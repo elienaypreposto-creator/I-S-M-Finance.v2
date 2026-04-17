@@ -1,0 +1,164 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+@import "tw-animate-css";
+@plugin "@tailwindcss/typography";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-card-border: hsl(var(--card-border));
+
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-popover-border: hsl(var(--popover-border));
+
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  
+  --color-success: hsl(var(--success));
+  --color-success-foreground: hsl(var(--success-foreground));
+  
+  --color-warning: hsl(var(--warning));
+  --color-warning-foreground: hsl(var(--warning-foreground));
+  
+  --color-teal: hsl(var(--teal));
+  --color-orange: hsl(var(--orange));
+
+  --color-sidebar: hsl(var(--sidebar));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+  --color-sidebar-primary: hsl(var(--sidebar-primary));
+  --color-sidebar-primary-foreground: hsl(var(--sidebar-primary-foreground));
+  --color-sidebar-accent: hsl(var(--sidebar-accent));
+  --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
+  --color-sidebar-ring: hsl(var(--sidebar-ring));
+
+  --font-sans: 'Inter', sans-serif;
+
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+}
+
+/* Forced Dark Mode Theme per requirements */
+:root, .dark {
+  --background: 240 23% 15%; /* #1E1E2E */
+  --foreground: 225 27% 93%; /* #E8EAF0 */
+  
+  --card: 240 19% 20%; /* #2A2A3E */
+  --card-foreground: 225 27% 93%;
+  --card-border: 240 19% 28%;
+  
+  --popover: 240 19% 20%;
+  --popover-foreground: 225 27% 93%;
+  --popover-border: 240 19% 28%;
+  
+  --primary: 201 65% 55%; /* #3BA8DC - Azul vibrante */
+  --primary-foreground: 0 0% 100%;
+  
+  --secondary: 225 56% 23%; /* #1A2B5E - Azul royal escuro */
+  --secondary-foreground: 225 27% 93%;
+  
+  --muted: 240 19% 25%;
+  --muted-foreground: 240 10% 65%;
+  
+  --accent: 201 65% 55%;
+  --accent-foreground: 0 0% 100%;
+  
+  --destructive: 6 78% 57%; /* #E74C3C - Vermelho */
+  --destructive-foreground: 0 0% 100%;
+  
+  --success: 145 63% 42%; /* #27AE60 - Verde */
+  --success-foreground: 0 0% 100%;
+  
+  --warning: 37 90% 51%; /* #F39C12 - Amarelo */
+  --warning-foreground: 0 0% 100%;
+  
+  --teal: 168 76% 42%; /* #1ABC9C - Verde-água */
+  --orange: 28 80% 52%; /* #E67E22 - Laranja */
+  
+  --border: 240 19% 28%;
+  --input: 240 19% 28%;
+  --ring: 201 65% 55%;
+
+  --sidebar: 225 56% 23%; /* #1A2B5E */
+  --sidebar-foreground: 225 27% 93%;
+  --sidebar-border: 240 19% 28%;
+  --sidebar-primary: 201 65% 55%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 240 19% 25%;
+  --sidebar-accent-foreground: 225 27% 93%;
+  --sidebar-ring: 201 65% 55%;
+
+  --radius: 0.75rem;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    @apply antialiased text-foreground bg-background;
+    color-scheme: dark;
+  }
+
+  body {
+    @apply min-h-screen font-sans;
+  }
+
+  /* Custom Scrollbar for sleek SaaS feel */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted));
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground));
+  }
+  /* Force dark background for selects/dropdowns */
+  select, select option {
+    background-color: #1e1e2e;
+    color: #e8eaf0;
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply bg-card/80 backdrop-blur-md border border-white/5 shadow-xl;
+  }
+  .animate-in {
+    animation: animate-in 0.3s ease-out forwards;
+  }
+  @keyframes animate-in {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+}

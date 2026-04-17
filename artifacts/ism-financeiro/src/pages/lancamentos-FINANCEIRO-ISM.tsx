@@ -176,28 +176,17 @@ function LancamentoModal({ onClose, onSaved, editItem }: { onClose: () => void; 
   const { data: parceiros = [] } = useQuery<Parceiro[]>({
     queryKey: ["parceiros-modal"],
     queryFn: async () => {
-      try {
-        const res = await fetch(`${API_URL}/parceiros?all=true`);
-        if (!res.ok) return [];
-        const json = await res.json();
-        return Array.isArray(json) ? json : (json.data ?? []);
-      } catch (e) {
-        return [];
-      }
+      const res = await fetch(`${API_URL}/parceiros?all=true`);
+      const json = await res.json();
+      return Array.isArray(json) ? json : (json.data ?? []);
     }
   });
 
   const { data: planoContas = [] } = useQuery<PlanoConta[]>({
     queryKey: ["plano-contas-modal"],
     queryFn: async () => {
-      try {
-        const res = await fetch(`${API_URL}/plano-contas`);
-        if (!res.ok) return [];
-        const json = await res.json();
-        return Array.isArray(json) ? json : (json.data ?? []);
-      } catch (e) {
-        return [];
-      }
+      const res = await fetch(`${API_URL}/plano-contas`);
+      return res.json();
     }
   });
 
@@ -350,7 +339,7 @@ function LancamentoModal({ onClose, onSaved, editItem }: { onClose: () => void; 
                 <label className={labelCls}>Classificação (Plano de Contas)</label>
                 <select value={form.plano_conta_id} onChange={e => setForm(f => ({ ...f, plano_conta_id: e.target.value }))} className={selectCls}>
                   <option value="">Indique a categoria contábil...</option>
-                  {Array.isArray(planoContas) && planoContas.map((p: PlanoConta) => (
+                  {planoContas.map((p: PlanoConta) => (
                     <option key={p.id} value={p.id}>{p.categoria} {p.subcategoria ? `— ${p.subcategoria}` : ""}</option>
                   ))}
                 </select>
@@ -501,8 +490,8 @@ export default function Lancamentos() {
       const params = new URLSearchParams();
       if (tipo) params.set("tipo", tipo);
       if (debouncedSearch) params.set("search", debouncedSearch);
-      if (dateStart) params.set("dateStart", dateStart);
-      if (dateEnd) params.set("dateEnd", dateEnd);
+      if (dateStart) params.set("data_inicio", dateStart);
+      if (dateEnd) params.set("data_fim", dateEnd);
       params.set("page", String(page));
       params.set("limit", String(limit));
       const res = await fetch(`${API_URL}/lancamentos?${params}`);

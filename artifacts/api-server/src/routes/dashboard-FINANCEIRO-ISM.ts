@@ -163,7 +163,7 @@ router.get("/dashboard/inadimplencia-clientes", async (req, res) => {
       .leftJoin(parceirosTable, eq(lancamentosTable.parceiro_id, parceirosTable.id))
       .where(whereClause)
       .groupBy(parceirosTable.id, parceirosTable.nome, lancamentosTable.vencimento)
-      .limit(10);
+      .limit(50);
 
     res.json(items.map(i => ({
       id: i.id ?? 0,
@@ -203,7 +203,7 @@ router.get("/dashboard/inadimplencia-fornecedores", async (req, res) => {
       .leftJoin(parceirosTable, eq(lancamentosTable.parceiro_id, parceirosTable.id))
       .where(whereClause)
       .groupBy(parceirosTable.id, parceirosTable.nome, lancamentosTable.vencimento)
-      .limit(10);
+      .limit(50);
 
     res.json(items.map(i => ({
       id: i.id ?? 0,
@@ -230,7 +230,7 @@ router.get("/dashboard/dias-atraso", async (_req, res) => {
       .from(lancamentosTable)
       .leftJoin(parceirosTable, eq(lancamentosTable.parceiro_id, parceirosTable.id))
       .where(and(lt(lancamentosTable.vencimento, hoje), sql`${lancamentosTable.status} IN ('pendente', 'atrasado')`))
-      .limit(10);
+      .limit(50);
 
     res.json(items.map(i => ({
       nome: i.nome || i.descricao || `Lançamento #${i.id}`,
@@ -264,7 +264,7 @@ router.get("/dashboard/nivel-risco", async (_req, res) => {
           sql`${lancamentosTable.status} NOT IN ('cancelado', 'recebido')`
         )
       )
-      .limit(20);
+      .limit(50);
 
     res.json(items.map(i => ({
       id: i.id,

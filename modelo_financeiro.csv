@@ -1,0 +1,5 @@
+Tipo,Vencimento,Parceiro,Descricao,Valor,Status,Categoria,Competencia,ContaBancaria
+CP,25/11/2023,ABC Solucoes LTDA,Licenca Software Oracle,1500.50,Pendente,Sistemas,11/2023,Itau CC
+CR,10/12/2023,Cliente Exemplo S.A.,Projeto Consultoria Fase 1,12500.00,Pendente,Receita de Servicos,12/2023,Bradesco CC
+CP,15/11/2023,Google Cloud,Servidores Producao,850.25,Pago,Hospedagem,11/2023,Nubank PJ
+CR,20/11/2023,Inova Tech,Suporte Mensal,4500.00,Recebido,Mensalidades,11/2023,Itau CC

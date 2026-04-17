@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { PageHeader } from "@/components/shared/page-header";
 import { Download } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
@@ -47,19 +47,40 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
+import { useQuery } from "@tanstack/react-query";
 import { DateRangePicker } from "@/components/shared/date-range-picker";
 import { format, startOfYear, endOfYear } from "date-fns";
+
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 export default function FluxoCaixa() {
   const [dateStart, setDateStart] = useState(format(startOfYear(new Date()), "yyyy-MM-dd"));
   const [dateEnd, setDateEnd] = useState(format(endOfYear(new Date()), "yyyy-MM-dd"));
   const ano = new Date(dateStart).getFullYear();
 
-  const getRowStyle = (tipo: FluxoRow["tipo"]) => {
+  const { data, isLoading } = useQuery({
+    queryKey: ["relatorio-fluxo", ano],
+    queryFn: async () => {
+      const res = await fetch(`${API_URL}/relatorios/fluxo-caixa?ano=${ano}`);
+      if (!res.ok) throw new Error("Erro ao buscar Fluxo de Caixa");
+      return res.json();
+    }
+  });
+
+  const secoes = data?.secoes || [];
+  
+  // Converte as seções para o formato que o gráfico e a tabela esperam
+  const chartData = meses.map((m, i) => {
+    const entradas = secoes.find((s: any) => s.tipo === "entradas")?.linhas[0]?.valores[i] || 0;
+    const saidas = secoes.find((s: any) => s.tipo === "saidas")?.linhas[0]?.valores[i] || 0;
+    const saldo = secoes.find((s: any) => s.tipo === "saldo_final")?.linhas[0]?.valores[i] || 0;
+    return { mes: m, entradas, saidas: Math.abs(saidas), saldo };
+  });
+
+  const getRowStyle = (tipo: string) => {
     switch (tipo) {
-      case "titulo": return "bg-white/5 text-primary font-bold text-xs uppercase tracking-wider";
-      case "subtotal": return "text-white font-semibold bg-primary/5";
       case "total": return "text-white font-bold bg-primary/10 border-t border-primary/20";
+      case "saldo_final": return "text-white font-black bg-primary/20 scale-[1.01] shadow-lg ring-1 ring-primary/20";
       default: return "text-muted-foreground hover:bg-white/5 transition-colors";
     }
   };
@@ -125,19 +146,24 @@ export default function FluxoCaixa() {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {fluxoData.map((row, i) => (
-                <tr key={i} className={getRowStyle(row.tipo)}>
-                  <td className={`px-4 py-3 sticky left-0 backdrop-blur-sm ${row.tipo === 'titulo' ? 'bg-white/5' : row.tipo === 'total' ? 'bg-primary/10' : 'bg-card/60'}`}>
-                    {row.tipo === "item" ? <span className="pl-3">{row.label}</span> : row.label}
-                  </td>
-                  {row.tipo === "titulo" ? <td colSpan={meses.length} /> : (
-                    row.valores.map((v, j) => (
-                      <td key={j} className={`px-3 py-3 text-right ${row.tipo === 'total' ? (v >= 0 ? 'text-success' : 'text-destructive') : row.negativo ? 'text-destructive' : v === 0 ? 'text-muted-foreground/30' : 'text-white'}`}>
-                        {v !== 0 ? (row.negativo ? `-${formatCurrency(v)}` : formatCurrency(v)) : "—"}
+              {secoes.map((secao: any) => (
+                <React.Fragment key={secao.titulo}>
+                  <tr className="bg-white/5 text-primary font-bold text-xs uppercase tracking-wider">
+                    <td colSpan={meses.length + 1} className="px-4 py-2">{secao.titulo}</td>
+                  </tr>
+                  {secao.linhas.map((row: any, i: number) => (
+                    <tr key={i} className={getRowStyle(secao.tipo)}>
+                      <td className={`px-4 py-3 sticky left-0 backdrop-blur-sm ${secao.tipo === 'total' ? 'bg-primary/10' : 'bg-card/60'}`}>
+                        <span className="pl-3">{row.label}</span>
                       </td>
-                    ))
-                  )}
-                </tr>
+                      {row.valores.map((v: number, j: number) => (
+                        <td key={j} className={`px-3 py-3 text-right ${secao.tipo === 'total' || secao.tipo === 'saldo_final' ? (v >= 0 ? 'text-success' : 'text-destructive') : row.negativo ? 'text-destructive' : v === 0 ? 'text-muted-foreground/30' : 'text-white'}`}>
+                          {v !== 0 ? (row.negativo ? `-${formatCurrency(v)}` : formatCurrency(v)) : "—"}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </React.Fragment>
               ))}
             </tbody>
           </table>

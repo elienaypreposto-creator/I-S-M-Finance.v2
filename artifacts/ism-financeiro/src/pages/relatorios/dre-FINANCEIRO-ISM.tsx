@@ -42,15 +42,27 @@ const dreCaixa: DreRow[] = dreCompetencia.map(row => ({
 
 import { DateRangePicker } from "@/components/shared/date-range-picker";
 import { format, startOfYear, endOfYear } from "date-fns";
+import { useQuery } from "@tanstack/react-query";
+
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 export default function DreGerencial() {
   const [dateStart, setDateStart] = useState(format(startOfYear(new Date()), "yyyy-MM-dd"));
   const [dateEnd, setDateEnd] = useState(format(endOfYear(new Date()), "yyyy-MM-dd"));
-  const ano = new Date(dateStart).getFullYear();
   const [regime, setRegime] = useState<"competencia" | "caixa">("competencia");
-  const mesAtual = 6;
+  const ano = new Date(dateStart).getFullYear();
 
-  const dreData = regime === "competencia" ? dreCompetencia : dreCaixa;
+  const { data, isLoading } = useQuery({
+    queryKey: ["relatorio-dre", ano, regime],
+    queryFn: async () => {
+      const res = await fetch(`${API_URL}/relatorios/dre?ano=${ano}&regime=${regime}`);
+      if (!res.ok) throw new Error("Erro ao buscar DRE");
+      return res.json();
+    }
+  });
+
+  const dreData: DreRow[] = data?.linhas || [];
+  const mesAtual = new Date().getMonth() + 1;
 
   const getRowStyle = (tipo: DreRow["tipo"]) => {
     switch (tipo) {

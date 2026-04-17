@@ -14,6 +14,8 @@ export const contasBancariasTable = pgTable("contas_bancarias", {
   empresa: text("empresa"),
   saldo_inicial: numeric("saldo_inicial", { precision: 15, scale: 2 }).default("0"),
   data_inicio: date("data_inicio").notNull(),
+  status: text("status").default("ativo").notNull(), // ativo, bloqueado
+  cor: text("cor").default("#3BA8DC"),
   created_at: timestamp("created_at").defaultNow().notNull(),
   updated_at: timestamp("updated_at").defaultNow().notNull(),
 });
