@@ -90,7 +90,10 @@ router.post("/lancamentos", async (req, res) => {
 router.get("/lancamentos/:id", async (req, res) => {
   try {
     const [item] = await db.select().from(lancamentosTable).where(eq(lancamentosTable.id, parseInt(req.params.id)));
-    if (!item) return res.status(404).json({ error: "Not found" });
+    if (!item) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
     res.json({ ...item, valor: Number(item.valor) });
   } catch (e) {
     res.status(500).json({ error: String(e) });
@@ -103,7 +106,10 @@ router.put("/lancamentos/:id", async (req, res) => {
     const updateData = valor !== undefined ? { ...rest, valor: String(valor) } : rest;
     const [item] = await db.update(lancamentosTable).set({ ...updateData, updated_at: new Date() })
       .where(eq(lancamentosTable.id, parseInt(req.params.id))).returning();
-    if (!item) return res.status(404).json({ error: "Not found" });
+    if (!item) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
     res.json({ ...item, valor: Number(item.valor) });
   } catch (e) {
     res.status(500).json({ error: String(e) });
