@@ -59,14 +59,14 @@ router.get("/lancamentos", async (req, res) => {
       .limit(limit)
       .offset(offset);
 
-    res.json({
+    return res.json({
       data: items.map(i => ({ ...i, valor: Number(i.valor) })),
       total: totalResult.count,
       page,
       limit,
     });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -81,9 +81,9 @@ router.post("/lancamentos", async (req, res) => {
       total_parcelas: total_parcelas || 1,
       riscos: riscos || [],
     }).returning();
-    res.status(201).json({ ...item, valor: Number(item.valor) });
+    return res.status(201).json({ ...item, valor: Number(item.valor) });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -91,12 +91,11 @@ router.get("/lancamentos/:id", async (req, res) => {
   try {
     const [item] = await db.select().from(lancamentosTable).where(eq(lancamentosTable.id, parseInt(req.params.id)));
     if (!item) {
-      res.status(404).json({ error: "Not found" });
-      return;
+      return res.status(404).json({ error: "Not found" });
     }
-    res.json({ ...item, valor: Number(item.valor) });
+    return res.json({ ...item, valor: Number(item.valor) });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -107,21 +106,20 @@ router.put("/lancamentos/:id", async (req, res) => {
     const [item] = await db.update(lancamentosTable).set({ ...updateData, updated_at: new Date() })
       .where(eq(lancamentosTable.id, parseInt(req.params.id))).returning();
     if (!item) {
-      res.status(404).json({ error: "Not found" });
-      return;
+      return res.status(404).json({ error: "Not found" });
     }
-    res.json({ ...item, valor: Number(item.valor) });
+    return res.json({ ...item, valor: Number(item.valor) });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
 router.delete("/lancamentos/:id", async (req, res) => {
   try {
     await db.delete(lancamentosTable).where(eq(lancamentosTable.id, parseInt(req.params.id)));
-    res.status(204).send();
+    return res.status(204).send();
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 

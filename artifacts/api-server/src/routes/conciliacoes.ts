@@ -54,9 +54,9 @@ router.get("/conciliacoes", async (req, res) => {
       return { ...item, conciliados, ignorados, pendentes, total };
     }));
 
-    res.json({ data: result, total: totalResult.count, page, limit });
+    return res.json({ data: result, total: totalResult.count, page, limit });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -85,9 +85,9 @@ router.post("/conciliacoes/importar", async (req, res) => {
     }
     await db.insert(itensConciliacaoTable).values(sampleItens);
 
-    res.status(201).json(item);
+    return res.status(201).json(item);
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -119,7 +119,7 @@ router.get("/conciliacoes/:id", async (req, res) => {
     const ignorados = itens.filter(i => i.status === "ignorado").length;
     const pendentes = itens.filter(i => i.status === "pendente").length;
 
-    res.json({
+    return res.json({
       conciliacao: {
         ...conciliacao,
         conciliados,
@@ -130,7 +130,7 @@ router.get("/conciliacoes/:id", async (req, res) => {
       itens: itens.map(i => ({ ...i, valor_extrato: Number(i.valor_extrato), desconto: Number(i.desconto ?? 0), acrescimo: Number(i.acrescimo ?? 0) })),
     });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -139,9 +139,9 @@ router.delete("/conciliacoes/:id", async (req, res) => {
     const id = parseInt(req.params.id);
     await db.delete(itensConciliacaoTable).where(eq(itensConciliacaoTable.conciliacao_id, id));
     await db.delete(conciliacoesTable).where(eq(conciliacoesTable.id, id));
-    res.status(204).send();
+    return res.status(204).send();
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -154,9 +154,9 @@ router.post("/conciliacoes/:id/conciliar", async (req, res) => {
     const status = pendentes.length === 0 ? "conciliado" : "pendente";
     const [item] = await db.update(conciliacoesTable).set({ status, updated_at: new Date() })
       .where(eq(conciliacoesTable.id, id)).returning();
-    res.json(item);
+    return res.json(item);
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
