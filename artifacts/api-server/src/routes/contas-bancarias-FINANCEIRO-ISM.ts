@@ -24,9 +24,9 @@ router.get("/contas-bancarias", async (req, res) => {
       .leftJoin(lancamentosTable, and(eq(lancamentosTable.conta_id, contasBancariasTable.id), sql`${lancamentosTable.status} IN ('pago', 'recebido')`))
       .groupBy(contasBancariasTable.id)
       .orderBy(contasBancariasTable.nome);
-    res.json(items);
+    return res.json(items);
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -37,9 +37,9 @@ router.post("/contas-bancarias", async (req, res) => {
       ...rest,
       saldo_inicial: saldo_inicial !== undefined ? String(saldo_inicial) : "0",
     }).returning();
-    res.status(201).json({ ...item, saldo_inicial: Number(item.saldo_inicial ?? 0) });
+    return res.status(201).json({ ...item, saldo_inicial: Number(item.saldo_inicial ?? 0) });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -48,18 +48,18 @@ router.put("/contas-bancarias/:id", async (req, res) => {
     const [item] = await db.update(contasBancariasTable).set({ ...req.body, updated_at: new Date() })
       .where(eq(contasBancariasTable.id, parseInt(req.params.id))).returning();
     if (!item) return res.status(404).json({ error: "Not found" });
-    res.json({ ...item, saldo_inicial: Number(item.saldo_inicial ?? 0) });
+    return res.json({ ...item, saldo_inicial: Number(item.saldo_inicial ?? 0) });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
 router.delete("/contas-bancarias/:id", async (req, res) => {
   try {
     await db.delete(contasBancariasTable).where(eq(contasBancariasTable.id, parseInt(req.params.id)));
-    res.status(204).send();
+    return res.status(204).send();
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 

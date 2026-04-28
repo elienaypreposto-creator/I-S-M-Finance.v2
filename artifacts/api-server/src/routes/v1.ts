@@ -25,9 +25,9 @@ const authenticate = async (req: any, res: any, next: any) => {
 router.get("/bancos", authenticate, async (_req, res) => {
   try {
     const items = await db.select().from(contasBancariasTable);
-    res.json(items.map(i => ({ ...i, saldo_inicial: Number(i.saldo_inicial ?? 0) })));
+    return res.json(items.map(i => ({ ...i, saldo_inicial: Number(i.saldo_inicial ?? 0) })));
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -39,9 +39,9 @@ router.get("/contasPagar", authenticate, async (req, res) => {
 
     const [totalResult] = await db.select({ count: count() }).from(lancamentosTable).where(eq(lancamentosTable.tipo, "CP"));
     const items = await db.select().from(lancamentosTable).where(eq(lancamentosTable.tipo, "CP")).limit(limit).offset(offset);
-    res.json({ data: items.map(i => ({ ...i, valor: Number(i.valor) })), total: totalResult.count, page, limit });
+    return res.json({ data: items.map(i => ({ ...i, valor: Number(i.valor) })), total: totalResult.count, page, limit });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -53,9 +53,9 @@ router.get("/contasReceber", authenticate, async (req, res) => {
 
     const [totalResult] = await db.select({ count: count() }).from(lancamentosTable).where(eq(lancamentosTable.tipo, "CR"));
     const items = await db.select().from(lancamentosTable).where(eq(lancamentosTable.tipo, "CR")).limit(limit).offset(offset);
-    res.json({ data: items.map(i => ({ ...i, valor: Number(i.valor) })), total: totalResult.count, page, limit });
+    return res.json({ data: items.map(i => ({ ...i, valor: Number(i.valor) })), total: totalResult.count, page, limit });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -63,36 +63,36 @@ router.get("/pessoas", authenticate, async (req, res) => {
   try {
     const [totalResult] = await db.select({ count: count() }).from(parceirosTable);
     const items = await db.select().from(parceirosTable);
-    res.json({ data: items, total: totalResult.count, page: 1, limit: 9999 });
+    return res.json({ data: items, total: totalResult.count, page: 1, limit: 9999 });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
 router.get("/filiais", authenticate, async (_req, res) => {
   try {
     const items = await db.select().from(filiaisTable);
-    res.json(items);
+    return res.json(items);
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
 router.get("/planoContas", authenticate, async (_req, res) => {
   try {
     const items = await db.select().from(planoContasTable);
-    res.json(items);
+    return res.json(items);
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
 router.get("/categoriaPlanoConta", authenticate, async (_req, res) => {
   try {
     const items = await db.select().from(planoContasTable);
-    res.json(items);
+    return res.json(items);
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -107,9 +107,9 @@ router.get("/tipoDocumentos", authenticate, async (_req, res) => {
       { id: 6, nome: "TED" },
       { id: 7, nome: "DOC" },
     ];
-    res.json(tipos);
+    return res.json(tipos);
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 

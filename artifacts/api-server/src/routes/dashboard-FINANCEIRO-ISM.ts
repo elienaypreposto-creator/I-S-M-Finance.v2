@@ -130,9 +130,9 @@ router.get("/dashboard/projecao-dias", async (req, res) => {
         pagar: p,
       });
     }
-    res.json(resultado);
+    return res.json(resultado);
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -165,14 +165,14 @@ router.get("/dashboard/inadimplencia-clientes", async (req, res) => {
       .groupBy(parceirosTable.id, parceirosTable.nome, lancamentosTable.vencimento)
       .limit(50);
 
-    res.json(items.map(i => ({
+    return res.json(items.map(i => ({
       id: i.id ?? 0,
       nome: i.nome ?? "Sem parceiro",
       valor: Number(i.valor ?? 0),
       vencimento: i.vencimento ?? "",
     })));
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -205,14 +205,14 @@ router.get("/dashboard/inadimplencia-fornecedores", async (req, res) => {
       .groupBy(parceirosTable.id, parceirosTable.nome, lancamentosTable.vencimento)
       .limit(50);
 
-    res.json(items.map(i => ({
+    return res.json(items.map(i => ({
       id: i.id ?? 0,
       nome: i.nome ?? "Sem parceiro",
       valor: Number(i.valor ?? 0),
       vencimento: i.vencimento ?? "",
     })));
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -310,9 +310,9 @@ router.get("/dashboard/fluxo-caixa-mensal", async (req, res) => {
       return { mes, entradas: Number(entradas), saidas: Number(saidas) };
     });
 
-    res.json(resultado);
+    return res.json(resultado);
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -337,9 +337,9 @@ router.get("/dashboard/saidas-plano-contas", async (_req, res) => {
       percentual: total > 0 ? Math.round((Number(r.valor) / total) * 100) : 0,
     }));
 
-    res.json(result);
+    return res.json(result);
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -364,9 +364,9 @@ router.get("/dashboard/entradas-plano-contas", async (_req, res) => {
       percentual: total > 0 ? Math.round((Number(r.valor) / total) * 100) : 0,
     }));
 
-    res.json(result);
+    return res.json(result);
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 

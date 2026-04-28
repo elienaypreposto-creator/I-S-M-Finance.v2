@@ -16,9 +16,9 @@ router.get("/tokens-api", async (_req, res) => {
       ativo: tokensApiTable.ativo,
       created_at: tokensApiTable.created_at,
     }).from(tokensApiTable).orderBy(tokensApiTable.created_at);
-    res.json(items);
+    return res.json(items);
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -41,9 +41,9 @@ router.post("/tokens-api", async (req, res) => {
       created_at: tokensApiTable.created_at,
     });
     // Return the full token once (only time it's visible)
-    res.status(201).json({ ...item, token });
+    return res.status(201).json({ ...item, token });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -59,18 +59,18 @@ router.put("/tokens-api/:id", async (req, res) => {
         created_at: tokensApiTable.created_at,
       });
     if (!item) return res.status(404).json({ error: "Not found" });
-    res.json(item);
+    return res.json(item);
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
 router.delete("/tokens-api/:id", async (req, res) => {
   try {
     await db.delete(tokensApiTable).where(eq(tokensApiTable.id, parseInt(req.params.id)));
-    res.status(204).send();
+    return res.status(204).send();
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
