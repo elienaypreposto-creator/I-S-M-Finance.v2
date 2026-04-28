@@ -37,9 +37,9 @@ router.put("/departamentos/:id", async (req, res) => {
 router.delete("/departamentos/:id", async (req, res) => {
   try {
     await db.delete(departamentosTable).where(eq(departamentosTable.id, parseInt(req.params.id)));
-    res.status(204).send();
+    return res.status(204).send();
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -75,9 +75,9 @@ router.put("/centros-custos/:id", async (req, res) => {
 router.delete("/centros-custos/:id", async (req, res) => {
   try {
     await db.delete(centrosCustosTable).where(eq(centrosCustosTable.id, parseInt(req.params.id)));
-    res.status(204).send();
+    return res.status(204).send();
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 

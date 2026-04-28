@@ -8,9 +8,9 @@ const router = Router();
 router.get("/contas-bancarias", async (req, res) => {
   try {
     const items = await db.select().from(contasBancariasTable).orderBy(contasBancariasTable.nome);
-    res.json(items.map(i => ({ ...i, saldo_inicial: Number(i.saldo_inicial ?? 0), saldo_atual: Number(i.saldo_inicial ?? 0) })));
+    return res.json(items.map(i => ({ ...i, saldo_inicial: Number(i.saldo_inicial ?? 0), saldo_atual: Number(i.saldo_inicial ?? 0) })));
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -21,9 +21,9 @@ router.post("/contas-bancarias", async (req, res) => {
       ...rest,
       saldo_inicial: saldo_inicial !== undefined ? String(saldo_inicial) : "0",
     }).returning();
-    res.status(201).json({ ...item, saldo_inicial: Number(item.saldo_inicial ?? 0) });
+    return res.status(201).json({ ...item, saldo_inicial: Number(item.saldo_inicial ?? 0) });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -32,18 +32,18 @@ router.put("/contas-bancarias/:id", async (req, res) => {
     const [item] = await db.update(contasBancariasTable).set({ ...req.body, updated_at: new Date() })
       .where(eq(contasBancariasTable.id, parseInt(req.params.id))).returning();
     if (!item) return res.status(404).json({ error: "Not found" });
-    res.json({ ...item, saldo_inicial: Number(item.saldo_inicial ?? 0) });
+    return res.json({ ...item, saldo_inicial: Number(item.saldo_inicial ?? 0) });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
 router.delete("/contas-bancarias/:id", async (req, res) => {
   try {
     await db.delete(contasBancariasTable).where(eq(contasBancariasTable.id, parseInt(req.params.id)));
-    res.status(204).send();
+    return res.status(204).send();
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
