@@ -77,12 +77,18 @@ export function AppSidebar() {
     <Sidebar collapsible="icon" variant="inset" className="border-r border-white/10 bg-sidebar">
       <SidebarHeader className="h-16 flex items-center justify-center border-b border-white/5">
         <div className="flex items-center gap-2 px-3 w-full group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:justify-center">
-          <div className="w-9 h-9 rounded-lg bg-primary flex items-center justify-center font-bold text-white shadow-lg shadow-primary/20 shrink-0">
-            IS
-          </div>
-          <span className="font-bold text-base tracking-tight truncate flex-1 group-data-[collapsible=icon]:hidden">
-            ISM Tecnologia
-          </span>
+          {/* Collapsed: small icon only */}
+          <img
+            src="/logo-ism.png"
+            alt="ISM"
+            className="h-8 w-8 object-contain shrink-0 group-data-[collapsible=icon]:block hidden"
+          />
+          {/* Expanded: full logo */}
+          <img
+            src="/logo-ism.png"
+            alt="ISM Tecnologia"
+            className="h-9 object-contain group-data-[collapsible=icon]:hidden"
+          />
           <SidebarTrigger className="hidden md:flex ml-auto group-data-[collapsible=icon]:hidden text-muted-foreground hover:text-foreground transition-all" />
         </div>
       </SidebarHeader>
