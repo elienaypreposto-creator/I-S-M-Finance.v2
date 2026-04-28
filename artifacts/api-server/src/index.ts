@@ -1,19 +1,14 @@
 import app from "./app";
 
-const rawPort = process.env["PORT"];
+const port = process.env.PORT || 5000;
 
-if (!rawPort) {
-  throw new Error(
-    "PORT environment variable is required but was not provided.",
-  );
+// Only listen when not in a serverless environment (like Vercel)
+// or when explicitly running in development.
+if (process.env.NODE_ENV !== "production" || process.env.RUN_LOCAL === "true") {
+  app.listen(port, () => {
+    console.log(`Server listening on port ${port}`);
+  });
 }
 
-const port = Number(rawPort);
-
-if (Number.isNaN(port) || port <= 0) {
-  throw new Error(`Invalid PORT value: "${rawPort}"`);
-}
-
-app.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
-});
+// Export for Vercel serverless function
+export default app;
