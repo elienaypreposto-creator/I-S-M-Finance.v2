@@ -262,8 +262,8 @@ function LancamentoModal({ onClose, onSaved, editItem }: { onClose: () => void; 
   const isCP = form.tipo === "CP";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 backdrop-blur-md p-4 pt-16 overflow-hidden">
-      <div className="bg-[#121417] border border-white/10 rounded-2xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-md p-0 sm:p-4 overflow-hidden">
+      <div className="bg-[#121417] border-t sm:border border-white/10 rounded-t-3xl sm:rounded-2xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[95vh] sm:max-h-[90vh] animate-in">
         {/* Header de Luxo */}
         <div className="flex items-center justify-between p-6 border-b border-white/5 bg-[#121417] rounded-t-2xl">
           <div>
@@ -459,11 +459,11 @@ function LancamentoModal({ onClose, onSaved, editItem }: { onClose: () => void; 
             </div>
           </div>
 
-          <div className="flex gap-4 pt-6 border-t border-white/5">
-            <button type="button" onClick={onClose} className="px-8 py-3 rounded-xl border border-white/10 text-white hover:bg-white/5 text-sm font-bold transition-all">
+          <div className="flex flex-col sm:flex-row gap-4 pt-6 border-t border-white/5">
+            <button type="button" onClick={onClose} className="w-full sm:px-8 py-3 rounded-xl border border-white/10 text-white hover:bg-white/5 text-sm font-bold transition-all order-2 sm:order-1">
               Cancelar
             </button>
-            <button type="submit" disabled={mutation.isPending} className="flex-1 py-3 rounded-xl bg-primary hover:bg-primary/90 text-white text-sm font-black shadow-xl shadow-primary/25 transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+            <button type="submit" disabled={mutation.isPending} className="w-full flex-1 py-3 rounded-xl bg-primary hover:bg-primary/90 text-white text-sm font-black shadow-xl shadow-primary/25 transition-all disabled:opacity-50 flex items-center justify-center gap-2 order-1 sm:order-2">
               {mutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : (editItem ? "Salvar Alterações" : "Concluir Lançamento")}
             </button>
           </div>
@@ -501,8 +501,8 @@ export default function Lancamentos() {
       const params = new URLSearchParams();
       if (tipo) params.set("tipo", tipo);
       if (debouncedSearch) params.set("search", debouncedSearch);
-      if (dateStart) params.set("dateStart", dateStart);
-      if (dateEnd) params.set("dateEnd", dateEnd);
+      if (dateStart) params.set("data_inicio", dateStart);
+      if (dateEnd) params.set("data_fim", dateEnd);
       params.set("page", String(page));
       params.set("limit", String(limit));
       const res = await fetch(`${API_URL}/lancamentos?${params}`);
@@ -544,19 +544,19 @@ export default function Lancamentos() {
       )}
 
       {/* Header compacto */}
-      <div className="flex items-center justify-between px-1 py-1">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between px-1 py-2 gap-4">
         <div>
           <h1 className="text-base font-bold text-white leading-tight">Lançamentos Financeiros</h1>
           <p className="text-xs text-muted-foreground">Gerencie suas contas a pagar e a receber</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-medium transition-all">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <button className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-medium transition-all">
             <Download className="w-3.5 h-3.5" />
-            Exportar
+            <span className="hidden xs:inline">Exportar</span>
           </button>
           <button
             onClick={() => setModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-xs font-medium transition-all shadow-md shadow-primary/30">
+            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-xs font-medium transition-all shadow-md shadow-primary/30">
             <Plus className="w-3.5 h-3.5" />
             Novo Lançamento
           </button>
@@ -566,13 +566,13 @@ export default function Lancamentos() {
       {/* Painel principal */}
       <div className="glass-panel rounded-2xl flex flex-col overflow-hidden flex-1 min-h-0">
         {/* Toolbar */}
-        <div className="px-4 py-2.5 border-b border-white/5 flex flex-wrap items-center justify-between gap-3 bg-black/10">
-          <div className="flex items-center gap-4">
-            <div className="flex bg-black/20 rounded-lg p-0.5 border border-white/5">
+        <div className="px-4 py-2.5 border-b border-white/5 flex flex-col xl:flex-row xl:items-center justify-between gap-4 bg-black/10">
+          <div className="flex flex-col md:flex-row md:items-center gap-4">
+            <div className="flex bg-black/20 rounded-lg p-0.5 border border-white/5 w-full md:w-auto">
                 {TABS.map(({ key, label }) => (
                 <button key={key}
                     onClick={() => { setActiveTab(key); setPage(1); }}
-                    className={`px-4 py-1 rounded-md text-xs font-bold transition-colors ${
+                    className={`flex-1 md:flex-none px-4 py-1.5 rounded-md text-xs font-bold transition-colors ${
                     activeTab === key
                         ? key === "cr" ? "bg-teal-500/20 text-teal-300 shadow-sm"
                         : key === "cp" ? "bg-orange-500/20 text-orange-300 shadow-sm"
@@ -584,10 +584,11 @@ export default function Lancamentos() {
                 ))}
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 w-full md:w-auto">
               <DateRangePicker 
                 startDate={dateStart} 
                 endDate={dateEnd} 
+                className="w-full md:w-auto justify-start"
                 onChange={(start: string, end: string) => {
                   setDateStart(start);
                   setDateEnd(end);
@@ -597,26 +598,26 @@ export default function Lancamentos() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-black/20 border border-white/5 focus-within:border-primary/50 transition-all">
+          <div className="flex items-center gap-2 w-full xl:w-auto">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-black/20 border border-white/5 focus-within:border-primary/50 transition-all flex-1 xl:flex-none">
               <Search className="w-3.5 h-3.5 text-muted-foreground" />
               <input
                 type="text"
                 placeholder="Buscar por descrição..."
                 value={search}
                 onChange={e => handleSearchChange(e.target.value)}
-                className="bg-transparent border-none outline-none text-xs w-52 placeholder:text-muted-foreground text-white"
+                className="bg-transparent border-none outline-none text-xs w-full xl:w-52 placeholder:text-muted-foreground text-white"
               />
             </div>
-            <button className="p-1.5 rounded-lg bg-white/5 border border-white/5 hover:bg-white/10 transition-colors text-muted-foreground hover:text-white">
+            <button className="p-2 rounded-lg bg-white/5 border border-white/5 hover:bg-white/10 transition-colors text-muted-foreground hover:text-white">
               <Filter className="w-4 h-4" />
             </button>
           </div>
         </div>
 
         {/* Table */}
-        <div className="overflow-x-auto flex-1">
-          <table className="w-full text-left text-xs whitespace-nowrap">
+        <div className="overflow-x-auto flex-1 responsive-table-container">
+          <table className="w-full text-left text-xs whitespace-nowrap table-to-cards">
             <thead className="bg-black/20 text-muted-foreground border-b border-white/5">
               <tr>
                 <th className="px-3 py-3 font-semibold w-14 text-center">Tipo</th>
@@ -655,7 +656,7 @@ export default function Lancamentos() {
                 return (
                   <tr key={l.id} className="hover:bg-white/[0.04] transition-colors group">
                     {/* Tipo CP/CR badge */}
-                    <td className="px-3 py-2.5 text-center">
+                    <td className="px-3 py-2.5 text-center" data-label="Tipo">
                       <span className={`inline-block text-[10px] font-black px-2 py-0.5 rounded ${
                         isCR ? "bg-teal-500/15 text-teal-300 border border-teal-500/25"
                               : "bg-orange-500/15 text-orange-300 border border-orange-500/25"
@@ -665,7 +666,7 @@ export default function Lancamentos() {
                     </td>
 
                     {/* Vencimento */}
-                    <td className="px-3 py-2.5">
+                    <td className="px-3 py-2.5" data-label="Vencimento">
                       <div className="flex items-center gap-1.5 text-white/80 font-medium">
                         <Calendar className="w-3 h-3 text-muted-foreground shrink-0" />
                         {formatDate(l.vencimento)}
@@ -673,7 +674,7 @@ export default function Lancamentos() {
                     </td>
 
                     {/* Banco — ícone/badge */}
-                    <td className="px-3 py-2.5">
+                    <td className="px-3 py-2.5" data-label="Banco">
                       <span
                         title={l.conta_nome || "A identificar"}
                         className="inline-flex items-center justify-center w-9 h-6 rounded text-[10px] font-black leading-none cursor-default"
@@ -683,48 +684,48 @@ export default function Lancamentos() {
                     </td>
 
                     {/* Parceiro */}
-                    <td className="px-3 py-2.5 font-medium text-white max-w-[160px] truncate" title={l.parceiro_nome || ""}>
+                    <td className="px-3 py-2.5 font-medium text-white max-w-[160px] truncate" title={l.parceiro_nome || ""} data-label="Parceiro">
                       {l.parceiro_nome || <span className="text-white/30 italic">—</span>}
                     </td>
 
                     {/* Descrição */}
-                    <td className="px-3 py-2.5 text-white/60 max-w-[200px] truncate" title={l.descricao || ""}>
+                    <td className="px-3 py-2.5 text-white/60 max-w-[200px] truncate" title={l.descricao || ""} data-label="Descrição">
                       {l.descricao || "—"}
                     </td>
 
                     {/* Categoria */}
-                    <td className="px-3 py-2.5 max-w-[140px] truncate">
+                    <td className="px-3 py-2.5 max-w-[140px] truncate" data-label="Categoria">
                       {l.plano_conta_nome
                         ? <span className="text-[10px] bg-white/5 border border-white/10 rounded-full px-2 py-0.5 text-white/70">{l.plano_conta_nome}</span>
                         : <span className="text-white/25 italic text-[10px]">Sem cat.</span>}
                     </td>
 
                     {/* Valor - sem $ na frente */}
-                    <td className={`px-3 py-2.5 text-right font-bold ${isCR ? "text-teal-300" : "text-white/90"}`}>
+                    <td className={`px-3 py-2.5 text-right font-bold ${isCR ? "text-teal-300" : "text-white/90"}`} data-label="Valor">
                       {isCR ? "" : "- "}{formatCurrency(l.valor).replace("R$", "").trim()}
                     </td>
 
                     {/* Status */}
-                    <td className="px-3 py-2.5 text-center">
+                    <td className="px-3 py-2.5 text-center" data-label="Status">
                       <StatusBadge status={l.status} />
                     </td>
 
                     {/* Ações - sempre visível */}
                     <td className="px-3 py-2.5">
-                      <div className="flex items-center justify-end gap-1">
+                      <div className="flex items-center justify-end gap-2">
                         <button
                           onClick={() => setEditItem(l)}
-                          className="p-1 rounded hover:bg-white/10 text-muted-foreground hover:text-primary transition-colors"
+                          className="p-2 rounded-lg hover:bg-white/10 text-muted-foreground hover:text-primary transition-colors touch-target-exempt"
                           title="Editar">
-                          <Pencil className="w-3.5 h-3.5" />
+                          <Pencil className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => {
                             if (confirm("Deseja excluir este lançamento?")) deleteMutation.mutate(l.id);
                           }}
-                          className="p-1 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
+                          className="p-2 rounded-lg hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors touch-target-exempt"
                           title="Excluir">
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
                     </td>
@@ -736,14 +737,14 @@ export default function Lancamentos() {
         </div>
 
         {/* Pagination */}
-        <div className="px-4 py-2.5 border-t border-white/5 flex items-center justify-between text-xs text-muted-foreground bg-black/10">
-          <span>
+        <div className="px-4 py-3 border-t border-white/5 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-muted-foreground bg-black/10">
+          <span className="order-2 sm:order-1">
             {isLoading ? "..." : `${(page - 1) * limit + 1}–${Math.min(page * limit, total)} de ${total.toLocaleString("pt-BR")} registros`}
           </span>
-          <div className="flex gap-1">
+          <div className="flex gap-1 order-1 sm:order-2 w-full sm:w-auto justify-center">
             <button disabled={page <= 1} onClick={() => setPage(p => p - 1)}
-              className="px-2.5 py-1 rounded border border-white/10 hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed">
-              ‹ Anterior
+              className="flex-1 sm:flex-none px-3 py-2 rounded border border-white/10 hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed">
+              ‹
             </button>
             {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
               const start = Math.max(1, page - 2);
@@ -751,14 +752,14 @@ export default function Lancamentos() {
               if (pageNum > totalPages) return null;
               return (
                 <button key={pageNum} onClick={() => setPage(pageNum)}
-                  className={`px-2.5 py-1 rounded font-medium transition-colors ${pageNum === page ? "bg-primary text-white" : "hover:bg-white/5"}`}>
+                  className={`flex-1 sm:flex-none px-3 py-2 rounded font-medium transition-colors ${pageNum === page ? "bg-primary text-white" : "hover:bg-white/5"}`}>
                   {pageNum}
                 </button>
               );
             })}
             <button disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}
-              className="px-2.5 py-1 rounded border border-white/10 hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed">
-              Próxima ›
+              className="flex-1 sm:flex-none px-3 py-2 rounded border border-white/10 hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed">
+              ›
             </button>
           </div>
         </div>

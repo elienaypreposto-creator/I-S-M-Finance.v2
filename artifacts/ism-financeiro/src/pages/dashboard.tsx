@@ -116,7 +116,7 @@ export default function Dashboard() {
       />
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           { label: "Saldo Total Bancos", value: formatCurrency(totalSaldo), icon: <Clock className="w-5 h-5" />, color: "text-primary", trend: null },
           { label: "A Receber em Aberto", value: formatCurrency(contasReceber.filter(c => c.status !== "recebido").reduce((a, b) => a + b.valor, 0)), icon: <ArrowDownRight className="w-5 h-5" />, color: "text-teal-400", trend: "+8%" },
@@ -125,11 +125,11 @@ export default function Dashboard() {
         ].map(kpi => (
           <div key={kpi.label} className="glass-panel rounded-2xl p-5">
             <div className="flex items-center justify-between mb-3">
-              <p className="text-xs text-muted-foreground">{kpi.label}</p>
+              <p className="text-[10px] sm:text-xs text-muted-foreground uppercase font-bold tracking-wider">{kpi.label}</p>
               <span className={kpi.color}>{kpi.icon}</span>
             </div>
-            <p className={`text-xl font-bold ${kpi.color}`}>{kpi.value}</p>
-            {kpi.trend && <p className="text-xs text-muted-foreground mt-1">{kpi.trend} vs. último mês</p>}
+            <p className={`text-lg sm:text-xl font-bold ${kpi.color}`}>{kpi.value}</p>
+            {kpi.trend && <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">{kpi.trend} vs. último mês</p>}
           </div>
         ))}
       </div>
@@ -137,120 +137,130 @@ export default function Dashboard() {
       {/* Saldo das Contas + Tabelas CP/CR */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Saldo por Conta */}
-        <div className="glass-panel rounded-2xl overflow-hidden">
+        <div className="glass-panel rounded-2xl overflow-hidden flex flex-col">
           <div className="p-4 border-b border-white/5">
             <h3 className="font-bold text-white text-sm">Saldo das Contas Bancárias</h3>
           </div>
-          <table className="w-full text-sm">
-            <thead className="bg-white/5">
-              <tr>
-                <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Banco / Conta</th>
-                <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">Saldo</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {saldosContas.map((c, i) => (
-                <tr key={i} className="hover:bg-white/5 transition-colors">
-                  <td className="px-4 py-3">
-                    <p className="font-medium text-white text-xs">{c.banco}</p>
-                    <p className="text-[11px] text-muted-foreground">Ag: {c.agencia} | CC: {c.conta}</p>
-                  </td>
-                  <td className="px-4 py-3 text-right font-bold text-primary text-sm">{formatCurrency(c.saldo)}</td>
+          <div className="overflow-x-auto flex-1">
+            <table className="w-full text-sm">
+              <thead className="bg-white/5">
+                <tr>
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Banco / Conta</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">Saldo</th>
                 </tr>
-              ))}
-              <tr className="bg-primary/5 border-t border-primary/20">
-                <td className="px-4 py-3 font-bold text-white text-xs">Total</td>
-                <td className="px-4 py-3 text-right font-bold text-primary">{formatCurrency(totalSaldo)}</td>
-              </tr>
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {saldosContas.map((c, i) => (
+                  <tr key={i} className="hover:bg-white/5 transition-colors">
+                    <td className="px-4 py-3 min-w-[150px]">
+                      <p className="font-medium text-white text-xs">{c.banco}</p>
+                      <p className="text-[11px] text-muted-foreground">Ag: {c.agencia} | CC: {c.conta}</p>
+                    </td>
+                    <td className="px-4 py-3 text-right font-bold text-primary text-sm">{formatCurrency(c.saldo)}</td>
+                  </tr>
+                ))}
+                <tr className="bg-primary/5 border-t border-primary/20">
+                  <td className="px-4 py-3 font-bold text-white text-xs">Total</td>
+                  <td className="px-4 py-3 text-right font-bold text-primary">{formatCurrency(totalSaldo)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* Contas a Pagar */}
-        <div className="glass-panel rounded-2xl overflow-hidden">
-          <div className="p-4 border-b border-white/5 flex items-center justify-between">
-            <h3 className="font-bold text-white text-sm">Contas a Pagar</h3>
-            <select value={filterCP} onChange={e => setFilterCP(e.target.value as CpCrFilter)} className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-white outline-none">
+        <div className="glass-panel rounded-2xl overflow-hidden flex flex-col">
+          <div className="p-4 border-b border-white/5 flex items-center justify-between gap-2">
+            <h3 className="font-bold text-white text-sm truncate">Contas a Pagar</h3>
+            <select value={filterCP} onChange={e => setFilterCP(e.target.value as CpCrFilter)} className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-[10px] text-white outline-none shrink-0">
               <option value="todos">Todos</option>
               <option value="vencido">Vencidos</option>
               <option value="pendente">Pendentes</option>
               <option value="pago">Pagos</option>
             </select>
           </div>
-          <table className="w-full text-sm">
-            <thead className="bg-white/5">
-              <tr>
-                <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Descrição</th>
-                <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">Valor</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {filteredCP.map(c => (
-                <tr key={c.id} className="hover:bg-white/5 transition-colors">
-                  <td className="px-4 py-3">
-                    <p className="text-white text-xs font-medium">{c.descricao}</p>
-                    <p className="text-[11px] text-muted-foreground">{c.parceiro} · {c.vencimento}</p>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${c.status === "vencido" ? "bg-destructive/20 text-destructive" : c.status === "pago" ? "bg-success/20 text-success" : "bg-warning/20 text-warning"}`}>
-                      {c.status === "vencido" ? `Vencido (${c.diasAtraso}d)` : c.status === "pago" ? "Pago" : "Pendente"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-right font-bold text-destructive text-sm">{formatCurrency(c.valor)}</td>
+          <div className="overflow-x-auto flex-1">
+            <table className="w-full text-sm">
+              <thead className="bg-white/5">
+                <tr>
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Descrição</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">Valor</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {filteredCP.map(c => (
+                  <tr key={c.id} className="hover:bg-white/5 transition-colors">
+                    <td className="px-4 py-3 min-w-[180px]">
+                      <p className="text-white text-xs font-medium">{c.descricao}</p>
+                      <p className="text-[11px] text-muted-foreground">{c.parceiro} · {c.vencimento}</p>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${c.status === "vencido" ? "bg-destructive/20 text-destructive" : c.status === "pago" ? "bg-success/20 text-success" : "bg-warning/20 text-warning"}`}>
+                        {c.status === "vencido" ? `Vencido (${c.diasAtraso}d)` : c.status === "pago" ? "Pago" : "Pendente"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right font-bold text-destructive text-sm">{formatCurrency(c.valor)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* Contas a Receber */}
-        <div className="glass-panel rounded-2xl overflow-hidden">
-          <div className="p-4 border-b border-white/5 flex items-center justify-between">
-            <h3 className="font-bold text-white text-sm">Contas a Receber</h3>
-            <select value={filterCR} onChange={e => setFilterCR(e.target.value as CpCrFilter)} className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-white outline-none">
+        <div className="glass-panel rounded-2xl overflow-hidden flex flex-col">
+          <div className="p-4 border-b border-white/5 flex items-center justify-between gap-2">
+            <h3 className="font-bold text-white text-sm truncate">Contas a Receber</h3>
+            <select value={filterCR} onChange={e => setFilterCR(e.target.value as CpCrFilter)} className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-[10px] text-white outline-none shrink-0">
               <option value="todos">Todos</option>
               <option value="vencido">Vencidos</option>
               <option value="pendente">Pendentes</option>
               <option value="recebido">Recebidos</option>
             </select>
           </div>
-          <table className="w-full text-sm">
-            <thead className="bg-white/5">
-              <tr>
-                <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Descrição</th>
-                <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">Valor</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {filteredCR.map(c => (
-                <tr key={c.id} className="hover:bg-white/5 transition-colors">
-                  <td className="px-4 py-3">
-                    <p className="text-white text-xs font-medium">{c.descricao}</p>
-                    <p className="text-[11px] text-muted-foreground">{c.parceiro} · {c.vencimento}</p>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${c.status === "vencido" ? "bg-destructive/20 text-destructive" : c.status === "recebido" ? "bg-success/20 text-success" : "bg-warning/20 text-warning"}`}>
-                      {c.status === "vencido" ? `Vencido (${c.diasAtraso}d)` : c.status === "recebido" ? "Recebido" : "Pendente"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-right font-bold text-teal-400 text-sm">{formatCurrency(c.valor)}</td>
+          <div className="overflow-x-auto flex-1">
+            <table className="w-full text-sm">
+              <thead className="bg-white/5">
+                <tr>
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Descrição</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">Valor</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {filteredCR.map(c => (
+                  <tr key={c.id} className="hover:bg-white/5 transition-colors">
+                    <td className="px-4 py-3 min-w-[180px]">
+                      <p className="text-white text-xs font-medium">{c.descricao}</p>
+                      <p className="text-[11px] text-muted-foreground">{c.parceiro} · {c.vencimento}</p>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${c.status === "vencido" ? "bg-destructive/20 text-destructive" : c.status === "recebido" ? "bg-success/20 text-success" : "bg-warning/20 text-warning"}`}>
+                        {c.status === "vencido" ? `Vencido (${c.diasAtraso}d)` : c.status === "recebido" ? "Recebido" : "Pendente"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right font-bold text-teal-400 text-sm">{formatCurrency(c.valor)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
       {/* Alertas de Atraso / Risco */}
       <div className="glass-panel rounded-2xl overflow-hidden border border-destructive/20">
-        <div className="p-4 border-b border-white/5 bg-destructive/5 flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 text-destructive" />
-          <h3 className="font-bold text-white text-sm">Alertas de Inadimplência e Risco</h3>
-          <span className="ml-auto text-xs bg-destructive/20 text-destructive px-2 py-0.5 rounded-full font-bold">{alertasAtraso.length} ocorrências</span>
+        <div className="p-4 border-b border-white/5 bg-destructive/5 flex flex-col sm:flex-row sm:items-center gap-2">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-destructive" />
+            <h3 className="font-bold text-white text-sm">Alertas de Inadimplência e Risco</h3>
+          </div>
+          <span className="sm:ml-auto text-xs bg-destructive/20 text-destructive px-2 py-0.5 rounded-full font-bold w-fit">{alertasAtraso.length} ocorrências</span>
         </div>
         <div className="divide-y divide-white/5">
           {alertasAtraso.map(a => (
-            <div key={a.id} className="flex items-center gap-4 px-5 py-3 hover:bg-white/5 transition-colors">
-              <div className={`w-2 h-2 rounded-full shrink-0 ${a.tipo === "cr" ? "bg-teal-400" : "bg-destructive"}`} />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-white">{a.parceiro}</p>
-                <p className="text-xs text-muted-foreground">{a.tipo === "cr" ? "A Receber" : "A Pagar"} · {a.diasAtraso} dias em atraso</p>
+            <div key={a.id} className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 px-5 py-4 sm:py-3 hover:bg-white/5 transition-colors">
+              <div className="flex items-center gap-3 flex-1 min-w-0">
+                <div className={`w-2 h-2 rounded-full shrink-0 ${a.tipo === "cr" ? "bg-teal-400" : "bg-destructive"}`} />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-white truncate">{a.parceiro}</p>
+                  <p className="text-[11px] text-muted-foreground">{a.tipo === "cr" ? "A Receber" : "A Pagar"} · {a.diasAtraso} dias em atraso</p>
+                </div>
               </div>
               <div className="flex flex-wrap gap-1">
                 {a.riscos.map(r => (
@@ -259,7 +269,7 @@ export default function Dashboard() {
                   </span>
                 ))}
               </div>
-              <p className="text-sm font-bold text-destructive shrink-0">{formatCurrency(a.valor)}</p>
+              <p className="text-sm font-bold text-destructive shrink-0 text-right sm:text-left">{formatCurrency(a.valor)}</p>
             </div>
           ))}
         </div>
@@ -284,11 +294,11 @@ export default function Dashboard() {
 
         <div className="glass-panel rounded-2xl p-5">
           <h3 className="font-bold text-white text-sm mb-4">Nível de Risco por Tipo</h3>
-          <div className="h-[220px] flex gap-4 items-center">
-            <div className="flex-1 h-full">
+          <div className="h-[250px] sm:h-[220px] flex flex-col sm:flex-row gap-4 items-center">
+            <div className="w-full sm:flex-1 h-full min-h-[150px]">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={riscoData} cx="50%" cy="50%" innerRadius={55} outerRadius={80} paddingAngle={4} dataKey="value" stroke="none">
+                  <Pie data={riscoData} cx="50%" cy="50%" innerRadius={50} outerRadius={70} paddingAngle={4} dataKey="value" stroke="none">
                     {riscoData.map((entry, index) => (
                       <Cell key={index} fill={entry.color} />
                     ))}
@@ -297,12 +307,12 @@ export default function Dashboard() {
                 </PieChart>
               </ResponsiveContainer>
             </div>
-            <div className="space-y-2 shrink-0">
+            <div className="grid grid-cols-2 sm:flex sm:flex-col gap-2 w-full sm:w-auto shrink-0">
               {riscoData.map(r => (
                 <div key={r.name} className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: r.color }} />
-                  <span className="text-xs text-muted-foreground">{r.name}</span>
-                  <span className="text-xs font-bold text-white ml-auto pl-2">{r.value}</span>
+                  <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: r.color }} />
+                  <span className="text-[10px] text-muted-foreground truncate">{r.name}</span>
+                  <span className="text-[10px] font-bold text-white ml-auto">{r.value}</span>
                 </div>
               ))}
             </div>

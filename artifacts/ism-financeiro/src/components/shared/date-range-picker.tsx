@@ -104,16 +104,27 @@ export function DateRangePicker({ startDate, endDate, onChange, className }: Dat
 
   return (
     <Popover open={isOpen} onOpenChange={setIsOpen}>
-      <PopoverTrigger asChild>
-        <button 
-          className={cn("flex items-center gap-2 px-3 py-1.5 bg-black/20 border border-white/10 rounded-xl hover:bg-white/5 hover:border-white/20 transition-all text-xs font-medium text-white shadow-lg", className)}
-        >
-          <CalendarIcon className="w-3.5 h-3.5 text-primary" />
-          {startDate ? format(new Date(startDate + "T00:00:00"), "dd/MM/yyyy") : "Início"}
-          <span className="text-muted-foreground/40">até</span>
-          {endDate ? format(new Date(endDate + "T00:00:00"), "dd/MM/yyyy") : "Fim"}
-        </button>
-      </PopoverTrigger>
+      <div className="flex items-center gap-2">
+        <PopoverTrigger asChild>
+          <button 
+            className={cn("flex items-center gap-2 px-3 py-1.5 bg-black/20 border border-white/10 rounded-xl hover:bg-white/5 hover:border-white/20 transition-all text-xs font-medium text-white shadow-lg", className)}
+          >
+            <CalendarIcon className="w-3.5 h-3.5 text-primary" />
+            {startDate ? format(new Date(startDate + "T00:00:00"), "dd/MM/yyyy") : "Início"}
+            <span className="text-muted-foreground/40">até</span>
+            {endDate ? format(new Date(endDate + "T00:00:00"), "dd/MM/yyyy") : "Fim"}
+          </button>
+        </PopoverTrigger>
+        {(startDate || endDate) && (
+          <button 
+            onClick={(e) => { e.stopPropagation(); onChange("", ""); }} 
+            className="p-1 rounded-full text-muted-foreground hover:text-white hover:bg-white/10 transition-all"
+            title="Limpar Datas"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
+      </div>
 
       <PopoverContent 
         align="start" 
@@ -139,16 +150,38 @@ export function DateRangePicker({ startDate, endDate, onChange, className }: Dat
              <div className="flex items-center gap-4">
                 <div className="flex-1 space-y-1.5">
                   <label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">De</label>
-                  <div className="flex items-center gap-2 p-2 bg-black/40 border border-white/5 rounded-xl text-xs font-bold text-white">
-                    <CalendarIcon className="w-3.5 h-3.5 text-primary" />
-                    {format(tempStart, "dd/MM/yyyy")}
+                  <div className="flex items-center gap-2 p-2 bg-black/40 border border-white/5 rounded-xl text-xs font-bold text-white relative">
+                    <CalendarIcon className="w-3.5 h-3.5 text-primary absolute left-3" />
+                    <input 
+                      type="date"
+                      value={tempStart ? format(tempStart, "yyyy-MM-dd") : ""}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                           const d = new Date(e.target.value + "T12:00:00");
+                           setTempStart(d);
+                           setViewDate(d);
+                        }
+                      }}
+                      className="bg-transparent border-none outline-none text-white w-full pl-6 cursor-text"
+                    />
                   </div>
                 </div>
                 <div className="flex-1 space-y-1.5">
                   <label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">Até</label>
-                  <div className="flex items-center gap-2 p-2 bg-black/40 border border-white/5 rounded-xl text-xs font-bold text-white">
-                    <CalendarIcon className="w-3.5 h-3.5 text-primary" />
-                    {tempEnd ? format(tempEnd, "dd/MM/yyyy") : "--/--/----"}
+                  <div className="flex items-center gap-2 p-2 bg-black/40 border border-white/5 rounded-xl text-xs font-bold text-white relative">
+                    <CalendarIcon className="w-3.5 h-3.5 text-primary absolute left-3" />
+                    <input 
+                      type="date"
+                      value={tempEnd ? format(tempEnd, "yyyy-MM-dd") : ""}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                           const d = new Date(e.target.value + "T12:00:00");
+                           setTempEnd(d);
+                           setViewDate(d);
+                        }
+                      }}
+                      className="bg-transparent border-none outline-none text-white w-full pl-6 cursor-text"
+                    />
                   </div>
                 </div>
              </div>

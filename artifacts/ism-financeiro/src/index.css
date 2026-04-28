@@ -156,4 +156,43 @@
     from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: translateY(0); }
   }
+
+  /* Responsive Table Utilities */
+  @media (max-width: 768px) {
+    .responsive-table-container {
+      @apply overflow-x-auto -mx-4 px-4;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .table-to-cards thead {
+      @apply hidden;
+    }
+    .table-to-cards tr {
+      @apply flex flex-col mb-4 bg-card/50 border border-white/5 rounded-xl p-4 space-y-2;
+    }
+    .table-to-cards td {
+      @apply flex justify-between items-center px-0 py-1 border-none text-right;
+    }
+    .table-to-cards td::before {
+      content: attr(data-label);
+      @apply text-muted-foreground font-medium text-[10px] uppercase text-left mr-4;
+    }
+    .table-to-cards td:last-child {
+      @apply mt-2 pt-2 border-t border-white/5 justify-end;
+    }
+    .table-to-cards td:last-child::before {
+      @apply hidden;
+    }
+  }
+
+  /* Mobile Touch Targets */
+  @media (max-width: 640px) {
+    button, [role="button"] {
+      @apply min-h-[44px] min-w-[44px];
+    }
+    .touch-target-exempt {
+      @apply min-h-0 min-w-0;
+    }
+  }
 }
