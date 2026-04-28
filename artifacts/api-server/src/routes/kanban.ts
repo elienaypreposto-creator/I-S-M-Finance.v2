@@ -31,9 +31,9 @@ router.get("/kanban/cards", async (_req, res) => {
       return { ...card, historico };
     }));
 
-    res.json(cardsWithHistory);
+    return res.json(cardsWithHistory);
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -50,9 +50,9 @@ router.post("/kanban/cards", async (req, res) => {
       comentario: "Card criado",
     });
 
-    res.status(201).json({ ...card, historico: [] });
+    return res.status(201).json({ ...card, historico: [] });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -85,9 +85,9 @@ router.put("/kanban/cards/:id", async (req, res) => {
       .where(eq(kanbanHistoricoTable.card_id, id))
       .orderBy(kanbanHistoricoTable.created_at);
 
-    res.json({ ...card, historico });
+    return res.json({ ...card, historico });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -96,9 +96,9 @@ router.delete("/kanban/cards/:id", async (req, res) => {
     const id = parseInt(req.params.id);
     await db.delete(kanbanHistoricoTable).where(eq(kanbanHistoricoTable.card_id, id));
     await db.delete(kanbanCardsTable).where(eq(kanbanCardsTable.id, id));
-    res.status(204).send();
+    return res.status(204).send();
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
