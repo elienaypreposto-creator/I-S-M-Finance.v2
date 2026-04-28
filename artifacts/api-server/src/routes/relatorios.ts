@@ -42,7 +42,7 @@ router.get("/relatorios/fechamento-mensal", async (req, res) => {
     recebimentos.forEach(r => r.percentual = r.planejado > 0 ? Math.round((r.realizado / r.planejado) * 100) : 0);
     despesas.forEach(d => d.percentual = d.planejado > 0 ? Math.round((d.realizado / d.planejado) * 100) : 0);
 
-    res.json({
+    return res.json({
       mes, ano,
       planejado_receber: planejadoReceber || 90000,
       realizado_receber: Number(totalCR?.total ?? 0),
@@ -52,7 +52,7 @@ router.get("/relatorios/fechamento-mensal", async (req, res) => {
       despesas,
     });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -88,9 +88,9 @@ router.get("/relatorios/dre", async (req, res) => {
       { descricao: "LUCRO LÍQUIDO DO PERÍODO", tipo: "subtotal", valores: buildValores(12000) },
     ];
 
-    res.json({ ano, regime, linhas });
+    return res.json({ ano, regime, linhas });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -134,9 +134,9 @@ router.get("/relatorios/fluxo-caixa", async (req, res) => {
       { titulo: "Saldo Final", tipo: "saldo_final", linhas: [{ descricao: "Saldo Final", codigo: "SF", valores: buildValores(65000) }] },
     ];
 
-    res.json({ ano, secoes });
+    return res.json({ ano, secoes });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -159,7 +159,7 @@ router.get("/relatorios/metas", async (req, res) => {
       return valores;
     };
 
-    res.json({
+    return res.json({
       ano,
       recebimentos: [
         { categoria: "Suporte Mensal (Fixa)", valores: buildValores(60000) },
@@ -177,7 +177,7 @@ router.get("/relatorios/metas", async (req, res) => {
       ],
     });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -208,9 +208,9 @@ router.get("/relatorios/contabil-fiscal", async (req, res) => {
       .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(lancamentosTable.vencimento);
 
-    res.json(items.map(i => ({ ...i, valor: Number(i.valor) })));
+    return res.json(items.map(i => ({ ...i, valor: Number(i.valor) })));
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
