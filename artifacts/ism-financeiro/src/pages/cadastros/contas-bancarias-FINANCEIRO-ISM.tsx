@@ -18,7 +18,7 @@ import { formatCurrency } from "@/lib/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+import { API_URL, fetchApi } from "@/lib/api-config";
 
 type ContaBancaria = {
   id: number;
@@ -53,15 +53,13 @@ function NovaContaModal({ onClose, initialData }: ModalProps) {
   });
 
   const mutation = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: (data: any) => {
       const isEdit = !!initialData;
-      const res = await fetch(`${API_URL}/contas-bancarias${isEdit ? `/${initialData.id}` : ""}`, {
+      const path = `/contas-bancarias${isEdit ? `/${initialData.id}` : ""}`;
+      return fetchApi(path, {
         method: isEdit ? "PUT" : "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...data, data_inicio: new Date().toISOString().split("T")[0] }),
       });
-      if (!res.ok) throw new Error("Erro ao salvar conta");
-      return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["contas-bancarias"] });
@@ -184,22 +182,15 @@ export default function ContasBancarias() {
 
   const { data: contas = [], isLoading } = useQuery<ContaBancaria[]>({
     queryKey: ["contas-bancarias"],
-    queryFn: async () => {
-      const res = await fetch(`${API_URL}/contas-bancarias`);
-      if (!res.ok) throw new Error("Erro ao buscar contas");
-      return res.json();
-    }
+    queryFn: () => fetchApi("/contas-bancarias")
   });
 
   const blockMutation = useMutation({
-    mutationFn: async ({ id, status }: { id: number; status: string }) => {
-      const res = await fetch(`${API_URL}/contas-bancarias/${id}`, {
+    mutationFn: ({ id, status }: { id: number; status: string }) => {
+      return fetchApi(`/contas-bancarias/${id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
       });
-      if (!res.ok) throw new Error("Erro ao alterar status");
-      return res.json();
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["contas-bancarias"] });
@@ -211,10 +202,7 @@ export default function ContasBancarias() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await fetch(`${API_URL}/contas-bancarias/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Erro ao deletar conta");
-    },
+    mutationFn: (id: number) => fetchApi(`/contas-bancarias/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["contas-bancarias"] });
       toast({ title: "Conta removida", description: "A conta foi deletada com sucesso." });

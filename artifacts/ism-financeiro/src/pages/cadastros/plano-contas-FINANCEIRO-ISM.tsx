@@ -4,7 +4,7 @@ import { Plus, Edit, Trash2 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+import { API_URL, fetchApi } from "@/lib/api-config";
 
 type PlanoConta = {
   id: number;
@@ -82,24 +82,17 @@ export default function PlanoContas() {
 
   const { data: contas = [], isLoading } = useQuery<PlanoConta[]>({
     queryKey: ['plano-contas'],
-    queryFn: async () => {
-      const res = await fetch(`${API_URL}/plano-contas`);
-      if (!res.ok) throw new Error('Falha ao buscar plano de contas');
-      return res.json();
-    }
+    queryFn: () => fetchApi("/plano-contas")
   });
 
   const saveMutation = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: (data: any) => {
       const method = data.id ? 'PUT' : 'POST';
-      const url = data.id ? `${API_URL}/plano-contas/${data.id}` : `${API_URL}/plano-contas`;
-      const res = await fetch(url, {
+      const path = data.id ? `/plano-contas/${data.id}` : "/plano-contas";
+      return fetchApi(path, {
         method,
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
       });
-      if (!res.ok) throw new Error('Falha ao salvar conta');
-      return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['plano-contas'] });
@@ -113,10 +106,7 @@ export default function PlanoContas() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await fetch(`${API_URL}/plano-contas/${id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('Falha ao excluir conta');
-    },
+    mutationFn: (id: number) => fetchApi(`/plano-contas/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['plano-contas'] });
       toast({ title: 'Sucesso', description: 'Categoria removida.' });

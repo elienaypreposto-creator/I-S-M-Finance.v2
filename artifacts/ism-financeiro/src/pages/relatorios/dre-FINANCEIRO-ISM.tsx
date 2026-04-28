@@ -44,7 +44,7 @@ import { DateRangePicker } from "@/components/shared/date-range-picker";
 import { format, startOfYear, endOfYear } from "date-fns";
 import { useQuery } from "@tanstack/react-query";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+import { API_URL, fetchApi } from "@/lib/api-config";
 
 export default function DreGerencial() {
   const [dateStart, setDateStart] = useState(format(startOfYear(new Date()), "yyyy-MM-dd"));
@@ -54,11 +54,7 @@ export default function DreGerencial() {
 
   const { data, isLoading } = useQuery({
     queryKey: ["relatorio-dre", ano, regime],
-    queryFn: async () => {
-      const res = await fetch(`${API_URL}/relatorios/dre?ano=${ano}&regime=${regime}`);
-      if (!res.ok) throw new Error("Erro ao buscar DRE");
-      return res.json();
-    }
+    queryFn: () => fetchApi(`/relatorios/dre?ano=${ano}&regime=${regime}`)
   });
 
   const dreData: DreRow[] = data?.linhas || [];
@@ -81,9 +77,21 @@ export default function DreGerencial() {
   };
 
   const totalAnual = (row: DreRow) => row.valores.reduce((a, b) => a + b, 0);
-  const rl = dreData.find(r => r.label === "RECEITA LÍQUIDA")!;
-  const lb = dreData.find(r => r.label === "LUCRO BRUTO")!;
-  const rs = dreData.find(r => r.label === "RESULTADO LÍQUIDO")!;
+  const rl = dreData.find(r => r.label === "RECEITA LÍQUIDA");
+  const lb = dreData.find(r => r.label === "LUCRO BRUTO");
+  const rs = dreData.find(r => r.label === "RESULTADO LÍQUIDO");
+
+  if (isLoading) return (
+    <div className="flex items-center justify-center h-64">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+    </div>
+  );
+
+  if (!rl || !lb || !rs) return (
+    <div className="p-8 text-center glass-panel rounded-2xl">
+      <p className="text-muted-foreground">Nenhum dado disponível para o período selecionado.</p>
+    </div>
+  );
 
   return (
     <div className="space-y-6">

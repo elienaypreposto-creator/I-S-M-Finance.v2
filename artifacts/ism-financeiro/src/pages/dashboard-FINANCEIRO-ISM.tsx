@@ -11,13 +11,7 @@ import {
 } from "recharts";
 import { formatCurrency } from "@/lib/utils";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
-
-async function fetchApi<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`);
-  if (!res.ok) throw new Error(`Falha: ${path}`);
-  return res.json();
-}
+import { API_URL, fetchApi } from "@/lib/api-config";
 
 const PIE_COLORS = ["#6366F1", "#F59E0B", "#E74C3C", "#22C55E", "#3B82F6", "#EC4899"];
 

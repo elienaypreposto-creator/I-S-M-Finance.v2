@@ -15,7 +15,7 @@ import {
   Target
 } from "lucide-react";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+import { API_URL, fetchApi } from "@/lib/api-config";
 
 type Lancamento = {
   id: number;
@@ -175,32 +175,22 @@ function LancamentoModal({ onClose, onSaved, editItem }: { onClose: () => void; 
 
   const { data: parceiros = [] } = useQuery<Parceiro[]>({
     queryKey: ["parceiros-modal"],
-    queryFn: async () => {
-      const res = await fetch(`${API_URL}/parceiros?all=true`);
-      const json = await res.json();
-      return Array.isArray(json) ? json : (json.data ?? []);
-    }
+    queryFn: () => fetchApi("/parceiros?all=true")
   });
 
   const { data: planoContas = [] } = useQuery<PlanoConta[]>({
     queryKey: ["plano-contas-modal"],
-    queryFn: async () => {
-      const res = await fetch(`${API_URL}/plano-contas`);
-      return res.json();
-    }
+    queryFn: () => fetchApi("/plano-contas")
   });
 
   const mutation = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: (data: any) => {
       const method = editItem ? "PUT" : "POST";
-      const url = editItem ? `${API_URL}/lancamentos/${editItem.id}` : `${API_URL}/lancamentos`;
-      const res = await fetch(url, {
+      const path = editItem ? `/lancamentos/${editItem.id}` : "/lancamentos";
+      return fetchApi(path, {
         method,
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data)
       });
-      if (!res.ok) throw new Error("Erro ao salvar lançamento");
-      return res.json();
     },
     onSuccess: () => {
       toast({ title: "Sucesso", description: editItem ? "Lançamento atualizado." : "Lançamento criado." });
@@ -486,7 +476,7 @@ export default function Lancamentos() {
 
   const { data, isLoading, isError } = useQuery<ApiResponse>({
     queryKey: ["lancamentos", tipo, debouncedSearch, page, dateStart, dateEnd],
-    queryFn: async () => {
+    queryFn: () => {
       const params = new URLSearchParams();
       if (tipo) params.set("tipo", tipo);
       if (debouncedSearch) params.set("search", debouncedSearch);
@@ -494,17 +484,12 @@ export default function Lancamentos() {
       if (dateEnd) params.set("data_fim", dateEnd);
       params.set("page", String(page));
       params.set("limit", String(limit));
-      const res = await fetch(`${API_URL}/lancamentos?${params}`);
-      if (!res.ok) throw new Error("Falha ao buscar lançamentos");
-      return res.json();
+      return fetchApi(`/lancamentos?${params}`);
     },
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await fetch(`${API_URL}/lancamentos/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Falha ao excluir");
-    },
+    mutationFn: (id: number) => fetchApi(`/lancamentos/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["lancamentos"] });
       toast({ title: "Excluído", description: "Lançamento removido com sucesso." });

@@ -51,7 +51,7 @@ import { useQuery } from "@tanstack/react-query";
 import { DateRangePicker } from "@/components/shared/date-range-picker";
 import { format, startOfYear, endOfYear } from "date-fns";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+import { API_URL, fetchApi } from "@/lib/api-config";
 
 export default function FluxoCaixa() {
   const [dateStart, setDateStart] = useState(format(startOfYear(new Date()), "yyyy-MM-dd"));
@@ -60,11 +60,7 @@ export default function FluxoCaixa() {
 
   const { data, isLoading } = useQuery({
     queryKey: ["relatorio-fluxo", ano],
-    queryFn: async () => {
-      const res = await fetch(`${API_URL}/relatorios/fluxo-caixa?ano=${ano}`);
-      if (!res.ok) throw new Error("Erro ao buscar Fluxo de Caixa");
-      return res.json();
-    }
+    queryFn: () => fetchApi(`/relatorios/fluxo-caixa?ano=${ano}`)
   });
 
   const secoes = data?.secoes || [];

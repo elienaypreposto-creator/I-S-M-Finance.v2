@@ -6,23 +6,23 @@ import { AppLayout } from "./components/layout/app-layout";
 import NotFound from "@/pages/not-found";
 
 // Pages
-import Dashboard from "./pages/dashboard";
+import Dashboard from "./pages/dashboard-FINANCEIRO-ISM";
 import Kanban from "./pages/kanban";
-import Lancamentos from "./pages/lancamentos";
+import Lancamentos from "./pages/lancamentos-FINANCEIRO-ISM";
 import ConciliacaoList from "./pages/conciliacao/index";
 
 // Cadastros
 import Parceiros from "./pages/cadastros/parceiros";
-import PlanoContas from "./pages/cadastros/plano-contas";
-import ContasBancarias from "./pages/cadastros/contas-bancarias";
+import PlanoContas from "./pages/cadastros/plano-contas-FINANCEIRO-ISM";
+import ContasBancarias from "./pages/cadastros/contas-bancarias-FINANCEIRO-ISM";
 import Metas from "./pages/cadastros/metas";
 import Departamentos from "./pages/cadastros/departamentos";
 
 // Relatórios
 import FechamentoMensal from "./pages/relatorios/fechamento-mensal";
 import ContabilFiscal from "./pages/relatorios/contabil-fiscal";
-import DreGerencial from "./pages/relatorios/dre";
-import FluxoCaixa from "./pages/relatorios/fluxo-caixa";
+import DreGerencial from "./pages/relatorios/dre-FINANCEIRO-ISM";
+import FluxoCaixa from "./pages/relatorios/fluxo-caixa-FINANCEIRO-ISM";
 import MetasRelatorio from "./pages/relatorios/metas-relatorio";
 
 // Configurações
@@ -30,7 +30,14 @@ import Usuarios from "./pages/configuracoes/usuarios";
 import Filiais from "./pages/configuracoes/filiais";
 import TokensApi from "./pages/configuracoes/tokens-api";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 function Router() {
   return (
@@ -65,11 +72,11 @@ function Router() {
   );
 }
 
-function App() {
+export function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+        <WouterRouter base={import.meta.env.BASE_URL?.replace(/\/$/, "") || ""}>
           <AppLayout>
             <Router />
           </AppLayout>
