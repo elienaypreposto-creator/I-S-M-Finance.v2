@@ -64,8 +64,15 @@ async function buildAll() {
       "process.env.NODE_ENV": '"production"',
     },
     minify: true,
-    external: externals,
+    external: [...externals, "pg-native"],
     logLevel: "info",
+    banner: {
+      js: '/* ISM Finance API Server */\nconsole.log("[ISM] Serverless function starting...");',
+    },
+    footer: {
+      // Ensures Vercel serverless finds the Express app as the handler
+      js: 'if(typeof exports!=="undefined"&&exports.default&&typeof exports.default==="function"){module.exports=exports.default;}',
+    },
   });
 }
 
