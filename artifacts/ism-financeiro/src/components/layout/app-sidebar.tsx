@@ -74,15 +74,16 @@ export function AppSidebar() {
   };
 
   return (
-    <Sidebar variant="inset" className="border-r border-white/10 bg-sidebar">
+    <Sidebar collapsible="icon" variant="inset" className="border-r border-white/10 bg-sidebar">
       <SidebarHeader className="h-16 flex items-center justify-center border-b border-white/5">
-        <div className="flex items-center gap-2 px-4 w-full">
-          <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center font-bold text-white shadow-lg shadow-primary/20 shrink-0">
+        <div className="flex items-center gap-2 px-3 w-full group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:justify-center">
+          <div className="w-9 h-9 rounded-lg bg-primary flex items-center justify-center font-bold text-white shadow-lg shadow-primary/20 shrink-0">
             IS
           </div>
-          <span className="font-bold text-lg tracking-tight truncate flex-1 group-data-[collapsible=icon]:hidden">
+          <span className="font-bold text-base tracking-tight truncate flex-1 group-data-[collapsible=icon]:hidden">
             ISM Tecnologia
           </span>
+          <SidebarTrigger className="hidden md:flex ml-auto group-data-[collapsible=icon]:hidden text-muted-foreground hover:text-foreground transition-all" />
         </div>
       </SidebarHeader>
       <SidebarContent className="p-2 gap-1">
@@ -98,8 +99,8 @@ export function AppSidebar() {
                     className="transition-all hover:bg-white/5 data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
                   >
                     <Link href={item.url} className="flex items-center gap-3">
-                      <item.icon className="w-5 h-5" />
-                      <span className="font-medium">{item.title}</span>
+                      <item.icon className="w-5 h-5 shrink-0" />
+                      <span className="font-medium group-data-[collapsible=icon]:hidden">{item.title}</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -109,9 +110,9 @@ export function AppSidebar() {
                 <SidebarMenuItem>
                   <CollapsibleTrigger asChild>
                     <SidebarMenuButton tooltip="Cadastros" className="transition-all hover:bg-white/5">
-                      <FolderOpen className="w-5 h-5" />
-                      <span className="font-medium">Cadastros</span>
-                      <ChevronDown className="ml-auto w-4 h-4 transition-transform group-data-[state=open]/collapsible:rotate-180" />
+                      <FolderOpen className="w-5 h-5 shrink-0" />
+                      <span className="font-medium group-data-[collapsible=icon]:hidden">Cadastros</span>
+                      <ChevronDown className="ml-auto w-4 h-4 transition-transform group-data-[state=open]/collapsible:rotate-180 group-data-[collapsible=icon]:hidden" />
                     </SidebarMenuButton>
                   </CollapsibleTrigger>
                   <CollapsibleContent>
@@ -139,9 +140,9 @@ export function AppSidebar() {
                 <SidebarMenuItem>
                   <CollapsibleTrigger asChild>
                     <SidebarMenuButton tooltip="Relatórios" className="transition-all hover:bg-white/5">
-                      <BarChart3 className="w-5 h-5" />
-                      <span className="font-medium">Relatórios</span>
-                      <ChevronDown className="ml-auto w-4 h-4 transition-transform group-data-[state=open]/collapsible:rotate-180" />
+                      <BarChart3 className="w-5 h-5 shrink-0" />
+                      <span className="font-medium group-data-[collapsible=icon]:hidden">Relatórios</span>
+                      <ChevronDown className="ml-auto w-4 h-4 transition-transform group-data-[state=open]/collapsible:rotate-180 group-data-[collapsible=icon]:hidden" />
                     </SidebarMenuButton>
                   </CollapsibleTrigger>
                   <CollapsibleContent>
@@ -169,9 +170,9 @@ export function AppSidebar() {
                 <SidebarMenuItem>
                   <CollapsibleTrigger asChild>
                     <SidebarMenuButton tooltip="Configurações" className="transition-all hover:bg-white/5">
-                      <Settings className="w-5 h-5" />
-                      <span className="font-medium">Configurações</span>
-                      <ChevronDown className="ml-auto w-4 h-4 transition-transform group-data-[state=open]/collapsible:rotate-180" />
+                      <Settings className="w-5 h-5 shrink-0" />
+                      <span className="font-medium group-data-[collapsible=icon]:hidden">Configurações</span>
+                      <ChevronDown className="ml-auto w-4 h-4 transition-transform group-data-[state=open]/collapsible:rotate-180 group-data-[collapsible=icon]:hidden" />
                     </SidebarMenuButton>
                   </CollapsibleTrigger>
                   <CollapsibleContent>

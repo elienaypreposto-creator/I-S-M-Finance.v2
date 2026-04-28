@@ -459,12 +459,26 @@ function LancamentoModal({ onClose, onSaved, editItem }: { onClose: () => void; 
             </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-4 pt-6 border-t border-white/5">
-            <button type="button" onClick={onClose} className="w-full sm:px-8 py-3 rounded-xl border border-white/10 text-white hover:bg-white/5 text-sm font-bold transition-all order-2 sm:order-1">
+          <div className="flex flex-col sm:flex-row items-center justify-end gap-3 pt-6 border-t border-white/5">
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-full sm:w-auto px-10 py-3 rounded-xl border border-white/10 text-white hover:bg-white/5 text-sm font-bold transition-all order-2 sm:order-1"
+            >
               Cancelar
             </button>
-            <button type="submit" disabled={mutation.isPending} className="w-full flex-1 py-3 rounded-xl bg-primary hover:bg-primary/90 text-white text-sm font-black shadow-xl shadow-primary/25 transition-all disabled:opacity-50 flex items-center justify-center gap-2 order-1 sm:order-2">
-              {mutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : (editItem ? "Salvar Alterações" : "Concluir Lançamento")}
+            <button
+              type="submit"
+              disabled={mutation.isPending}
+              className="w-full sm:w-auto px-10 py-3 rounded-xl bg-primary hover:bg-primary/90 text-white text-sm font-black shadow-xl shadow-primary/25 transition-all disabled:opacity-50 flex items-center justify-center gap-2 order-1 sm:order-2"
+            >
+              {mutation.isPending ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : editItem ? (
+                "Salvar Alterações"
+              ) : (
+                "Concluir Lançamento"
+              )}
             </button>
           </div>
         </form>

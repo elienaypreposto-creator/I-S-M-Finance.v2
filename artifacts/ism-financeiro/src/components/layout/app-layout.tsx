@@ -16,16 +16,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
         <div className="flex flex-col flex-1 min-w-0">
           <header className="h-16 flex items-center justify-between px-6 border-b border-white/5 bg-card/50 backdrop-blur-xl sticky top-0 z-20">
             <div className="flex items-center gap-4">
-              <SidebarTrigger className="text-muted-foreground hover:text-foreground transition-colors" />
-              
-              <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/20 border border-white/5 focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/50 transition-all w-64">
-                <Search className="w-4 h-4 text-muted-foreground" />
-                <input 
-                  type="text" 
-                  placeholder="Pesquisar..." 
-                  className="bg-transparent border-none outline-none text-sm w-full placeholder:text-muted-foreground text-foreground"
-                />
-              </div>
+              <SidebarTrigger className="text-muted-foreground hover:text-foreground transition-all" />
             </div>
             
             <div className="flex items-center gap-4">
