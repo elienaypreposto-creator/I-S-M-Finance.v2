@@ -43,14 +43,14 @@ router.get("/dashboard/kpis", async (_req, res) => {
       .from(lancamentosTable)
       .where(and(eq(lancamentosTable.tipo, "CP"), lt(lancamentosTable.vencimento, hoje), sql`${lancamentosTable.status} IN ('pendente', 'atrasado')`));
 
-    res.json({
+    return res.json({
       contasReceberAtraso: Number(contasReceberAtraso?.total ?? 0),
       contasReceberAberto: Number(contasReceberAberto?.total ?? 0),
       contasPagarAberto: Number(contasPagarAberto?.total ?? 0),
       contasPagarAtraso: Number(contasPagarAtraso?.total ?? 0),
     });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -81,7 +81,7 @@ router.get("/dashboard/projecao-mes", async (_req, res) => {
     const pr = Number(projecaoRecebimentos?.total ?? 0);
     const pp = Number(projecaoPagamentos?.total ?? 0);
 
-    res.json({
+    return res.json({
       projecaoRecebimentos: pr,
       projecaoPagamentos: pp,
       projecaoLucroLiquido: pr - pp,
@@ -89,7 +89,7 @@ router.get("/dashboard/projecao-mes", async (_req, res) => {
       totalPagamentos: pp,
     });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -232,13 +232,13 @@ router.get("/dashboard/dias-atraso", async (_req, res) => {
       .where(and(lt(lancamentosTable.vencimento, hoje), sql`${lancamentosTable.status} IN ('pendente', 'atrasado')`))
       .limit(50);
 
-    res.json(items.map(i => ({
+    return res.json(items.map(i => ({
       nome: i.nome || i.descricao || `Lançamento #${i.id}`,
       dias: Math.floor((new Date(hoje).getTime() - new Date(i.vencimento).getTime()) / 86400000),
       valor: Number(i.valor ?? 0),
     })));
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
@@ -266,7 +266,7 @@ router.get("/dashboard/nivel-risco", async (_req, res) => {
       )
       .limit(50);
 
-    res.json(items.map(i => ({
+    return res.json(items.map(i => ({
       id: i.id,
       tipo: i.tipo,
       nome: i.nome || i.descricao || `Lançamento #${i.id}`,
@@ -275,7 +275,7 @@ router.get("/dashboard/nivel-risco", async (_req, res) => {
       riscos: i.riscos ?? [],
     })));
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    return res.status(500).json({ error: String(e) });
   }
 });
 
