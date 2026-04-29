@@ -13,8 +13,8 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { TaskCard } from "../components/tasks/task-card";
-import { TaskModal } from "../components/tasks/task-modal";
+import { TaskCard } from "@/components/tasks/task-card";
+import { TaskModal } from "@/components/tasks/task-modal";
 
 const COLORS = {
   fundoPrincipal: "#121212",
