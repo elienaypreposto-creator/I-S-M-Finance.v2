@@ -85,12 +85,12 @@ type FluxoMes = { mes: string; entradas: number; saidas: number; };
 type PlanoItem = { categoria: string; valor: number; percentual: number; };
 
 const STATUSES = [
-  { v: "todos", label: "Todos" },
-  { v: "pendente", label: "Pendente" },
-  { v: "pago", label: "Pago" },
-  { v: "recebido", label: "Recebido" },
-  { v: "atrasado", label: "Atrasado" },
-  { v: "cancelado", label: "Cancelado" },
+  { v: "todos", label: "Todos", cls: "text-gray-300" },
+  { v: "pendente", label: "Pendente", cls: "text-yellow-400" },
+  { v: "pago", label: "Pago", cls: "text-teal-400" },
+  { v: "recebido", label: "Recebido", cls: "text-teal-400" },
+  { v: "atrasado", label: "Atrasado", cls: "text-red-400" },
+  { v: "cancelado", label: "Cancelado", cls: "text-gray-500" },
 ];
 
 function ContasPanel({ tipo, title, color, tab }: { tipo: "CP" | "CR"; title: string; color: "teal" | "orange"; tab: string }) {
@@ -117,8 +117,8 @@ function ContasPanel({ tipo, title, color, tab }: { tipo: "CP" | "CR"; title: st
         <h3 className="font-bold text-white text-sm">{title}</h3>
         <div className="ml-auto flex items-center gap-2">
           <select value={status} onChange={e => setStatus(e.target.value)}
-            className="bg-white/5 border border-white/10 rounded-lg px-2 py-0.5 text-xs text-white outline-none">
-            {STATUSES.map(s => <option key={s.v} value={s.v}>{s.label}</option>)}
+            className={`bg-white/5 border border-white/10 rounded-lg px-2 py-0.5 text-xs outline-none font-medium ${STATUSES.find(s => s.v === status)?.cls || "text-white"}`}>
+            {STATUSES.map(s => <option key={s.v} value={s.v} className={s.cls}>{s.label}</option>)}
           </select>
           <span className={`text-xs ${colorMap.badge} px-2 py-0.5 rounded-full font-bold`}>
             {isLoading ? "..." : items.length}
