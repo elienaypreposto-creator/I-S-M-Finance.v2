@@ -1,7 +1,7 @@
 // Centralized API configuration for I-S-M-Finance
 // The API_URL defaults to the local dev server, but should be overridden by VITE_API_URL in production (Vercel)
 
-const DEFAULT_API_URL = "https://i-s-m-finance-v2-api-server.vercel.app/api";
+const DEFAULT_API_URL = "/api";
 
 export const API_URL = import.meta.env.VITE_API_URL || (
   import.meta.env.PROD 
