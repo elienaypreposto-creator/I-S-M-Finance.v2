@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 type ChecklistItem = { id: string; texto: string; completed: boolean };
-typeDepartamento = { value: string; label: string };
+type Departamento = { value: string; label: string };
 
 const DEPARTAMENTOS: Departamento[] = [
   { value: "financeiro", label: "Financeiro" },
