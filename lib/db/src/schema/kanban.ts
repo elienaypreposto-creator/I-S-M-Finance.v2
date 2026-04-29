@@ -17,7 +17,7 @@ export const kanbanCardsTable = pgTable("kanban_cards", {
   anexos_count: integer("anexos_count").default(0),
   prazo: date("prazo"),
   prioridade: text("prioridade").notNull().default("media"),
-  created_by: integer("create_by").references(() => usuariosTable.id),
+  created_by: integer("created_by").references(() => usuariosTable.id),
   responsavel_nome: text("responsavel_nome"),
   created_at: timestamp("created_at").defaultNow().notNull(),
   updated_at: timestamp("updated_at").defaultNow().notNull(),

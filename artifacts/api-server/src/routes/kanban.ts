@@ -33,13 +33,14 @@ router.get("/kanban/cards", async (req, res) => {
         responsavel_nome: usuariosTable.nome,
         responsaveis_multiplos: kanbanCardsTable.responsaveis_multiplos,
         responsaveis_nomes: usuariosTable.nome,
+        departamentos: kanbanCardsTable.departamentos,
         tags: kanbanCardsTable.tags,
         checklist: kanbanCardsTable.checklist,
         comentarios_count: kanbanCardsTable.comentarios_count,
         anexos_count: kanbanCardsTable.anexos_count,
         prazo: kanbanCardsTable.prazo,
         prioridade: kanbanCardsTable.prioridade,
-        criado_por: kanbanCardsTable.criado_por,
+        created_by: kanbanCardsTable.created_by,
         created_at: kanbanCardsTable.created_at,
       })
       .from(kanbanCardsTable)
@@ -64,13 +65,14 @@ router.get("/kanban/cards/:id", async (req, res) => {
       responsavel_id: kanbanCardsTable.responsavel_id,
       responsavel_nome: usuariosTable.nome,
       responsaveis_multiplos: kanbanCardsTable.responsaveis_multiplos,
+      departamentos: kanbanCardsTable.departamentos,
       tags: kanbanCardsTable.tags,
       checklist: kanbanCardsTable.checklist,
       comentarios_count: kanbanCardsTable.comentarios_count,
       anexos_count: kanbanCardsTable.anexos_count,
       prazo: kanbanCardsTable.prazo,
       prioridade: kanbanCardsTable.prioridade,
-      criado_por: kanbanCardsTable.criado_por,
+      created_by: kanbanCardsTable.created_by,
       created_at: kanbanCardsTable.created_at,
     })
       .from(kanbanCardsTable)
@@ -124,12 +126,12 @@ router.put("/kanban/cards/:id", async (req, res) => {
     const [card] = await db.update(kanbanCardsTable).set({ ...updateData, updated_at: new Date() })
       .where(eq(kanbanCardsTable.id, id)).returning();
 
-    if (updateData.coluna && updateData.coluna !== current.coluna) {
+if (updateData.coluna && updateData.coluna !== current.coluna) {
       await db.insert(kanbanHistoricoTable).values({
         card_id: id,
         coluna_anterior: current.coluna,
         coluna_nova: updateData.coluna,
-        comentario: komentar || `Movido para ${updateData.coluna}`,
+        comentario: comentario || `Movido para ${updateData.coluna}`,
       });
     } else if (comentario) {
       await db.insert(kanbanHistoricoTable).values({
@@ -179,7 +181,10 @@ router.post("/kanban/cards/:id/comentarios", async (req, res) => {
       comentario,
     }).returning();
 
-    await db.update(kanbanCardsTable).set({ comentarios_count: (current.comentarios_count || 0) + 1 })
+    const [card] = await db.select().from(kanbanCardsTable).where(eq(kanbanCardsTable.id, id));
+    const novoCount = (card?.comentarios_count || 0) + 1;
+    
+    await db.update(kanbanCardsTable).set({ comentarios_count: novoCount })
       .where(eq(kanbanCardsTable.id, id));
 
     return res.status(201).json(novoComentario);
