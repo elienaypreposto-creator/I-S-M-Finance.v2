@@ -90,7 +90,6 @@ export function AppSidebar() {
             alt="ISM Tecnologia"
             className="h-9 object-contain group-data-[collapsible=icon]:hidden"
           />
-          <SidebarTrigger className="hidden md:flex ml-auto group-data-[collapsible=icon]:hidden text-muted-foreground hover:text-foreground transition-all" />
         </div>
       </SidebarHeader>
       <SidebarContent className="p-2 gap-1">
