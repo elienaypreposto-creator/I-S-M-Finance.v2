@@ -509,7 +509,7 @@ export default function Lancamentos() {
 
   const tipo = activeTab === "cr" ? "CR" : activeTab === "cp" ? "CP" : undefined;
 
-  const { data, isLoading, isError } = useQuery<ApiResponse>({
+  const { data, isLoading, isError, error } = useQuery<ApiResponse>({
     queryKey: ["lancamentos", tipo, debouncedSearch, page, dateStart, dateEnd],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -520,7 +520,11 @@ export default function Lancamentos() {
       params.set("page", String(page));
       params.set("limit", String(limit));
       const res = await fetch(`${API_URL}/lancamentos?${params}`);
-      if (!res.ok) throw new Error("Falha ao buscar lançamentos");
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error("Erro API lançamentos:", res.status, errText);
+        throw new Error(`Falha ao buscar lançamentos: ${res.status}`);
+      }
       return res.json();
     },
   });

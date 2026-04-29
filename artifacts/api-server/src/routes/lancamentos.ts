@@ -66,6 +66,7 @@ router.get("/lancamentos", async (req, res) => {
       limit,
     });
   } catch (e) {
+    console.error("Erro ao buscar lançamentos:", e);
     return res.status(500).json({ error: String(e) });
   }
 });
