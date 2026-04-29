@@ -165,10 +165,11 @@ export default function Kanban() {
   
   const queryClient = useQueryClient();
   
-  const { data: cardsData, isLoading } = useQuery<Card[]>({
+  const { data: cardsData, isLoading, error } = useQuery<Card[]>({
     queryKey: ["kanban-cards"],
     queryFn: async () => {
       const res = await fetch(`${API_URL}/kanban/cards`);
+      if (!res.ok) throw new Error(`API Error: ${res.status}`);
       return res.json();
     }
   });
@@ -180,9 +181,20 @@ export default function Kanban() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
+      if (!res.ok) throw new Error(`Create Error: ${res.status}`);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (newCard) => {
+      // Adicionar o card diretamente ao estado local para imediata visualização
+      setCards(prev => [...prev, { 
+        ...newCard, 
+        responsaveis_multiplos: newCard.responsaveis_multiplos || [],
+        departamentos: newCard.departamentos || [],
+        tags: newCard.tags || [],
+        checklist: newCard.checklist || [],
+        comentarios_count: 0,
+        anexos_count: 0
+      }]);
       queryClient.invalidateQueries({ queryKey: ["kanban-cards"] });
     }
   });
@@ -233,7 +245,9 @@ export default function Kanban() {
         const hoje = new Date().toISOString().split('T')[0];
         result = result.filter(c => c.prazo === hoje);
         break;
+      case "todas":
       default:
+        // Não filtra - mostra todos
         break;
     }
     
