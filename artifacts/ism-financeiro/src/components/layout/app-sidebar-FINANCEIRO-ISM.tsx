@@ -1,5 +1,5 @@
+import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import logoIsm from "@/assets/logo-ism.png";
 import {
   Home,
   Columns,
@@ -32,12 +32,14 @@ import {
   SidebarMenuSub,
   SidebarMenuSubItem,
   SidebarMenuSubButton,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { cn } from "@/lib/utils";
 
 const navItems = [
   { title: "Home", url: "/", icon: Home },
-  { title: "Kanban", url: "/kanban", icon: Columns },
+  { title: "Tarefas", url: "/kanban", icon: Columns },
   { title: "Conciliação", url: "/conciliacao", icon: RefreshCw },
   { title: "Lançamentos", url: "/lancamentos", icon: FileText },
 ];
@@ -65,8 +67,37 @@ const configItems = [
   { title: "Tokens de API", url: "/configuracoes/tokens-api", icon: Key },
 ];
 
+type MenuSection = {
+  title: string;
+  icon: React.ElementType;
+  items: typeof cadastrosItems;
+};
+
 export function AppSidebar() {
   const [location] = useLocation();
+  const { state } = useSidebar();
+  const isCollapsed = state === "collapsed";
+  const [expandedSections, setExpandedSections] = useState<string[]>(["Cadastros", "Relatórios", "Configurações"]);
+
+  useEffect(() => {
+    if (!isCollapsed) {
+      setExpandedSections(["Cadastros", "Relatórios", "Configurações"]);
+    }
+  }, [isCollapsed]);
+
+  const toggleSection = (title: string) => {
+    setExpandedSections(prev => 
+      prev.includes(title) 
+        ? prev.filter(t => t !== title) 
+        : [...prev, title]
+    );
+  };
+
+  const handleSectionClick = (title: string, hasSubItems: boolean) => {
+    if (isCollapsed && hasSubItems) {
+      toggleSection(title);
+    }
+  };
 
   const isActive = (url: string) => {
     if (url === "/" && location === "/") return true;
@@ -74,122 +105,94 @@ export function AppSidebar() {
     return false;
   };
 
+  const renderCollapsibleSection = (section: MenuSection, defaultOpen: boolean = true) => {
+    const isExpanded = expandedSections.includes(section.title);
+    
+    return (
+      <Collapsible defaultOpen={defaultOpen && !isCollapsed} open={isCollapsed ? isExpanded : undefined} className="group/collapsible">
+        <SidebarMenuItem>
+          <CollapsibleTrigger asChild>
+            <SidebarMenuButton 
+              tooltip={section.title}
+              className={cn(
+                "transition-all hover:bg-white/5",
+                isCollapsed && "justify-center px-0"
+              )}
+              onClick={() => handleSectionClick(section.title, true)}
+            >
+              <section.icon className="w-5 h-5 shrink-0" />
+              <span className={cn("font-medium", isCollapsed ? "hidden" : undefined)}>{section.title}</span>
+              {!isCollapsed && (
+                <ChevronDown className="ml-auto w-4 h-4 transition-transform group-data-[state=open]/collapsible:rotate-180" />
+              )}
+              {isCollapsed && isExpanded && (
+                <ChevronDown className="ml-auto w-3 h-3 absolute right-1 top-1/2 -translate-y-1/2 rotate-180" />
+              )}
+            </SidebarMenuButton>
+          </CollapsibleTrigger>
+          <CollapsibleContent className={cn(isCollapsed && "absolute left-full ml-1 top-0 bg-sidebar border border-white/10 rounded-lg shadow-xl p-2 min-w-[180px] z-50")}>
+            <SidebarMenuSub className="border-white/10 pr-0 mr-0">
+              {section.items.map((subItem) => (
+                <SidebarMenuSubItem key={subItem.title}>
+                  <SidebarMenuSubButton
+                    asChild
+                    isActive={isActive(subItem.url)}
+                    className="transition-all hover:bg-white/5 data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
+                  >
+                    <Link href={subItem.url} className="flex items-center gap-2">
+                      <subItem.icon className="w-4 h-4 opacity-70" />
+                      <span>{subItem.title}</span>
+                    </Link>
+                  </SidebarMenuSubButton>
+                </SidebarMenuSubItem>
+              ))}
+            </SidebarMenuSub>
+          </CollapsibleContent>
+        </SidebarMenuItem>
+      </Collapsible>
+    );
+  };
+
   return (
-    <Sidebar variant="inset" className="border-r border-white/10 bg-sidebar">
-      <SidebarHeader className="h-20 flex items-center justify-center border-b border-white/5 px-4 overflow-hidden">
-        <Link href="/" className="flex items-center justify-center w-full">
-          <img src={logoIsm} alt="ISM Tecnologia" className="h-[4.5rem] w-auto object-contain transition-transform hover:scale-105 duration-300" />
-        </Link>
+    <Sidebar collapsible="icon" variant="inset" className="border-r border-white/10 bg-sidebar">
+      <SidebarHeader className="h-20 flex items-center justify-center border-b border-white/5">
+        <div className="flex items-center justify-center w-full px-2">
+          <img
+            src="/logo-ism.png"
+            alt="ISM Tecnologia"
+            className={cn(
+              "object-contain shrink-0 transition-all",
+              isCollapsed ? "h-10 w-10" : "h-12"
+            )}
+          />
+        </div>
       </SidebarHeader>
       <SidebarContent className="p-2 gap-1">
         <SidebarGroup>
           <SidebarGroupContent>
-            <SidebarMenu>
+            <SidebarMenu className="space-y-1">
               {navItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton
                     asChild
                     isActive={isActive(item.url)}
                     tooltip={item.title}
-                    className="transition-all hover:bg-white/5 data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
+                    className={cn(
+                      "transition-all hover:bg-white/5 data-[active=true]:bg-primary/10 data-[active=true]:text-primary text-sm font-medium",
+                      isCollapsed && "justify-center px-0"
+                    )}
                   >
-                    <Link href={item.url} className="flex items-center gap-3">
-                      <item.icon className="w-5 h-5" />
-                      <span className="font-medium">{item.title}</span>
+                    <Link href={item.url} className={cn("flex items-center gap-3", isCollapsed && "justify-center")}>
+                      <item.icon className="w-5 h-5 shrink-0" />
+                      <span className={isCollapsed ? "hidden" : undefined}>{item.title}</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
 
-              <Collapsible defaultOpen className="group/collapsible">
-                <SidebarMenuItem>
-                  <CollapsibleTrigger asChild>
-                    <SidebarMenuButton tooltip="Cadastros" className="transition-all hover:bg-white/5">
-                      <FolderOpen className="w-5 h-5" />
-                      <span className="font-medium">Cadastros</span>
-                      <ChevronDown className="ml-auto w-4 h-4 transition-transform group-data-[state=open]/collapsible:rotate-180" />
-                    </SidebarMenuButton>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent>
-                    <SidebarMenuSub className="border-white/10 ml-5 pr-0 mr-0">
-                      {cadastrosItems.map((subItem) => (
-                        <SidebarMenuSubItem key={subItem.title}>
-                          <SidebarMenuSubButton
-                            asChild
-                            isActive={isActive(subItem.url)}
-                            className="transition-all hover:bg-white/5 data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
-                          >
-                            <Link href={subItem.url} className="flex items-center gap-2">
-                              <subItem.icon className="w-4 h-4 opacity-70" />
-                              <span>{subItem.title}</span>
-                            </Link>
-                          </SidebarMenuSubButton>
-                        </SidebarMenuSubItem>
-                      ))}
-                    </SidebarMenuSub>
-                  </CollapsibleContent>
-                </SidebarMenuItem>
-              </Collapsible>
-
-              <Collapsible defaultOpen className="group/collapsible">
-                <SidebarMenuItem>
-                  <CollapsibleTrigger asChild>
-                    <SidebarMenuButton tooltip="Relatórios" className="transition-all hover:bg-white/5">
-                      <BarChart3 className="w-5 h-5" />
-                      <span className="font-medium">Relatórios</span>
-                      <ChevronDown className="ml-auto w-4 h-4 transition-transform group-data-[state=open]/collapsible:rotate-180" />
-                    </SidebarMenuButton>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent>
-                    <SidebarMenuSub className="border-white/10 ml-5 pr-0 mr-0">
-                      {relatoriosItems.map((subItem) => (
-                        <SidebarMenuSubItem key={subItem.title}>
-                          <SidebarMenuSubButton
-                            asChild
-                            isActive={isActive(subItem.url)}
-                            className="transition-all hover:bg-white/5 data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
-                          >
-                            <Link href={subItem.url} className="flex items-center gap-2">
-                              <subItem.icon className="w-4 h-4 opacity-70" />
-                              <span>{subItem.title}</span>
-                            </Link>
-                          </SidebarMenuSubButton>
-                        </SidebarMenuSubItem>
-                      ))}
-                    </SidebarMenuSub>
-                  </CollapsibleContent>
-                </SidebarMenuItem>
-              </Collapsible>
-
-              <Collapsible defaultOpen className="group/collapsible">
-                <SidebarMenuItem>
-                  <CollapsibleTrigger asChild>
-                    <SidebarMenuButton tooltip="Configurações" className="transition-all hover:bg-white/5">
-                      <Settings className="w-5 h-5" />
-                      <span className="font-medium">Configurações</span>
-                      <ChevronDown className="ml-auto w-4 h-4 transition-transform group-data-[state=open]/collapsible:rotate-180" />
-                    </SidebarMenuButton>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent>
-                    <SidebarMenuSub className="border-white/10 ml-5 pr-0 mr-0">
-                      {configItems.map((subItem) => (
-                        <SidebarMenuSubItem key={subItem.title}>
-                          <SidebarMenuSubButton
-                            asChild
-                            isActive={isActive(subItem.url)}
-                            className="transition-all hover:bg-white/5 data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
-                          >
-                            <Link href={subItem.url} className="flex items-center gap-2">
-                              <subItem.icon className="w-4 h-4 opacity-70" />
-                              <span>{subItem.title}</span>
-                            </Link>
-                          </SidebarMenuSubButton>
-                        </SidebarMenuSubItem>
-                      ))}
-                    </SidebarMenuSub>
-                  </CollapsibleContent>
-                </SidebarMenuItem>
-              </Collapsible>
+              {renderCollapsibleSection({ title: "Cadastros", icon: FolderOpen, items: cadastrosItems }, true)}
+              {renderCollapsibleSection({ title: "Relatórios", icon: BarChart3, items: relatoriosItems }, true)}
+              {renderCollapsibleSection({ title: "Configurações", icon: Settings, items: configItems }, false)}
 
             </SidebarMenu>
           </SidebarGroupContent>

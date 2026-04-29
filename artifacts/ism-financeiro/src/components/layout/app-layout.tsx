@@ -1,11 +1,9 @@
-import { ReactNode, useState } from "react";
+import { ReactNode } from "react";
 import { AppSidebar } from "./app-sidebar";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { Bell, Search, User, Menu, X } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Bell, User } from "lucide-react";
 
 export function AppLayout({ children }: { children: ReactNode }) {
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const style = {
     "--sidebar-width": "17rem",
     "--sidebar-width-icon": "4.5rem",
@@ -19,17 +17,6 @@ export function AppLayout({ children }: { children: ReactNode }) {
           <header className="h-16 flex items-center justify-between px-4 md:px-6 border-b border-white/5 bg-card/50 backdrop-blur-xl sticky top-0 z-20">
             <div className="flex items-center gap-3">
               <SidebarTrigger className="text-muted-foreground hover:text-foreground hover:bg-white/10 transition-all" />
-              <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/5">
-                <Search className="w-4 h-4 text-muted-foreground" />
-                <input
-                  type="text"
-                  placeholder="Buscar..."
-                  className="bg-transparent border-none outline-none text-sm w-48 placeholder:text-muted-foreground/50 text-foreground"
-                />
-                <kbd className="hidden lg:inline-flex h-5 items-center gap-1 rounded border border-white/10 bg-white/5 px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
-                  <span className="text-xs">⌘</span>K
-                </kbd>
-              </div>
             </div>
             
             <div className="flex items-center gap-2 md:gap-4">
