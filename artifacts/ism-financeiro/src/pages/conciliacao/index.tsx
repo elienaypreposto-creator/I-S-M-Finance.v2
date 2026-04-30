@@ -516,6 +516,8 @@ function ImportarModal({ onClose, onSave }: { onClose: () => void; onSave: (data
   const [contaSelecionada, setContaSelecionada] = useState<ContaBancaria | null>(null);
   const [extrato, setExtrato] = useState<ExtratoItem[]>(extratoMock.map(e => ({ ...e, status: "pendente" as const })));
   const [vinculandoId, setVinculandoId] = useState<number | null>(null);
+  const [editing, setEditing] = useState<{ id: number; field: "desconto" | "acrescimo" } | null>(null);
+  const [editValue, setEditValue] = useState("");
   const [fileInputRef, setFileInputRef] = useState<HTMLInputElement | null>(null);
   const [arquivoNome, setArquivoNome] = useState("");
 
@@ -573,6 +575,18 @@ const { data: contasAPI = [] } = useQuery<ContaBancaria[]>({
 
   const toggleResidual = (itemId: number) => {
     setExtrato(e => e.map(item => item.id === itemId ? { ...item, gerarResidual: !item.gerarResidual } : item));
+  };
+
+  const startEditing = (id: number, field: "desconto" | "acrescimo", current: number) => {
+    setEditing({ id, field });
+    setEditValue(current.toString());
+  };
+
+  const saveEdit = () => {
+    if (!editing) return;
+    const val = parseFloat(editValue.replace(",", ".")) || 0;
+    setExtrato(e => e.map(item => item.id === editing.id ? { ...item, [editing.field]: val } : item));
+    setEditing(null);
   };
 
   const handleDesvincular = (id: number) => setExtrato(e => e.map(item => item.id === id ? { ...item, status: "pendente" as const, vinculados: undefined, desconto: 0, acrescimo: 0 } : item));
@@ -677,7 +691,10 @@ const { data: contasAPI = [] } = useQuery<ContaBancaria[]>({
                {extrato.map(item => {
                  const linkedLancamentos = (item.vinculados || []).map(id => lancamentosDisponiveis.find(l => l.id === id)).filter(Boolean) as LancamentoConciliacao[];
                  const totalLinked = linkedLancamentos.reduce((acc, l) => acc + l.valor, 0);
-                 const hasDifference = Math.abs(totalLinked) > Math.abs(item.valor);
+                 
+                 // Diferença: Lançamento - (Extrato + Acréscimo - Desconto)
+                 const diff = Math.abs(totalLinked) - (Math.abs(item.valor) + (item.acrescimo || 0) - (item.desconto || 0));
+                 const hasDifference = diff > 0.01;
 
                  return (
                    <div key={item.id} className={cn(
@@ -685,36 +702,36 @@ const { data: contasAPI = [] } = useQuery<ContaBancaria[]>({
                      item.status === "ignorado" ? "opacity-30 grayscale" : ""
                    )}>
                      {/* Left: Extrato */}
-                     <div className="flex-1 bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col justify-center relative">
+                     <div className="flex-1 bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col justify-center relative shadow-lg">
                         <div className="flex items-center justify-between mb-2">
-                           <span className="text-white font-bold text-xs">{item.descricao}</span>
+                           <span className="text-white font-bold text-xs uppercase">{item.descricao}</span>
                            <div className="flex items-center gap-2">
                               {item.status === "pendente" && (
-                                <button onClick={() => handleIgnorar(item.id)} className="p-1.5 hover:bg-white/10 rounded-lg text-muted-foreground hover:text-white transition-colors" title="Ignorar">
-                                  <Ban className="w-3.5 h-3.5" /> <span className="text-[10px] ml-1">Ignorar</span>
+                                <button onClick={() => handleIgnorar(item.id)} className="p-1.5 hover:bg-white/10 rounded-lg text-muted-foreground hover:text-white transition-colors flex items-center gap-1">
+                                  <Ban className="w-3.5 h-3.5" /> <span className="text-[10px] font-black uppercase">Ignorar</span>
                                 </button>
                               )}
                               <span className={cn(
-                                "text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-tighter",
-                                item.status === "vinculado" ? "bg-success/20 text-success" : 
-                                item.status === "ignorado" ? "bg-white/10 text-muted-foreground" : "bg-warning/20 text-warning"
+                                "text-[9px] px-2 py-0.5 rounded-md font-black uppercase tracking-tighter border",
+                                item.status === "vinculado" ? "bg-success/10 text-success border-success/20" : 
+                                item.status === "ignorado" ? "bg-white/5 text-muted-foreground border-white/10" : "bg-warning/10 text-warning border-warning/20"
                               )}>
                                 {item.status === "vinculado" ? "Vinculado" : item.status === "ignorado" ? "Ignorado" : "Pendente"}
                               </span>
                            </div>
                         </div>
                         <div className="flex items-center justify-between">
-                           <span className="text-[10px] text-muted-foreground font-medium">{item.data} | {formatCurrencyValue(item.valor)}</span>
-                           <div className="bg-success rounded p-1">
-                              <Plus className="w-3 h-3 text-white" />
+                           <span className="text-[10px] text-muted-foreground font-medium uppercase">{item.data} | <span className="text-white">{formatCurrencyValue(item.valor)}</span></span>
+                           <div className="bg-success/20 rounded p-1.5 border border-success/20">
+                              <Plus className="w-3 h-3 text-success" />
                            </div>
                         </div>
                      </div>
 
                      {/* Middle: Connection */}
                      <div className="w-20 flex flex-col items-center justify-center relative">
-                        <div className="absolute inset-y-0 w-px border-l border-dashed border-white/20" />
-                        <div className="z-10 bg-[#121417] p-2 rounded-full border border-white/10 shadow-xl group cursor-pointer" onClick={() => item.status === "pendente" && handleVincular(item.id)}>
+                        <div className="absolute inset-y-0 w-px border-l border-dashed border-white/10" />
+                        <div className="z-10 bg-[#121417] p-2.5 rounded-full border border-white/10 shadow-2xl group cursor-pointer" onClick={() => item.status === "pendente" && handleVincular(item.id)}>
                            {item.status === "vinculado" ? (
                              <Link2 className="w-4 h-4 text-success" />
                            ) : (
@@ -728,35 +745,83 @@ const { data: contasAPI = [] } = useQuery<ContaBancaria[]>({
                         {item.status === "vinculado" && linkedLancamentos.length > 0 ? (
                           <div className="space-y-3">
                             {linkedLancamentos.map(l => (
-                              <div key={l.id} className="bg-white/5 border border-white/10 rounded-xl p-4 relative group animate-in slide-in-from-right-4">
-                                 <div className="flex items-center justify-between mb-1">
-                                    <span className="text-white font-bold text-xs">{l.descricao}</span>
-                                    <button onClick={() => handleDesvincular(item.id)} className="p-1.5 hover:bg-destructive/20 rounded-lg text-muted-foreground hover:text-destructive transition-colors">
+                              <div key={l.id} className="bg-white/5 border border-white/10 rounded-xl p-4 relative group animate-in slide-in-from-right-4 shadow-xl">
+                                 <div className="flex items-center justify-between mb-2">
+                                    <span className="text-white font-bold text-xs uppercase">{l.descricao}</span>
+                                    <button onClick={() => handleDesvincular(item.id)} className="p-1.5 hover:bg-destructive/20 rounded-lg text-muted-foreground hover:text-destructive transition-colors" title="Remover vínculo">
                                        <Trash2 className="w-3.5 h-3.5" />
                                     </button>
                                  </div>
                                  <div className="flex flex-col gap-1">
                                     <div className="flex items-center justify-between">
-                                       <span className="text-[10px] text-muted-foreground font-medium">{l.vencimento} | {formatCurrencyValue(l.valor)}</span>
+                                       <span className="text-[10px] text-muted-foreground font-medium uppercase">{l.vencimento} | <span className="text-white">{formatCurrencyValue(l.valor)}</span></span>
                                     </div>
-                                    {hasDifference && (
-                                      <div className="mt-2 pt-2 border-t border-white/5 space-y-2">
-                                         <label className="flex items-center gap-2 cursor-pointer group/label">
-                                            <input 
-                                              type="checkbox" 
-                                              checked={item.gerarResidual} 
-                                              onChange={() => toggleResidual(item.id)}
-                                              className="accent-primary w-3 h-3 rounded"
-                                            />
-                                            <span className="text-[10px] text-primary font-bold group-hover/label:underline underline-offset-2">Gerar movimentação residual</span>
-                                         </label>
-                                         <div className="flex items-center gap-4 text-[9px] font-black text-muted-foreground/60 uppercase tracking-widest">
-                                            <span>Desconto: 0.00</span>
-                                            <span>|</span>
-                                            <span>Acréscimo: 0.00</span>
+                                    
+                                    <div className="mt-3 pt-3 border-t border-white/5 space-y-3">
+                                       {hasDifference && (
+                                         <div className="flex items-center gap-3">
+                                            <label className="flex items-center gap-2 cursor-pointer group/label shrink-0">
+                                               <input 
+                                                 type="checkbox" 
+                                                 checked={item.gerarResidual} 
+                                                 onChange={() => toggleResidual(item.id)}
+                                                 className="accent-primary w-3.5 h-3.5 rounded"
+                                               />
+                                               <span className="text-[10px] text-primary font-bold group-hover/label:underline underline-offset-2">Gerar movimentação residual</span>
+                                            </label>
+                                            
+                                            {item.gerarResidual && (
+                                              <div className="bg-destructive/10 border border-destructive/20 text-destructive text-[10px] font-bold px-3 py-1 rounded-lg animate-in fade-in zoom-in-95">
+                                                 Gerar movimentação residual de {formatCurrencyValue(diff)} que vai gerar novo lançamento
+                                              </div>
+                                            )}
                                          </div>
-                                      </div>
-                                    )}
+                                       )}
+                                       
+                                       <div className="flex items-center gap-6 text-[10px] font-medium text-muted-foreground">
+                                          <div className="flex items-center gap-2">
+                                             <span className="uppercase tracking-wider">Desconto:</span>
+                                             {editing?.id === item.id && editing?.field === "desconto" ? (
+                                               <div className="flex items-center gap-1">
+                                                  <input 
+                                                    autoFocus
+                                                    value={editValue}
+                                                    onChange={e => setEditValue(e.target.value)}
+                                                    className="w-16 bg-black/40 border border-white/20 rounded px-1.5 py-0.5 text-white text-[10px] outline-none focus:border-primary/50"
+                                                  />
+                                                  <button onClick={saveEdit} className="bg-success p-0.5 rounded text-white hover:bg-success/90"><CheckCircle className="w-3 h-3" /></button>
+                                               </div>
+                                             ) : (
+                                               <div className="flex items-center gap-1.5">
+                                                  <span className="text-white font-bold">{item.desconto?.toFixed(2).replace(".", ",")}</span>
+                                                  <button onClick={() => startEditing(item.id, "desconto", item.desconto || 0)} className="text-muted-foreground/40 hover:text-white transition-colors"><Pencil className="w-2.5 h-2.5" /></button>
+                                               </div>
+                                             )}
+                                          </div>
+                                          
+                                          <span className="text-white/10">|</span>
+                                          
+                                          <div className="flex items-center gap-2">
+                                             <span className="uppercase tracking-wider">Acréscimo:</span>
+                                             {editing?.id === item.id && editing?.field === "acrescimo" ? (
+                                               <div className="flex items-center gap-1">
+                                                  <input 
+                                                    autoFocus
+                                                    value={editValue}
+                                                    onChange={e => setEditValue(e.target.value)}
+                                                    className="w-16 bg-black/40 border border-white/20 rounded px-1.5 py-0.5 text-white text-[10px] outline-none focus:border-primary/50"
+                                                  />
+                                                  <button onClick={saveEdit} className="bg-success p-0.5 rounded text-white hover:bg-success/90"><CheckCircle className="w-3 h-3" /></button>
+                                               </div>
+                                             ) : (
+                                               <div className="flex items-center gap-1.5">
+                                                  <span className="text-white font-bold">{item.acrescimo?.toFixed(2).replace(".", ",")}</span>
+                                                  <button onClick={() => startEditing(item.id, "acrescimo", item.acrescimo || 0)} className="text-muted-foreground/40 hover:text-white transition-colors"><Pencil className="w-2.5 h-2.5" /></button>
+                                               </div>
+                                             )}
+                                          </div>
+                                       </div>
+                                    </div>
                                  </div>
                               </div>
                             ))}
