@@ -688,160 +688,164 @@ const { data: contasAPI = [] } = useQuery<ContaBancaria[]>({
                <div className="flex-1 text-center">Movimentações não conciliadas</div>
             </div>
             <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-black/40">
-               {extrato.map(item => {
-                 const linkedLancamentos = (item.vinculados || []).map(id => lancamentosDisponiveis.find(l => l.id === id)).filter(Boolean) as LancamentoConciliacao[];
-                 const totalLinked = linkedLancamentos.reduce((acc, l) => acc + l.valor, 0);
-                 
-                 // Diferença: Lançamento - (Extrato + Acréscimo - Desconto)
-                 const diff = Math.abs(totalLinked) - (Math.abs(item.valor) + (item.acrescimo || 0) - (item.desconto || 0));
-                 const hasDifference = diff > 0.01;
+                {extrato.map(item => {
+                  const linkedLancamentos = (item.vinculados || []).map(id => lancamentosDisponiveis.find(l => l.id === id)).filter(Boolean) as LancamentoConciliacao[];
+                  const totalLinked = linkedLancamentos.reduce((acc, l) => acc + l.valor, 0);
+                  
+                  // Nova Lógica: (Lançamento + Acréscimo - Desconto) - Extrato
+                  const diff = (Math.abs(totalLinked) + (item.acrescimo || 0) - (item.desconto || 0)) - Math.abs(item.valor);
+                  const hasDifference = diff > 0.01;
 
-                 return (
-                   <div key={item.id} className={cn(
-                     "flex items-stretch gap-4 transition-all duration-300",
-                     item.status === "ignorado" ? "opacity-30 grayscale" : ""
-                   )}>
-                     {/* Left: Extrato */}
-                     <div className="flex-1 bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col justify-center relative shadow-lg">
-                        <div className="flex items-center justify-between mb-2">
-                           <span className="text-white font-bold text-xs uppercase">{item.descricao}</span>
-                           <div className="flex items-center gap-2">
-                              {item.status === "pendente" && (
-                                <button onClick={() => handleIgnorar(item.id)} className="p-1.5 hover:bg-white/10 rounded-lg text-muted-foreground hover:text-white transition-colors flex items-center gap-1">
-                                  <Ban className="w-3.5 h-3.5" /> <span className="text-[10px] font-black uppercase">Ignorar</span>
-                                </button>
-                              )}
-                              <span className={cn(
-                                "text-[9px] px-2 py-0.5 rounded-md font-black uppercase tracking-tighter border",
-                                item.status === "vinculado" ? "bg-success/10 text-success border-success/20" : 
-                                item.status === "ignorado" ? "bg-white/5 text-muted-foreground border-white/10" : "bg-warning/10 text-warning border-warning/20"
-                              )}>
-                                {item.status === "vinculado" ? "Vinculado" : item.status === "ignorado" ? "Ignorado" : "Pendente"}
-                              </span>
-                           </div>
-                        </div>
-                        <div className="flex items-center justify-between">
-                           <span className="text-[10px] text-muted-foreground font-medium uppercase">{item.data} | <span className="text-white">{formatCurrencyValue(item.valor)}</span></span>
-                           <div className="bg-success/20 rounded p-1.5 border border-success/20">
-                              <Plus className="w-3 h-3 text-success" />
-                           </div>
-                        </div>
-                     </div>
+                  return (
+                    <div key={item.id} className={cn(
+                      "flex items-stretch gap-4 transition-all duration-300",
+                      item.status === "ignorado" ? "opacity-30 grayscale" : ""
+                    )}>
+                      {/* Left: Extrato */}
+                      <div className="flex-1 bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col justify-center relative shadow-lg">
+                         <div className="flex items-center justify-between mb-2">
+                            <span className="text-white font-bold text-xs uppercase">{item.descricao}</span>
+                            <div className="flex items-center gap-2">
+                               {item.status === "pendente" && (
+                                 <button onClick={() => handleIgnorar(item.id)} className="p-1.5 hover:bg-white/10 rounded-lg text-muted-foreground hover:text-white transition-colors flex items-center gap-1">
+                                   <Ban className="w-3.5 h-3.5" /> <span className="text-[10px] font-black uppercase">Ignorar</span>
+                                 </button>
+                               )}
+                               <span className={cn(
+                                 "text-[9px] px-2 py-0.5 rounded-md font-black uppercase tracking-tighter border",
+                                 item.status === "vinculado" ? "bg-success/10 text-success border-success/20" : 
+                                 item.status === "ignorado" ? "bg-white/5 text-muted-foreground border-white/10" : "bg-warning/10 text-warning border-warning/20"
+                               )}>
+                                 {item.status === "vinculado" ? "Vinculado" : item.status === "ignorado" ? "Ignorado" : "Pendente"}
+                               </span>
+                            </div>
+                         </div>
+                         <div className="flex items-center justify-between">
+                            <span className="text-[10px] text-muted-foreground font-medium uppercase">{item.data} | <span className="text-white">{formatCurrencyValue(item.valor)}</span></span>
+                            <div className="bg-success/20 rounded p-1.5 border border-success/20">
+                               <Plus className="w-3 h-3 text-success" />
+                            </div>
+                         </div>
+                      </div>
 
-                     {/* Middle: Connection */}
-                     <div className="w-20 flex flex-col items-center justify-center relative">
-                        <div className="absolute inset-y-0 w-px border-l border-dashed border-white/10" />
-                        <div className="z-10 bg-[#121417] p-2.5 rounded-full border border-white/10 shadow-2xl group cursor-pointer" onClick={() => item.status === "pendente" && handleVincular(item.id)}>
-                           {item.status === "vinculado" ? (
-                             <Link2 className="w-4 h-4 text-success" />
-                           ) : (
-                             <Search className="w-4 h-4 text-muted-foreground group-hover:text-white transition-colors" />
-                           )}
-                        </div>
-                     </div>
+                      {/* Middle: Connection */}
+                      <div className="w-20 flex flex-col items-center justify-center relative">
+                         <div className="absolute inset-y-0 w-px border-l border-dashed border-white/10" />
+                         
+                         {item.status === "vinculado" && (
+                           <div className="absolute top-1/2 -translate-y-1/2 w-full h-px border-t border-dashed border-success/40" />
+                         )}
 
-                     {/* Right: Lancamentos */}
-                     <div className="flex-1 flex flex-col justify-center">
-                        {item.status === "vinculado" && linkedLancamentos.length > 0 ? (
-                          <div className="space-y-3">
-                            {linkedLancamentos.map(l => (
-                              <div key={l.id} className="bg-white/5 border border-white/10 rounded-xl p-4 relative group animate-in slide-in-from-right-4 shadow-xl">
-                                 <div className="flex items-center justify-between mb-2">
-                                    <span className="text-white font-bold text-xs uppercase">{l.descricao}</span>
-                                    <button onClick={() => handleDesvincular(item.id)} className="p-1.5 hover:bg-destructive/20 rounded-lg text-muted-foreground hover:text-destructive transition-colors" title="Remover vínculo">
-                                       <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                 </div>
-                                 <div className="flex flex-col gap-1">
-                                    <div className="flex items-center justify-between">
-                                       <span className="text-[10px] text-muted-foreground font-medium uppercase">{l.vencimento} | <span className="text-white">{formatCurrencyValue(l.valor)}</span></span>
-                                    </div>
-                                    
-                                    <div className="mt-3 pt-3 border-t border-white/5 space-y-3">
-                                       {hasDifference && (
-                                         <div className="flex items-center gap-3">
-                                            <label className="flex items-center gap-2 cursor-pointer group/label shrink-0">
-                                               <input 
-                                                 type="checkbox" 
-                                                 checked={item.gerarResidual} 
-                                                 onChange={() => toggleResidual(item.id)}
-                                                 className="accent-primary w-3.5 h-3.5 rounded"
-                                               />
-                                               <span className="text-[10px] text-primary font-bold group-hover/label:underline underline-offset-2">Gerar movimentação residual</span>
-                                            </label>
-                                            
-                                            {item.gerarResidual && (
-                                              <div className="bg-destructive/10 border border-destructive/20 text-destructive text-[10px] font-bold px-3 py-1 rounded-lg animate-in fade-in zoom-in-95">
-                                                 Gerar movimentação residual de {formatCurrencyValue(diff)} que vai gerar novo lançamento
-                                              </div>
-                                            )}
-                                         </div>
-                                       )}
-                                       
-                                       <div className="flex items-center gap-6 text-[10px] font-medium text-muted-foreground">
+                         <div className="z-10 bg-[#121417] p-2.5 rounded-full border border-white/10 shadow-2xl">
+                            {item.status === "vinculado" ? (
+                              <Link2 className="w-4 h-4 text-success" />
+                            ) : (
+                              <div className="w-4 h-4" />
+                            )}
+                         </div>
+                      </div>
+
+                      {/* Right: Lancamentos */}
+                      <div className="flex-1 flex flex-col justify-center">
+                         {item.status === "vinculado" && linkedLancamentos.length > 0 ? (
+                           <div className="space-y-3">
+                             {linkedLancamentos.map(l => (
+                               <div key={l.id} className="bg-white/5 border border-white/10 rounded-xl p-4 relative group animate-in slide-in-from-right-4 shadow-xl">
+                                  <div className="flex items-center justify-between mb-2">
+                                     <span className="text-white font-bold text-xs uppercase">{l.descricao}</span>
+                                     <button onClick={() => handleDesvincular(item.id)} className="p-1.5 hover:bg-destructive/20 rounded-lg text-muted-foreground hover:text-destructive transition-colors" title="Remover vínculo">
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                     </button>
+                                  </div>
+                                  <div className="flex flex-col gap-1">
+                                     <div className="flex items-center justify-between">
+                                        <span className="text-[10px] text-muted-foreground font-medium uppercase">{l.vencimento} | <span className="text-white">{formatCurrencyValue(l.valor)}</span></span>
+                                     </div>
+                                     
+                                     <div className="mt-3 pt-3 border-t border-white/5 space-y-3">
+                                        {hasDifference && (
                                           <div className="flex items-center gap-2">
-                                             <span className="uppercase tracking-wider">Desconto:</span>
-                                             {editing?.id === item.id && editing?.field === "desconto" ? (
-                                               <div className="flex items-center gap-1">
-                                                  <input 
-                                                    autoFocus
-                                                    value={editValue}
-                                                    onChange={e => setEditValue(e.target.value)}
-                                                    className="w-16 bg-black/40 border border-white/20 rounded px-1.5 py-0.5 text-white text-[10px] outline-none focus:border-primary/50"
-                                                  />
-                                                  <button onClick={saveEdit} className="bg-success p-0.5 rounded text-white hover:bg-success/90"><CheckCircle className="w-3 h-3" /></button>
-                                               </div>
-                                             ) : (
-                                               <div className="flex items-center gap-1.5">
-                                                  <span className="text-white font-bold">{item.desconto?.toFixed(2).replace(".", ",")}</span>
-                                                  <button onClick={() => startEditing(item.id, "desconto", item.desconto || 0)} className="text-muted-foreground/40 hover:text-white transition-colors"><Pencil className="w-2.5 h-2.5" /></button>
+                                             <label className="flex items-center gap-2 cursor-pointer group/label shrink-0">
+                                                <input 
+                                                  type="checkbox" 
+                                                  checked={item.gerarResidual} 
+                                                  onChange={() => toggleResidual(item.id)}
+                                                  className="accent-primary w-3.5 h-3.5 rounded"
+                                                />
+                                             </label>
+                                             
+                                             {item.gerarResidual && (
+                                               <div className="bg-destructive/10 border border-destructive/20 text-destructive text-[10px] font-bold px-3 py-1.5 rounded-lg animate-in fade-in zoom-in-95 flex items-center gap-1">
+                                                  Gerar movimentação residual de <span className="text-white">{formatCurrencyValue(diff)}</span> em novo lançamento
                                                </div>
                                              )}
                                           </div>
-                                          
-                                          <span className="text-white/10">|</span>
-                                          
-                                          <div className="flex items-center gap-2">
-                                             <span className="uppercase tracking-wider">Acréscimo:</span>
-                                             {editing?.id === item.id && editing?.field === "acrescimo" ? (
-                                               <div className="flex items-center gap-1">
-                                                  <input 
-                                                    autoFocus
-                                                    value={editValue}
-                                                    onChange={e => setEditValue(e.target.value)}
-                                                    className="w-16 bg-black/40 border border-white/20 rounded px-1.5 py-0.5 text-white text-[10px] outline-none focus:border-primary/50"
-                                                  />
-                                                  <button onClick={saveEdit} className="bg-success p-0.5 rounded text-white hover:bg-success/90"><CheckCircle className="w-3 h-3" /></button>
-                                               </div>
-                                             ) : (
-                                               <div className="flex items-center gap-1.5">
-                                                  <span className="text-white font-bold">{item.acrescimo?.toFixed(2).replace(".", ",")}</span>
-                                                  <button onClick={() => startEditing(item.id, "acrescimo", item.acrescimo || 0)} className="text-muted-foreground/40 hover:text-white transition-colors"><Pencil className="w-2.5 h-2.5" /></button>
-                                               </div>
-                                             )}
-                                          </div>
-                                       </div>
-                                    </div>
-                                 </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : item.status === "pendente" ? (
-                          <div className="h-full flex items-center">
-                            <button 
-                              onClick={() => handleVincular(item.id)}
-                              className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:bg-white/10 hover:text-white transition-all"
-                            >
-                              <Search className="w-3.5 h-3.5" /> Vincular
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="text-[10px] text-muted-foreground italic text-center">Item ignorado</div>
-                        )}
-                     </div>
-                   </div>
-                 );
-               })}
+                                        )}
+                                        
+                                        <div className="flex items-center gap-6 text-[10px] font-medium text-muted-foreground">
+                                           <div className="flex items-center gap-2">
+                                              <span className="uppercase tracking-wider">Desconto:</span>
+                                              {editing?.id === item.id && editing?.field === "desconto" ? (
+                                                <div className="flex items-center gap-1">
+                                                   <input 
+                                                     autoFocus
+                                                     value={editValue}
+                                                     onChange={e => setEditValue(e.target.value)}
+                                                     className="w-16 bg-black/40 border border-white/20 rounded px-1.5 py-0.5 text-white text-[10px] outline-none focus:border-primary/50"
+                                                   />
+                                                   <button onClick={saveEdit} className="bg-success p-0.5 rounded text-white hover:bg-success/90"><CheckCircle className="w-3 h-3" /></button>
+                                                </div>
+                                              ) : (
+                                                <div className="flex items-center gap-1.5">
+                                                   <span className="text-white font-bold">{item.desconto?.toFixed(2).replace(".", ",")}</span>
+                                                   <button onClick={() => startEditing(item.id, "desconto", item.desconto || 0)} className="text-muted-foreground/40 hover:text-white transition-colors"><Pencil className="w-2.5 h-2.5" /></button>
+                                                </div>
+                                              )}
+                                           </div>
+                                           
+                                           <span className="text-white/10">|</span>
+                                           
+                                           <div className="flex items-center gap-2">
+                                              <span className="uppercase tracking-wider">Acréscimo:</span>
+                                              {editing?.id === item.id && editing?.field === "acrescimo" ? (
+                                                <div className="flex items-center gap-1">
+                                                   <input 
+                                                     autoFocus
+                                                     value={editValue}
+                                                     onChange={e => setEditValue(e.target.value)}
+                                                     className="w-16 bg-black/40 border border-white/20 rounded px-1.5 py-0.5 text-white text-[10px] outline-none focus:border-primary/50"
+                                                   />
+                                                   <button onClick={saveEdit} className="bg-success p-0.5 rounded text-white hover:bg-success/90"><CheckCircle className="w-3 h-3" /></button>
+                                                </div>
+                                              ) : (
+                                                <div className="flex items-center gap-1.5">
+                                                   <span className="text-white font-bold">{item.acrescimo?.toFixed(2).replace(".", ",")}</span>
+                                                   <button onClick={() => startEditing(item.id, "acrescimo", item.acrescimo || 0)} className="text-muted-foreground/40 hover:text-white transition-colors"><Pencil className="w-2.5 h-2.5" /></button>
+                                                </div>
+                                              )}
+                                           </div>
+                                        </div>
+                                     </div>
+                                  </div>
+                               </div>
+                             ))}
+                           </div>
+                         ) : item.status === "pendente" ? (
+                           <div className="h-full flex items-center">
+                             <button 
+                               onClick={() => handleVincular(item.id)}
+                               className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:bg-white/10 hover:text-white transition-all"
+                             >
+                               <Search className="w-3.5 h-3.5" /> Vincular
+                             </button>
+                           </div>
+                         ) : (
+                           <div className="text-[10px] text-muted-foreground italic text-center">Item ignorado</div>
+                         )}
+                      </div>
+                    </div>
+                  );
+                })}
             </div>
           </div>
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-5 border-t border-white/5">
