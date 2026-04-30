@@ -15,6 +15,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { TaskCard } from "@/components/tasks/task-card";
 import { TaskModal } from "@/components/tasks/task-modal";
+import { API_URL, fetchApi } from "@/lib/api-config";
+import { toast } from "sonner";
 
 const COLORS = {
   fundoPrincipal: "#121212",
@@ -22,7 +24,7 @@ const COLORS = {
   cards: "#262626",
 };
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+
 
 type ChecklistItem = { id: string; texto: string; completed: boolean };
 
@@ -155,7 +157,7 @@ function SortableCard({ card, onClick, isDragging }: { card: Card; onClick: () =
 }
 
 export default function Kanban() {
-  const [cards, setCards] = useState<Card[]>([]);
+
   const [selectedCard, setSelectedCard] = useState<Card | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [modalColuna, setModalColuna] = useState("solicitado");
@@ -167,27 +169,17 @@ export default function Kanban() {
   
   const { data: cardsData, isLoading, error } = useQuery<Card[]>({
     queryKey: ["kanban-cards"],
-    queryFn: async () => {
-      const res = await fetch(`${API_URL}/kanban/cards`);
-      if (!res.ok) throw new Error(`API Error: ${res.status}`);
-      return res.json();
-    }
+    queryFn: () => fetchApi<Card[]>("/kanban/cards")
   });
   
   const createMutation = useMutation({
-    mutationFn: async (data: Partial<Card>) => {
-      const res = await fetch(`${API_URL}/kanban/cards`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error(`Create Error: ${res.status}`);
-      return res.json();
-    },
+    mutationFn: (data: Partial<Card>) => fetchApi<Card>("/kanban/cards", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
     onSuccess: (newCard) => {
-      // Adicionar o card diretamente ao estado local para imediata visualização
-      setCards(prev => [...prev, { 
-        ...newCard, 
+      queryClient.setQueryData(["kanban-cards"], (old: Card[] = []) => [...old, {
+        ...newCard,
         responsaveis_multiplos: newCard.responsaveis_multiplos || [],
         departamentos: newCard.departamentos || [],
         tags: newCard.tags || [],
@@ -195,27 +187,26 @@ export default function Kanban() {
         comentarios_count: 0,
         anexos_count: 0
       }]);
-      queryClient.invalidateQueries({ queryKey: ["kanban-cards"] });
+      toast.success("Tarefa criada com sucesso!");
+    },
+    onError: (err) => {
+      console.error(err);
+      toast.error("Erro ao criar tarefa. Verifique a conexão com o servidor.");
     }
   });
   
   const moveMutation = useMutation({
-    mutationFn: async ({ id, columna }: { id: number; columna: string }) => {
-      const res = await fetch(`${API_URL}/kanban/cards/${id}/mover`, {
+    mutationFn: ({ id, columna }: { id: number; columna: string }) => 
+      fetchApi(`/kanban/cards/${id}/mover`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ coluna: columna }),
-      });
-      return res.json();
-    },
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["kanban-cards"] });
     }
   });
   
-  useEffect(() => {
-    if (cardsData) setCards(cardsData);
-  }, [cardsData]);
+
   
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -224,7 +215,7 @@ export default function Kanban() {
   );
   
   const filteredCards = useMemo(() => {
-    let result = cards;
+    let result = cardsData || [];
     
     if (search) {
       const searchLower = search.toLowerCase();
@@ -252,7 +243,7 @@ export default function Kanban() {
     }
     
     return result;
-  }, [cards, search, activeFilter]);
+  }, [cardsData, search, activeFilter]);
   
   const handleDragStart = (event: DragStartEvent) => {
     setActiveId(event.active.id as number);
@@ -290,7 +281,7 @@ export default function Kanban() {
     setModalOpen(false);
   };
   
-  const activeCard = activeId ? cards.find(c => c.id === activeId) : null;
+  const activeCard = activeId ? (cardsData || []).find(c => c.id === activeId) : null;
   
   return (
     <div className="h-[calc(100vh-8rem)] flex flex-col">
