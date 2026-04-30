@@ -37,12 +37,15 @@ function NovaContaModal({ onClose }: ModalProps) {
           conta: form.conta,
           nome: form.nome || form.banco,
           saldo_inicial: parseFloat(form.saldo_inicial) || 0,
-          data_inicio: form.data_inicio,
+          data_inicio: new Date(form.data_inicio),
           status: "ativo",
           cor: "#3BA8DC"
         })
       });
-      if (!res.ok) throw new Error("Erro ao salvar conta");
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Erro ao salvar conta");
+      }
       queryClient.invalidateQueries({ queryKey: ["contas-bancarias"] });
       onClose();
     } catch (e: any) {

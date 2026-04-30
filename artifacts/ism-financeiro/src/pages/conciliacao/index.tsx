@@ -495,12 +495,19 @@ function ImportarModal({ onClose, onSave }: { onClose: () => void; onSave: (data
   const [fileInputRef, setFileInputRef] = useState<HTMLInputElement | null>(null);
   const [arquivoNome, setArquivoNome] = useState("");
 
-  const { data: contasAPI = [] } = useQuery<ContaBancaria[]>({
+  const { data: contasAPI = [], isLoading: loadingContas } = useQuery<ContaBancaria[]>({
     queryKey: ["contas-bancarias"],
     queryFn: async () => {
-      const res = await fetch(`${API_URL}/contas-bancarias`);
-      if (!res.ok) return [];
-      return res.json();
+      try {
+        const res = await fetch(`${API_URL}/contas-bancarias`);
+        if (!res.ok) return [];
+        const data = await res.json();
+        console.log("Contas retornadas:", data);
+        return data;
+      } catch (e) {
+        console.error("Erro ao buscar contas:", e);
+        return [];
+      }
     }
   });
 
