@@ -365,19 +365,30 @@ function VincularModal({
               className="bg-transparent border-none outline-none text-xs text-white w-24"
             />
           </div>
-          <div className="flex gap-2">
-            <button 
-              onClick={() => onCriarNovo("transferencia")}
-              className="px-3 py-2 bg-white/5 hover:bg-white/10 text-white rounded-lg text-xs font-medium flex items-center gap-1"
-            >
-              <ArrowLeftRight className="w-3 h-3" /> Transferência
+          <div className="relative group">
+            <button className="px-3 py-2 bg-primary/10 text-primary hover:bg-primary/20 rounded-lg text-xs font-medium flex items-center gap-1">
+              <Plus className="w-3 h-3" /> Criar
             </button>
-            <button 
-              onClick={() => onCriarNovo("socio")}
-              className="px-3 py-2 bg-white/5 hover:bg-white/10 text-white rounded-lg text-xs font-medium flex items-center gap-1"
-            >
-              <Users className="w-3 h-3" /> Sócio
-            </button>
+            <div className="absolute top-full left-0 mt-1 bg-[#1a1c23] border border-white/10 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10 min-w-[160px]">
+              <button 
+                onClick={() => onCriarNovo("transferencia")}
+                className="w-full text-left px-4 py-2.5 hover:bg-white/5 text-white text-xs flex items-center gap-2"
+              >
+                <ArrowLeftRight className="w-3 h-3 text-primary" /> Transferência
+              </button>
+              <button 
+                onClick={() => onCriarNovo("socio")}
+                className="w-full text-left px-4 py-2.5 hover:bg-white/5 text-white text-xs flex items-center gap-2"
+              >
+                <Users className="w-3 h-3 text-teal-400" /> Antecipação Sócio
+              </button>
+              <button 
+                onClick={() => onCriarNovo("socio")}
+                className="w-full text-left px-4 py-2.5 hover:bg-white/5 text-white text-xs flex items-center gap-2"
+              >
+                <Users className="w-3 h-3 text-teal-400" /> Aporte Sócio
+              </button>
+            </div>
           </div>
         </div>
 
@@ -796,43 +807,7 @@ const { data: contasAPI = [], isLoading: loadingContas } = useQuery<ContaBancari
               </div>
             </div>
 
-            {/* Movimentações não conciliadas */}
-            <div className="flex-1 flex flex-col">
-              <div className="px-4 py-2 bg-white/5 border-b border-white/5">
-                <h3 className="text-sm font-bold text-white">Movimentações não conciliadas</h3>
-              </div>
-              <div className="flex-1 overflow-y-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-white/5 sticky top-0">
-                    <tr>
-                      <th className="px-4 py-2 text-left font-medium text-muted-foreground text-xs">Tipo</th>
-                      <th className="px-4 py-2 text-left font-medium text-muted-foreground text-xs">Descrição</th>
-                      <th className="px-4 py-2 text-left font-medium text-muted-foreground text-xs">Parceiro</th>
-                      <th className="px-4 py-2 text-right font-medium text-muted-foreground text-xs">Valor</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {lancamentosDisponiveis.filter(l => l.status === "pendente").map(l => (
-                      <tr key={l.id} className="hover:bg-white/5 transition-colors">
-                        <td className="px-4 py-2">
-                          <span className={cn(
-                            "text-[10px] font-black px-2 py-0.5 rounded",
-                            l.tipo === "CR" ? "bg-teal-500/15 text-teal-300 border border-teal-500/25" : "bg-orange-500/15 text-orange-300 border border-orange-500/25"
-                          )}>
-                            {l.tipo}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2 text-white text-xs">{l.descricao}</td>
-                        <td className="px-4 py-2 text-muted-foreground text-xs">{l.parceiro_nome}</td>
-                        <td className={cn("px-4 py-2 text-right font-bold text-xs", l.tipo === "CR" ? "text-teal-400" : "text-white/90")}>
-                          {l.tipo === "CP" ? "-" : ""}{formatCurrencyValue(l.valor)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            
           </div>
 
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-5 border-t border-white/5">
