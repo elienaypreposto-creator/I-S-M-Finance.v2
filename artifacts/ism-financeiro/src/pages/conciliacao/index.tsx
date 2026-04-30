@@ -1,16 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { PageHeader } from "@/components/shared/page-header";
 import { DateRangePicker } from "@/components/shared/date-range-picker";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Calendar as CalendarPicker } from "@/components/ui/calendar";
-import { format as formatBtn, parseISO } from "date-fns";
-import { ptBR } from "date-fns/locale";
 import {
   Plus, Search, Trash2, ArrowRight, X, Link2, Ban, ChevronsRight, 
   CheckCircle, AlertCircle, Pencil, Calendar, Settings, RotateCcw,
-  Users, ArrowLeftRight, FileText, Loader2, Briefcase, Building2
+  Users, ArrowLeftRight, FileText, Loader2
 } from "lucide-react";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
@@ -485,10 +481,8 @@ function VincularModal({
 }
 
 function ImportarModal({ onClose, onSave }: { onClose: () => void; onSave: (data: any) => void }) {
-  const [step, setStep] = useState<"conta" | "extrato">("conta");
+  const [step, setStep] = useState<"conta" | "carregando" | "extrato">("conta");
   const [contaSelecionada, setContaSelecionada] = useState<ContaBancaria | null>(null);
-  const [searchConta, setSearchConta] = useState("");
-  const [showDropdown, setShowDropdown] = useState(false);
   const [extrato, setExtrato] = useState<ExtratoItem[]>(extratoMock.map(e => ({ ...e, status: "pendente" as const })));
   const [vinculandoId, setVinculandoId] = useState<number | null>(null);
   const [config, setConfig] = useState({
@@ -498,11 +492,40 @@ function ImportarModal({ onClose, onSave }: { onClose: () => void; onSave: (data
     pesquisaAproximada: "nao"
   });
   const [showConfig, setShowConfig] = useState(false);
+  const [fileInputRef, setFileInputRef] = useState<HTMLInputElement | null>(null);
+  const [arquivoNome, setArquivoNome] = useState("");
 
-  const contasFiltradas = contasBancariasMock.filter(c =>
-    c.nome.toLowerCase().includes(searchConta.toLowerCase()) ||
-    c.conta.includes(searchConta)
-  );
+  const { data: contasAPI = [] } = useQuery<ContaBancaria[]>({
+    queryKey: ["contas-bancarias"],
+    queryFn: async () => {
+      const res = await fetch(`${API_URL}/contas-bancarias`);
+      if (!res.ok) return [];
+      return res.json();
+    }
+  });
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !contaSelecionada) return;
+    
+    setArquivoNome(file.name);
+    setStep("carregando");
+    
+    // Simula processamento do arquivo
+    setTimeout(() => {
+      setStep("extrato");
+    }, 1500);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files?.[0];
+    if (file && contaSelecionada) {
+      setArquivoNome(file.name);
+      setStep("carregando");
+      setTimeout(() => setStep("extrato"), 1500);
+    }
+  };
 
   const handleIgnorar = (id: number) => setExtrato(e => e.map(item => 
     item.id === id ? { ...item, status: "ignorado" as const } : item
@@ -554,41 +577,48 @@ function ImportarModal({ onClose, onSave }: { onClose: () => void; onSave: (data
               <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">
                 Selecione a Conta Bancária *
               </label>
-              <div className="relative">
-                <input
-                  value={searchConta}
-                  onChange={e => { setSearchConta(e.target.value); setShowDropdown(true); }}
-                  onFocus={() => setShowDropdown(true)}
-                  placeholder="Buscar por banco ou conta..."
-                  className="w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white"
-                />
-                {showDropdown && searchConta && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-[#1a1c23] border border-white/10 rounded-xl shadow-xl z-10 max-h-60 overflow-y-auto">
-                    {contasFiltradas.length > 0 ? (
-                      contasFiltradas.map(c => (
-                        <button
-                          key={c.id}
-                          onClick={() => { setContaSelecionada(c); setSearchConta(`${c.nome} - ${c.agencia} / ${c.conta}`); setShowDropdown(false); }}
-                          className="w-full text-left px-4 py-3 hover:bg-white/5 border-b border-white/5 last:border-0"
-                        >
-                          <p className="font-semibold text-white text-sm">{c.nome}</p>
-                          <p className="text-xs text-muted-foreground">Ag: {c.agencia} · CC: {c.conta}</p>
-                        </button>
-                      ))
-                    ) : (
-                      <div className="px-4 py-3 text-sm text-muted-foreground">Nenhuma conta encontrada</div>
-                    )}
-                  </div>
-                )}
-              </div>
+              <select
+                value={contaSelecionada?.id || ""}
+                onChange={e => {
+                  const conta = contasAPI.find(c => c.id === parseInt(e.target.value));
+                  setContaSelecionada(conta || null);
+                }}
+                className="w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-primary/50 cursor-pointer"
+              >
+                <option value="">Selecione uma conta...</option>
+                {contasAPI.map(c => (
+                  <option key={c.id} value={c.id}>{c.nome} - Ag: {c.agencia} / CC: {c.conta}</option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
                 Importação Manual
               </label>
-              <div className="border-2 border-dashed border-white/10 hover:border-primary/40 rounded-xl p-6 text-center cursor-pointer transition-colors">
-                <p className="text-sm text-muted-foreground">Arraste o arquivo aqui ou clique para selecionar</p>
-                <p className="text-xs text-muted-foreground/60 mt-1">Formatos aceitos: .OFX, .CSV, .XLSX</p>
+              <div 
+                className="border-2 border-dashed border-white/10 hover:border-primary/40 rounded-xl p-6 text-center cursor-pointer transition-colors"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef?.click()}
+              >
+                <input
+                  ref={setFileInputRef}
+                  type="file"
+                  accept=".ofx,.csv,.xlsx,.xls"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+                {arquivoNome ? (
+                  <div className="flex items-center justify-center gap-2">
+                    <FileText className="w-6 h-6 text-success" />
+                    <p className="text-sm text-white font-medium">{arquivoNome}</p>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-sm text-muted-foreground">Arraste o arquivo aqui ou clique para selecionar</p>
+                    <p className="text-xs text-muted-foreground/60 mt-1">Formatos aceitos: .OFX, .CSV, .XLSX</p>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -597,13 +627,25 @@ function ImportarModal({ onClose, onSave }: { onClose: () => void; onSave: (data
               Cancelar
             </button>
             <button 
-              onClick={() => contaSelecionada && setStep("extrato")}
-              disabled={!contaSelecionada}
+              onClick={() => arquivoNome && contaSelecionada && setStep("extrato")}
+              disabled={!contaSelecionada || !arquivoNome}
               className="w-full sm:w-auto px-10 py-2.5 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2"
             >
               <ChevronsRight className="w-4 h-4" /> Carregar Extrato
             </button>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "carregando") {
+    return (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="bg-card border border-white/10 rounded-2xl w-full max-w-md shadow-2xl p-8 text-center">
+          <Loader2 className="w-12 h-12 text-primary animate-spin mx-auto mb-4" />
+          <h3 className="text-lg font-bold text-white mb-2">Processando arquivo...</h3>
+          <p className="text-sm text-muted-foreground">{arquivoNome}</p>
         </div>
       </div>
     );
