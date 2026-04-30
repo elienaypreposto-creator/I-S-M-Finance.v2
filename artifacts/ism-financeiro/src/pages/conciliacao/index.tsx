@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { PageHeader } from "@/components/shared/page-header";
-import { Plus, Search, Trash2, ArrowRight, X, Link2, Ban, ChevronsRight, CheckCircle, AlertCircle, Pencil, Calendar, Banknote } from "lucide-react";
+import { DateRangePicker } from "@/components/shared/date-range-picker";
+import { Plus, Search, Trash2, ArrowRight, X, Link2, Ban, ChevronsRight, CheckCircle, AlertCircle, Pencil } from "lucide-react";
 
 const contasBancarias = [
   { id: 1, banco: "Itaú", agencia: "1234", conta: "56789-0" },
@@ -331,20 +332,14 @@ export default function ConciliacaoList() {
               ))}
             </select>
           </div>
-          <div className="flex items-center gap-2 bg-[#1a1c23] border border-white/10 rounded-lg px-3 py-1.5">
-            <Calendar className="w-3.5 h-3.5 text-primary" />
-            <input
-              type="date"
-              value={filtroDataInicio}
-              onChange={e => setFiltroDataInicio(e.target.value)}
-              className="bg-transparent border-none outline-none text-xs text-white w-24"
-            />
-            <span className="text-white/30">até</span>
-            <input
-              type="date"
-              value={filtroDataFim}
-              onChange={e => setFiltroDataFim(e.target.value)}
-              className="bg-transparent border-none outline-none text-xs text-white w-24"
+          <DateRangePicker
+              startDate={filtroDataInicio}
+              endDate={filtroDataFim}
+              className="w-auto justify-start"
+              onChange={(start: string, end: string) => {
+                setFiltroDataInicio(start);
+                setFiltroDataFim(end);
+              }}
             />
           </div>
           {(filtroStatus || filtroConta || filtroDataInicio || filtroDataFim) && (
