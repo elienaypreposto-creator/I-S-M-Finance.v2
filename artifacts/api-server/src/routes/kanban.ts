@@ -1,241 +1,161 @@
 import { Router } from "express";
-import { db } from "@workspace/db";
-import { kanbanCardsTable, kanbanComentariosTable, kanbanAnexosTable, kanbanHistoricoTable, usuariosTable } from "@workspace/db/schema";
-import { eq, and } from "drizzle-orm";
+import { supabase } from "../lib/supabase";
 
 const router = Router();
 
-router.get("/kanban/cards", async (req, res) => {
+// GET /api/kanban/cards
+router.get("/cards", async (req, res) => {
   try {
     const { prioridade, responsavel_id, prazo } = req.query;
+    
+    let query = supabase
+      .from("kanban_cards")
+      .select(`
+        *,
+        responsavel:usuarios!responsavel_id(id, nome),
+        comentarios:kanban_comentarios(count),
+        anexos:kanban_anexos(count)
+      `);
 
-    let conditions: any[] = [];
-    if (prioridade) conditions.push(eq(kanbanCardsTable.prioridade, String(prioridade)));
-    if (responsavel_id) conditions.push(eq(kanbanCardsTable.responsavel_id, parseInt(String(responsavel_id))));
+    if (prioridade) query = query.eq("prioridade", String(prioridade));
+    if (responsavel_id) query = query.eq("responsavel_id", parseInt(String(responsavel_id)));
+    
     if (prazo) {
       const hoje = new Date().toISOString().split('T')[0];
       if (prazo === "atrasado") {
-        conditions.push(eq(kanbanCardsTable.prazo, hoje));
+        query = query.lt("prazo", hoje);
+      } else if (prazo === "hoje") {
+        query = query.eq("prazo", hoje);
       } else if (prazo === "proximos") {
         const proximaSemana = new Date();
         proximaSemana.setDate(proximaSemana.getDate() + 7);
-        conditions.push(eq(kanbanCardsTable.prazo, proximaSemana.toISOString().split('T')[0]));
+        query = query.lte("prazo", proximaSemana.toISOString().split('T')[0]).gte("prazo", hoje);
       }
     }
 
-    const cards = await db
-      .select({
-        id: kanbanCardsTable.id,
-        titulo: kanbanCardsTable.titulo,
-        descricao: kanbanCardsTable.descricao,
-        coluna: kanbanCardsTable.coluna,
-        responsavel_id: kanbanCardsTable.responsavel_id,
-        responsavel_nome: usuariosTable.nome,
-        responsaveis_multiplos: kanbanCardsTable.responsaveis_multiplos,
-        responsaveis_nomes: usuariosTable.nome,
-        departamentos: kanbanCardsTable.departamentos,
-        tags: kanbanCardsTable.tags,
-        checklist: kanbanCardsTable.checklist,
-        comentarios_count: kanbanCardsTable.comentarios_count,
-        anexos_count: kanbanCardsTable.anexos_count,
-        prazo: kanbanCardsTable.prazo,
-        prioridade: kanbanCardsTable.prioridade,
-        created_by: kanbanCardsTable.created_by,
-        created_at: kanbanCardsTable.created_at,
-      })
-      .from(kanbanCardsTable)
-      .leftJoin(usuariosTable, eq(kanbanCardsTable.responsavel_id, usuariosTable.id))
-      .where(conditions.length > 0 ? and(...conditions) : undefined)
-      .orderBy(kanbanCardsTable.prioridade, kanbanCardsTable.prazo);
+    const { data, error } = await query.order("created_at", { ascending: false });
 
-    return res.json(cards);
-  } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    if (error) throw error;
+
+    // Transform data to match frontend expectation (nesting count)
+    const cards = data.map(card => ({
+      ...card,
+      comentarios_count: card.comentarios?.[0]?.count || 0,
+      anexos_count: card.anexos?.[0]?.count || 0,
+      comentarios: undefined,
+      anexos: undefined
+    }));
+
+    res.json(cards);
+  } catch (error: any) {
+    console.error("Erro ao buscar cards:", error);
+    res.status(500).json({ error: "Erro interno", message: error.message });
   }
 });
 
-router.get("/kanban/cards/:id", async (req, res) => {
+// POST /api/kanban/cards
+router.post("/cards", async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    const [card] = await db.select({
-      id: kanbanCardsTable.id,
-      titulo: kanbanCardsTable.titulo,
-      descricao: kanbanCardsTable.descricao,
-      coluna: kanbanCardsTable.coluna,
-      responsavel_id: kanbanCardsTable.responsavel_id,
-      responsavel_nome: usuariosTable.nome,
-      responsaveis_multiplos: kanbanCardsTable.responsaveis_multiplos,
-      departamentos: kanbanCardsTable.departamentos,
-      tags: kanbanCardsTable.tags,
-      checklist: kanbanCardsTable.checklist,
-      comentarios_count: kanbanCardsTable.comentarios_count,
-      anexos_count: kanbanCardsTable.anexos_count,
-      prazo: kanbanCardsTable.prazo,
-      prioridade: kanbanCardsTable.prioridade,
-      created_by: kanbanCardsTable.created_by,
-      created_at: kanbanCardsTable.created_at,
-    })
-      .from(kanbanCardsTable)
-      .leftJoin(usuariosTable, eq(kanbanCardsTable.responsavel_id, usuariosTable.id))
-      .where(eq(kanbanCardsTable.id, id));
+    const { titulo, descricao, prioridade, coluna, prazo, departamentos, checklist, tags } = req.body;
 
-    if (!card) return res.status(404).json({ error: "Not found" });
-
-    const comentarios = await db.select().from(kanbanComentariosTable)
-      .where(eq(kanbanComentariosTable.card_id, id))
-      .orderBy(kanbanComentariosTable.created_at);
-
-    const historico = await db.select().from(kanbanHistoricoTable)
-      .where(eq(kanbanHistoricoTable.card_id, id))
-      .orderBy(kanbanHistoricoTable.created_at);
-
-    return res.json({ ...card, comentarios, historico });
-  } catch (e) {
-    return res.status(500).json({ error: String(e) });
-  }
-});
-
-router.post("/kanban/cards", async (req, res) => {
-  try {
-    const { coluna, ...cardData } = req.body;
-    console.log("POST /api/kanban/cards - Request Body:", req.body);
-    
-    // Sanitizar prazo se for string vazia
-    if (cardData.prazo === "") cardData.prazo = null;
-
-    const [card] = await db.insert(kanbanCardsTable).values({
-      ...cardData,
-      coluna: coluna || "solicitado",
-    }).returning();
-
-    console.log("POST /api/kanban/cards - Created Card:", card);
-
-    await db.insert(kanbanHistoricoTable).values({
-      card_id: card.id,
-      coluna_nova: coluna || "solicitado",
-      comentario: "Card criado",
-    });
-
-    return res.status(201).json(card);
-  } catch (e) {
-    return res.status(500).json({ error: String(e) });
-  }
-});
-
-router.put("/kanban/cards/:id", async (req, res) => {
-  try {
-    const id = parseInt(req.params.id);
-    const { comentario, ...updateData } = req.body;
-
-    const [current] = await db.select().from(kanbanCardsTable).where(eq(kanbanCardsTable.id, id));
-    if (!current) return res.status(404).json({ error: "Not found" });
-
-    const [card] = await db.update(kanbanCardsTable).set({ ...updateData, updated_at: new Date() })
-      .where(eq(kanbanCardsTable.id, id)).returning();
-
-if (updateData.coluna && updateData.coluna !== current.coluna) {
-      await db.insert(kanbanHistoricoTable).values({
-        card_id: id,
-        coluna_anterior: current.coluna,
-        coluna_nova: updateData.coluna,
-        comentario: comentario || `Movido para ${updateData.coluna}`,
-      });
-    } else if (comentario) {
-      await db.insert(kanbanHistoricoTable).values({
-        card_id: id,
-        comentario,
-      });
+    if (!titulo) {
+      return res.status(400).json({ error: "Título é obrigatório" });
     }
 
-    return res.json(card);
-  } catch (e) {
-    return res.status(500).json({ error: String(e) });
-  }
-});
+    const { data, error } = await supabase
+      .from("kanban_cards")
+      .insert([{
+        titulo,
+        descricao,
+        prioridade: prioridade || "media",
+        coluna: coluna || "solicitado",
+        prazo: prazo || null,
+        departamentos: departamentos || [],
+        checklist: checklist || [],
+        tags: tags || [],
+        comentarios_count: 0,
+        anexos_count: 0
+      }])
+      .select()
+      .single();
 
-router.patch("/kanban/cards/:id/mover", async (req, res) => {
-  try {
-    const id = parseInt(req.params.id);
-    const { coluna } = req.body;
+    if (error) throw error;
 
-    const [current] = await db.select().from(kanbanCardsTable).where(eq(kanbanCardsTable.id, id));
-    if (!current) return res.status(404).json({ error: "Not found" });
+    // Criar histórico
+    await supabase
+      .from("kanban_historico")
+      .insert([{
+        card_id: data.id,
+        tipo: "criacao",
+        descricao: `Tarefa "${titulo}" criada`,
+      }]);
 
-    const [card] = await db.update(kanbanCardsTable).set({ coluna, updated_at: new Date() })
-      .where(eq(kanbanCardsTable.id, id)).returning();
-
-    await db.insert(kanbanHistoricoTable).values({
-      card_id: id,
-      coluna_anterior: current.coluna,
-      coluna_nova: coluna,
-      comentario: `Movido para ${coluna}`,
-    });
-
-    return res.json(card);
-  } catch (e) {
-    return res.status(500).json({ error: String(e) });
-  }
-});
-
-router.post("/kanban/cards/:id/comentarios", async (req, res) => {
-  try {
-    const id = parseInt(req.params.id);
-    const { usuario_id, comentario } = req.body;
-
-    const [novoComentario] = await db.insert(kanbanComentariosTable).values({
-      card_id: id,
-      usuario_id,
-      comentario,
-    }).returning();
-
-    const [card] = await db.select().from(kanbanCardsTable).where(eq(kanbanCardsTable.id, id));
-    const novoCount = (card?.comentarios_count || 0) + 1;
+    res.status(201).json(data);
+  } catch (error: any) {
+    console.error("Erro ao criar card:", error);
     
-    await db.update(kanbanCardsTable).set({ comentarios_count: novoCount })
-      .where(eq(kanbanCardsTable.id, id));
-
-    return res.status(201).json(novoComentario);
-  } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    // Log do erro no banco via Supabase (mesmo se o log falhar, retornamos o erro original)
+    try {
+      await supabase.from("logs_sistema").insert([{
+        servico: "api-kanban",
+        mensagem: "Erro ao criar card: " + error.message,
+        detalhes: JSON.stringify({ body: req.body, stack: error.stack })
+      }]);
+    } catch (logErr) {
+      console.error("Falha ao salvar log:", logErr);
+    }
+    
+    res.status(500).json({ error: "Erro interno", message: error.message });
   }
 });
 
-router.get("/kanban/cards/:id/comentarios", async (req, res) => {
+// PATCH /api/kanban/cards/:id
+router.patch("/cards/:id", async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    const comentarios = await db.select().from(kanbanComentariosTable)
-      .where(eq(kanbanComentariosTable.card_id, id))
-      .orderBy(kanbanComentariosTable.created_at);
-    return res.json(comentarios);
-  } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    const { id } = req.params;
+    const updates = req.body;
+
+    const { data, error } = await supabase
+      .from("kanban_cards")
+      .update(updates)
+      .eq("id", parseInt(id))
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    // Se a coluna mudou, registrar no histórico
+    if (updates.coluna) {
+      await supabase
+        .from("kanban_historico")
+        .insert([{
+          card_id: parseInt(id),
+          tipo: "movimentacao",
+          descricao: `Movido para ${updates.coluna}`,
+          coluna_destino: updates.coluna
+        }]);
+    }
+
+    res.json(data);
+  } catch (error: any) {
+    console.error("Erro ao atualizar card:", error);
+    res.status(500).json({ error: "Erro interno", message: error.message });
   }
 });
 
-router.get("/kanban/usuarios", async (_req, res) => {
+// GET /api/kanban/usuarios
+router.get("/usuarios", async (req, res) => {
   try {
-    const usuarios = await db.select({
-      id: usuariosTable.id,
-      nome: usuariosTable.nome,
-      email: usuariosTable.email,
-      avatar: usuariosTable.avatar,
-    }).from(usuariosTable);
-    return res.json(usuarios);
-  } catch (e) {
-    return res.status(500).json({ error: String(e) });
-  }
-});
+    const { data, error } = await supabase
+      .from("usuarios")
+      .select("id, nome, email")
+      .order("nome");
 
-router.delete("/kanban/cards/:id", async (req, res) => {
-  try {
-    const id = parseInt(req.params.id);
-    await db.delete(kanbanComentariosTable).where(eq(kanbanComentariosTable.card_id, id));
-    await db.delete(kanbanAnexosTable).where(eq(kanbanAnexosTable.card_id, id));
-    await db.delete(kanbanHistoricoTable).where(eq(kanbanHistoricoTable.card_id, id));
-    await db.delete(kanbanCardsTable).where(eq(kanbanCardsTable.id, id));
-    return res.status(204).send();
-  } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    if (error) throw error;
+    res.json(data);
+  } catch (error: any) {
+    console.error("Erro ao buscar usuários:", error);
+    res.status(500).json({ error: "Erro interno", message: error.message });
   }
 });
 

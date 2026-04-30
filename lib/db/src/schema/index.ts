@@ -9,3 +9,4 @@ export * from "./conciliacoes";
 export * from "./kanban";
 export * from "./tokens-api";
 export * from "./departamentos";
+export * from "./logs";

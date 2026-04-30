@@ -3,6 +3,7 @@ import pg from "pg";
 import * as schema from "./schema";
 
 const { Pool } = pg;
+pg.defaults.ssl = { rejectUnauthorized: false };
 
 // Lazy initialization: only create the pool when first needed.
 // This prevents the serverless function from crashing on cold start
@@ -22,6 +23,9 @@ function getPool(): pg.Pool {
       connectionString,
       // Limit connections in serverless environment
       max: 5,
+      ssl: {
+        rejectUnauthorized: false
+      },
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
     });

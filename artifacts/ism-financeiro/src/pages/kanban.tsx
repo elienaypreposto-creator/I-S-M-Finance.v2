@@ -177,16 +177,8 @@ export default function Kanban() {
       method: "POST",
       body: JSON.stringify(data),
     }),
-    onSuccess: (newCard) => {
-      queryClient.setQueryData(["kanban-cards"], (old: Card[] = []) => [...old, {
-        ...newCard,
-        responsaveis_multiplos: newCard.responsaveis_multiplos || [],
-        departamentos: newCard.departamentos || [],
-        tags: newCard.tags || [],
-        checklist: newCard.checklist || [],
-        comentarios_count: 0,
-        anexos_count: 0
-      }]);
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["kanban-cards"] });
       toast.success("Tarefa criada com sucesso!");
     },
     onError: (err) => {

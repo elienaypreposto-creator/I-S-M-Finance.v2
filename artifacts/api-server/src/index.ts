@@ -1,3 +1,5 @@
+// @ts-ignore
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 import app from "./app";
 
 const port = process.env.PORT || 5000;

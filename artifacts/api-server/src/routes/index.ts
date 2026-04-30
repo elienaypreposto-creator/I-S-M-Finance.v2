@@ -25,7 +25,7 @@ router.use(contasBancariasRouter);
 router.use(planoContasRouter);
 router.use(metasRouter);
 router.use(conciliacoesRouter);
-router.use(kanbanRouter);
+router.use("/kanban", kanbanRouter);
 router.use(relatoriosRouter);
 router.use(usuariosRouter);
 router.use(filiaisRouter);
