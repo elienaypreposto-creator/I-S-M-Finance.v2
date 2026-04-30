@@ -113,10 +113,10 @@ function VincularModal({ item, onClose, onVincular }: { item: ExtratoItem; onClo
         )}
 
         <div className="flex flex-col sm:flex-row items-center justify-end gap-3 p-5 border-t border-white/5">
-          <button onClick={onClose} className="w-full sm:w-auto px-10 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">Cancelar</button>
+          <button onClick={onClose} className="w-full sm:w-auto px-10 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium order-2 sm:order-1">Cancelar</button>
           <button onClick={() => { onVincular(selecionados); onClose(); }}
             disabled={selecionados.length === 0}
-            className="w-full sm:w-auto px-10 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+            className="w-full sm:w-auto px-10 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 order-1 sm:order-2">
             <Link2 className="w-4 h-4" /> Confirmar Vínculo
           </button>
         </div>
@@ -174,10 +174,10 @@ function ImportarModal({ onClose }: { onClose: () => void }) {
             </div>
           </div>
           <div className="flex flex-col sm:flex-row items-center justify-end gap-3 p-6 pt-0">
-            <button onClick={onClose} className="w-full sm:w-auto px-10 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">Cancelar</button>
+            <button onClick={onClose} className="w-full sm:w-auto px-10 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium order-2 sm:order-1">Cancelar</button>
             <button onClick={() => contaSelecionada && setStep("extrato")}
               disabled={!contaSelecionada}
-              className="w-full sm:w-auto px-10 py-2.5 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2">
+              className="w-full sm:w-auto px-10 py-2.5 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2 order-1 sm:order-2">
               <ChevronsRight className="w-4 h-4" /> Carregar Extrato
             </button>
           </div>
@@ -267,8 +267,8 @@ function ImportarModal({ onClose }: { onClose: () => void }) {
           </div>
 
           <div className="flex flex-col sm:flex-row items-center justify-end gap-3 p-5 border-t border-white/5">
-            <button onClick={onClose} className="w-full sm:w-auto px-10 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">Fechar</button>
-            <button onClick={handleSalvar} className="w-full sm:w-auto px-10 py-2.5 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2">
+            <button onClick={onClose} className="w-full sm:w-auto px-10 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium order-2 sm:order-1">Fechar</button>
+            <button onClick={handleSalvar} className="w-full sm:w-auto px-10 py-2.5 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 order-1 sm:order-2">
               <CheckCircle className="w-4 h-4" />
               Salvar Conciliação
             </button>
@@ -285,7 +285,6 @@ export default function ConciliacaoList() {
   const [filtroConta, setFiltroConta] = useState("");
   const [filtroDataInicio, setFiltroDataInicio] = useState("");
   const [filtroDataFim, setFiltroDataFim] = useState("");
-  const [conciliacaoSelecionada, setConciliacaoSelecionada] = useState<number | null>(null);
 
   const filteredConciliacoes = conciliacoes.filter(c => {
     if (filtroStatus && c.status !== filtroStatus) return false;
@@ -333,15 +332,14 @@ export default function ConciliacaoList() {
             </select>
           </div>
           <DateRangePicker
-              startDate={filtroDataInicio}
-              endDate={filtroDataFim}
-              className="w-auto justify-start"
-              onChange={(start: string, end: string) => {
-                setFiltroDataInicio(start);
-                setFiltroDataFim(end);
-              }}
-            />
-          </div>
+            startDate={filtroDataInicio}
+            endDate={filtroDataFim}
+            className="w-auto justify-start"
+            onChange={(start: string, end: string) => {
+              setFiltroDataInicio(start);
+              setFiltroDataFim(end);
+            }}
+          />
           {(filtroStatus || filtroConta || filtroDataInicio || filtroDataFim) && (
             <button
               onClick={() => { setFiltroStatus(""); setFiltroConta(""); setFiltroDataInicio(""); setFiltroDataFim(""); }}
