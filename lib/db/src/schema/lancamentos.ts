@@ -22,6 +22,7 @@ export const lancamentosTable = pgTable("lancamentos", {
   parcela_atual: integer("parcela_atual").default(1),
   total_parcelas: integer("total_parcelas").default(1),
   riscos: jsonb("riscos").$type<string[]>().default([]),
+  criado_por: integer("criado_por").references(() => usuariosTable.id),
   created_at: timestamp("created_at").defaultNow().notNull(),
   updated_at: timestamp("updated_at").defaultNow().notNull(),
 });
