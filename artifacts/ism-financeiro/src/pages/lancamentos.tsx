@@ -463,14 +463,14 @@ function LancamentoModal({ onClose, onSaved, editItem }: { onClose: () => void; 
             <button
               type="button"
               onClick={onClose}
-              className="w-full sm:w-auto px-10 py-3 rounded-xl border border-white/10 text-white hover:bg-white/5 text-sm font-bold transition-all order-2 sm:order-1"
+              className="w-full sm:w-auto px-10 py-3 rounded-xl border border-white/10 text-white hover:bg-white/5 text-sm font-bold transition-all"
             >
               Cancelar
             </button>
             <button
               type="submit"
               disabled={mutation.isPending}
-              className="w-full sm:w-auto px-10 py-3 rounded-xl bg-primary hover:bg-primary/90 text-white text-sm font-black shadow-xl shadow-primary/25 transition-all disabled:opacity-50 flex items-center justify-center gap-2 order-1 sm:order-2"
+              className="w-full sm:w-auto px-10 py-3 rounded-xl bg-primary hover:bg-primary/90 text-white text-sm font-black shadow-xl shadow-primary/25 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {mutation.isPending ? (
                 <Loader2 className="w-5 h-5 animate-spin" />
@@ -495,6 +495,7 @@ export default function Lancamentos() {
   const [page, setPage] = useState(1);
   const [dateStart, setDateStart] = useState("");
   const [dateEnd, setDateEnd] = useState("");
+  const [filtroStatus, setFiltroStatus] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [editItem, setEditItem] = useState<Lancamento | null>(null);
   const queryClient = useQueryClient();
@@ -510,13 +511,14 @@ export default function Lancamentos() {
   const tipo = activeTab === "cr" ? "CR" : activeTab === "cp" ? "CP" : undefined;
 
   const { data, isLoading, isError, error } = useQuery<ApiResponse>({
-    queryKey: ["lancamentos", tipo, debouncedSearch, page, dateStart, dateEnd],
+    queryKey: ["lancamentos", tipo, debouncedSearch, page, dateStart, dateEnd, filtroStatus],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (tipo) params.set("tipo", tipo);
       if (debouncedSearch) params.set("search", debouncedSearch);
       if (dateStart) params.set("data_inicio", dateStart);
       if (dateEnd) params.set("data_fim", dateEnd);
+      if (filtroStatus) params.set("status", filtroStatus);
       params.set("page", String(page));
       params.set("limit", String(limit));
       const res = await fetch(`${API_URL}/lancamentos?${params}`);
@@ -585,8 +587,8 @@ export default function Lancamentos() {
       <div className="glass-panel rounded-2xl flex flex-col overflow-hidden flex-1 min-h-0">
         {/* Toolbar */}
         <div className="px-4 py-2.5 border-b border-white/5 flex flex-col xl:flex-row xl:items-center justify-between gap-4 bg-black/10">
-          <div className="flex flex-col md:flex-row md:items-center gap-4">
-            <div className="flex bg-black/20 rounded-lg p-0.5 border border-white/5 w-full md:w-auto">
+<div className="flex flex-col md:flex-row md:items-center gap-4">
+              <div className="flex bg-black/20 rounded-lg p-0.5 border border-white/5 w-full md:w-auto">
                 {TABS.map(({ key, label }) => (
                 <button key={key}
                     onClick={() => { setActiveTab(key); setPage(1); }}
@@ -601,6 +603,19 @@ export default function Lancamentos() {
                 </button>
                 ))}
             </div>
+
+            <select
+              value={filtroStatus}
+              onChange={e => { setFiltroStatus(e.target.value); setPage(1); }}
+              className="bg-[#1a1c23] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-primary/50 cursor-pointer"
+            >
+              <option value="">Status</option>
+              <option value="pendente">Pendente</option>
+              <option value="pago">Pago</option>
+              <option value="recebido">Recebido</option>
+              <option value="atrasado">Atrasado</option>
+              <option value="cancelado">Cancelado</option>
+            </select>
 
             <div className="flex items-center gap-2 w-full md:w-auto">
               <DateRangePicker 

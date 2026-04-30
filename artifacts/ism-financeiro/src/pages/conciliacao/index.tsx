@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { PageHeader } from "@/components/shared/page-header";
-import { Plus, Search, Trash2, ArrowRight, X, Link2, Ban, ChevronsRight, CheckCircle, AlertCircle } from "lucide-react";
+import { Plus, Search, Trash2, ArrowRight, X, Link2, Ban, ChevronsRight, CheckCircle, AlertCircle, Pencil, Calendar, Banknote } from "lucide-react";
 
 const contasBancarias = [
   { id: 1, banco: "Itaú", agencia: "1234", conta: "56789-0" },
@@ -112,10 +112,10 @@ function VincularModal({ item, onClose, onVincular }: { item: ExtratoItem; onClo
         )}
 
         <div className="flex flex-col sm:flex-row items-center justify-end gap-3 p-5 border-t border-white/5">
-          <button onClick={onClose} className="w-full sm:w-auto px-10 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium order-2 sm:order-1">Cancelar</button>
+          <button onClick={onClose} className="w-full sm:w-auto px-10 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">Cancelar</button>
           <button onClick={() => { onVincular(selecionados); onClose(); }}
             disabled={selecionados.length === 0}
-            className="w-full sm:w-auto px-10 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 order-1 sm:order-2">
+            className="w-full sm:w-auto px-10 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
             <Link2 className="w-4 h-4" /> Confirmar Vínculo
           </button>
         </div>
@@ -173,10 +173,10 @@ function ImportarModal({ onClose }: { onClose: () => void }) {
             </div>
           </div>
           <div className="flex flex-col sm:flex-row items-center justify-end gap-3 p-6 pt-0">
-            <button onClick={onClose} className="w-full sm:w-auto px-10 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium order-2 sm:order-1">Cancelar</button>
+            <button onClick={onClose} className="w-full sm:w-auto px-10 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">Cancelar</button>
             <button onClick={() => contaSelecionada && setStep("extrato")}
               disabled={!contaSelecionada}
-              className="w-full sm:w-auto px-10 py-2.5 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2 order-1 sm:order-2">
+              className="w-full sm:w-auto px-10 py-2.5 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2">
               <ChevronsRight className="w-4 h-4" /> Carregar Extrato
             </button>
           </div>
@@ -266,8 +266,8 @@ function ImportarModal({ onClose }: { onClose: () => void }) {
           </div>
 
           <div className="flex flex-col sm:flex-row items-center justify-end gap-3 p-5 border-t border-white/5">
-            <button onClick={onClose} className="w-full sm:w-auto px-10 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium order-2 sm:order-1">Fechar</button>
-            <button onClick={handleSalvar} className="w-full sm:w-auto px-10 py-2.5 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 order-1 sm:order-2">
+            <button onClick={onClose} className="w-full sm:w-auto px-10 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">Fechar</button>
+            <button onClick={handleSalvar} className="w-full sm:w-auto px-10 py-2.5 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2">
               <CheckCircle className="w-4 h-4" />
               Salvar Conciliação
             </button>
@@ -280,6 +280,17 @@ function ImportarModal({ onClose }: { onClose: () => void }) {
 
 export default function ConciliacaoList() {
   const [showImportar, setShowImportar] = useState(false);
+  const [filtroStatus, setFiltroStatus] = useState("");
+  const [filtroConta, setFiltroConta] = useState("");
+  const [filtroDataInicio, setFiltroDataInicio] = useState("");
+  const [filtroDataFim, setFiltroDataFim] = useState("");
+  const [conciliacaoSelecionada, setConciliacaoSelecionada] = useState<number | null>(null);
+
+  const filteredConciliacoes = conciliacoes.filter(c => {
+    if (filtroStatus && c.status !== filtroStatus) return false;
+    if (filtroConta && c.banco.toLowerCase() !== filtroConta.toLowerCase()) return false;
+    return true;
+  });
 
   return (
     <div className="space-y-6">
@@ -296,6 +307,55 @@ export default function ConciliacaoList() {
       />
 
       <div className="glass-panel rounded-2xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-white/5 flex flex-wrap items-center gap-3 bg-black/10">
+          <div className="flex items-center gap-2">
+            <select
+              value={filtroStatus}
+              onChange={e => setFiltroStatus(e.target.value)}
+              className="bg-[#1a1c23] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-primary/50 cursor-pointer"
+            >
+              <option value="">Status</option>
+              <option value="conciliado">Conciliado</option>
+              <option value="pendente">Pendente</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={filtroConta}
+              onChange={e => setFiltroConta(e.target.value)}
+              className="bg-[#1a1c23] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-primary/50 cursor-pointer"
+            >
+              <option value="">Todas as Contas</option>
+              {contasBancarias.map(c => (
+                <option key={c.id} value={c.banco}>{c.banco}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-2 bg-[#1a1c23] border border-white/10 rounded-lg px-3 py-1.5">
+            <Calendar className="w-3.5 h-3.5 text-primary" />
+            <input
+              type="date"
+              value={filtroDataInicio}
+              onChange={e => setFiltroDataInicio(e.target.value)}
+              className="bg-transparent border-none outline-none text-xs text-white w-24"
+            />
+            <span className="text-white/30">até</span>
+            <input
+              type="date"
+              value={filtroDataFim}
+              onChange={e => setFiltroDataFim(e.target.value)}
+              className="bg-transparent border-none outline-none text-xs text-white w-24"
+            />
+          </div>
+          {(filtroStatus || filtroConta || filtroDataInicio || filtroDataFim) && (
+            <button
+              onClick={() => { setFiltroStatus(""); setFiltroConta(""); setFiltroDataInicio(""); setFiltroDataFim(""); }}
+              className="text-xs text-muted-foreground hover:text-white flex items-center gap-1"
+            >
+              <X className="w-3 h-3" /> Limpar
+            </button>
+          )}
+        </div>
         <div className="overflow-x-auto responsive-table-container">
           <table className="w-full text-left text-sm whitespace-nowrap table-to-cards">
             <thead className="bg-black/20 text-muted-foreground">
@@ -311,8 +371,8 @@ export default function ConciliacaoList() {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {conciliacoes.map(c => (
-                <tr key={c.id} className="hover:bg-white/5 transition-colors group">
+              {filteredConciliacoes.map(c => (
+                <tr key={c.id} className="hover:bg-white/5 transition-colors group cursor-pointer" onDoubleClick={() => setShowImportar(true)}>
                   <td className="px-6 py-4 text-center" data-label="Status">
                     <span className={`text-xs px-3 py-1.5 rounded-full font-medium ${c.status === "conciliado" ? "bg-success/20 text-success" : "bg-white/10 text-muted-foreground"}`}>
                       {c.status === "conciliado" ? "Conciliado" : "Pendente"}
@@ -329,8 +389,8 @@ export default function ConciliacaoList() {
                   <td className="px-6 py-4 text-center font-bold text-white" data-label="Total">{c.total}</td>
                   <td className="px-6 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
-                      <button onClick={() => setShowImportar(true)} className="flex items-center gap-1 px-4 py-2.5 bg-primary/10 text-primary hover:bg-primary/20 rounded-xl text-xs font-medium transition-colors touch-target-exempt">
-                        Continuar <ArrowRight className="w-4 h-4" />
+                      <button onClick={() => setShowImportar(true)} className="p-2.5 rounded-xl hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors touch-target-exempt" title="Editar">
+                        <Pencil className="w-5 h-5" />
                       </button>
                       <button className="p-2.5 rounded-xl hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors touch-target-exempt">
                         <Trash2 className="w-5 h-5" />
