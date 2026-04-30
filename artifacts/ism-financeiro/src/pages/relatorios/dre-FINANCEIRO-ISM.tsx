@@ -46,13 +46,17 @@ import { useQuery } from "@tanstack/react-query";
 
 import { API_URL, fetchApi } from "@/lib/api-config";
 
+interface DreResponse {
+  linhas: DreRow[];
+}
+
 export default function DreGerencial() {
   const [dateStart, setDateStart] = useState(format(startOfYear(new Date()), "yyyy-MM-dd"));
   const [dateEnd, setDateEnd] = useState(format(endOfYear(new Date()), "yyyy-MM-dd"));
   const [regime, setRegime] = useState<"competencia" | "caixa">("competencia");
   const ano = new Date(dateStart).getFullYear();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading } = useQuery<DreResponse>({
     queryKey: ["relatorio-dre", ano, regime],
     queryFn: () => fetchApi(`/relatorios/dre?ano=${ano}&regime=${regime}`)
   });

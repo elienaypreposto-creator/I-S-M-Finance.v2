@@ -222,7 +222,7 @@ export default function ContasBancarias() {
             <div className="pt-3 border-t border-white/5">
               <p className="text-xs text-muted-foreground mb-1">Saldo Atual</p>
               <p className="text-xl font-bold" style={{ color: conta.cor }}>
-                {showSaldos ? formatCurrency(conta.saldo) : "R$ ••••••"}
+                {showSaldos ? formatCurrency(conta.saldo_atual) : "R$ ••••••"}
               </p>
             </div>
           </div>

@@ -53,12 +53,16 @@ import { format, startOfYear, endOfYear } from "date-fns";
 
 import { API_URL, fetchApi } from "@/lib/api-config";
 
+interface FluxoCaixaResponse {
+  secoes: any[];
+}
+
 export default function FluxoCaixa() {
   const [dateStart, setDateStart] = useState(format(startOfYear(new Date()), "yyyy-MM-dd"));
   const [dateEnd, setDateEnd] = useState(format(endOfYear(new Date()), "yyyy-MM-dd"));
   const ano = new Date(dateStart).getFullYear();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading } = useQuery<FluxoCaixaResponse>({
     queryKey: ["relatorio-fluxo", ano],
     queryFn: () => fetchApi(`/relatorios/fluxo-caixa?ano=${ano}`)
   });
