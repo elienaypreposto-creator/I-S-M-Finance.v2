@@ -1,20 +1,56 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { PageHeader } from "@/components/shared/page-header";
-import { Plus, Landmark, Eye, EyeOff, CheckCircle, AlertCircle, Clock, X } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Plus, Landmark, Eye, EyeOff, CheckCircle, AlertCircle, Clock, X, Loader2 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
-const contas = [
-  { id: 1, banco: "Itaú", agencia: "1234", conta: "56789-0", tipo: "Conta Corrente", saldo: 215430.50, status: "ativo", cor: "#3BA8DC" },
-  { id: 2, banco: "Bradesco", agencia: "4321", conta: "98765-4", tipo: "Conta Corrente", saldo: 87200.00, status: "ativo", cor: "#E67E22" },
-  { id: 3, banco: "Nubank", agencia: "0001", conta: "11223344-5", tipo: "Conta PJ", saldo: 42000.00, status: "ativo", cor: "#8B5CF6" },
-  { id: 4, banco: "Caixa Econômica", agencia: "9999", conta: "00123456-7", tipo: "Poupança", saldo: 15000.00, status: "inativo", cor: "#27AE60" },
-];
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+
+type ContaBancaria = {
+  id: number; tipo: string; banco: string; agencia: string; conta: string; nome: string;
+  saldo_inicial: number; saldo_atual: number; data_inicio: string; status: string; cor: string;
+};
 
 interface ModalProps { onClose: () => void }
 
 function NovaContaModal({ onClose }: ModalProps) {
   const [step, setStep] = useState(1);
-  const [form, setForm] = useState({ banco: "", agencia: "", conta: "", tipo: "Conta Corrente", descricao: "" });
+  const [form, setForm] = useState({ 
+    banco: "", agencia: "", conta: "", tipo: "corrente", nome: "", descricao: "", 
+    saldo_inicial: "0", data_inicio: new Date().toISOString().split("T")[0]
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const queryClient = useQueryClient();
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError("");
+    try {
+      const res = await fetch(`${API_URL}/contas-bancarias`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tipo: form.tipo,
+          banco: form.banco,
+          agencia: form.agencia,
+          conta: form.conta,
+          nome: form.nome || form.banco,
+          saldo_inicial: parseFloat(form.saldo_inicial) || 0,
+          data_inicio: form.data_inicio,
+          status: "ativo",
+          cor: "#3BA8DC"
+        })
+      });
+      if (!res.ok) throw new Error("Erro ao salvar conta");
+      queryClient.invalidateQueries({ queryKey: ["contas-bancarias"] });
+      onClose();
+    } catch (e: any) {
+      setError(e.message || "Erro ao salvar");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -43,10 +79,10 @@ function NovaContaModal({ onClose }: ModalProps) {
               <div>
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Tipo de Conta</label>
                 <select value={form.tipo} onChange={e => setForm({ ...form, tipo: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors">
-                  <option value="Conta Corrente">Conta Corrente</option>
-                  <option value="Conta PJ">Conta PJ</option>
-                  <option value="Poupança">Poupança</option>
-                  <option value="Investimento">Investimento</option>
+                  <option value="corrente">Conta Corrente</option>
+                  <option value="movimento">Conta Movimento</option>
+                  <option value="poupanca">Poupança</option>
+                  <option value="investimento">Investimento</option>
                 </select>
               </div>
             </>
@@ -91,8 +127,12 @@ function NovaContaModal({ onClose }: ModalProps) {
           {step > 1 && <button onClick={() => setStep(s => s - 1)} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium transition-all">Voltar</button>}
           {step < 3
             ? <button onClick={() => setStep(s => s + 1)} className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium transition-all">Próximo</button>
-            : <button onClick={onClose} className="flex-1 py-2.5 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-medium transition-all">Confirmar Cadastro</button>
+            : <button onClick={handleSave} disabled={saving} className="flex-1 py-2.5 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2">
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                Confirmar Cadastro
+              </button>
           }
+          {error && <p className="text-xs text-destructive mt-2 text-center">{error}</p>}
         </div>
       </div>
     </div>
@@ -102,7 +142,17 @@ function NovaContaModal({ onClose }: ModalProps) {
 export default function ContasBancarias() {
   const [showSaldos, setShowSaldos] = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const totalSaldo = contas.filter(c => c.status === "ativo").reduce((acc, c) => acc + c.saldo, 0);
+  
+  const { data: contas = [], isLoading } = useQuery<ContaBancaria[]>({
+    queryKey: ["contas-bancarias"],
+    queryFn: async () => {
+      const res = await fetch(`${API_URL}/contas-bancarias`);
+      if (!res.ok) return [];
+      return res.json();
+    }
+  });
+
+  const totalSaldo = contas.filter(c => c.status === "ativo").reduce((acc, c) => acc + (c.saldo_atual || 0), 0);
 
   return (
     <div className="space-y-6">
