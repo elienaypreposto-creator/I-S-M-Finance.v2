@@ -23,6 +23,7 @@ type ExtratoItem = {
   vinculados?: number[];
   desconto?: number;
   acrescimo?: number;
+  gerarResidual?: boolean;
 };
 
 type LancamentoConciliacao = {
@@ -515,13 +516,6 @@ function ImportarModal({ onClose, onSave }: { onClose: () => void; onSave: (data
   const [contaSelecionada, setContaSelecionada] = useState<ContaBancaria | null>(null);
   const [extrato, setExtrato] = useState<ExtratoItem[]>(extratoMock.map(e => ({ ...e, status: "pendente" as const })));
   const [vinculandoId, setVinculandoId] = useState<number | null>(null);
-  const [config, setConfig] = useState({
-    retornarConciliados: "nao",
-    filtrarConta: "sim",
-    dias: 30,
-    pesquisaAproximada: "nao"
-  });
-  const [showConfig, setShowConfig] = useState(false);
   const [fileInputRef, setFileInputRef] = useState<HTMLInputElement | null>(null);
   const [arquivoNome, setArquivoNome] = useState("");
 
@@ -567,9 +561,18 @@ const { data: contasAPI = [] } = useQuery<ContaBancaria[]>({
 
   const handleConfirmVincular = (itemId: number, data: any) => {
     setExtrato(e => e.map(item => item.id === itemId ? { 
-      ...item, status: "vinculado" as const, vinculados: data.lancamentos, desconto: data.desconto, acrescimo: data.acrescimo
+      ...item, 
+      status: "vinculado" as const, 
+      vinculados: data.lancamentos, 
+      desconto: data.desconto, 
+      acrescimo: data.acrescimo,
+      gerarResidual: true // Default to true when there is a difference
     } : item));
     setVinculandoId(null);
+  };
+
+  const toggleResidual = (itemId: number) => {
+    setExtrato(e => e.map(item => item.id === itemId ? { ...item, gerarResidual: !item.gerarResidual } : item));
   };
 
   const handleDesvincular = (id: number) => setExtrato(e => e.map(item => item.id === id ? { ...item, status: "pendente" as const, vinculados: undefined, desconto: 0, acrescimo: 0 } : item));
@@ -654,7 +657,6 @@ const { data: contasAPI = [] } = useQuery<ContaBancaria[]>({
           lancamentos={lancamentosDisponiveis}
         />
       )}
-      <ConfigModal open={showConfig} onClose={() => setShowConfig(false)} config={config} onSave={setConfig} />
 
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
         <div className="bg-card border-t sm:border border-white/10 rounded-t-3xl sm:rounded-2xl w-full max-w-6xl shadow-2xl max-h-[95vh] sm:max-h-[90vh] flex flex-col animate-in">
@@ -663,57 +665,118 @@ const { data: contasAPI = [] } = useQuery<ContaBancaria[]>({
               <h2 className="text-sm sm:text-lg font-bold text-white truncate">Conciliação — {contaSelecionada?.nome}</h2>
               <p className="text-[10px] sm:text-xs text-muted-foreground">Ag: {contaSelecionada?.agencia} · CC: {contaSelecionada?.conta}</p>
             </div>
-            <div className="hidden md:flex items-center gap-4 text-xs mx-4 shrink-0">
-              <span className="text-success font-semibold">{vinculados} vinc.</span>
-              <span className="text-muted-foreground">{ignorados} ign.</span>
-              <span className="text-warning font-semibold">{pendentes} pend.</span>
-              <span className="text-white">{totalItens} total</span>
-            </div>
-            <button onClick={() => setShowConfig(true)} className="p-2 hover:bg-white/5 rounded-lg shrink-0"><Settings className="w-5 h-5 text-muted-foreground" /></button>
             <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-lg shrink-0 ml-2"><X className="w-5 h-5" /></button>
           </div>
-          <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
-            <div className="flex-1 flex flex-col">
-              <div className="px-4 py-2 bg-white/5 border-b border-white/5 flex items-center justify-between">
-                <h3 className="text-sm font-bold text-white">Extrato</h3>
-              </div>
-              <div className="flex-1 overflow-y-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-white/5 sticky top-0">
-                    <tr>
-                      <th className="px-4 py-2 text-left font-medium text-muted-foreground text-xs">Data</th>
-                      <th className="px-4 py-2 text-left font-medium text-muted-foreground text-xs">Descrição</th>
-                      <th className="px-4 py-2 text-right font-medium text-muted-foreground text-xs">Valor</th>
-                      <th className="px-4 py-2 text-center font-medium text-muted-foreground text-xs">Status</th>
-                      <th className="px-4 py-2 text-right font-medium text-muted-foreground text-xs">Ações</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {extrato.map(item => (
-                      <tr key={item.id} className={cn("transition-colors", item.status === "vinculado" ? "bg-success/5" : item.status === "ignorado" ? "opacity-40" : "hover:bg-white/5")}>
-                        <td className="px-4 py-2 text-muted-foreground text-xs">{item.data}</td>
-                        <td className="px-4 py-2 text-white text-xs truncate max-w-[200px]">{item.descricao}</td>
-                        <td className={cn("px-4 py-2 text-right font-bold text-xs", item.valor > 0 ? "text-teal-400" : "text-destructive")}>{item.valor > 0 ? "+" : "-"}{formatCurrencyValue(item.valor)}</td>
-                        <td className="px-4 py-2 text-center">
-                          <span className={cn("text-xs px-2 py-0.5 rounded-full font-medium", item.status === "vinculado" ? "bg-success/20 text-success" : item.status === "ignorado" ? "bg-white/10 text-muted-foreground" : "bg-warning/20 text-warning")}>
-                            {item.status === "vinculado" ? "Vinculado" : item.status === "ignorado" ? "Ignorado" : "Pendente"}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2 text-right">
-                          <div className="flex items-center justify-end gap-1">
-                            {item.status === "pendente" ? (
-                              <><button onClick={() => handleIgnorar(item.id)} className="p-1.5 hover:bg-white/10 rounded-lg text-muted-foreground hover:text-white transition-colors" title="Ignorar"><Ban className="w-4 h-4" /></button>
-                                <button onClick={() => handleVincular(item.id)} className="p-1.5 hover:bg-primary/20 rounded-lg text-primary transition-colors" title="Vincular"><Link2 className="w-4 h-4" /></button></>
-                            ) : (
-                              <button onClick={() => handleDesvincular(item.id)} className="p-1.5 hover:bg-destructive/20 rounded-lg text-destructive transition-colors" title="Remover"><X className="w-4 h-4" /></button>
-                            )}
+          <div className="flex-1 overflow-hidden flex flex-col">
+            <div className="px-6 py-3 bg-white/5 border-b border-white/5 flex items-center text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
+               <div className="flex-1 text-center">Extrato</div>
+               <div className="w-20"></div>
+               <div className="flex-1 text-center">Movimentações não conciliadas</div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-black/40">
+               {extrato.map(item => {
+                 const linkedLancamentos = (item.vinculados || []).map(id => lancamentosDisponiveis.find(l => l.id === id)).filter(Boolean) as LancamentoConciliacao[];
+                 const totalLinked = linkedLancamentos.reduce((acc, l) => acc + l.valor, 0);
+                 const hasDifference = Math.abs(totalLinked) > Math.abs(item.valor);
+
+                 return (
+                   <div key={item.id} className={cn(
+                     "flex items-stretch gap-4 transition-all duration-300",
+                     item.status === "ignorado" ? "opacity-30 grayscale" : ""
+                   )}>
+                     {/* Left: Extrato */}
+                     <div className="flex-1 bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col justify-center relative">
+                        <div className="flex items-center justify-between mb-2">
+                           <span className="text-white font-bold text-xs">{item.descricao}</span>
+                           <div className="flex items-center gap-2">
+                              {item.status === "pendente" && (
+                                <button onClick={() => handleIgnorar(item.id)} className="p-1.5 hover:bg-white/10 rounded-lg text-muted-foreground hover:text-white transition-colors" title="Ignorar">
+                                  <Ban className="w-3.5 h-3.5" /> <span className="text-[10px] ml-1">Ignorar</span>
+                                </button>
+                              )}
+                              <span className={cn(
+                                "text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-tighter",
+                                item.status === "vinculado" ? "bg-success/20 text-success" : 
+                                item.status === "ignorado" ? "bg-white/10 text-muted-foreground" : "bg-warning/20 text-warning"
+                              )}>
+                                {item.status === "vinculado" ? "Vinculado" : item.status === "ignorado" ? "Ignorado" : "Pendente"}
+                              </span>
+                           </div>
+                        </div>
+                        <div className="flex items-center justify-between">
+                           <span className="text-[10px] text-muted-foreground font-medium">{item.data} | {formatCurrencyValue(item.valor)}</span>
+                           <div className="bg-success rounded p-1">
+                              <Plus className="w-3 h-3 text-white" />
+                           </div>
+                        </div>
+                     </div>
+
+                     {/* Middle: Connection */}
+                     <div className="w-20 flex flex-col items-center justify-center relative">
+                        <div className="absolute inset-y-0 w-px border-l border-dashed border-white/20" />
+                        <div className="z-10 bg-[#121417] p-2 rounded-full border border-white/10 shadow-xl group cursor-pointer" onClick={() => item.status === "pendente" && handleVincular(item.id)}>
+                           {item.status === "vinculado" ? (
+                             <Link2 className="w-4 h-4 text-success" />
+                           ) : (
+                             <Search className="w-4 h-4 text-muted-foreground group-hover:text-white transition-colors" />
+                           )}
+                        </div>
+                     </div>
+
+                     {/* Right: Lancamentos */}
+                     <div className="flex-1 flex flex-col justify-center">
+                        {item.status === "vinculado" && linkedLancamentos.length > 0 ? (
+                          <div className="space-y-3">
+                            {linkedLancamentos.map(l => (
+                              <div key={l.id} className="bg-white/5 border border-white/10 rounded-xl p-4 relative group animate-in slide-in-from-right-4">
+                                 <div className="flex items-center justify-between mb-1">
+                                    <span className="text-white font-bold text-xs">{l.descricao}</span>
+                                    <button onClick={() => handleDesvincular(item.id)} className="p-1.5 hover:bg-destructive/20 rounded-lg text-muted-foreground hover:text-destructive transition-colors">
+                                       <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                 </div>
+                                 <div className="flex flex-col gap-1">
+                                    <div className="flex items-center justify-between">
+                                       <span className="text-[10px] text-muted-foreground font-medium">{l.vencimento} | {formatCurrencyValue(l.valor)}</span>
+                                    </div>
+                                    {hasDifference && (
+                                      <div className="mt-2 pt-2 border-t border-white/5 space-y-2">
+                                         <label className="flex items-center gap-2 cursor-pointer group/label">
+                                            <input 
+                                              type="checkbox" 
+                                              checked={item.gerarResidual} 
+                                              onChange={() => toggleResidual(item.id)}
+                                              className="accent-primary w-3 h-3 rounded"
+                                            />
+                                            <span className="text-[10px] text-primary font-bold group-hover/label:underline underline-offset-2">Gerar movimentação residual</span>
+                                         </label>
+                                         <div className="flex items-center gap-4 text-[9px] font-black text-muted-foreground/60 uppercase tracking-widest">
+                                            <span>Desconto: 0.00</span>
+                                            <span>|</span>
+                                            <span>Acréscimo: 0.00</span>
+                                         </div>
+                                      </div>
+                                    )}
+                                 </div>
+                              </div>
+                            ))}
                           </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                        ) : item.status === "pendente" ? (
+                          <div className="h-full flex items-center">
+                            <button 
+                              onClick={() => handleVincular(item.id)}
+                              className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:bg-white/10 hover:text-white transition-all"
+                            >
+                              <Search className="w-3.5 h-3.5" /> Vincular
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="text-[10px] text-muted-foreground italic text-center">Item ignorado</div>
+                        )}
+                     </div>
+                   </div>
+                 );
+               })}
             </div>
           </div>
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-5 border-t border-white/5">
