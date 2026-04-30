@@ -98,10 +98,17 @@ router.get("/kanban/cards/:id", async (req, res) => {
 router.post("/kanban/cards", async (req, res) => {
   try {
     const { coluna, ...cardData } = req.body;
+    console.log("POST /api/kanban/cards - Request Body:", req.body);
+    
+    // Sanitizar prazo se for string vazia
+    if (cardData.prazo === "") cardData.prazo = null;
+
     const [card] = await db.insert(kanbanCardsTable).values({
       ...cardData,
       coluna: coluna || "solicitado",
     }).returning();
+
+    console.log("POST /api/kanban/cards - Created Card:", card);
 
     await db.insert(kanbanHistoricoTable).values({
       card_id: card.id,

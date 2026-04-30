@@ -39,7 +39,7 @@ interface TaskModalProps {
     descricao: string;
     prioridade: string;
     coluna: string;
-    prazo: string;
+    prazo: string | null;
     departamentos: string[];
     checklist: ChecklistItem[];
     tags: string[];
@@ -49,7 +49,7 @@ interface TaskModalProps {
     descricao: string;
     prioridade: string;
     coluna: string;
-    prazo: string;
+    prazo: string | null;
     departamentos: string[];
     checklist: ChecklistItem[];
     tags: string[];
@@ -133,7 +133,7 @@ export function TaskModal({ open, onClose, onSave, initialData }: TaskModalProps
       descricao,
       prioridade,
       coluna,
-      prazo,
+      prazo: prazo || null,
       departamentos,
       checklist,
       tags
