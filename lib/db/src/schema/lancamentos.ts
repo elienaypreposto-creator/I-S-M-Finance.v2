@@ -5,6 +5,7 @@ import { contasBancariasTable } from "./contas-bancarias";
 import { parceirosTable } from "./parceiros";
 import { planoContasTable } from "./plano-contas";
 import { departamentosTable, centrosCustosTable } from "./departamentos";
+import { usuariosTable } from "./usuarios";
 
 export const lancamentosTable = pgTable("lancamentos", {
   id: serial("id").primaryKey(),
