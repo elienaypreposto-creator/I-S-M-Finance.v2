@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { usuariosTable, permissoesTable } from "@workspace/db/schema";
 import { eq, ilike, and, count } from "drizzle-orm";
 import crypto from "crypto";
+import { errorResponse, successResponse } from "../utils/response";
 
 const router = Router();
 
@@ -29,9 +30,9 @@ router.get("/usuarios", async (req, res) => {
       created_at: usuariosTable.created_at,
     }).from(usuariosTable).where(where).limit(limit).offset(offset).orderBy(usuariosTable.nome);
 
-    return res.json({ data: items, total: totalResult.count, page, limit });
+    return successResponse(res, items, { total: totalResult.count, page, limit });
   } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar usuários.", String(e));
   }
 });
 
@@ -48,9 +49,9 @@ router.post("/usuarios", async (req, res) => {
       bloqueado: usuariosTable.bloqueado,
       created_at: usuariosTable.created_at,
     });
-    return res.status(201).json(item);
+    return successResponse(res, item, null, 201);
   } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao criar usuário.", String(e));
   }
 });
 
@@ -66,10 +67,10 @@ router.put("/usuarios/:id", async (req, res) => {
         bloqueado: usuariosTable.bloqueado,
         created_at: usuariosTable.created_at,
       });
-    if (!item) return res.status(404).json({ error: "Not found" });
-    return res.json(item);
+    if (!item) return errorResponse(res, 404, "NOT_FOUND", "Usuário não encontrado.");
+    return successResponse(res, item);
   } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao atualizar usuário.", String(e));
   }
 });
 
@@ -77,9 +78,9 @@ router.get("/usuarios/:id/permissoes", async (req, res) => {
   try {
     const items = await db.select({ permissao: permissoesTable.codigo_permissao })
       .from(permissoesTable).where(eq(permissoesTable.usuario_id, parseInt(req.params.id)));
-    return res.json(items.map(i => i.permissao));
+    return successResponse(res, items.map(i => i.permissao));
   } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar permissões do usuário.", String(e));
   }
 });
 
@@ -91,9 +92,9 @@ router.put("/usuarios/:id/permissoes", async (req, res) => {
     if (permissoes?.length > 0) {
       await db.insert(permissoesTable).values(permissoes.map((p: string) => ({ usuario_id: id, codigo_permissao: p })));
     }
-    return res.json(permissoes);
+    return successResponse(res, permissoes);
   } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao atualizar permissões do usuário.", String(e));
   }
 });
 

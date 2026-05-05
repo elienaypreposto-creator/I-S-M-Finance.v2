@@ -2,17 +2,18 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { metasTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
+import { errorResponse, successResponse } from "../utils/response";
 
 const router = Router();
 
 router.get("/metas", async (req, res) => {
   try {
     const ano = parseInt(req.query.ano as string);
-    if (!ano) return res.status(400).json({ error: "ano is required" });
+    if (!ano) return errorResponse(res, 400, "VALIDATION_ERROR", "Parâmetro 'ano' é obrigatório.");
     const items = await db.select().from(metasTable).where(eq(metasTable.ano, ano));
-    return res.json(items.map(i => ({ ...i, valor_projetado: Number(i.valor_projetado) })));
+    return successResponse(res, items.map(i => ({ ...i, valor_projetado: Number(i.valor_projetado) })));
   } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar metas.", String(e));
   }
 });
 
@@ -29,9 +30,9 @@ router.post("/metas", async (req, res) => {
     } else {
       [item] = await db.insert(metasTable).values({ plano_conta_id, ano, mes, valor_projetado: String(valor_projetado) }).returning();
     }
-    return res.json({ ...item, valor_projetado: Number(item.valor_projetado) });
+    return successResponse(res, { ...item, valor_projetado: Number(item.valor_projetado) });
   } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao salvar meta.", String(e));
   }
 });
 

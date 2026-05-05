@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { lancamentosTable, parceirosTable, contasBancariasTable, planoContasTable, departamentosTable, centrosCustosTable } from "@workspace/db/schema";
 import { sql, and, eq, gte, lte, ilike, count } from "drizzle-orm";
 import { requirePermission } from "../middlewares/auth";
+import { errorResponse, successResponse } from "../utils/response";
 
 const router = Router();
 
@@ -60,32 +61,67 @@ router.get("/lancamentos", async (req, res) => {
       .limit(limit)
       .offset(offset);
 
-    return res.json({
-      data: items.map(i => ({ ...i, valor: Number(i.valor) })),
-      total: totalResult.count,
-      page,
-      limit,
-    });
+    return successResponse(
+      res,
+      items.map(i => ({ ...i, valor: Number(i.valor) })),
+      { total: totalResult.count, page, limit },
+    );
   } catch (e) {
     console.error("Erro ao buscar lançamentos:", e);
-    return res.status(500).json({ error: String(e) });
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao buscar lançamentos.", String(e));
   }
 });
 
 router.post("/lancamentos", async (req, res) => {
   try {
-    const { tipo, vencimento, competencia, conta_id, parceiro_id, descricao, valor, status, plano_conta_id, departamento_id, centro_custo_id, parcela_atual, total_parcelas, riscos } = req.body;
+    const {
+      tipo,
+      vencimento,
+      competencia,
+      conta_id,
+      parceiro_id,
+      descricao,
+      valor,
+      status,
+      plano_conta_id,
+      departamento_id,
+      centro_custo_id,
+      parcela_atual,
+      total_parcelas,
+      riscos,
+    } = req.body;
+
+    let departamentoIdFinal = departamento_id;
+    let centroCustoIdFinal = centro_custo_id;
+
+    // Preenchimento automático com base no parceiro quando os campos vierem vazios
+    if (parceiro_id && !departamentoIdFinal && !centroCustoIdFinal) {
+      const [parceiro] = await db
+        .select({
+          departamento_id: parceirosTable.departamento_id,
+          centro_custo_id: parceirosTable.centro_custo_id,
+        })
+        .from(parceirosTable)
+        .where(eq(parceirosTable.id, Number(parceiro_id)))
+        .limit(1);
+
+      if (parceiro) {
+        departamentoIdFinal = parceiro.departamento_id ?? undefined;
+        centroCustoIdFinal = parceiro.centro_custo_id ?? undefined;
+      }
+    }
+
     const [item] = await db.insert(lancamentosTable).values({
       tipo, vencimento, competencia, conta_id, parceiro_id, descricao,
       valor: String(valor), status: status || "pendente",
-      plano_conta_id, departamento_id, centro_custo_id,
+      plano_conta_id, departamento_id: departamentoIdFinal, centro_custo_id: centroCustoIdFinal,
       parcela_atual: parcela_atual || 1,
       total_parcelas: total_parcelas || 1,
       riscos: riscos || [],
     }).returning();
-    return res.status(201).json({ ...item, valor: Number(item.valor) });
+    return successResponse(res, { ...item, valor: Number(item.valor) }, null, 201);
   } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao criar lançamento.", String(e));
   }
 });
 
@@ -93,35 +129,57 @@ router.get("/lancamentos/:id", async (req, res) => {
   try {
     const [item] = await db.select().from(lancamentosTable).where(eq(lancamentosTable.id, parseInt(req.params.id)));
     if (!item) {
-      return res.status(404).json({ error: "Not found" });
+      return errorResponse(res, 404, "NOT_FOUND", "Lançamento não encontrado.");
     }
-    return res.json({ ...item, valor: Number(item.valor) });
+    return successResponse(res, { ...item, valor: Number(item.valor) });
   } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao buscar lançamento.", String(e));
   }
 });
 
 router.put("/lancamentos/:id", async (req, res) => {
   try {
-    const { valor, ...rest } = req.body;
-    const updateData = valor !== undefined ? { ...rest, valor: String(valor) } : rest;
+    const { valor, parceiro_id, departamento_id, centro_custo_id, ...rest } = req.body;
+    let departamentoIdFinal = departamento_id;
+    let centroCustoIdFinal = centro_custo_id;
+
+    // Preenchimento automático com base no parceiro quando os campos vierem vazios
+    if (parceiro_id && !departamentoIdFinal && !centroCustoIdFinal) {
+      const [parceiro] = await db
+        .select({
+          departamento_id: parceirosTable.departamento_id,
+          centro_custo_id: parceirosTable.centro_custo_id,
+        })
+        .from(parceirosTable)
+        .where(eq(parceirosTable.id, Number(parceiro_id)))
+        .limit(1);
+
+      if (parceiro) {
+        departamentoIdFinal = parceiro.departamento_id ?? undefined;
+        centroCustoIdFinal = parceiro.centro_custo_id ?? undefined;
+      }
+    }
+
+    const updateData = valor !== undefined
+      ? { ...rest, parceiro_id, departamento_id: departamentoIdFinal, centro_custo_id: centroCustoIdFinal, valor: String(valor) }
+      : { ...rest, parceiro_id, departamento_id: departamentoIdFinal, centro_custo_id: centroCustoIdFinal };
     const [item] = await db.update(lancamentosTable).set({ ...updateData, updated_at: new Date() })
       .where(eq(lancamentosTable.id, parseInt(req.params.id))).returning();
     if (!item) {
-      return res.status(404).json({ error: "Not found" });
+      return errorResponse(res, 404, "NOT_FOUND", "Lançamento não encontrado.");
     }
-    return res.json({ ...item, valor: Number(item.valor) });
+    return successResponse(res, { ...item, valor: Number(item.valor) });
   } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao atualizar lançamento.", String(e));
   }
 });
 
 router.delete("/lancamentos/:id", requirePermission("Baixa de Contas a Pagar"), async (req, res) => {
   try {
     await db.delete(lancamentosTable).where(eq(lancamentosTable.id, parseInt(req.params.id)));
-    return res.status(204).send();
+    return successResponse(res, { deleted: true });
   } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao excluir lançamento.", String(e));
   }
 });
 

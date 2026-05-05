@@ -2,6 +2,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { parceirosTable } from "@workspace/db/schema";
 import { eq, ilike, and, count } from "drizzle-orm";
+import { errorResponse, successResponse } from "../utils/response";
 
 const router = Router();
 
@@ -19,9 +20,9 @@ router.get("/parceiros", async (req, res) => {
     const [totalResult] = await db.select({ count: count() }).from(parceirosTable).where(where);
     const items = await db.select().from(parceirosTable).where(where).limit(limit).offset(offset).orderBy(parceirosTable.nome);
 
-    return res.json({ data: items, total: totalResult.count, page, limit });
+    return successResponse(res, items, { total: totalResult.count, page, limit });
   } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar parceiros.", String(e));
   }
 });
 
@@ -33,19 +34,19 @@ router.post("/parceiros", async (req, res) => {
       chaves_pix: req.body.chaves_pix || [],
       dados_bancarios: req.body.dados_bancarios || [],
     }).returning();
-    return res.status(201).json(item);
+    return successResponse(res, item, null, 201);
   } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao criar parceiro.", String(e));
   }
 });
 
 router.get("/parceiros/:id", async (req, res) => {
   try {
     const [item] = await db.select().from(parceirosTable).where(eq(parceirosTable.id, parseInt(req.params.id)));
-    if (!item) return res.status(404).json({ error: "Not found" });
-    return res.json(item);
+    if (!item) return errorResponse(res, 404, "NOT_FOUND", "Parceiro não encontrado.");
+    return successResponse(res, item);
   } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao buscar parceiro.", String(e));
   }
 });
 
@@ -53,19 +54,19 @@ router.put("/parceiros/:id", async (req, res) => {
   try {
     const [item] = await db.update(parceirosTable).set({ ...req.body, updated_at: new Date() })
       .where(eq(parceirosTable.id, parseInt(req.params.id))).returning();
-    if (!item) return res.status(404).json({ error: "Not found" });
-    return res.json(item);
+    if (!item) return errorResponse(res, 404, "NOT_FOUND", "Parceiro não encontrado.");
+    return successResponse(res, item);
   } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao atualizar parceiro.", String(e));
   }
 });
 
 router.delete("/parceiros/:id", async (req, res) => {
   try {
     await db.delete(parceirosTable).where(eq(parceirosTable.id, parseInt(req.params.id)));
-    return res.status(204).send();
+    return successResponse(res, { deleted: true });
   } catch (e) {
-    return res.status(500).json({ error: String(e) });
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao excluir parceiro.", String(e));
   }
 });
 
