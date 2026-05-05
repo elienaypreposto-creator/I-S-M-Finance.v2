@@ -1,0 +1,1151 @@
+openapi: 3.0.3
+info:
+  title: ISM Finance API
+  version: 1.0.0
+  description: API REST para controle financeiro, conciliação bancária e relatórios.
+servers:
+  - url: http://localhost:3000/api
+    description: Local
+tags:
+  - name: Auth
+  - name: Usuarios
+  - name: Parceiros
+  - name: Lancamentos
+  - name: Contas Bancarias
+  - name: Plano de Contas
+  - name: Metas
+  - name: Filiais
+  - name: Departamentos
+  - name: Conciliacoes
+  - name: Dashboard
+  - name: Relatorios
+  - name: Kanban
+  - name: Tokens API
+  - name: Power BI V1
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Health check
+      responses:
+        "200":
+          description: OK
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login com email e senha
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, senha]
+              properties:
+                email: { type: string, format: email }
+                senha: { type: string }
+      responses:
+        "200":
+          description: Login efetuado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiEnvelopeAuthLogin"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Usuário autenticado + permissões
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Usuário atual
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiEnvelopeMe"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /usuarios:
+    get:
+      tags: [Usuarios]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20 }
+        - in: query
+          name: search
+          schema: { type: string }
+      responses:
+        "200":
+          description: Lista de usuários
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiEnvelopePaginated"
+    post:
+      tags: [Usuarios]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UsuarioCreateInput"
+      responses:
+        "201":
+          description: Usuário criado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiEnvelopeGeneric"
+  /usuarios/{id}:
+    put:
+      tags: [Usuarios]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Usuário atualizado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiEnvelopeGeneric"
+  /usuarios/{id}/permissoes:
+    get:
+      tags: [Usuarios]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Permissões do usuário
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiEnvelopePermissions"
+    put:
+      tags: [Usuarios]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                permissoes:
+                  type: array
+                  items: { type: string }
+      responses:
+        "200":
+          description: Permissões atualizadas
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiEnvelopePermissions"
+  /parceiros:
+    get:
+      tags: [Parceiros]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20 }
+        - in: query
+          name: search
+          schema: { type: string }
+      responses:
+        "200":
+          description: Lista de parceiros
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopePaginated" }
+    post:
+      tags: [Parceiros]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ParceiroInput" }
+      responses:
+        "201":
+          description: Parceiro criado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /parceiros/{id}:
+    get:
+      tags: [Parceiros]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      responses:
+        "200":
+          description: Parceiro
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+    put:
+      tags: [Parceiros]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ParceiroInput" }
+      responses:
+        "200":
+          description: Parceiro atualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+    delete:
+      tags: [Parceiros]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      responses:
+        "200":
+          description: Parceiro removido
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /lancamentos:
+    get:
+      tags: [Lancamentos]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20 }
+        - in: query
+          name: tipo
+          schema: { type: string, enum: [CP, CR] }
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: conta_id
+          schema: { type: integer }
+        - in: query
+          name: parceiro_id
+          schema: { type: integer }
+        - in: query
+          name: data_inicio
+          schema: { type: string, format: date }
+        - in: query
+          name: data_fim
+          schema: { type: string, format: date }
+        - in: query
+          name: search
+          schema: { type: string }
+      responses:
+        "200":
+          description: Lista de lançamentos
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopePaginated" }
+    post:
+      tags: [Lancamentos]
+      security: [{ bearerAuth: [] }]
+      description: Aplica preenchimento automático de departamento e centro de custo via parceiro quando esses campos não forem enviados.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LancamentoInput" }
+      responses:
+        "201":
+          description: Lançamento criado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /lancamentos/{id}:
+    get:
+      tags: [Lancamentos]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      responses:
+        "200":
+          description: Lançamento
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+    put:
+      tags: [Lancamentos]
+      security: [{ bearerAuth: [] }]
+      description: Também aplica preenchimento automático por parceiro quando necessário.
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LancamentoInput" }
+      responses:
+        "200":
+          description: Lançamento atualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+    delete:
+      tags: [Lancamentos]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      responses:
+        "200":
+          description: Lançamento removido
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+  /contas-bancarias:
+    get:
+      tags: [Contas Bancarias]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Lista de contas bancárias
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+    post:
+      tags: [Contas Bancarias]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ContaBancariaInput" }
+      responses:
+        "201":
+          description: Conta criada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /contas-bancarias/{id}:
+    put:
+      tags: [Contas Bancarias]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ContaBancariaInput" }
+      responses:
+        "200":
+          description: Conta atualizada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+    delete:
+      tags: [Contas Bancarias]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      responses:
+        "200":
+          description: Conta removida
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /plano-contas:
+    get:
+      tags: [Plano de Contas]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Lista de plano de contas
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+    post:
+      tags: [Plano de Contas]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PlanoContaInput" }
+      responses:
+        "201":
+          description: Plano de conta criado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /plano-contas/{id}:
+    put:
+      tags: [Plano de Contas]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PlanoContaInput" }
+      responses:
+        "200":
+          description: Plano atualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+    delete:
+      tags: [Plano de Contas]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      responses:
+        "200":
+          description: Plano removido
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /metas:
+    get:
+      tags: [Metas]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: ano
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Metas por ano
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+    post:
+      tags: [Metas]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plano_conta_id, ano, mes, valor_projetado]
+              properties:
+                plano_conta_id: { type: integer }
+                ano: { type: integer }
+                mes: { type: integer, minimum: 1, maximum: 12 }
+                valor_projetado: { type: number }
+      responses:
+        "200":
+          description: Meta criada/atualizada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /filiais:
+    get:
+      tags: [Filiais]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Lista de filiais
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+    post:
+      tags: [Filiais]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nome]
+              properties:
+                nome: { type: string }
+      responses:
+        "201":
+          description: Filial criada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /filiais/{id}:
+    put:
+      tags: [Filiais]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                nome: { type: string }
+      responses:
+        "200":
+          description: Filial atualizada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+    delete:
+      tags: [Filiais]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      responses:
+        "200":
+          description: Filial removida
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /departamentos:
+    get:
+      tags: [Departamentos]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Lista de departamentos
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+    post:
+      tags: [Departamentos]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nome]
+              properties:
+                nome: { type: string }
+      responses:
+        "201":
+          description: Departamento criado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /departamentos/{id}:
+    put:
+      tags: [Departamentos]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                nome: { type: string }
+      responses:
+        "200":
+          description: Departamento atualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+    delete:
+      tags: [Departamentos]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      responses:
+        "200":
+          description: Departamento removido
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /conciliacoes:
+    get:
+      tags: [Conciliacoes]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Lista de conciliações
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /conciliacoes/importar:
+    post:
+      tags: [Conciliacoes]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Extrato importado para conciliação
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /conciliacoes/{id}:
+    get:
+      tags: [Conciliacoes]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      responses:
+        "200":
+          description: Detalhe da conciliação
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+    delete:
+      tags: [Conciliacoes]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      responses:
+        "200":
+          description: Conciliação removida
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /conciliacoes/{id}/conciliar:
+    post:
+      tags: [Conciliacoes]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      responses:
+        "200":
+          description: Conciliação finalizada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /conciliacoes/{id}/itens/{itemId}/ignorar:
+    post:
+      tags: [Conciliacoes]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+        - in: path
+          name: itemId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Item ignorado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /conciliacoes/{id}/itens/{itemId}/vincular:
+    post:
+      tags: [Conciliacoes]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+        - in: path
+          name: itemId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Item vinculado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /dashboard/kpis:
+    get:
+      tags: [Dashboard]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: KPIs do dashboard
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /dashboard/projecao-mes:
+    get:
+      tags: [Dashboard]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Projeção mensal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /dashboard/projecao-dias:
+    get:
+      tags: [Dashboard]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Projeção por dias
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /dashboard/inadimplencia-clientes:
+    get:
+      tags: [Dashboard]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Inadimplência clientes
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /dashboard/inadimplencia-fornecedores:
+    get:
+      tags: [Dashboard]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Inadimplência fornecedores
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /dashboard/dias-atraso:
+    get:
+      tags: [Dashboard]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Dias de atraso
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /dashboard/nivel-risco:
+    get:
+      tags: [Dashboard]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Nível de risco
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /dashboard/fluxo-caixa-mensal:
+    get:
+      tags: [Dashboard]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Fluxo de caixa mensal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /dashboard/saidas-plano-contas:
+    get:
+      tags: [Dashboard]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Saídas por plano de contas
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /dashboard/entradas-plano-contas:
+    get:
+      tags: [Dashboard]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Entradas por plano de contas
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /relatorios/fechamento-mensal:
+    get:
+      tags: [Relatorios]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Fechamento mensal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /relatorios/dre:
+    get:
+      tags: [Relatorios]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Relatório DRE
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /relatorios/fluxo-caixa:
+    get:
+      tags: [Relatorios]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Fluxo de caixa
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /relatorios/metas:
+    get:
+      tags: [Relatorios]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Relatório de metas
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /relatorios/contabil-fiscal:
+    get:
+      tags: [Relatorios]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Relatório contábil/fiscal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /cards:
+    get:
+      tags: [Kanban]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Lista de cards kanban
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+    post:
+      tags: [Kanban]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          description: Card criado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /cards/{id}:
+    patch:
+      tags: [Kanban]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Card atualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /kanban/usuarios:
+    get:
+      tags: [Kanban]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Usuários para kanban
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /tokens-api:
+    get:
+      tags: [Tokens API]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Lista de tokens de API
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+    post:
+      tags: [Tokens API]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          description: Token criado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /tokens-api/{id}:
+    put:
+      tags: [Tokens API]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Token atualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+    delete:
+      tags: [Tokens API]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      responses:
+        "200":
+          description: Token removido
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /v1/bancos:
+    get:
+      tags: [Power BI V1]
+      responses:
+        "200":
+          description: Bancos (token fixo v1)
+  /v1/contasPagar:
+    get:
+      tags: [Power BI V1]
+      responses:
+        "200":
+          description: Contas a pagar
+  /v1/contasReceber:
+    get:
+      tags: [Power BI V1]
+      responses:
+        "200":
+          description: Contas a receber
+  /v1/pessoas:
+    get:
+      tags: [Power BI V1]
+      responses:
+        "200":
+          description: Pessoas
+  /v1/filiais:
+    get:
+      tags: [Power BI V1]
+      responses:
+        "200":
+          description: Filiais
+  /v1/planoContas:
+    get:
+      tags: [Power BI V1]
+      responses:
+        "200":
+          description: Plano de contas
+  /v1/categoriaPlanoConta:
+    get:
+      tags: [Power BI V1]
+      responses:
+        "200":
+          description: Categorias de plano de conta
+  /v1/tipoDocumentos:
+    get:
+      tags: [Power BI V1]
+      responses:
+        "200":
+          description: Tipos de documentos
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    IdPath:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: integer
+  responses:
+    UnauthorizedError:
+      description: Não autenticado
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiEnvelopeError"
+    ForbiddenError:
+      description: Sem permissão
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiEnvelopeError"
+  schemas:
+    ApiErrorItem:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details: {}
+    ApiEnvelopeGeneric:
+      type: object
+      properties:
+        data: {}
+        meta:
+          nullable: true
+          type: object
+          additionalProperties: true
+        errors:
+          nullable: true
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiErrorItem"
+    ApiEnvelopePaginated:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelopeGeneric"
+        - type: object
+          properties:
+            meta:
+              type: object
+              properties:
+                total: { type: integer }
+                page: { type: integer }
+                limit: { type: integer }
+    ApiEnvelopePermissions:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelopeGeneric"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                type: string
+    ApiEnvelopeAuthLogin:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelopeGeneric"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                token: { type: string }
+                user:
+                  $ref: "#/components/schemas/Usuario"
+            meta:
+              type: object
+              properties:
+                tokenType: { type: string, example: Bearer }
+                expiresIn: { type: string, example: 24h }
+    ApiEnvelopeMe:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelopeGeneric"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                user:
+                  $ref: "#/components/schemas/Usuario"
+                permissoes:
+                  type: array
+                  items: { type: string }
+    ApiEnvelopeError:
+      type: object
+      properties:
+        data:
+          nullable: true
+        meta:
+          nullable: true
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiErrorItem"
+    Usuario:
+      type: object
+      properties:
+        id: { type: integer }
+        nome: { type: string }
+        email: { type: string, format: email }
+    UsuarioCreateInput:
+      type: object
+      required: [nome, email, senha]
+      properties:
+        nome: { type: string }
+        email: { type: string, format: email }
+        senha: { type: string }
+        telefone: { type: string }
+        celular: { type: string }
+        bloqueado: { type: boolean }
+    ParceiroInput:
+      type: object
+      properties:
+        tipo_pessoa: { type: string, enum: [PF, PJ] }
+        cpf_cnpj: { type: string }
+        nome: { type: string }
+        nome_fantasia: { type: string }
+        tipos:
+          type: array
+          items: { type: string }
+        departamento_id: { type: integer, nullable: true }
+        centro_custo_id: { type: integer, nullable: true }
+        ativo: { type: boolean }
+        bloqueado: { type: boolean }
+        chaves_pix:
+          type: array
+          items:
+            type: object
+            properties:
+              tipo: { type: string }
+              chave: { type: string }
+        dados_bancarios:
+          type: array
+          items:
+            type: object
+            properties:
+              banco: { type: string }
+              agencia: { type: string }
+              conta: { type: string }
+    LancamentoInput:
+      type: object
+      required: [tipo, vencimento, valor]
+      properties:
+        tipo: { type: string, enum: [CP, CR] }
+        vencimento: { type: string, format: date }
+        competencia: { type: string, format: date }
+        conta_id: { type: integer }
+        parceiro_id: { type: integer }
+        descricao: { type: string }
+        valor: { type: number }
+        status: { type: string }
+        plano_conta_id: { type: integer }
+        departamento_id: { type: integer, nullable: true }
+        centro_custo_id: { type: integer, nullable: true }
+        parcela_atual: { type: integer }
+        total_parcelas: { type: integer }
+        riscos:
+          type: array
+          items: { type: string }
+    ContaBancariaInput:
+      type: object
+      properties:
+        tipo: { type: string }
+        banco: { type: string }
+        agencia: { type: string }
+        conta: { type: string }
+        nome: { type: string }
+        empresa: { type: string }
+        saldo_inicial: { type: number }
+        data_inicio: { type: string, format: date }
+        status: { type: string }
+        cor: { type: string }
+    PlanoContaInput:
+      type: object
+      properties:
+        tipo: { type: string, example: despesa }
+        categoria: { type: string }
+        subcategoria: { type: string }
+        codigo: { type: string }
+        ativo: { type: boolean }
