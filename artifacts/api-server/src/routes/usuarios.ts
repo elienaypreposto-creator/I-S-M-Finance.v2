@@ -75,7 +75,7 @@ router.put("/usuarios/:id", async (req, res) => {
 
 router.get("/usuarios/:id/permissoes", async (req, res) => {
   try {
-    const items = await db.select({ permissao: permissoesTable.permissao })
+    const items = await db.select({ permissao: permissoesTable.codigo_permissao })
       .from(permissoesTable).where(eq(permissoesTable.usuario_id, parseInt(req.params.id)));
     return res.json(items.map(i => i.permissao));
   } catch (e) {
@@ -89,7 +89,7 @@ router.put("/usuarios/:id/permissoes", async (req, res) => {
     const { permissoes } = req.body;
     await db.delete(permissoesTable).where(eq(permissoesTable.usuario_id, id));
     if (permissoes?.length > 0) {
-      await db.insert(permissoesTable).values(permissoes.map((p: string) => ({ usuario_id: id, permissao: p })));
+      await db.insert(permissoesTable).values(permissoes.map((p: string) => ({ usuario_id: id, codigo_permissao: p })));
     }
     return res.json(permissoes);
   } catch (e) {

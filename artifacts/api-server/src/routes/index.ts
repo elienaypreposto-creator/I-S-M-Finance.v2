@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import healthRouter from "./health";
+import authRouter from "./auth";
 import dashboardRouter from "./dashboard";
 import lancamentosRouter from "./lancamentos";
 import parceirosRouter from "./parceiros";
@@ -14,10 +15,13 @@ import filiaisRouter from "./filiais";
 import tokensApiRouter from "./tokens-api";
 import departamentosRouter from "./departamentos";
 import v1Router from "./v1";
+import { authMiddleware } from "../middlewares/auth";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
+router.use(authRouter);
+router.use(authMiddleware);
 router.use(dashboardRouter);
 router.use(lancamentosRouter);
 router.use(parceirosRouter);

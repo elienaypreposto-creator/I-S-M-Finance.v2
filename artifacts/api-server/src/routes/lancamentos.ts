@@ -2,6 +2,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { lancamentosTable, parceirosTable, contasBancariasTable, planoContasTable, departamentosTable, centrosCustosTable } from "@workspace/db/schema";
 import { sql, and, eq, gte, lte, ilike, count } from "drizzle-orm";
+import { requirePermission } from "../middlewares/auth";
 
 const router = Router();
 
@@ -115,7 +116,7 @@ router.put("/lancamentos/:id", async (req, res) => {
   }
 });
 
-router.delete("/lancamentos/:id", async (req, res) => {
+router.delete("/lancamentos/:id", requirePermission("Baixa de Contas a Pagar"), async (req, res) => {
   try {
     await db.delete(lancamentosTable).where(eq(lancamentosTable.id, parseInt(req.params.id)));
     return res.status(204).send();
