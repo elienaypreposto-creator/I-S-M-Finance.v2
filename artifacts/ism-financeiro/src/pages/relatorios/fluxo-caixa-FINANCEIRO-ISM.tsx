@@ -156,7 +156,7 @@ export default function FluxoCaixa() {
                       <td className={`px-4 py-3 sticky left-0 backdrop-blur-sm ${secao.tipo === 'total' ? 'bg-primary/10' : 'bg-card/60'}`}>
                         <span className="pl-3">{row.label}</span>
                       </td>
-                      {row.valores.map((v: number, j: number) => (
+                      {(Array.isArray(row.valores) ? row.valores : []).map((v: number, j: number) => (
                         <td key={j} className={`px-3 py-3 text-right ${secao.tipo === 'total' || secao.tipo === 'saldo_final' ? (v >= 0 ? 'text-success' : 'text-destructive') : row.negativo ? 'text-destructive' : v === 0 ? 'text-muted-foreground/30' : 'text-white'}`}>
                           {v !== 0 ? (row.negativo ? `-${formatCurrency(v)}` : formatCurrency(v)) : "—"}
                         </td>
