@@ -14,6 +14,32 @@ const parceirosData = [
 const tiposParceiroOptions = ["Cliente", "Fornecedor", "Sócio(a)", "Participante Societário(a)", "Funcionário(a)", "Prestador(a) de Serviços PJ"];
 const formaPagamentoOpcoes = ["PIX", "Boleto", "TED", "DOC", "Cheque"];
 
+function mascararDocumento(valor: string, tipo: "PJ" | "PF") {
+  const numeros = valor.replace(/\D/g, "");
+  if (tipo === "PF") {
+    return numeros
+      .slice(0, 11)                                
+      .replace(/(\d{3})(\d)/, "$1.$2")
+      .replace(/(\d{3})(\d)/, "$1.$2")
+      .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
+  } else {
+    return numeros
+      .slice(0, 14)                                
+      .replace(/(\d{2})(\d)/, "$1.$2")
+      .replace(/(\d{3})(\d)/, "$1.$2")
+      .replace(/(\d{3})(\d)/, "$1/$2")            
+      .replace(/(\d{4})(\d{1,2})$/, "$1-$2");
+  }
+}
+
+function mascararTelefone(valor: string) {
+  const numeros = valor.replace(/\D/g, "");
+  return numeros
+    .slice(0, 11)
+    .replace(/(\d{2})(\d)/, "($1) $2")
+    .replace(/(\d{5})(\d{1,4})$/, "$1-$2");
+}
+
 function ConfirmacaoCancelModal({ onConfirm, onDismiss }: { onConfirm: () => void; onDismiss: () => void }) {
   return (
     <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
@@ -102,7 +128,7 @@ function NovoParceirModal({ onClose }: { onClose: () => void }) {
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
                   {form.tipoPessoa === "PF" ? "CPF *" : "CNPJ *"}
                 </label>
-                <input value={form.documento} onChange={e => setForm(f => ({ ...f, documento: e.target.value }))}
+                <input value={form.documento} onChange={e => setForm(f => ({ ...f, documento: mascararDocumento(e.target.value, f.tipoPessoa as "PF" | "PJ") }))}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
                   placeholder={form.tipoPessoa === "PF" ? "000.000.000-00" : "00.000.000/0000-00"} />
               </div>
@@ -117,7 +143,7 @@ function NovoParceirModal({ onClose }: { onClose: () => void }) {
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Telefone</label>
-                <input value={form.telefone} onChange={e => setForm(f => ({ ...f, telefone: e.target.value }))}
+                <input value={form.telefone} onChange={e => setForm(f => ({ ...f, telefone: mascararTelefone(e.target.value) }))}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
                   placeholder="(11) 99999-0000" />
               </div>
@@ -126,7 +152,7 @@ function NovoParceirModal({ onClose }: { onClose: () => void }) {
             <div>
               <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Lotação / Departamento</label>
               <select value={form.lotacao} onChange={e => setForm(f => ({ ...f, lotacao: e.target.value }))}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors">
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-black outline-none focus:border-primary/50 transition-colors">
                 <option value="">Selecione...</option>
                 <option>Tecnologia</option><option>Financeiro</option><option>Comercial</option><option>Recursos Humanos</option>
               </select>
@@ -162,7 +188,7 @@ function NovoParceirModal({ onClose }: { onClose: () => void }) {
                   <div>
                     <label className="text-xs text-muted-foreground mb-1 block">Tipo do Recebedor</label>
                     <select value={form.pixTipoRecebedor} onChange={e => setForm(f => ({ ...f, pixTipoRecebedor: e.target.value }))}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none">
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-black outline-none">
                       <option value="PF">Pessoa Física</option>
                       <option value="PJ">Pessoa Jurídica</option>
                     </select>
@@ -181,14 +207,14 @@ function NovoParceirModal({ onClose }: { onClose: () => void }) {
                   <div>
                     <label className="text-xs text-muted-foreground mb-1 block">Tipo Recebedor</label>
                     <select value={form.pixTipoRecebedor} onChange={e => setForm(f => ({ ...f, pixTipoRecebedor: e.target.value }))}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none">
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-black outline-none">
                       <option value="PF">Pessoa Física</option>
                       <option value="PJ">Pessoa Jurídica</option>
                     </select>
                   </div>
                   <div>
                     <label className="text-xs text-muted-foreground mb-1 block">{form.pixTipoRecebedor === "PF" ? "CPF *" : "CNPJ *"}</label>
-                    <input value={form.cpfCnpjBancario} onChange={e => setForm(f => ({ ...f, cpfCnpjBancario: e.target.value }))}
+                    <input value={form.cpfCnpjBancario} onChange={e => setForm(f => ({ ...f, cpfCnpjBancario: mascararDocumento(e.target.value, f.pixTipoRecebedor as "PF" | "PJ") }))}
                       className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50"
                       placeholder={form.pixTipoRecebedor === "PF" ? "000.000.000-00" : "00.000.000/0000-00"} />
                   </div>
@@ -200,7 +226,7 @@ function NovoParceirModal({ onClose }: { onClose: () => void }) {
                   <div>
                     <label className="text-xs text-muted-foreground mb-1 block">Tipo de Conta *</label>
                     <select value={form.contaTipo} onChange={e => setForm(f => ({ ...f, contaTipo: e.target.value }))}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none">
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-black outline-none">
                       <option>Corrente</option><option>Poupança</option>
                     </select>
                   </div>

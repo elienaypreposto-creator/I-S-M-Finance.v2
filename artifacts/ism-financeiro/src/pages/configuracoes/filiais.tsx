@@ -23,41 +23,70 @@ const filiais = [
   },
 ];
 
+const UFS = ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"];
+
 function NovaFilialModal({ onClose }: { onClose: () => void }) {
   const [form, setForm] = useState({ nome: "", cnpj: "", cidade: "", estado: "", email: "" });
   return (
+    //modal  centralizado
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-card border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl">
-        <div className="flex items-center justify-between p-6 border-b border-white/5">
-          <h2 className="text-lg font-bold text-white">Nova Filial</h2>
-          <button onClick={onClose} className="p-1.5 hover:bg-white/5 rounded-lg"><X className="w-5 h-5" /></button>
+      <div className="bg-card border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-4 sm:p-6 border-b border-white/5 sticky top-0 bg-card z-10">
+          <h2 className="text-base sm:text-lg font-bold text-white">Nova Filial</h2>
+          <button onClick={onClose} className="p-1.5 hover:bg-white/5 rounded-lg">
+            <X className="w-5 h-5" />
+          </button>
         </div>
-        <div className="p-6 grid grid-cols-2 gap-4">
-          <div className="col-span-2">
+        <div className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="col-span-1 sm:col-span-2">
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Nome da Filial</label>
-            <input value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors" placeholder="Ex: Filial Curitiba" />
+            <input
+              value={form.nome}
+              onChange={e => setForm({ ...form, nome: e.target.value })}
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+              placeholder="Ex: Filial Curitiba"
+            />
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">CNPJ</label>
-            <input value={form.cnpj} onChange={e => setForm({ ...form, cnpj: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors" placeholder="00.000.000/0000-00" />
+            <input
+              value={form.cnpj}
+              onChange={e => setForm({ ...form, cnpj: e.target.value })}
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+              placeholder="00.000.000/0000-00"
+            />
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">E-mail</label>
-            <input value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors" placeholder="filial@empresa.com.br" />
+            <input
+              value={form.email}
+              onChange={e => setForm({ ...form, email: e.target.value })}
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+              placeholder="filial@empresa.com.br"
+            />
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Cidade</label>
-            <input value={form.cidade} onChange={e => setForm({ ...form, cidade: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors" placeholder="Ex: Curitiba" />
+            <input
+              value={form.cidade}
+              onChange={e => setForm({ ...form, cidade: e.target.value })}
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+              placeholder="Ex: Curitiba"
+            />
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Estado</label>
-            <select value={form.estado} onChange={e => setForm({ ...form, estado: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors">
+            <select
+              value={form.estado}
+              onChange={e => setForm({ ...form, estado: e.target.value })}
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-black outline-none focus:border-primary/50 transition-colors"
+            >
               <option value="">Selecione...</option>
-              {["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"].map(uf => <option key={uf} value={uf}>{uf}</option>)}
+              {UFS.map(uf => <option key={uf} value={uf}>{uf}</option>)}
             </select>
           </div>
         </div>
-        <div className="flex gap-3 p-6 pt-0">
+        <div className="flex gap-3 p-4 sm:p-6 pt-0">
           <button onClick={onClose} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">Cancelar</button>
           <button onClick={onClose} className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium">Salvar Filial</button>
         </div>
@@ -70,67 +99,85 @@ export default function Filiais() {
   const [showModal, setShowModal] = useState(false);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {showModal && <NovaFilialModal onClose={() => setShowModal(false)} />}
 
       <PageHeader
         title="Filiais"
         description="Gerencie as filiais e unidades da empresa"
         actions={
-          <button onClick={() => setShowModal(true)} className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25">
-            <Plus className="w-4 h-4" /> Nova Filial
+          <button
+            onClick={() => setShowModal(true)}
+            className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25 whitespace-nowrap"
+          >
+            <Plus className="w-4 h-4" />
+            Nova Filial
           </button>
         }
       />
 
-      <div className="grid grid-cols-3 gap-4">
+      {/* Cards de resumo */}
+      <div className="grid grid-cols-3 gap-2 sm:gap-4">
         {[
           { label: "Total Filiais", value: filiais.length, color: "text-primary" },
           { label: "Ativas", value: filiais.filter(f => f.status === "ativo").length, color: "text-success" },
           { label: "Inativas", value: filiais.filter(f => f.status === "inativo").length, color: "text-muted-foreground" },
         ].map(item => (
-          <div key={item.label} className="glass-panel rounded-2xl p-4 text-center">
-            <p className={`text-3xl font-bold ${item.color}`}>{item.value}</p>
-            <p className="text-xs text-muted-foreground mt-1">{item.label}</p>
+          <div key={item.label} className="glass-panel rounded-2xl p-3 sm:p-4 text-center">
+            <p className={`text-2xl sm:text-3xl font-bold ${item.color}`}>{item.value}</p>
+            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">{item.label}</p>
           </div>
         ))}
       </div>
 
-      <div className="space-y-4">
+      {/* Cards de filiais */}
+      <div className="space-y-3 sm:space-y-4">
         {filiais.map(filial => (
-          <div key={filial.id} className="glass-panel rounded-2xl p-5 hover:border-white/20 border border-white/5 transition-all group">
-            <div className="flex items-start justify-between">
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 rounded-xl bg-primary/20 flex items-center justify-center shrink-0">
-                  <Building className="w-6 h-6 text-primary" />
+          <div
+            key={filial.id}
+            className="glass-panel rounded-2xl p-4 sm:p-5 hover:border-white/20 border border-white/5 transition-all group"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3 sm:gap-4 flex-1 min-w-0">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-primary/20 flex items-center justify-center shrink-0">
+                  <Building className="w-5 h-5 sm:w-6 sm:h-6 text-primary" />
                 </div>
-                <div>
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <h3 className="font-bold text-white">{filial.nome}</h3>
-                    <span className="text-xs text-muted-foreground font-mono bg-white/5 px-2 py-0.5 rounded">{filial.codigo}</span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex items-center gap-1 ${filial.status === 'ativo' ? 'bg-success/20 text-success' : 'bg-white/10 text-muted-foreground'}`}>
-                      <CheckCircle className="w-2.5 h-2.5" /> {filial.status === 'ativo' ? 'Ativa' : 'Inativa'}
+                <div className="flex-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mb-0.5">
+                    <h3 className="font-bold text-white text-sm sm:text-base">{filial.nome}</h3>
+                    <span className="text-xs text-muted-foreground font-mono bg-white/5 px-2 py-0.5 rounded shrink-0">
+                      {filial.codigo}
+                    </span>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex items-center gap-1 shrink-0 ${filial.status === "ativo" ? "bg-success/20 text-success" : "bg-white/10 text-muted-foreground"}`}>
+                      <CheckCircle className="w-2.5 h-2.5" />
+                      {filial.status === "ativo" ? "Ativa" : "Inativa"}
                     </span>
                   </div>
+
                   <p className="text-xs text-muted-foreground">CNPJ: {filial.cnpj}</p>
-                  <div className="flex flex-wrap gap-4 mt-3 text-sm">
-                    <div className="flex items-center gap-1.5 text-muted-foreground">
-                      <MapPin className="w-3.5 h-3.5" />
+
+                  <div className="flex flex-col sm:flex-row sm:flex-wrap gap-1.5 sm:gap-4 mt-2 sm:mt-3 text-xs sm:text-sm">
+                    <div className="flex items-start gap-1.5 text-muted-foreground">
+                      <MapPin className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                       <span>{filial.endereco} — {filial.cidade}/{filial.estado}</span>
                     </div>
                     <div className="flex items-center gap-1.5 text-muted-foreground">
-                      <Phone className="w-3.5 h-3.5" />
+                      <Phone className="w-3.5 h-3.5 shrink-0" />
                       <span>{filial.telefone}</span>
                     </div>
                     <div className="flex items-center gap-1.5 text-muted-foreground">
-                      <Mail className="w-3.5 h-3.5" />
-                      <span>{filial.email}</span>
+                      <Mail className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">{filial.email}</span>
                     </div>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-2">Responsável: <span className="text-white">{filial.responsavel}</span></p>
+
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Responsável: <span className="text-white">{filial.responsavel}</span>
+                  </p>
                 </div>
               </div>
-              <button className="p-2 hover:bg-white/10 rounded-lg opacity-0 group-hover:opacity-100 transition-all">
+
+              <button className="p-2 hover:bg-white/10 rounded-lg sm:opacity-0 sm:group-hover:opacity-100 transition-all shrink-0">
                 <Pencil className="w-4 h-4 text-muted-foreground" />
               </button>
             </div>

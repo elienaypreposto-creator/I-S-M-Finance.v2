@@ -30,32 +30,44 @@ function NovoTokenModal({ onClose }: { onClose: () => void }) {
   const fakeToken = "ism_live_" + Math.random().toString(36).substring(2, 18);
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
       <div className="bg-card border border-white/10 rounded-2xl w-full max-w-md shadow-2xl">
-        <div className="flex items-center justify-between p-6 border-b border-white/5">
-          <h2 className="text-lg font-bold text-white">Gerar Novo Token</h2>
-          <button onClick={onClose} className="p-1.5 hover:bg-white/5 rounded-lg"><X className="w-5 h-5" /></button>
+        <div className="flex items-center justify-between p-4 sm:p-6 border-b border-white/5">
+          <h2 className="text-base sm:text-lg font-bold text-white">Gerar Novo Token</h2>
+          <button onClick={onClose} className="p-1.5 hover:bg-white/5 rounded-lg">
+            <X className="w-5 h-5" />
+          </button>
         </div>
         {!gerado ? (
           <>
-            <div className="p-6 space-y-4">
+            <div className="p-4 sm:p-6 space-y-4">
               <div>
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Nome do Token</label>
-                <input value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors" placeholder="Ex: Power BI Produção" />
+                <input
+                  value={form.nome}
+                  onChange={e => setForm({ ...form, nome: e.target.value })}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+                  placeholder="Ex: Power BI Produção"
+                />
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Descrição</label>
-                <input value={form.descricao} onChange={e => setForm({ ...form, descricao: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors" placeholder="Para que serve esse token?" />
+                <input
+                  value={form.descricao}
+                  onChange={e => setForm({ ...form, descricao: e.target.value })}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+                  placeholder="Para que serve esse token?"
+                />
               </div>
             </div>
-            <div className="flex gap-3 p-6 pt-0">
+            <div className="flex gap-3 p-4 sm:p-6 pt-0">
               <button onClick={onClose} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">Cancelar</button>
               <button onClick={() => setGerado(true)} className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium">Gerar Token</button>
             </div>
           </>
         ) : (
           <>
-            <div className="p-6 space-y-4">
+            <div className="p-4 sm:p-6 space-y-4">
               <div className="text-center py-2">
                 <CheckCircle className="w-10 h-10 text-success mx-auto mb-2" />
                 <p className="font-bold text-white">Token gerado com sucesso!</p>
@@ -68,7 +80,7 @@ function NovoTokenModal({ onClose }: { onClose: () => void }) {
                 <Copy className="w-4 h-4" /> Copiar Token
               </button>
             </div>
-            <div className="p-6 pt-0">
+            <div className="p-4 sm:p-6 pt-0">
               <button onClick={onClose} className="w-full py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium">Concluído</button>
             </div>
           </>
@@ -84,62 +96,98 @@ export default function TokensApi() {
   const [tab, setTab] = useState<"tokens" | "docs">("tokens");
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {showModal && <NovoTokenModal onClose={() => setShowModal(false)} />}
 
       <PageHeader
         title="Tokens de API"
         description="Gerencie tokens de acesso para integrações externas (Power BI, ERPs)"
         actions={
-          <button onClick={() => setShowModal(true)} className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25">
-            <Plus className="w-4 h-4" /> Gerar Token
+          <button
+            onClick={() => setShowModal(true)}
+            className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25 whitespace-nowrap"
+          >
+            <Plus className="w-4 h-4" />
+            <span className="hidden xs:inline">Gerar Token</span>
+            <span className="xs:hidden">Gerar Token</span>
           </button>
         }
       />
 
-      <div className="flex gap-1 p-1 bg-white/5 rounded-xl w-fit">
-        <button onClick={() => setTab("tokens")} className={`px-5 py-2 rounded-lg text-sm font-medium transition-all ${tab === "tokens" ? 'bg-primary text-white' : 'text-muted-foreground hover:text-white'}`}>
-          <Key className="w-3.5 h-3.5 inline mr-1" /> Tokens Ativos
+      {/* Tabelas mobile */}
+      <div className="flex gap-1 p-1 bg-white/5 rounded-xl w-full sm:w-fit">
+        <button
+          onClick={() => setTab("tokens")}
+          className={`flex-1 sm:flex-none px-3 sm:px-5 py-2 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-1.5 ${tab === "tokens" ? "bg-primary text-white" : "text-muted-foreground hover:text-white"}`}
+        >
+          <Key className="w-3.5 h-3.5" />
+          <span>Tokens Ativos</span>
         </button>
-        <button onClick={() => setTab("docs")} className={`px-5 py-2 rounded-lg text-sm font-medium transition-all ${tab === "docs" ? 'bg-primary text-white' : 'text-muted-foreground hover:text-white'}`}>
-          <Code className="w-3.5 h-3.5 inline mr-1" /> Documentação
+        <button
+          onClick={() => setTab("docs")}
+          className={`flex-1 sm:flex-none px-3 sm:px-5 py-2 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-1.5 ${tab === "docs" ? "bg-primary text-white" : "text-muted-foreground hover:text-white"}`}
+        >
+          <Code className="w-3.5 h-3.5" />
+          <span>Documentação</span>
         </button>
       </div>
 
       {tab === "tokens" && (
         <div className="glass-panel rounded-2xl overflow-hidden">
-          <div className="p-5 border-b border-white/5 bg-warning/5">
-            <p className="text-xs text-warning flex items-center gap-2">
-              <span className="font-bold">⚠ Segurança:</span> Tokens concedem acesso de leitura à API. Nunca compartilhe publicamente. Use o header <code className="bg-black/30 px-1.5 py-0.5 rounded font-mono">Authorization: Bearer &lt;token&gt;</code>
+          <div className="p-4 sm:p-5 border-b border-white/5 bg-warning/5">
+            <p className="text-xs text-warning flex items-start gap-2">
+              <span className="font-bold shrink-0">⚠ Segurança:</span>
+              <span>
+                Tokens concedem acesso de leitura à API. Nunca compartilhe publicamente. Use o header{" "}
+                <code className="bg-black/30 px-1.5 py-0.5 rounded font-mono break-all">Authorization: Bearer &lt;token&gt;</code>
+              </span>
             </p>
           </div>
           <div className="divide-y divide-white/5">
             {tokens.map(t => (
-              <div key={t.id} className="p-5 hover:bg-white/5 transition-colors group">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <p className="font-bold text-white">{t.nome}</p>
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${t.status === 'ativo' ? 'bg-success/20 text-success' : 'bg-white/10 text-muted-foreground'}`}>
-                        {t.status === 'ativo' ? 'Ativo' : 'Inativo'}
+              <div key={t.id} className="p-4 sm:p-5 hover:bg-white/5 transition-colors group">
+                <div className="flex items-start justify-between gap-3 sm:gap-4">
+                  <div className="flex-1 min-w-0">
+
+                    <div className="flex flex-wrap items-center gap-2 mb-1">
+                      <p className="font-bold text-white text-sm sm:text-base">{t.nome}</p>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${t.status === "ativo" ? "bg-success/20 text-success" : "bg-white/10 text-muted-foreground"}`}>
+                        {t.status === "ativo" ? "Ativo" : "Inativo"}
                       </span>
                     </div>
-                    <p className="text-sm text-muted-foreground mb-3">{t.descricao}</p>
+                    <p className="text-xs sm:text-sm text-muted-foreground mb-3">{t.descricao}</p>
+
+                    {/* Token field */}
                     <div className="flex items-center gap-2 bg-black/30 rounded-xl px-3 py-2 font-mono text-xs">
-                      <span className={`flex-1 ${showTokens[t.id] ? 'text-success' : 'text-muted-foreground'}`}>
+                      <span className={`flex-1 truncate ${showTokens[t.id] ? "text-success" : "text-muted-foreground"}`}>
                         {showTokens[t.id] ? t.token : "ism_live_" + "•".repeat(16)}
                       </span>
-                      <button onClick={() => setShowTokens(prev => ({ ...prev, [t.id]: !prev[t.id] }))} className="hover:text-white transition-colors">
-                        {showTokens[t.id] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                      </button>
-                      <button className="hover:text-white transition-colors"><Copy className="w-3.5 h-3.5" /></button>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          onClick={() => setShowTokens(prev => ({ ...prev, [t.id]: !prev[t.id] }))}
+                          className="hover:text-white transition-colors p-0.5"
+                        >
+                          {showTokens[t.id] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                        <button className="hover:text-white transition-colors p-0.5">
+                          <Copy className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1"><CheckCircle className="w-3 h-3" /> Criado: {t.criado}</span>
-                      <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> Último uso: {t.ultimoUso}</span>
+
+                    {/*mobile */}
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <CheckCircle className="w-3 h-3 shrink-0" /> Criado: {t.criado}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Clock className="w-3 h-3 shrink-0" /> Último uso: {t.ultimoUso}
+                      </span>
                     </div>
                   </div>
-                  <button className="p-2 hover:bg-destructive/20 rounded-lg opacity-0 group-hover:opacity-100 transition-all shrink-0">
+
+                  {/*desktop */}
+                  <button className="p-2 hover:bg-destructive/20 rounded-lg sm:opacity-0 sm:group-hover:opacity-100 transition-all shrink-0 mt-0.5">
                     <Trash2 className="w-4 h-4 text-destructive" />
                   </button>
                 </div>
@@ -151,30 +199,34 @@ export default function TokensApi() {
 
       {tab === "docs" && (
         <div className="space-y-4">
-          <div className="glass-panel rounded-2xl p-5">
+          <div className="glass-panel rounded-2xl p-4 sm:p-5">
             <h3 className="font-bold text-white mb-2">Autenticação</h3>
-            <p className="text-sm text-muted-foreground mb-3">Todas as requisições devem incluir o token no cabeçalho HTTP:</p>
-            <div className="bg-black/50 rounded-xl p-4 font-mono text-xs text-success border border-success/10">
+            <p className="text-xs sm:text-sm text-muted-foreground mb-3">Todas as requisições devem incluir o token no cabeçalho HTTP:</p>
+            <div className="bg-black/50 rounded-xl p-3 sm:p-4 font-mono text-xs text-success border border-success/10 overflow-x-auto">
               <p className="text-muted-foreground mb-1"># Exemplo de requisição curl:</p>
-              <p>curl -H "Authorization: Bearer ism_live_xxx..." \</p>
-              <p className="pl-4">https://api.ismtecnologia.com.br/api/v1/kpis</p>
+              <p className="whitespace-nowrap">curl -H "Authorization: Bearer ism_live_xxx..." \</p>
+              <p className="pl-4 whitespace-nowrap">https://api.ismtecnologia.com.br/api/v1/kpis</p>
             </div>
           </div>
 
           <div className="glass-panel rounded-2xl overflow-hidden">
-            <div className="p-5 border-b border-white/5">
+            <div className="p-4 sm:p-5 border-b border-white/5">
               <h3 className="font-bold text-white">Endpoints Disponíveis</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">Base URL: <code className="text-primary">https://api.ismtecnologia.com.br</code></p>
+              <p className="text-xs text-muted-foreground mt-0.5 break-all">
+                Base URL: <code className="text-primary">https://api.ismtecnologia.com.br</code>
+              </p>
             </div>
             <div className="divide-y divide-white/5">
               {endpoints.map((ep, i) => (
-                <div key={i} className="flex items-start gap-4 p-4 hover:bg-white/5 transition-colors">
-                  <span className={`text-xs font-bold px-2 py-1 rounded font-mono shrink-0 ${methodColors[ep.method]}`}>{ep.method}</span>
+                <div key={i} className="flex items-start gap-3 sm:gap-4 p-3 sm:p-4 hover:bg-white/5 transition-colors">
+                  <span className={`text-xs font-bold px-2 py-1 rounded font-mono shrink-0 ${methodColors[ep.method]}`}>
+                    {ep.method}
+                  </span>
                   <div className="flex-1 min-w-0">
-                    <p className="font-mono text-sm text-white">{ep.path}</p>
+                    <p className="font-mono text-xs sm:text-sm text-white break-all">{ep.path}</p>
                     <p className="text-xs text-muted-foreground mt-0.5">{ep.descricao}</p>
                     {ep.parametros && (
-                      <p className="text-xs text-primary/70 mt-1 font-mono">{ep.parametros}</p>
+                      <p className="text-xs text-primary/70 mt-1 font-mono break-all">{ep.parametros}</p>
                     )}
                   </div>
                 </div>

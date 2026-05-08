@@ -33,10 +33,16 @@ export default function FechamentoMensal() {
         description="Consolidação e fechamento contábil mensal"
         actions={
           <div className="flex gap-3">
-            <select value={mesSelecionado} onChange={e => setMesSelecionado(Number(e.target.value))} className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white outline-none">
+            <select value={mesSelecionado} onChange={e => setMesSelecionado(Number(e.target.value))} className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-black outline-none">
               {meses.map((m, i) => <option key={i} value={i}>{m}</option>)}
             </select>
-            <select value={anoSelecionado} onChange={e => setAnoSelecionado(Number(e.target.value))} className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white outline-none">
+            <select value={anoSelecionado} onChange={e => setAnoSelecionado(Number(e.target.value))} className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-black outline-none">
+              <option value={2030}>2030</option>
+              <option value={2029}>2029</option>
+              <option value={2028}>2028</option>
+              <option value={2027}>2027</option>
+              <option value={2026}>2026</option>
+              <option value={2025}>2025</option>
               <option value={2024}>2024</option>
               <option value={2023}>2023</option>
             </select>

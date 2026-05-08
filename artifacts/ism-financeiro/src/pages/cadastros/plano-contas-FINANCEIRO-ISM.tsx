@@ -36,7 +36,7 @@ function FormModal({ isOpen, onClose, onSubmit, initialData }: any) {
             <label className="text-sm font-medium text-muted-foreground">Tipo</label>
             <select 
               value={tipo} onChange={e => setTipo(e.target.value)}
-              className="mt-1 w-full bg-black/20 border border-white/10 rounded-lg p-2.5 text-white outline-none focus:border-primary/50"
+              className="mt-1 w-full bg-white/20 border border-white/10 rounded-lg p-2.5 text-black outline-none focus:border-primary/50"
             >
               <option value="receita">Receita</option>
               <option value="custo">Custo</option>
