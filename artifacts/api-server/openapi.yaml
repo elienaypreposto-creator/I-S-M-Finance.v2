@@ -1,23 +1,23 @@
 openapi: 3.0.3
 info:
   title: ISM Finance API
-  version: 1.1.0
-  description: API REST para controle financeiro, conciliação bancária e relatórios.
+  version: 1.2.0
+  description: API REST do SaaS financeiro com painel JWT e integração Power BI (v1 token).
 servers:
   - url: http://localhost:3000/api
     description: Local
 tags:
   - name: Auth
+  - name: Lancamentos
   - name: Conciliacoes
   - name: Dashboard
   - name: Relatorios
-  - name: Lancamentos
+  - name: PowerBI v1
 paths:
   /healthz:
     get:
       tags: [Auth]
       operationId: healthCheck
-      summary: Health check
       responses:
         "200":
           description: OK
@@ -187,6 +187,9 @@ paths:
                 arquivo:
                   type: string
                   format: binary
+            encoding:
+              arquivo:
+                contentType: application/octet-stream
       responses:
         "201":
           description: Extrato importado para conciliação
@@ -260,6 +263,17 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/VincularLinhaRequest"
+            examples:
+              exemploVinculoParcial:
+                value:
+                  lancamentos:
+                    - lancamento_id: 101
+                      desconto: 0
+                      acrescimo: 10
+                    - lancamento_id: 205
+                      desconto: 5
+                      acrescimo: 0
+                  gerar_parcial: true
       responses:
         "200":
           description: Linha vinculada com sucesso
@@ -513,12 +527,107 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /v1/bancos:
+    get:
+      tags: [PowerBI v1]
+      operationId: getV1Bancos
+      security: [{ bearerV1Token: [] }]
+      responses:
+        "200":
+          description: Contas bancárias (extração)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /v1/contasPagar:
+    get:
+      tags: [PowerBI v1]
+      operationId: getV1ContasPagar
+      security: [{ bearerV1Token: [] }]
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 10000 }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+      responses:
+        "200":
+          description: Lançamentos CP com joins para BI
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /v1/contasReceber:
+    get:
+      tags: [PowerBI v1]
+      operationId: getV1ContasReceber
+      security: [{ bearerV1Token: [] }]
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 10000 }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+      responses:
+        "200":
+          description: Lançamentos CR com joins para BI
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /v1/pessoas:
+    get:
+      tags: [PowerBI v1]
+      operationId: getV1Pessoas
+      security: [{ bearerV1Token: [] }]
+      responses:
+        "200":
+          description: Parceiros/pessoas
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /v1/filiais:
+    get:
+      tags: [PowerBI v1]
+      operationId: getV1Filiais
+      security: [{ bearerV1Token: [] }]
+      responses:
+        "200":
+          description: Filiais
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /v1/planoContas:
+    get:
+      tags: [PowerBI v1]
+      operationId: getV1PlanoContas
+      security: [{ bearerV1Token: [] }]
+      responses:
+        "200":
+          description: Plano de contas
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /v1/categoriaPlanoConta:
+    get:
+      tags: [PowerBI v1]
+      operationId: getV1CategoriaPlanoConta
+      security: [{ bearerV1Token: [] }]
+      responses:
+        "200":
+          description: Categorias do plano de contas
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    bearerV1Token:
+      type: http
+      scheme: bearer
+      description: Token estático validado na tabela `tokens_api`.
   responses:
     UnauthorizedError:
       description: Não autenticado

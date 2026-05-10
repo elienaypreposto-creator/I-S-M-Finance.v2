@@ -1,31 +1,44 @@
-// Centralized API configuration for I-S-M-Finance
-// The API_URL defaults to the local dev server, but should be overridden by VITE_API_URL in production (Vercel)
-
 const DEFAULT_API_URL = "/api";
 
-export const API_URL = import.meta.env.VITE_API_URL || (
-  import.meta.env.PROD 
-    ? DEFAULT_API_URL 
-    : "http://localhost:5000/api"
-);
+export const API_URL = import.meta.env.VITE_API_URL || "/api";
 
-/**
- * Helper to fetch data from the API
- */
+// Chave para o LocalStorage
+const AUTH_TOKEN_KEY = "ism_finance_token";
+
+export const authStorage = {
+    getToken: () => localStorage.getItem(AUTH_TOKEN_KEY),
+    setToken: (token: string) => localStorage.setItem(AUTH_TOKEN_KEY, token),
+    removeToken: () => localStorage.removeItem(AUTH_TOKEN_KEY),
+    logout: () => {
+        localStorage.removeItem(AUTH_TOKEN_KEY);
+        window.location.href = "/login";
+    }
+};
+
 export async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
-  const url = `${API_URL}${path.startsWith("/") ? path : `/${path}`}`;
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
-  });
-  
+    const url = `${API_URL}${path.startsWith("/") ? path : `/${path}`}`;
+    const token = authStorage.getToken();
+
+    const res = await fetch(url, {
+        ...options,
+        headers: {
+            "Content-Type": "application/json",
+            ...(token ? {"Authorization": `Bearer ${token}`} : {}),
+            ...options?.headers,
+        },
+    });
+
+    if (res.status === 401 && !path.includes("/auth/login")) {
+        authStorage.logout();
+        throw new Error("Sessão expirada");
+    }
+
   if (!res.ok) {
     const errorBody = await res.json().catch(() => ({}));
-    throw new Error(errorBody.error || `Erro na requisição: ${res.status} ${res.statusText}`);
+    const message = errorBody.errors?.[0]?.message || errorBody.error || `Erro: ${res.status}`;
+    throw new Error(message);
   }
-  
-  return res.json();
+
+  const body = await res.json();
+  return body;
 }

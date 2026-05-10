@@ -25,10 +25,10 @@ router.get("/dashboard/kpis", async (_req, res) => {
 
     const [totais] = await db
       .select({
-        contas_receber_atraso: sql<number>`coalesce(sum(case when ${lancamentosTable.tipo} = 'CR' and ${lancamentosTable.vencimento} < ${hoje} and ${lancamentosTable.status} = any(${sql.raw("ARRAY['pendente','atrasado']")}) then ${lancamentosTable.valor}::numeric else 0 end), 0)`,
-        contas_receber_aberto_mes: sql<number>`coalesce(sum(case when ${lancamentosTable.tipo} = 'CR' and ${lancamentosTable.vencimento} between ${toDate(inicioMes)} and ${toDate(fimMes)} and ${lancamentosTable.status} = any(${sql.raw("ARRAY['pendente','atrasado']")}) then ${lancamentosTable.valor}::numeric else 0 end), 0)`,
-        contas_pagar_aberto_mes: sql<number>`coalesce(sum(case when ${lancamentosTable.tipo} = 'CP' and ${lancamentosTable.vencimento} between ${toDate(inicioMes)} and ${toDate(fimMes)} and ${lancamentosTable.status} = any(${sql.raw("ARRAY['pendente','atrasado']")}) then ${lancamentosTable.valor}::numeric else 0 end), 0)`,
-        contas_pagar_atraso: sql<number>`coalesce(sum(case when ${lancamentosTable.tipo} = 'CP' and ${lancamentosTable.vencimento} < ${hoje} and ${lancamentosTable.status} = any(${sql.raw("ARRAY['pendente','atrasado']")}) then ${lancamentosTable.valor}::numeric else 0 end), 0)`,
+          contas_receber_atraso: sql<number>`coalesce(sum(case when ${lancamentosTable.tipo} = 'CR' and ${lancamentosTable.vencimento} < ${hoje}::date and ${lancamentosTable.status} in ('pendente', 'atrasado') then ${lancamentosTable.valor}::numeric else 0 end), 0)`,
+          contas_receber_aberto_mes: sql<number>`coalesce(sum(case when ${lancamentosTable.tipo} = 'CR' and ${lancamentosTable.vencimento} between ${toDate(inicioMes)}::date and ${toDate(fimMes)}::date and ${lancamentosTable.status} in ('pendente', 'atrasado') then ${lancamentosTable.valor}::numeric else 0 end), 0)`,
+          contas_pagar_aberto_mes: sql<number>`coalesce(sum(case when ${lancamentosTable.tipo} = 'CP' and ${lancamentosTable.vencimento} between ${toDate(inicioMes)}::date and ${toDate(fimMes)}::date and ${lancamentosTable.status} in ('pendente', 'atrasado') then ${lancamentosTable.valor}::numeric else 0 end), 0)`,
+          contas_pagar_atraso: sql<number>`coalesce(sum(case when ${lancamentosTable.tipo} = 'CP' and ${lancamentosTable.vencimento} < ${hoje}::date and ${lancamentosTable.status} in ('pendente', 'atrasado') then ${lancamentosTable.valor}::numeric else 0 end), 0)`,
       })
       .from(lancamentosTable)
       .where(sql`${lancamentosTable.status} != 'cancelado'`);
@@ -245,9 +245,6 @@ router.get("/dashboard/alertas-atraso", async (req, res) => {
         vencimento: lancamentosTable.vencimento,
         valor: lancamentosTable.valor,
         nome: parceirosTable.nome,
-      })
-      .from(lancamentosTable)
-      .leftJoin(parceirosTable, eq(lancamentosTable.parceiro_id, parceirosTable.id))
         riscos: lancamentosTable.riscos,
       })
       .from(lancamentosTable)

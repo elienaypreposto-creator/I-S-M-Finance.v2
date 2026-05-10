@@ -21,6 +21,7 @@ const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use(authRouter);
+router.use("/v1", v1Router);
 router.use(authMiddleware);
 router.use(dashboardRouter);
 router.use(lancamentosRouter);
@@ -35,6 +36,5 @@ router.use(usuariosRouter);
 router.use(filiaisRouter);
 router.use(tokensApiRouter);
 router.use(departamentosRouter);
-router.use("/v1", v1Router);
 
 export default router;

@@ -64,8 +64,10 @@ router.post("/auth/login", async (req, res) => {
         expiresIn: "24h",
       },
     );
-  } catch (e) {
-    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro no login.", String(e));
+  } catch (error: any) {
+      console.error("🔥 Erro detalhado no banco de dados (Login):", error);
+
+      return errorResponse(res, 500, "INTERNAL_ERROR", "Erro no login.", String(error));
   }
 });
 
