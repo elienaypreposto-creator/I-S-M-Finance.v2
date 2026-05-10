@@ -51,9 +51,14 @@ export default function Metas() {
         description="Planejamento orçamentário e acompanhamento de metas"
         actions={
           <div className="flex gap-3">
-            <select value={ano} onChange={e => setAno(Number(e.target.value))} className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white outline-none">
-              <option value={2024}>2024</option>
+            <select value={ano} onChange={e => setAno(Number(e.target.value))} className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-black outline-none">
+              <option value={2030}>2030</option>
+              <option value={2029}>2029</option>
+              <option value={2028}>2028</option>
+              <option value={2027}>2027</option>
+              <option value={2026}>2026</option>
               <option value={2025}>2025</option>
+              <option value={2024}>2024</option>
             </select>
             <button className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all">
               <Download className="w-4 h-4" /> Exportar

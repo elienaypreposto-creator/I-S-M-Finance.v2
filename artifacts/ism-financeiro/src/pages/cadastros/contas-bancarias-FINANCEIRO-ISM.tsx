@@ -102,7 +102,7 @@ function NovaContaModal({ onClose, initialData }: ModalProps) {
                 </div>
                 <div>
                    <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Tipo de Conta</label>
-                   <select value={form.tipo} onChange={e => setForm({ ...form, tipo: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors">
+                   <select value={form.tipo} onChange={e => setForm({ ...form, tipo: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-black outline-none focus:border-primary/50 transition-colors">
                      <option value="Conta Corrente">Conta Corrente</option>
                      <option value="Conta PJ">Conta PJ</option>
                      <option value="Poupança">Poupança</option>
