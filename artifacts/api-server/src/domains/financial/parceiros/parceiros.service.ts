@@ -1,6 +1,6 @@
 import { and, count, eq, ilike } from "drizzle-orm";
 import { db } from "@workspace/db";
-import { parceirosTable } from "@workspace/db/schema";
+import { lancamentosTable, parceirosTable } from "@workspace/db/schema";
 import { AppError } from "../../../utils/app-error";
 import type { CreateParceiroBody, ListParceirosQuery, UpdateParceiroBody } from "./schemas";
 
@@ -67,6 +67,20 @@ export const parceirosService = {
   },
 
   async remove(id: number) {
+    const [hasVinculo] = await db
+      .select({ id: lancamentosTable.id })
+      .from(lancamentosTable)
+      .where(eq(lancamentosTable.parceiro_id, id))
+      .limit(1);
+
+    if (hasVinculo) {
+      throw new AppError(
+        400,
+        "INTEGRITY_ERROR",
+        "Não é possível excluir este parceiro, pois existem lançamentos financeiros vinculados a ele.",
+      );
+    }
+
     await db.delete(parceirosTable).where(eq(parceirosTable.id, id));
     return { deleted: true };
   },

@@ -1,9 +1,9 @@
 import { Router } from "express";
-import contasBancariasRouter from "../../routes/contas-bancarias";
-import planoContasRouter from "../../routes/plano-contas";
-import metasRouter from "../../routes/metas";
-import filiaisRouter from "../../routes/filiais";
-import departamentosRouter from "../../routes/departamentos";
+import contasBancariasDomainRouter from "./contas-bancarias/router";
+import planoContasDomainRouter from "./plano-contas/router";
+import metasDomainRouter from "./metas/router";
+import filiaisDomainRouter from "./filiais/router";
+import departamentosDomainRouter from "./departamentos/router";
 import tokensApiRouter from "../../routes/tokens-api";
 import usuariosRouter from "../../routes/usuarios";
 import lancamentosDomainRouter from "./lancamentos/router";
@@ -11,13 +11,13 @@ import parceirosDomainRouter from "./parceiros/router";
 
 const financialDomainRouter = Router();
 
-financialDomainRouter.use(contasBancariasRouter);
+financialDomainRouter.use(contasBancariasDomainRouter);
 financialDomainRouter.use(lancamentosDomainRouter);
 financialDomainRouter.use(parceirosDomainRouter);
-financialDomainRouter.use(planoContasRouter);
-financialDomainRouter.use(metasRouter);
-financialDomainRouter.use(filiaisRouter);
-financialDomainRouter.use(departamentosRouter);
+financialDomainRouter.use(planoContasDomainRouter);
+financialDomainRouter.use(metasDomainRouter);
+financialDomainRouter.use(filiaisDomainRouter);
+financialDomainRouter.use(departamentosDomainRouter);
 financialDomainRouter.use(tokensApiRouter);
 financialDomainRouter.use(usuariosRouter);
 

@@ -29,8 +29,9 @@ type ContaBancaria = {
   tipo: string;
   status: string;
   cor: string;
-  saldo_inicial: number;
-  saldo_atual: number;
+  /** API devolve `numeric` como string para evitar perda de precisão */
+  saldo_inicial: number | string;
+  saldo_atual: number | string;
 };
 
 interface ModalProps { 
@@ -48,7 +49,7 @@ function NovaContaModal({ onClose, initialData }: ModalProps) {
     agencia: initialData?.agencia || "", 
     conta: initialData?.conta || "", 
     tipo: initialData?.tipo || "Conta Corrente",
-    saldo_inicial: initialData?.saldo_inicial || 0,
+    saldo_inicial: Number(initialData?.saldo_inicial ?? 0),
     cor: initialData?.cor || "#3BA8DC"
   });
 
@@ -209,7 +210,9 @@ export default function ContasBancarias() {
     }
   });
 
-  const totalSaldo = contas.filter(c => c.status === "ativo").reduce((acc, c) => acc + c.saldo_atual, 0);
+  const totalSaldo = contas
+    .filter((c) => c.status === "ativo")
+    .reduce((acc, c) => acc + Number(c.saldo_atual), 0);
 
   if (isLoading) return <div className="flex items-center justify-center h-64"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
 
@@ -302,7 +305,7 @@ export default function ContasBancarias() {
               <div>
                 <p className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1">Saldo Atual</p>
                 <p className="text-2xl font-bold" style={{ color: conta.cor }}>
-                  {showSaldos ? formatCurrency(conta.saldo_atual) : "R$ ••••••"}
+                  {showSaldos ? formatCurrency(Number(conta.saldo_atual)) : "R$ ••••••"}
                 </p>
               </div>
               <div className="text-right">
