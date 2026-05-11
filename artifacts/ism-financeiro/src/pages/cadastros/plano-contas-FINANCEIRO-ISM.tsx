@@ -4,7 +4,7 @@ import { Plus, Edit, Trash2 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 
-import { API_URL, fetchApi } from "@/lib/api-config";
+import { fetchApi, fetchApiData } from "@/lib/api-config";
 
 type PlanoConta = {
   id: number;
@@ -82,7 +82,7 @@ export default function PlanoContas() {
 
   const { data: contas = [], isLoading } = useQuery<PlanoConta[]>({
     queryKey: ['plano-contas'],
-    queryFn: () => fetchApi("/plano-contas")
+    queryFn: () => fetchApiData("/plano-contas")
   });
 
   const saveMutation = useMutation({

@@ -15,6 +15,12 @@ export const authStorage = {
     }
 };
 
+export type ApiEnvelope<T> = {
+  data: T;
+  meta: Record<string, unknown> | null;
+  errors: Array<{ code: string; message: string; details?: unknown }> | null;
+};
+
 export async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
     const url = `${API_URL}${path.startsWith("/") ? path : `/${path}`}`;
     const token = authStorage.getToken();
@@ -41,4 +47,9 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
 
   const body = await res.json();
   return body;
+}
+
+export async function fetchApiData<T>(path: string, options?: RequestInit): Promise<T> {
+  const envelope = await fetchApi<ApiEnvelope<T>>(path, options);
+  return envelope.data;
 }

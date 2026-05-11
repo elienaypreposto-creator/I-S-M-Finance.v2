@@ -18,7 +18,7 @@ import { formatCurrency } from "@/lib/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 
-import { API_URL, fetchApi } from "@/lib/api-config";
+import { fetchApi, fetchApiData } from "@/lib/api-config";
 
 type ContaBancaria = {
   id: number;
@@ -182,7 +182,7 @@ export default function ContasBancarias() {
 
   const { data: contas = [], isLoading } = useQuery<ContaBancaria[]>({
     queryKey: ["contas-bancarias"],
-    queryFn: () => fetchApi("/contas-bancarias")
+    queryFn: () => fetchApiData("/contas-bancarias")
   });
 
   const blockMutation = useMutation({

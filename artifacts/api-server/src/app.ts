@@ -1,6 +1,7 @@
 import express, { type Express } from "express";
 import cors from "cors";
 import router from "./routes";
+import { errorHandler } from "./middlewares/error-handler";
 
 const app: Express = express();
 
@@ -21,13 +22,6 @@ app.get("/healthz", (req, res) => {
 app.use("/api", router);
 
 // Global Error Handler
-app.use((err: any, req: any, res: any, next: any) => {
-  console.error("Global Error Handler:", err);
-  res.status(500).json({ 
-    error: "Internal Server Error", 
-    message: err.message,
-    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined 
-  });
-});
+app.use(errorHandler);
 
 export default app;

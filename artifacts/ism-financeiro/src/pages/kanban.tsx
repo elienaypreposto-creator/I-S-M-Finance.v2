@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { TaskCard } from "@/components/tasks/task-card";
 import { TaskModal } from "@/components/tasks/task-modal";
-import { API_URL, fetchApi } from "@/lib/api-config";
+import { fetchApi, fetchApiData } from "@/lib/api-config";
 import { toast } from "sonner";
 
 const COLORS = {
@@ -169,11 +169,11 @@ export default function Kanban() {
   
   const { data: cardsData, isLoading, error } = useQuery<Card[]>({
     queryKey: ["kanban-cards"],
-    queryFn: () => fetchApi<Card[]>("/kanban/cards")
+    queryFn: () => fetchApiData<Card[]>("/kanban/cards")
   });
   
   const createMutation = useMutation({
-    mutationFn: (data: Partial<Card>) => fetchApi<Card>("/kanban/cards", {
+    mutationFn: (data: Partial<Card>) => fetchApiData<Card>("/kanban/cards", {
       method: "POST",
       body: JSON.stringify(data),
     }),
@@ -189,7 +189,7 @@ export default function Kanban() {
   
   const moveMutation = useMutation({
     mutationFn: ({ id, columna }: { id: number; columna: string }) => 
-      fetchApi(`/kanban/cards/${id}/mover`, {
+      fetchApiData(`/kanban/cards/${id}`, {
         method: "PATCH",
         body: JSON.stringify({ coluna: columna }),
       }),

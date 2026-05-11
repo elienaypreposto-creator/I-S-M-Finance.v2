@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { supabase } from "../lib/supabase";
+import { errorResponse, successResponse } from "../utils/response";
 
 const router = Router();
 
@@ -46,10 +47,10 @@ router.get("/cards", async (req, res) => {
       anexos: undefined
     }));
 
-    res.json(cards);
-  } catch (error: any) {
+    return successResponse(res, cards);
+  } catch (error) {
     console.error("Erro ao buscar cards:", error);
-    res.status(500).json({ error: "Erro interno", message: error.message });
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao buscar cards do kanban.");
   }
 });
 
@@ -59,7 +60,7 @@ router.post("/cards", async (req, res) => {
     const { titulo, descricao, prioridade, coluna, prazo, departamentos, checklist, tags } = req.body;
 
     if (!titulo) {
-      return res.status(400).json({ error: "Título é obrigatório" });
+      return errorResponse(res, 400, "VALIDATION_ERROR", "Título é obrigatório.");
     }
 
     const { data, error } = await supabase
@@ -90,22 +91,22 @@ router.post("/cards", async (req, res) => {
         descricao: `Tarefa "${titulo}" criada`,
       }]);
 
-    res.status(201).json(data);
-  } catch (error: any) {
+    return successResponse(res, data, null, 201);
+  } catch (error) {
     console.error("Erro ao criar card:", error);
     
     // Log do erro no banco via Supabase (mesmo se o log falhar, retornamos o erro original)
     try {
       await supabase.from("logs_sistema").insert([{
         servico: "api-kanban",
-        mensagem: "Erro ao criar card: " + error.message,
-        detalhes: JSON.stringify({ body: req.body, stack: error.stack })
+        mensagem: "Erro ao criar card",
+        detalhes: JSON.stringify({ body: req.body })
       }]);
     } catch (logErr) {
       console.error("Falha ao salvar log:", logErr);
     }
     
-    res.status(500).json({ error: "Erro interno", message: error.message });
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao criar card do kanban.");
   }
 });
 
@@ -136,10 +137,10 @@ router.patch("/cards/:id", async (req, res) => {
         }]);
     }
 
-    res.json(data);
-  } catch (error: any) {
+    return successResponse(res, data);
+  } catch (error) {
     console.error("Erro ao atualizar card:", error);
-    res.status(500).json({ error: "Erro interno", message: error.message });
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao atualizar card do kanban.");
   }
 });
 
@@ -152,10 +153,10 @@ router.get("/usuarios", async (req, res) => {
       .order("nome");
 
     if (error) throw error;
-    res.json(data);
-  } catch (error: any) {
+    return successResponse(res, data);
+  } catch (error) {
     console.error("Erro ao buscar usuários:", error);
-    res.status(500).json({ error: "Erro interno", message: error.message });
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao buscar usuários do kanban.");
   }
 });
 

@@ -1,40 +1,20 @@
 import { Router, type IRouter } from "express";
 import healthRouter from "./health";
-import authRouter from "./auth";
-import dashboardRouter from "./dashboard";
-import lancamentosRouter from "./lancamentos";
-import parceirosRouter from "./parceiros";
-import contasBancariasRouter from "./contas-bancarias";
-import planoContasRouter from "./plano-contas";
-import metasRouter from "./metas";
-import conciliacoesRouter from "./conciliacoes";
-import kanbanRouter from "./kanban";
-import relatoriosRouter from "./relatorios";
-import usuariosRouter from "./usuarios";
-import filiaisRouter from "./filiais";
-import tokensApiRouter from "./tokens-api";
-import departamentosRouter from "./departamentos";
 import v1Router from "./v1";
 import { authMiddleware } from "../middlewares/auth";
+import authDomainRouter from "../domains/auth/router";
+import financialDomainRouter from "../domains/financial/router";
+import reconciliationDomainRouter from "../domains/reconciliation/router";
+import reportsDomainRouter from "../domains/reports/router";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
-router.use(authRouter);
+router.use(authDomainRouter);
 router.use("/v1", v1Router);
 router.use(authMiddleware);
-router.use(dashboardRouter);
-router.use(lancamentosRouter);
-router.use(parceirosRouter);
-router.use(contasBancariasRouter);
-router.use(planoContasRouter);
-router.use(metasRouter);
-router.use(conciliacoesRouter);
-router.use("/kanban", kanbanRouter);
-router.use(relatoriosRouter);
-router.use(usuariosRouter);
-router.use(filiaisRouter);
-router.use(tokensApiRouter);
-router.use(departamentosRouter);
+router.use(reportsDomainRouter);
+router.use(financialDomainRouter);
+router.use(reconciliationDomainRouter);
 
 export default router;
