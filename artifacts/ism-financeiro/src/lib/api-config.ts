@@ -24,12 +24,13 @@ export type ApiEnvelope<T> = {
 export async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
     const url = `${API_URL}${path.startsWith("/") ? path : `/${path}`}`;
     const token = authStorage.getToken();
+    const isFormData = typeof FormData !== "undefined" && options?.body instanceof FormData;
 
     const res = await fetch(url, {
         ...options,
         headers: {
-            "Content-Type": "application/json",
-            ...(token ? {"Authorization": `Bearer ${token}`} : {}),
+            ...(isFormData ? {} : { "Content-Type": "application/json" }),
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
             ...options?.headers,
         },
     });

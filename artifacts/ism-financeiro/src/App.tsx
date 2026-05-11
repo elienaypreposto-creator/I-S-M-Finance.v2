@@ -10,6 +10,7 @@ import Dashboard from "./pages/dashboard-FINANCEIRO-ISM";
 import Kanban from "./pages/kanban";
 import Lancamentos from "./pages/lancamentos-FINANCEIRO-ISM";
 import ConciliacaoList from "./pages/conciliacao/index";
+import ConciliacaoExtratoDetalhe from "./pages/conciliacao/extrato";
 
 // Cadastros
 import Parceiros from "./pages/cadastros/parceiros";
@@ -70,6 +71,7 @@ function Router() {
             <PrivateRoute path="/kanban" component={Kanban} />
             <PrivateRoute path="/lancamentos" component={Lancamentos} />
             <PrivateRoute path="/conciliacao" component={ConciliacaoList} />
+            <PrivateRoute path="/conciliacao/extrato/:extratoId" component={ConciliacaoExtratoDetalhe} />
 
             {/* Cadastros */}
             <PrivateRoute path="/cadastros/parceiros" component={Parceiros} />
