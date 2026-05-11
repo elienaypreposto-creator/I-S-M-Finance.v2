@@ -1,126 +1,145 @@
-import { useState } from "react";
-import { PageHeader } from "@/components/shared/page-header";
-import { Download, TrendingUp } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
-
-const meses = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
-
-type DreRow = { label: string; tipo: "titulo" | "item" | "subtotal" | "total"; valores: number[]; negativo?: boolean };
-
-const dreCompetencia: DreRow[] = [
-  { label: "RECEITA BRUTA", tipo: "titulo", valores: [] },
-  { label: "Receita de Serviços", tipo: "item", valores: [118500, 131200, 127800, 132000, 139000, 143500, 0, 0, 0, 0, 0, 0] },
-  { label: "Outras Receitas", tipo: "item", valores: [1200, 800, 1500, 900, 1100, 1200, 0, 0, 0, 0, 0, 0] },
-  { label: "TOTAL RECEITA BRUTA", tipo: "subtotal", valores: [119700, 132000, 129300, 132900, 140100, 144700, 0, 0, 0, 0, 0, 0] },
-  { label: "DEDUÇÕES", tipo: "titulo", valores: [] },
-  { label: "ISS (2,5%)", tipo: "item", negativo: true, valores: [2993, 3300, 3233, 3323, 3503, 3618, 0, 0, 0, 0, 0, 0] },
-  { label: "PIS + COFINS (3,65%)", tipo: "item", negativo: true, valores: [4369, 4818, 4720, 4851, 5114, 5282, 0, 0, 0, 0, 0, 0] },
-  { label: "RECEITA LÍQUIDA", tipo: "total", valores: [112338, 123882, 121347, 124726, 131483, 135800, 0, 0, 0, 0, 0, 0] },
-  { label: "CUSTOS (CSP)", tipo: "titulo", valores: [] },
-  { label: "Folha PJ", tipo: "item", negativo: true, valores: [40000, 40000, 42000, 42000, 44000, 44000, 0, 0, 0, 0, 0, 0] },
-  { label: "Fornecedores CSP", tipo: "item", negativo: true, valores: [14200, 16800, 15500, 16100, 13200, 15000, 0, 0, 0, 0, 0, 0] },
-  { label: "LUCRO BRUTO", tipo: "total", valores: [58138, 67082, 63847, 66626, 74283, 76800, 0, 0, 0, 0, 0, 0] },
-  { label: "DESPESAS OPERACIONAIS", tipo: "titulo", valores: [] },
-  { label: "Despesas Administrativas", tipo: "item", negativo: true, valores: [8000, 8200, 7500, 8100, 7900, 8300, 0, 0, 0, 0, 0, 0] },
-  { label: "Ocupação (Aluguel)", tipo: "item", negativo: true, valores: [3200, 3200, 3200, 3200, 3200, 3200, 0, 0, 0, 0, 0, 0] },
-  { label: "Despesa Pessoal CLT", tipo: "item", negativo: true, valores: [5000, 5000, 5000, 5000, 5000, 5000, 0, 0, 0, 0, 0, 0] },
-  { label: "Despesas Financeiras", tipo: "item", negativo: true, valores: [1600, 2000, 1800, 1900, 1700, 1800, 0, 0, 0, 0, 0, 0] },
-  { label: "EBITDA", tipo: "total", valores: [40338, 48682, 46347, 48426, 56483, 58500, 0, 0, 0, 0, 0, 0] },
-  { label: "IRPJ + CSLL (Estimado)", tipo: "item", negativo: true, valores: [6050, 7302, 6952, 7264, 8472, 8775, 0, 0, 0, 0, 0, 0] },
-  { label: "RESULTADO LÍQUIDO", tipo: "total", valores: [34288, 41380, 39395, 41162, 48011, 49725, 0, 0, 0, 0, 0, 0] },
-];
-
-// Regime de Caixa: valores menores pois considera o que foi efetivamente pago/recebido
-const dreCaixa: DreRow[] = dreCompetencia.map(row => ({
-  ...row,
-  valores: row.valores.map((v, i) => {
-    if (v === 0) return 0;
-    const fator = [0.92, 0.95, 0.88, 0.93, 0.97, 1.02][i] ?? 1;
-    return Math.round(v * fator);
-  }),
-}));
-
-import { DateRangePicker } from "@/components/shared/date-range-picker";
-import { format, startOfYear, endOfYear } from "date-fns";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { PageHeader } from "@/components/shared/page-header";
+import { Download, Loader2, TrendingUp, AlertCircle } from "lucide-react";
+import { formatCurrency, cn } from "@/lib/utils";
+import { fetchApiData } from "@/lib/api-config";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
-import { API_URL, fetchApi } from "@/lib/api-config";
+const monthKey = (m: number) => String(m).padStart(2, "0");
 
-interface DreResponse {
-  linhas: DreRow[];
+function mesesPtLong(): string[] {
+  return Array.from({ length: 12 }, (_, i) => {
+    const s = new Intl.DateTimeFormat("pt-BR", { month: "long" }).format(new Date(2000, i, 1));
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  });
+}
+
+export type DreLinhaApi = {
+  codigo: string;
+  descricao: string;
+  valores: Record<string, string | number>;
+  total: string | number;
+};
+
+export type DreResponse = {
+  ano: number;
+  regime: string;
+  meses: string[];
+  linhas: DreLinhaApi[];
+};
+
+function valorMes(linha: DreLinhaApi, mes: number): number {
+  return Number(linha.valores[monthKey(mes)] ?? 0);
 }
 
 export default function DreGerencial() {
-  const [dateStart, setDateStart] = useState(format(startOfYear(new Date()), "yyyy-MM-dd"));
-  const [dateEnd, setDateEnd] = useState(format(endOfYear(new Date()), "yyyy-MM-dd"));
+  const currentYear = new Date().getFullYear();
+  const [ano, setAno] = useState(currentYear);
   const [regime, setRegime] = useState<"competencia" | "caixa">("competencia");
-  const ano = new Date(dateStart).getFullYear();
+  const mesesPt = useMemo(() => mesesPtLong(), []);
 
-  const { data, isLoading } = useQuery<DreResponse>({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["relatorio-dre", ano, regime],
-    queryFn: () => fetchApi(`/relatorios/dre?ano=${ano}&regime=${regime}`)
+    queryFn: () =>
+      fetchApiData<DreResponse>(`/relatorios/dre?ano=${ano}&regime=${regime}`),
   });
 
-  const dreData: DreRow[] = data?.linhas || [];
-  const mesAtual = new Date().getMonth() + 1;
+  const linhas = data?.linhas ?? [];
+  const mesAtualRef = data?.ano === currentYear ? new Date().getMonth() + 1 : 12;
 
-  const getRowStyle = (tipo: DreRow["tipo"]) => {
-    switch (tipo) {
-      case "titulo": return "bg-white/5 text-primary font-bold text-xs uppercase tracking-wider";
-      case "subtotal": return "text-white font-semibold bg-primary/5";
-      case "total": return "text-white font-bold bg-primary/10 border-t border-primary/20";
-      default: return "text-muted-foreground hover:bg-white/5 transition-colors";
-    }
-  };
+  const porCodigo = useMemo(() => {
+    const m = new Map<string, DreLinhaApi>();
+    for (const l of linhas) m.set(l.codigo, l);
+    return m;
+  }, [linhas]);
 
-  const getCellColor = (row: DreRow, val: number) => {
-    if (row.tipo === "titulo" || val === 0) return "text-muted-foreground/30";
-    if (row.tipo === "total" || row.tipo === "subtotal") return val >= 0 ? "text-success" : "text-destructive";
-    if (row.negativo) return "text-destructive";
+  const kpis = useMemo(() => {
+    const rl = porCodigo.get("3");
+    const mc = porCodigo.get("5");
+    const ll = porCodigo.get("7");
+    return [
+      { label: "Receita líquida (ano)", value: Number(rl?.total ?? 0), color: "text-teal-400" },
+      { label: "Margem de contribuição (ano)", value: Number(mc?.total ?? 0), color: "text-primary" },
+      { label: "Lucro líquido (ano)", value: Number(ll?.total ?? 0), color: "text-emerald-400" },
+    ];
+  }, [porCodigo]);
+
+  const anosOpcoes = useMemo(() => {
+    const out: number[] = [];
+    for (let y = currentYear + 1; y >= currentYear - 8; y--) out.push(y);
+    return out;
+  }, [currentYear]);
+
+  const rowClass = (codigo: string) => {
+    if (codigo === "7")
+      return "bg-emerald-500/15 border-y border-emerald-500/30 font-bold text-white";
+    if (codigo === "3" || codigo === "5")
+      return "bg-primary/10 font-semibold text-white border-t border-primary/15";
+    if (codigo === "2" || codigo === "4" || codigo === "6") return "text-white/90";
     return "text-white";
   };
 
-  const totalAnual = (row: DreRow) => row.valores.reduce((a, b) => a + b, 0);
-  const rl = dreData.find(r => r.label === "RECEITA LÍQUIDA");
-  const lb = dreData.find(r => r.label === "LUCRO BRUTO");
-  const rs = dreData.find(r => r.label === "RESULTADO LÍQUIDO");
-
-  if (isLoading) return (
-    <div className="flex items-center justify-center h-64">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-    </div>
-  );
-
-  if (!rl || !lb || !rs) return (
-    <div className="p-8 text-center glass-panel rounded-2xl">
-      <p className="text-muted-foreground">Nenhum dado disponível para o período selecionado.</p>
-    </div>
-  );
+  const cellClass = (codigo: string, val: number) => {
+    if (codigo === "7") return val >= 0 ? "text-emerald-300" : "text-destructive";
+    if (val < 0) return "text-orange-300/95";
+    if (val > 0) return "text-white";
+    return "text-muted-foreground/40";
+  };
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="DRE Gerencial"
-        description="Demonstração do Resultado do Exercício"
+        description="Demonstração do resultado do exercício por mês (competência ou caixa)."
         actions={
-          <div className="flex gap-3">
-            <DateRangePicker 
-              startDate={dateStart} 
-              endDate={dateEnd} 
-              onChange={(start, end) => {
-                setDateStart(start);
-                setDateEnd(end);
-              }}
-            />
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground whitespace-nowrap">Ano</span>
+              <Select value={String(ano)} onValueChange={(v) => setAno(Number(v))}>
+                <SelectTrigger className="w-[120px] h-9 bg-white/5 border-white/10 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {anosOpcoes.map((y) => (
+                    <SelectItem key={y} value={String(y)}>
+                      {y}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="flex gap-1 p-1 bg-white/5 rounded-xl border border-white/10">
-              <button onClick={() => setRegime("competencia")} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${regime === "competencia" ? "bg-primary text-white" : "text-muted-foreground hover:text-white"}`}>
-                Regime de Competência
+              <button
+                type="button"
+                onClick={() => setRegime("competencia")}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
+                  regime === "competencia" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-white",
+                )}>
+                Competência
               </button>
-              <button onClick={() => setRegime("caixa")} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${regime === "caixa" ? "bg-primary text-white" : "text-muted-foreground hover:text-white"}`}>
-                Regime de Caixa
+              <button
+                type="button"
+                onClick={() => setRegime("caixa")}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
+                  regime === "caixa" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-white",
+                )}>
+                Caixa
               </button>
             </div>
-            <button className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all">
+            <button
+              type="button"
+              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all opacity-60 cursor-not-allowed"
+              disabled
+              title="Em breve">
               <Download className="w-4 h-4" /> Exportar XLSX
             </button>
           </div>
@@ -128,66 +147,123 @@ export default function DreGerencial() {
       />
 
       {regime === "caixa" && (
-        <div className="bg-warning/10 border border-warning/30 rounded-xl p-3 flex items-center gap-2 text-sm text-warning">
-          <span className="font-bold">ℹ</span>
-          <span>Regime de Caixa: exibe valores efetivamente recebidos/pagos. O Regime de Competência é a visão principal do sistema (lançamentos por vencimento).</span>
+        <div className="bg-amber-500/10 border border-amber-500/25 rounded-xl p-3 text-sm text-amber-200/95 flex gap-2 items-start">
+          <span className="font-bold shrink-0">ℹ</span>
+          <span>
+            Regime de caixa considera apenas lançamentos quitados/recebidos, pela data de quitação. Competência usa vencimento e exclui cancelados.
+          </span>
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-4">
-        {[
-          { label: "Receita Líquida Acum.", value: rl.valores.filter(v => v > 0).reduce((a, b) => a + b, 0), icon: <TrendingUp className="w-4 h-4" />, color: "text-teal-400" },
-          { label: "Lucro Bruto Acum.", value: lb.valores.filter(v => v > 0).reduce((a, b) => a + b, 0), icon: <TrendingUp className="w-4 h-4" />, color: "text-primary" },
-          { label: "Resultado Líquido Acum.", value: rs.valores.filter(v => v > 0).reduce((a, b) => a + b, 0), icon: <TrendingUp className="w-4 h-4" />, color: "text-success" },
-        ].map(item => (
-          <div key={item.label} className="glass-panel rounded-2xl p-4">
-            <div className="flex items-center gap-2 mb-1">
-              <span className={item.color}>{item.icon}</span>
-              <p className="text-xs text-muted-foreground">{item.label}</p>
-            </div>
-            <p className={`text-xl font-bold ${item.color}`}>{formatCurrency(item.value)}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="glass-panel rounded-2xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-white/5 border-b border-white/10">
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground sticky left-0 bg-card/90 backdrop-blur-sm min-w-[220px]">Descrição</th>
-                {meses.map((m, i) => (
-                  <th key={m} className={`px-3 py-3 text-right font-medium min-w-[90px] ${i < mesAtual ? "text-white" : "text-muted-foreground/40"}`}>{m}</th>
-                ))}
-                <th className="px-4 py-3 text-right font-bold text-primary min-w-[110px]">Total</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {dreData.map((row, i) => (
-                <tr key={i} className={getRowStyle(row.tipo)}>
-                  <td className={`px-4 py-3 sticky left-0 backdrop-blur-sm ${row.tipo === "titulo" ? "bg-white/5" : row.tipo === "total" ? "bg-primary/10" : "bg-card/60"}`}>
-                    {row.tipo === "item" ? <span className="pl-3">{row.label}</span> : row.label}
-                  </td>
-                  {row.tipo === "titulo" ? (
-                    <td colSpan={meses.length + 1} />
-                  ) : (
-                    <>
-                      {row.valores.map((v, j) => (
-                        <td key={j} className={`px-3 py-3 text-right ${getCellColor(row, v)}`}>
-                          {v !== 0 ? (row.negativo ? `-${formatCurrency(v)}` : formatCurrency(v)) : "—"}
-                        </td>
-                      ))}
-                      <td className={`px-4 py-3 text-right font-bold ${getCellColor(row, totalAnual(row))}`}>
-                        {totalAnual(row) !== 0 ? (row.negativo ? `-${formatCurrency(totalAnual(row))}` : formatCurrency(totalAnual(row))) : "—"}
-                      </td>
-                    </>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {isLoading ? (
+        <div className="glass-panel rounded-2xl border border-white/10 p-16 flex flex-col items-center gap-3 text-muted-foreground">
+          <Loader2 className="w-10 h-10 animate-spin text-primary" />
+          <p className="text-sm">Carregando DRE…</p>
         </div>
-      </div>
+      ) : isError ? (
+        <div className="glass-panel rounded-2xl border border-destructive/30 p-8 flex flex-col items-center gap-2 text-center">
+          <AlertCircle className="w-10 h-10 text-destructive" />
+          <p className="text-sm text-white font-medium">Não foi possível carregar o relatório.</p>
+          <p className="text-xs text-muted-foreground">{error instanceof Error ? error.message : "Erro desconhecido"}</p>
+          <button type="button" onClick={() => void refetch()} className="mt-2 text-xs text-primary underline">
+            Tentar novamente
+          </button>
+        </div>
+      ) : linhas.length === 0 ? (
+        <div className="glass-panel rounded-2xl border border-white/10 p-10 text-center text-muted-foreground text-sm">
+          Nenhuma linha retornada para {ano}.
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {kpis.map((item) => (
+              <div key={item.label} className="glass-panel rounded-2xl p-4 border border-white/10">
+                <div className="flex items-center gap-2 mb-1">
+                  <TrendingUp className={cn("w-4 h-4", item.color)} />
+                  <p className="text-xs text-muted-foreground">{item.label}</p>
+                </div>
+                <p className={cn("text-xl font-bold tabular-nums", item.color)}>{formatCurrency(item.value)}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="glass-panel rounded-2xl overflow-hidden border border-white/10">
+            <div className="px-4 py-3 border-b border-white/10 bg-black/20 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs text-muted-foreground">
+                Exercício <span className="text-white font-semibold">{data?.ano ?? ano}</span>
+                {" · "}
+                Regime <span className="text-white font-semibold">{data?.regime ?? regime}</span>
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[1100px]">
+                <thead>
+                  <tr className="bg-white/5 border-b border-white/10">
+                    <th className="px-4 py-3 text-left font-medium text-muted-foreground sticky left-0 bg-[#121417]/95 backdrop-blur-sm z-10 min-w-[260px] border-r border-white/5">
+                      Linha DRE
+                    </th>
+                    {mesesPt.map((nome, i) => {
+                      const m = i + 1;
+                      const futuro = data?.ano === currentYear && m > mesAtualRef;
+                      return (
+                        <th
+                          key={nome}
+                          title={nome}
+                          className={cn(
+                            "px-1.5 py-3 text-right font-medium text-[10px] leading-tight min-w-[76px] max-w-[90px]",
+                            futuro ? "text-muted-foreground/35" : "text-muted-foreground",
+                          )}>
+                          {nome}
+                        </th>
+                      );
+                    })}
+                    <th className="px-3 py-3 text-right font-bold text-primary min-w-[100px] sticky right-0 bg-[#121417]/95 backdrop-blur-sm border-l border-white/5">
+                      Total
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {linhas.map((linha) => (
+                    <tr key={linha.codigo} className={cn("hover:bg-white/[0.02]", rowClass(linha.codigo))}>
+                      <td
+                        className={cn(
+                          "px-4 py-2.5 sticky left-0 z-[1] border-r border-white/5 backdrop-blur-sm",
+                          linha.codigo === "7" ? "bg-emerald-500/10" : "bg-[#121417]/90",
+                        )}>
+                        <span className={cn(linha.codigo === "7" && "text-base")}>{linha.descricao}</span>
+                      </td>
+                      {mesesPt.map((_, i) => {
+                        const m = i + 1;
+                        const v = valorMes(linha, m);
+                        const futuro = data?.ano === currentYear && m > mesAtualRef;
+                        return (
+                          <td
+                            key={m}
+                            className={cn(
+                              "px-2 py-2.5 text-right tabular-nums text-xs",
+                              cellClass(linha.codigo, v),
+                              futuro && "opacity-40",
+                            )}>
+                            {v !== 0 ? formatCurrency(v) : "—"}
+                          </td>
+                        );
+                      })}
+                      <td
+                        className={cn(
+                          "px-3 py-2.5 text-right font-bold tabular-nums text-xs sticky right-0 border-l border-white/5 backdrop-blur-sm",
+                          cellClass(linha.codigo, Number(linha.total)),
+                          linha.codigo === "7" ? "bg-emerald-500/10" : "bg-[#121417]/90",
+                        )}>
+                        {Number(linha.total) !== 0 ? formatCurrency(Number(linha.total)) : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -1,174 +1,288 @@
-import React, { useState } from "react";
+import { Fragment, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/shared/page-header";
-import { Download } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import { Download, Loader2, AlertCircle, ChevronDown, ChevronRight } from "lucide-react";
+import { formatCurrency, cn } from "@/lib/utils";
+import { fetchApiData } from "@/lib/api-config";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
-const meses = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+const monthKey = (m: number) => String(m).padStart(2, "0");
 
-type FluxoRow = { label: string; tipo: "titulo" | "item" | "subtotal" | "total"; valores: number[]; negativo?: boolean };
+function mesesPtLong(): string[] {
+  return Array.from({ length: 12 }, (_, i) => {
+    const s = new Intl.DateTimeFormat("pt-BR", { month: "long" }).format(new Date(2000, i, 1));
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  });
+}
 
-const fluxoData: FluxoRow[] = [
-  { label: "ENTRADAS OPERACIONAIS", tipo: "titulo", valores: [] },
-  { label: "Recebimento de Clientes", tipo: "item", valores: [105000, 128000, 119000, 126000, 135000, 142000, 130000, 140000, 148000, 152000, 145000, 160000] },
-  { label: "Recebimentos Antecipados", tipo: "item", valores: [8000, 5000, 12000, 7000, 5000, 8000, 6000, 9000, 5000, 7000, 8000, 5000] },
-  { label: "TOTAL ENTRADAS", tipo: "subtotal", valores: [113000, 133000, 131000, 133000, 140000, 150000, 136000, 149000, 153000, 159000, 153000, 165000] },
-  { label: "SAÍDAS OPERACIONAIS", tipo: "titulo", valores: [] },
-  { label: "Pagamento Fornecedores", tipo: "item", negativo: true, valores: [54200, 56800, 57500, 58100, 57200, 59000, 58000, 60000, 61000, 62000, 60000, 65000] },
-  { label: "Despesas Administrativas", tipo: "item", negativo: true, valores: [8000, 8200, 7500, 8100, 7900, 8300, 8000, 8200, 8100, 8300, 8200, 8500] },
-  { label: "Impostos e Tributos", tipo: "item", negativo: true, valores: [9412, 10302, 9905, 10238, 11090, 12375, 10500, 11200, 11500, 12000, 11800, 12500] },
-  { label: "Ocupação", tipo: "item", negativo: true, valores: [3200, 3200, 3200, 3200, 3200, 3200, 3200, 3200, 3200, 3200, 3200, 3200] },
-  { label: "TOTAL SAÍDAS", tipo: "subtotal", negativo: true, valores: [74812, 78502, 78105, 79638, 79390, 82875, 79700, 82600, 83800, 85500, 83200, 89700] },
-  { label: "FLUXO OPERACIONAL LÍQUIDO", tipo: "total", valores: [38188, 54498, 52895, 53362, 60610, 67125, 56300, 66400, 69200, 73500, 69800, 75300] },
-  { label: "SALDO INICIAL", tipo: "item", valores: [150000, 188188, 242686, 295581, 348943, 409553, 476678, 532978, 599378, 668578, 742078, 811878] },
-  { label: "SALDO FINAL", tipo: "total", valores: [188188, 242686, 295581, 348943, 409553, 476678, 532978, 599378, 668578, 742078, 811878, 887178] },
-];
-
-const chartData = meses.map((m, i) => ({
-  mes: m,
-  entradas: fluxoData.find(r => r.label === "TOTAL ENTRADAS")!.valores[i],
-  saidas: fluxoData.find(r => r.label === "TOTAL SAÍDAS")!.valores[i],
-  saldo: fluxoData.find(r => r.label === "SALDO FINAL")!.valores[i],
-}));
-
-const CustomTooltip = ({ active, payload, label }: any) => {
-  if (active && payload && payload.length) {
-    return (
-      <div className="bg-card/95 backdrop-blur-md border border-white/10 p-3 rounded-lg shadow-xl">
-        <p className="text-white font-medium mb-2">{label}</p>
-        {payload.map((entry: any, index: number) => (
-          <p key={index} style={{ color: entry.color }} className="text-sm font-medium">
-            {entry.name}: {formatCurrency(entry.value)}
-          </p>
-        ))}
-      </div>
-    );
-  }
-  return null;
+export type FluxoLinhaApi = {
+  codigo: string;
+  descricao: string;
+  valores: Record<string, string | number>;
+  total: string | number;
 };
 
-import { useQuery } from "@tanstack/react-query";
-import { DateRangePicker } from "@/components/shared/date-range-picker";
-import { format, startOfYear, endOfYear } from "date-fns";
+export type FluxoSecaoApi = {
+  titulo: string;
+  tipo: string;
+  linhas: FluxoLinhaApi[];
+};
 
-import { API_URL, fetchApi } from "@/lib/api-config";
+export type FluxoCaixaResponse = {
+  ano: number;
+  meses: string[];
+  secoes: FluxoSecaoApi[];
+};
 
-interface FluxoCaixaResponse {
-  secoes: any[];
+/** Lida com string numeric e number para evitar erro IEEE 754 de float */
+function toCents(v: string | number | undefined | null): number {
+  if (v === undefined || v === null) return 0;
+  if (typeof v === "number") return Math.round(v * 100);
+  const str = String(v).replace(",", ".");
+  return Math.round(Number(str) * 100);
+}
+
+function valorMesCents(linha: FluxoLinhaApi, mes: number): number {
+  return toCents(linha.valores[monthKey(mes)]);
+}
+
+function somaMesSecaoCents(linhas: FluxoLinhaApi[], mes: number): number {
+  return linhas.reduce((acc, l) => acc + valorMesCents(l, mes), 0);
+}
+
+function somaTotalSecaoCents(linhas: FluxoLinhaApi[]): number {
+  return linhas.reduce((acc, l) => acc + toCents(l.total), 0);
 }
 
 export default function FluxoCaixa() {
-  const [dateStart, setDateStart] = useState(format(startOfYear(new Date()), "yyyy-MM-dd"));
-  const [dateEnd, setDateEnd] = useState(format(endOfYear(new Date()), "yyyy-MM-dd"));
-  const ano = new Date(dateStart).getFullYear();
+  const currentYear = new Date().getFullYear();
+  const [ano, setAno] = useState(currentYear);
+  const mesesPt = useMemo(() => mesesPtLong(), []);
 
-  const { data, isLoading } = useQuery<FluxoCaixaResponse>({
-    queryKey: ["relatorio-fluxo", ano],
-    queryFn: () => fetchApi(`/relatorios/fluxo-caixa?ano=${ano}`)
+  const [aberto, setAberto] = useState<Record<string, boolean>>({});
+
+  const { data, isLoading, isError, error, refetch } = useQuery({
+    queryKey: ["relatorio-fluxo-caixa", ano],
+    queryFn: () => fetchApiData<FluxoCaixaResponse>(`/relatorios/fluxo-caixa?ano=${ano}`),
   });
 
-  const secoes = data?.secoes || [];
-  
-  // Converte as seções para o formato que o gráfico e a tabela esperam
-  const chartData = meses.map((m, i) => {
-    const entradas = secoes.find((s: any) => s.tipo === "entradas")?.linhas[0]?.valores[i] || 0;
-    const saidas = secoes.find((s: any) => s.tipo === "saidas")?.linhas[0]?.valores[i] || 0;
-    const saldo = secoes.find((s: any) => s.tipo === "saldo_final")?.linhas[0]?.valores[i] || 0;
-    return { mes: m, entradas, saidas: Math.abs(saidas), saldo };
-  });
+  const secoes = data?.secoes ?? [];
 
-  const getRowStyle = (tipo: string) => {
-    switch (tipo) {
-      case "total": return "text-white font-bold bg-primary/10 border-t border-primary/20";
-      case "saldo_final": return "text-white font-black bg-primary/20 scale-[1.01] shadow-lg ring-1 ring-primary/20";
-      default: return "text-muted-foreground hover:bg-white/5 transition-colors";
-    }
+  const toggleSecao = (tipo: string) => {
+    setAberto((prev) => ({
+      ...prev,
+      [tipo]: !(prev[tipo] ?? true),
+    }));
+  };
+
+  /** Secções expandidas por defeito até o utilizador fechar. */
+  const isOpen = (tipo: string) => aberto[tipo] !== false;
+
+  const fluxoLiquidoMensalCents = useMemo(() => {
+    if (!data?.secoes.length) return null;
+    return Array.from({ length: 12 }, (_, i) => {
+      const m = i + 1;
+      return data.secoes.reduce((acc, sec) => acc + somaMesSecaoCents(sec.linhas, m), 0);
+    });
+  }, [data]);
+
+  const fluxoLiquidoTotalCents = fluxoLiquidoMensalCents?.reduce((a, b) => a + b, 0) ?? 0;
+
+  const anosOpcoes = useMemo(() => {
+    const out: number[] = [];
+    for (let y = currentYear + 1; y >= currentYear - 8; y--) out.push(y);
+    return out;
+  }, [currentYear]);
+
+  const cellTone = (vCents: number, opts?: { mutedZero?: boolean }) => {
+    if (vCents === 0 && opts?.mutedZero) return "text-muted-foreground/35";
+    if (vCents < 0) return "text-orange-300/95";
+    if (vCents > 0) return "text-teal-300/95";
+    return "text-muted-foreground/40";
   };
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Fluxo de Caixa"
-        description="Demonstrativo de entradas e saídas financeiras"
+        title="Fluxo de caixa mensal"
+        description="Entradas e saídas por categoria (data de quitação, lançamentos recebidos/pagos)."
         actions={
-          <div className="flex gap-3">
-            <DateRangePicker 
-              startDate={dateStart} 
-              endDate={dateEnd} 
-              onChange={(start, end) => {
-                setDateStart(start);
-                setDateEnd(end);
-              }}
-            />
-            <button className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground whitespace-nowrap">Ano</span>
+              <Select value={String(ano)} onValueChange={(v) => setAno(Number(v))}>
+                <SelectTrigger className="w-[120px] h-9 bg-white/5 border-white/10 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {anosOpcoes.map((y) => (
+                    <SelectItem key={y} value={String(y)}>
+                      {y}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <button
+              type="button"
+              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all opacity-60 cursor-not-allowed"
+              disabled
+              title="Em breve">
               <Download className="w-4 h-4" /> Exportar XLSX
             </button>
           </div>
         }
       />
 
-      <div className="glass-panel rounded-2xl p-6">
-        <h3 className="font-bold text-white mb-6">Evolução do Saldo de Caixa — {ano}</h3>
-        <div className="h-[280px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id="colorSaldo" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#3BA8DC" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#3BA8DC" stopOpacity={0.0} />
-                </linearGradient>
-                <linearGradient id="colorEntradas" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#27AE60" stopOpacity={0.2} />
-                  <stop offset="95%" stopColor="#27AE60" stopOpacity={0.0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
-              <XAxis dataKey="mes" stroke="#ffffff50" fontSize={12} tickLine={false} axisLine={false} />
-              <YAxis stroke="#ffffff50" fontSize={12} tickLine={false} axisLine={false} tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} />
-              <Tooltip content={<CustomTooltip />} />
-              <Legend iconType="circle" wrapperStyle={{ fontSize: '12px' }} />
-              <Area type="monotone" dataKey="saldo" name="Saldo Final" stroke="#3BA8DC" strokeWidth={2} fill="url(#colorSaldo)" />
-              <Area type="monotone" dataKey="entradas" name="Entradas" stroke="#27AE60" strokeWidth={2} fill="url(#colorEntradas)" />
-            </AreaChart>
-          </ResponsiveContainer>
+      {isLoading ? (
+        <div className="glass-panel rounded-2xl border border-white/10 p-16 flex flex-col items-center gap-3 text-muted-foreground">
+          <Loader2 className="w-10 h-10 animate-spin text-primary" />
+          <p className="text-sm">Carregando fluxo de caixa…</p>
         </div>
-      </div>
+      ) : isError ? (
+        <div className="glass-panel rounded-2xl border border-destructive/30 p-8 flex flex-col items-center gap-2 text-center">
+          <AlertCircle className="w-10 h-10 text-destructive" />
+          <p className="text-sm text-white font-medium">Não foi possível carregar o relatório.</p>
+          <p className="text-xs text-muted-foreground">{error instanceof Error ? error.message : "Erro desconhecido"}</p>
+          <button type="button" onClick={() => void refetch()} className="mt-2 text-xs text-primary underline">
+            Tentar novamente
+          </button>
+        </div>
+      ) : secoes.length === 0 ? (
+        <div className="glass-panel rounded-2xl border border-white/10 p-10 text-center text-muted-foreground text-sm">
+          Nenhuma seção retornada para {ano}.
+        </div>
+      ) : (
+        <div className="glass-panel rounded-2xl overflow-hidden border border-white/10">
+          <div className="px-4 py-3 border-b border-white/10 bg-black/20 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground">
+              Exercício <span className="text-white font-semibold">{data?.ano ?? ano}</span>
+              <span className="text-muted-foreground/60"> · </span>
+              <span className="text-[11px]">Valores na data de quitação (caixa)</span>
+            </p>
+          </div>
 
-      <div className="glass-panel rounded-2xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-white/5 border-b border-white/10">
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground sticky left-0 bg-card/90 backdrop-blur-sm min-w-[240px]">Descrição</th>
-                {meses.map(m => (
-                  <th key={m} className="px-3 py-3 text-right font-medium text-white min-w-[90px]">{m}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {secoes.map((secao: any) => (
-                <React.Fragment key={secao.titulo}>
-                  <tr className="bg-white/5 text-primary font-bold text-xs uppercase tracking-wider">
-                    <td colSpan={meses.length + 1} className="px-4 py-2">{secao.titulo}</td>
-                  </tr>
-                  {secao.linhas.map((row: any, i: number) => (
-                    <tr key={i} className={getRowStyle(secao.tipo)}>
-                      <td className={`px-4 py-3 sticky left-0 backdrop-blur-sm ${secao.tipo === 'total' ? 'bg-primary/10' : 'bg-card/60'}`}>
-                        <span className="pl-3">{row.label}</span>
-                      </td>
-                      {(Array.isArray(row.valores) ? row.valores : []).map((v: number, j: number) => (
-                        <td key={j} className={`px-3 py-3 text-right ${secao.tipo === 'total' || secao.tipo === 'saldo_final' ? (v >= 0 ? 'text-success' : 'text-destructive') : row.negativo ? 'text-destructive' : v === 0 ? 'text-muted-foreground/30' : 'text-white'}`}>
-                          {v !== 0 ? (row.negativo ? `-${formatCurrency(v)}` : formatCurrency(v)) : "—"}
-                        </td>
-                      ))}
-                    </tr>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[1180px]">
+              <thead>
+                <tr className="bg-white/5 border-b border-white/10">
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground sticky left-0 bg-[#121417]/95 backdrop-blur-sm z-10 min-w-[240px] border-r border-white/5">
+                    Categoria
+                  </th>
+                  {mesesPt.map((nome) => (
+                    <th
+                      key={nome}
+                      title={nome}
+                      className="px-1.5 py-3 text-right font-medium text-[10px] leading-tight text-muted-foreground min-w-[76px] max-w-[92px]">
+                      {nome}
+                    </th>
                   ))}
-                </React.Fragment>
-              ))}
-            </tbody>
-          </table>
+                  <th className="px-3 py-3 text-right font-bold text-primary min-w-[100px] sticky right-0 bg-[#121417]/95 backdrop-blur-sm border-l border-white/5">
+                    Total
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {secoes.map((secao) => {
+                  const open = isOpen(secao.tipo);
+                  const subTotaisMesCents = Array.from({ length: 12 }, (_, i) => somaMesSecaoCents(secao.linhas, i + 1));
+                  const subTotalAnoCents = somaTotalSecaoCents(secao.linhas);
+
+                  return (
+                    <Fragment key={secao.tipo}>
+                      <tr className="bg-white/[0.06]">
+                        <td colSpan={14} className="p-0">
+                          <button
+                            type="button"
+                            onClick={() => toggleSecao(secao.tipo)}
+                            className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-xs font-black uppercase tracking-wider text-primary hover:bg-white/5 transition-colors">
+                            {open ? <ChevronDown className="w-4 h-4 shrink-0" /> : <ChevronRight className="w-4 h-4 shrink-0" />}
+                            {secao.titulo}
+                            <span className="ml-auto text-[10px] font-normal text-muted-foreground normal-case">
+                              {secao.linhas.length} {secao.linhas.length === 1 ? "categoria" : "categorias"}
+                            </span>
+                          </button>
+                        </td>
+                      </tr>
+                      {open &&
+                        secao.linhas.map((linha) => (
+                          <tr key={linha.codigo} className="hover:bg-white/[0.02]">
+                            <td className="px-4 py-2 pl-8 text-white/90 sticky left-0 bg-[#121417]/90 backdrop-blur-sm border-r border-white/5 z-[1]">
+                              {linha.descricao}
+                            </td>
+                            {mesesPt.map((_, i) => {
+                              const m = i + 1;
+                              const vCents = valorMesCents(linha, m);
+                              return (
+                                <td
+                                  key={m}
+                                  className={cn("px-1.5 py-2 text-right tabular-nums text-xs", cellTone(vCents, { mutedZero: true }))}>
+                                  {vCents !== 0 ? formatCurrency(vCents / 100) : "—"}
+                                </td>
+                              );
+                            })}
+                            <td
+                              className={cn(
+                                "px-3 py-2 text-right font-semibold tabular-nums text-xs sticky right-0 bg-[#121417]/90 border-l border-white/5",
+                                cellTone(toCents(linha.total)),
+                              )}>
+                              {toCents(linha.total) !== 0 ? formatCurrency(toCents(linha.total) / 100) : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      {open && (
+                        <tr key={`sub-${secao.tipo}`} className="bg-primary/5 border-t border-primary/10 font-semibold text-white/95">
+                          <td className="px-4 py-2 sticky left-0 bg-[#121417]/95 border-r border-white/5 z-[1]">
+                            Subtotal {secao.titulo}
+                          </td>
+                          {subTotaisMesCents.map((vCents, i) => (
+                            <td key={i} className={cn("px-1.5 py-2 text-right tabular-nums text-xs", cellTone(vCents))}>
+                              {vCents !== 0 ? formatCurrency(vCents / 100) : "—"}
+                            </td>
+                          ))}
+                          <td
+                            className={cn(
+                              "px-3 py-2 text-right tabular-nums text-xs sticky right-0 bg-[#121417]/95 border-l border-white/5",
+                              cellTone(subTotalAnoCents),
+                            )}>
+                            {subTotalAnoCents !== 0 ? formatCurrency(subTotalAnoCents / 100) : "—"}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+
+                {fluxoLiquidoMensalCents && (
+                  <tr className="bg-emerald-500/10 border-t-2 border-emerald-500/25 font-bold text-white">
+                    <td className="px-4 py-3 sticky left-0 bg-emerald-500/10 border-r border-emerald-500/20 z-[1]">
+                      Fluxo líquido (todas as seções)
+                    </td>
+                    {fluxoLiquidoMensalCents.map((vCents, i) => (
+                      <td key={i} className={cn("px-1.5 py-3 text-right tabular-nums text-xs", cellTone(vCents))}>
+                        {vCents !== 0 ? formatCurrency(vCents / 100) : "—"}
+                      </td>
+                    ))}
+                    <td
+                      className={cn(
+                        "px-3 py-3 text-right tabular-nums text-sm sticky right-0 bg-emerald-500/10 border-l border-emerald-500/20",
+                        cellTone(fluxoLiquidoTotalCents),
+                      )}>
+                      {fluxoLiquidoTotalCents !== 0 ? formatCurrency(fluxoLiquidoTotalCents / 100) : "—"}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
