@@ -19,7 +19,8 @@
     "drizzle-orm": "catalog:",
     "express": "^5",
     "jsonwebtoken": "^9.0.3",
-    "multer": "1.4.5-lts.2"
+    "multer": "1.4.5-lts.2",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.10",

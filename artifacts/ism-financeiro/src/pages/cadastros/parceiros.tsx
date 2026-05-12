@@ -1,35 +1,38 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useForm, Controller } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { PageHeader } from "@/components/shared/page-header";
 import { Plus, Search, Download, Edit2, Trash2, Ban, CheckCircle, X, AlertTriangle } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
+import { fetchApiData } from "@/lib/api-config";
+import { parceiroFormSchema, type ParceiroFormValues } from "@/validations/cadastros.schema";
 
-const parceirosData = [
-  { id: 1, tipo: "PJ", nome: "Tech Solutions S.A.", documento: "12.345.678/0001-90", lotacao: "Comercial", tiposParceiro: ["Cliente", "Fornecedor"], status: "ativo" },
-  { id: 2, tipo: "PF", nome: "João da Silva", documento: "123.456.789-00", lotacao: "Tecnologia", tiposParceiro: ["Funcionário(a)"], status: "ativo" },
-  { id: 3, tipo: "PJ", nome: "Amazon Web Services", documento: "98.765.432/0001-10", lotacao: "—", tiposParceiro: ["Fornecedor"], status: "inativo" },
-  { id: 4, tipo: "PF", nome: "Maria Oliveira", documento: "987.654.321-11", lotacao: "—", tiposParceiro: ["Sócio(a)"], status: "ativo" },
-  { id: 5, tipo: "PJ", nome: "Global Industries", documento: "11.222.333/0001-44", lotacao: "Comercial", tiposParceiro: ["Cliente"], status: "ativo" },
-  { id: 6, tipo: "PF", nome: "Carlos Eduardo", documento: "456.789.012-33", lotacao: "Financeiro", tiposParceiro: ["Prestador(a) de Serviços PJ", "Funcionário(a)"], status: "ativo" },
+const tiposParceiroOptions = [
+  "Cliente",
+  "Fornecedor",
+  "Sócio(a)",
+  "Participante Societário(a)",
+  "Funcionário(a)",
+  "Prestador(a) de Serviços PJ",
 ];
-
-const tiposParceiroOptions = ["Cliente", "Fornecedor", "Sócio(a)", "Participante Societário(a)", "Funcionário(a)", "Prestador(a) de Serviços PJ"];
 const formaPagamentoOpcoes = ["PIX", "Boleto", "TED", "DOC", "Cheque"];
 
 function mascararDocumento(valor: string, tipo: "PJ" | "PF") {
   const numeros = valor.replace(/\D/g, "");
   if (tipo === "PF") {
     return numeros
-      .slice(0, 11)                                
+      .slice(0, 11)
       .replace(/(\d{3})(\d)/, "$1.$2")
       .replace(/(\d{3})(\d)/, "$1.$2")
       .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
-  } else {
-    return numeros
-      .slice(0, 14)                                
-      .replace(/(\d{2})(\d)/, "$1.$2")
-      .replace(/(\d{3})(\d)/, "$1.$2")
-      .replace(/(\d{3})(\d)/, "$1/$2")            
-      .replace(/(\d{4})(\d{1,2})$/, "$1-$2");
   }
+  return numeros
+    .slice(0, 14)
+    .replace(/(\d{2})(\d)/, "$1.$2")
+    .replace(/(\d{3})(\d)/, "$1.$2")
+    .replace(/(\d{3})(\d)/, "$1/$2")
+    .replace(/(\d{4})(\d{1,2})$/, "$1-$2");
 }
 
 function mascararTelefone(valor: string) {
@@ -40,6 +43,69 @@ function mascararTelefone(valor: string) {
     .replace(/(\d{5})(\d{1,4})$/, "$1-$2");
 }
 
+function docNumeros(s: string) {
+  return s.replace(/\D/g, "");
+}
+
+type DepartamentoRow = { id: number; nome: string };
+
+type ParceiroRow = {
+  id: number;
+  tipo_pessoa: string;
+  cpf_cnpj: string | null;
+  nome: string;
+  nome_fantasia: string | null;
+  tipos: unknown;
+  departamento_id: number | null;
+  centro_custo_id: number | null;
+  ativo: boolean;
+  bloqueado: boolean;
+};
+
+function tiposArray(t: unknown): string[] {
+  return Array.isArray(t) ? (t as string[]) : [];
+}
+
+function parceiroFormToApiBody(values: ParceiroFormValues) {
+  const dig = docNumeros(values.documento);
+  const deptRaw = values.departamento_id.trim();
+  const departamento_id = deptRaw ? Number(deptRaw) : undefined;
+
+  const chaves_pix: Array<{ tipo: string; chave: string }> = [];
+  const dados_bancarios: Array<{
+    banco: string;
+    agencia: string;
+    conta: string;
+    digito_agencia?: string;
+    digito_conta?: string;
+  }> = [];
+
+  if (values.formaPagamento === "PIX" && values.pixChave.trim()) {
+    chaves_pix.push({ tipo: values.pixTipoRecebedor, chave: values.pixChave.trim() });
+  }
+  if (values.formaPagamento === "Boleto" || values.formaPagamento === "TED" || values.formaPagamento === "DOC") {
+    dados_bancarios.push({
+      banco: values.formaPagamento,
+      agencia: values.agencia.trim(),
+      conta: values.contaNumero.trim(),
+    });
+  }
+
+  return {
+    tipo_pessoa: values.tipoPessoa,
+    cpf_cnpj: dig || null,
+    nome: values.nomeRazao.trim(),
+    nome_fantasia: null as string | null,
+    tipos: values.tiposParceiro,
+    departamento_id: departamento_id ?? null,
+    centro_custo_id: null as number | null,
+    ativo: true,
+    bloqueado: false,
+    chaves_pix,
+    dados_bancarios,
+  };
+}
+
 function ConfirmacaoCancelModal({ onConfirm, onDismiss }: { onConfirm: () => void; onDismiss: () => void }) {
   return (
     <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
@@ -48,202 +114,354 @@ function ConfirmacaoCancelModal({ onConfirm, onDismiss }: { onConfirm: () => voi
         <h3 className="font-bold text-white text-lg mb-1">Cancelar cadastro?</h3>
         <p className="text-sm text-muted-foreground mb-5">As informações preenchidas serão perdidas. Deseja realmente cancelar?</p>
         <div className="flex gap-3">
-          <button onClick={onDismiss} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">Não, continuar</button>
-          <button onClick={onConfirm} className="flex-1 py-2.5 bg-destructive hover:bg-destructive/90 text-white rounded-xl text-sm font-medium">Sim, cancelar</button>
+          <button type="button" onClick={onDismiss} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">
+            Não, continuar
+          </button>
+          <button type="button" onClick={onConfirm} className="flex-1 py-2.5 bg-destructive hover:bg-destructive/90 text-white rounded-xl text-sm font-medium">
+            Sim, cancelar
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
-function NovoParceirModal({ onClose }: { onClose: () => void }) {
+const defaultParceiroForm: ParceiroFormValues = {
+  tipoPessoa: "PJ",
+  nomeRazao: "",
+  documento: "",
+  departamento_id: "",
+  tiposParceiro: [],
+  formaPagamento: "PIX",
+  email: "",
+  telefone: "",
+  pixTipoRecebedor: "PJ",
+  pixChave: "",
+  agencia: "",
+  contaTipo: "Corrente",
+  contaNumero: "",
+  cpfCnpjBancario: "",
+};
+
+function NovoParceiroModal({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [showConfirmCancel, setShowConfirmCancel] = useState(false);
-  const [form, setForm] = useState({
-    tipoPessoa: "PJ",
-    nomeRazao: "",
-    documento: "",
-    lotacao: "",
-    tiposParceiro: [] as string[],
-    formaPagamento: "PIX",
-    email: "",
-    telefone: "",
-    // PIX
-    pixTipoRecebedor: "PJ",
-    pixChave: "",
-    // Boleto/TED
-    agencia: "",
-    contaTipo: "Corrente",
-    contaNumero: "",
-    cpfCnpjBancario: "",
+
+  const { data: departamentos = [] } = useQuery({
+    queryKey: ["departamentos"],
+    queryFn: () => fetchApiData<DepartamentoRow[]>("/departamentos"),
   });
 
-  const isDirty = form.nomeRazao !== "" || form.documento !== "";
+  const form = useForm<ParceiroFormValues>({
+    resolver: zodResolver(parceiroFormSchema),
+    defaultValues: defaultParceiroForm,
+  });
+
+  const {
+    register,
+    control,
+    handleSubmit,
+    watch,
+    setValue,
+    reset,
+    formState: { errors, isDirty },
+  } = form;
+
+  const tipoPessoa = watch("tipoPessoa");
+  const formaPagamento = watch("formaPagamento");
+  const tiposParceiro = watch("tiposParceiro");
+  const pixTipoRecebedor = watch("pixTipoRecebedor");
+
+  const createMutation = useMutation({
+    mutationFn: (values: ParceiroFormValues) =>
+      fetchApiData<ParceiroRow>("/parceiros", {
+        method: "POST",
+        body: JSON.stringify(parceiroFormToApiBody(values)),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["parceiros"] });
+      toast({ title: "Parceiro cadastrado", description: "O registro foi salvo com sucesso." });
+      reset(defaultParceiroForm);
+      onClose();
+    },
+    onError: (e: unknown) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao salvar",
+        description: e instanceof Error ? e.message : String(e),
+      });
+    },
+  });
 
   const handleCancel = () => {
     if (isDirty) setShowConfirmCancel(true);
     else onClose();
   };
 
-  const toggleTipo = (t: string) => {
-    setForm(f => ({
-      ...f,
-      tiposParceiro: f.tiposParceiro.includes(t) ? f.tiposParceiro.filter(x => x !== t) : [...f.tiposParceiro, t]
-    }));
-  };
-
   return (
     <>
-      {showConfirmCancel && <ConfirmacaoCancelModal onConfirm={onClose} onDismiss={() => setShowConfirmCancel(false)} />}
+      {showConfirmCancel && (
+        <ConfirmacaoCancelModal
+          onConfirm={() => {
+            reset(defaultParceiroForm);
+            onClose();
+          }}
+          onDismiss={() => setShowConfirmCancel(false)}
+        />
+      )}
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
         <div className="bg-card border border-white/10 rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
           <div className="flex items-center justify-between p-6 border-b border-white/5 sticky top-0 bg-card z-10">
             <h2 className="text-lg font-bold text-white">Novo Cadastro — Clientes/Fornecedores</h2>
-            <button onClick={handleCancel} className="p-1.5 hover:bg-white/5 rounded-lg"><X className="w-5 h-5" /></button>
+            <button type="button" onClick={handleCancel} className="p-1.5 hover:bg-white/5 rounded-lg">
+              <X className="w-5 h-5" />
+            </button>
           </div>
 
-          <div className="p-6 space-y-5">
-            {/* Tipo Pessoa */}
-            <div>
-              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">Tipo de Pessoa *</label>
-              <div className="flex gap-2">
-                {["PF", "PJ"].map(t => (
-                  <button key={t} onClick={() => setForm(f => ({ ...f, tipoPessoa: t }))}
-                    className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all border ${form.tipoPessoa === t ? "bg-primary text-white border-primary" : "bg-white/5 text-muted-foreground border-white/10 hover:border-white/20"}`}>
-                    {t === "PF" ? "Pessoa Física (PF)" : "Pessoa Jurídica (PJ)"}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
+          <form onSubmit={handleSubmit((v) => createMutation.mutate(v))} className="flex flex-col">
+            <div className="p-6 space-y-5">
               <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                  {form.tipoPessoa === "PF" ? "Nome Completo *" : "Razão Social / Nome Fantasia *"}
-                </label>
-                <input value={form.nomeRazao} onChange={e => setForm(f => ({ ...f, nomeRazao: e.target.value }))}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
-                  placeholder={form.tipoPessoa === "PF" ? "Ex: João da Silva" : "Ex: Tech Solutions S.A."} />
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">Tipo de Pessoa *</label>
+                <Controller
+                  name="tipoPessoa"
+                  control={control}
+                  render={({ field }) => (
+                    <div className="flex gap-2">
+                      {(["PF", "PJ"] as const).map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => field.onChange(t)}
+                          className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all border ${
+                            field.value === t
+                              ? "bg-primary text-white border-primary"
+                              : "bg-white/5 text-muted-foreground border-white/10 hover:border-white/20"
+                          }`}>
+                          {t === "PF" ? "Pessoa Física (PF)" : "Pessoa Jurídica (PJ)"}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                />
               </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                  {form.tipoPessoa === "PF" ? "CPF *" : "CNPJ *"}
-                </label>
-                <input value={form.documento} onChange={e => setForm(f => ({ ...f, documento: mascararDocumento(e.target.value, f.tipoPessoa as "PF" | "PJ") }))}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
-                  placeholder={form.tipoPessoa === "PF" ? "000.000.000-00" : "00.000.000/0000-00"} />
-              </div>
-            </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">E-mail</label>
-                <input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
-                  placeholder="email@exemplo.com.br" />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Telefone</label>
-                <input value={form.telefone} onChange={e => setForm(f => ({ ...f, telefone: mascararTelefone(e.target.value) }))}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
-                  placeholder="(11) 99999-0000" />
-              </div>
-            </div>
-
-            <div>
-              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Lotação / Departamento</label>
-              <select value={form.lotacao} onChange={e => setForm(f => ({ ...f, lotacao: e.target.value }))}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-black outline-none focus:border-primary/50 transition-colors">
-                <option value="">Selecione...</option>
-                <option>Tecnologia</option><option>Financeiro</option><option>Comercial</option><option>Recursos Humanos</option>
-              </select>
-            </div>
-
-            {/* Tipo de Parceiro */}
-            <div>
-              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">Tipo de Parceiro *</label>
-              <div className="grid grid-cols-2 gap-2">
-                {tiposParceiroOptions.map(t => (
-                  <label key={t} className="flex items-center gap-2 cursor-pointer p-3 rounded-xl border border-white/10 hover:border-primary/40 hover:bg-primary/5 transition-all">
-                    <input type="checkbox" checked={form.tiposParceiro.includes(t)} onChange={() => toggleTipo(t)} className="accent-primary w-4 h-4" />
-                    <span className="text-sm text-white">{t}</span>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                    {tipoPessoa === "PF" ? "Nome Completo *" : "Razão Social / Nome Fantasia *"}
                   </label>
-                ))}
+                  <input
+                    {...register("nomeRazao")}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+                    placeholder={tipoPessoa === "PF" ? "Ex: João da Silva" : "Ex: Tech Solutions S.A."}
+                  />
+                  {errors.nomeRazao && <p className="text-[11px] text-destructive mt-1">{errors.nomeRazao.message}</p>}
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                    {tipoPessoa === "PF" ? "CPF *" : "CNPJ *"}
+                  </label>
+                  <Controller
+                    name="documento"
+                    control={control}
+                    render={({ field }) => (
+                      <input
+                        value={field.value}
+                        onChange={(e) => field.onChange(mascararDocumento(e.target.value, tipoPessoa as "PF" | "PJ"))}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+                        placeholder={tipoPessoa === "PF" ? "000.000.000-00" : "00.000.000/0000-00"}
+                      />
+                    )}
+                  />
+                  {errors.documento && <p className="text-[11px] text-destructive mt-1">{errors.documento.message}</p>}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">E-mail</label>
+                  <input
+                    {...register("email")}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+                    placeholder="email@exemplo.com.br"
+                  />
+                  {errors.email && <p className="text-[11px] text-destructive mt-1">{errors.email.message}</p>}
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Telefone</label>
+                  <Controller
+                    name="telefone"
+                    control={control}
+                    render={({ field }) => (
+                      <input
+                        value={field.value}
+                        onChange={(e) => field.onChange(mascararTelefone(e.target.value))}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+                        placeholder="(11) 99999-0000"
+                      />
+                    )}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                  Lotação / Departamento
+                </label>
+                <select
+                  {...register("departamento_id")}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-black outline-none focus:border-primary/50 transition-colors">
+                  <option value="">Selecione...</option>
+                  {departamentos.map((d) => (
+                    <option key={d.id} value={String(d.id)}>
+                      {d.nome}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">Tipo de Parceiro *</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {tiposParceiroOptions.map((t) => (
+                    <label
+                      key={t}
+                      className="flex items-center gap-2 cursor-pointer p-3 rounded-xl border border-white/10 hover:border-primary/40 hover:bg-primary/5 transition-all">
+                      <input
+                        type="checkbox"
+                        checked={tiposParceiro.includes(t)}
+                        onChange={() => {
+                          const next = tiposParceiro.includes(t) ? tiposParceiro.filter((x) => x !== t) : [...tiposParceiro, t];
+                          setValue("tiposParceiro", next, { shouldValidate: true, shouldDirty: true });
+                        }}
+                        className="accent-primary w-4 h-4"
+                      />
+                      <span className="text-sm text-white">{t}</span>
+                    </label>
+                  ))}
+                </div>
+                {errors.tiposParceiro && <p className="text-[11px] text-destructive mt-1">{errors.tiposParceiro.message}</p>}
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">Forma de Pagamento Preferencial</label>
+                <Controller
+                  name="formaPagamento"
+                  control={control}
+                  render={({ field }) => (
+                    <div className="flex gap-2 flex-wrap mb-3">
+                      {formaPagamentoOpcoes.map((f) => (
+                        <button
+                          key={f}
+                          type="button"
+                          onClick={() => field.onChange(f)}
+                          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all border ${
+                            field.value === f
+                              ? "bg-primary text-white border-primary"
+                              : "bg-white/5 text-muted-foreground border-white/10 hover:border-white/20"
+                          }`}>
+                          {f}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                />
+
+                {formaPagamento === "PIX" && (
+                  <div className="grid grid-cols-2 gap-3 bg-white/5 rounded-xl p-4">
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">Tipo do Recebedor</label>
+                      <select
+                        {...register("pixTipoRecebedor")}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-black outline-none">
+                        <option value="PF">Pessoa Física</option>
+                        <option value="PJ">Pessoa Jurídica</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">Chave PIX *</label>
+                      <input
+                        {...register("pixChave")}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50"
+                        placeholder="CPF, CNPJ, e-mail ou telefone"
+                      />
+                      {errors.pixChave && <p className="text-[11px] text-destructive mt-1">{errors.pixChave.message}</p>}
+                    </div>
+                  </div>
+                )}
+
+                {(formaPagamento === "Boleto" || formaPagamento === "TED" || formaPagamento === "DOC") && (
+                  <div className="grid grid-cols-2 gap-3 bg-white/5 rounded-xl p-4">
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">Tipo Recebedor</label>
+                      <select
+                        {...register("pixTipoRecebedor")}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-black outline-none">
+                        <option value="PF">Pessoa Física</option>
+                        <option value="PJ">Pessoa Jurídica</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">{pixTipoRecebedor === "PF" ? "CPF *" : "CNPJ *"}</label>
+                      <Controller
+                        name="cpfCnpjBancario"
+                        control={control}
+                        render={({ field }) => (
+                          <input
+                            value={field.value}
+                            onChange={(e) =>
+                              field.onChange(mascararDocumento(e.target.value, pixTipoRecebedor as "PF" | "PJ"))
+                            }
+                            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50"
+                            placeholder={pixTipoRecebedor === "PF" ? "000.000.000-00" : "00.000.000/0000-00"}
+                          />
+                        )}
+                      />
+                      {errors.cpfCnpjBancario && <p className="text-[11px] text-destructive mt-1">{errors.cpfCnpjBancario.message}</p>}
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">Agência *</label>
+                      <input
+                        {...register("agencia")}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50"
+                        placeholder="0000"
+                      />
+                      {errors.agencia && <p className="text-[11px] text-destructive mt-1">{errors.agencia.message}</p>}
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">Tipo de Conta *</label>
+                      <select {...register("contaTipo")} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-black outline-none">
+                        <option>Corrente</option>
+                        <option>Poupança</option>
+                      </select>
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-xs text-muted-foreground mb-1 block">Número da Conta *</label>
+                      <input
+                        {...register("contaNumero")}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50"
+                        placeholder="00000-0"
+                      />
+                      {errors.contaNumero && <p className="text-[11px] text-destructive mt-1">{errors.contaNumero.message}</p>}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* Forma de Pagamento */}
-            <div>
-              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">Forma de Pagamento Preferencial</label>
-              <div className="flex gap-2 flex-wrap mb-3">
-                {formaPagamentoOpcoes.map(f => (
-                  <button key={f} onClick={() => setForm(fm => ({ ...fm, formaPagamento: f }))}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all border ${form.formaPagamento === f ? "bg-primary text-white border-primary" : "bg-white/5 text-muted-foreground border-white/10 hover:border-white/20"}`}>
-                    {f}
-                  </button>
-                ))}
-              </div>
-
-              {form.formaPagamento === "PIX" && (
-                <div className="grid grid-cols-2 gap-3 bg-white/5 rounded-xl p-4">
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Tipo do Recebedor</label>
-                    <select value={form.pixTipoRecebedor} onChange={e => setForm(f => ({ ...f, pixTipoRecebedor: e.target.value }))}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-black outline-none">
-                      <option value="PF">Pessoa Física</option>
-                      <option value="PJ">Pessoa Jurídica</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Chave PIX *</label>
-                    <input value={form.pixChave} onChange={e => setForm(f => ({ ...f, pixChave: e.target.value }))}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50"
-                      placeholder="CPF, CNPJ, e-mail ou telefone" />
-                  </div>
-                </div>
-              )}
-
-              {(form.formaPagamento === "Boleto" || form.formaPagamento === "TED" || form.formaPagamento === "DOC") && (
-                <div className="grid grid-cols-2 gap-3 bg-white/5 rounded-xl p-4">
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Tipo Recebedor</label>
-                    <select value={form.pixTipoRecebedor} onChange={e => setForm(f => ({ ...f, pixTipoRecebedor: e.target.value }))}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-black outline-none">
-                      <option value="PF">Pessoa Física</option>
-                      <option value="PJ">Pessoa Jurídica</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">{form.pixTipoRecebedor === "PF" ? "CPF *" : "CNPJ *"}</label>
-                    <input value={form.cpfCnpjBancario} onChange={e => setForm(f => ({ ...f, cpfCnpjBancario: mascararDocumento(e.target.value, f.pixTipoRecebedor as "PF" | "PJ") }))}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50"
-                      placeholder={form.pixTipoRecebedor === "PF" ? "000.000.000-00" : "00.000.000/0000-00"} />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Agência *</label>
-                    <input value={form.agencia} onChange={e => setForm(f => ({ ...f, agencia: e.target.value }))}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50" placeholder="0000" />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Tipo de Conta *</label>
-                    <select value={form.contaTipo} onChange={e => setForm(f => ({ ...f, contaTipo: e.target.value }))}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-black outline-none">
-                      <option>Corrente</option><option>Poupança</option>
-                    </select>
-                  </div>
-                  <div className="col-span-2">
-                    <label className="text-xs text-muted-foreground mb-1 block">Número da Conta *</label>
-                    <input value={form.contaNumero} onChange={e => setForm(f => ({ ...f, contaNumero: e.target.value }))}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50" placeholder="00000-0" />
-                  </div>
-                </div>
-              )}
+            <div className="flex gap-3 p-6 pt-0 sticky bottom-0 bg-card border-t border-white/5">
+              <button type="button" onClick={handleCancel} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={createMutation.isPending}
+                className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium shadow-lg shadow-primary/25 disabled:opacity-50">
+                {createMutation.isPending ? "Salvando…" : "Salvar Cadastro"}
+              </button>
             </div>
-          </div>
-
-          <div className="flex gap-3 p-6 pt-0 sticky bottom-0 bg-card border-t border-white/5">
-            <button onClick={handleCancel} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">Cancelar</button>
-            <button onClick={onClose} className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium shadow-lg shadow-primary/25">Salvar Cadastro</button>
-          </div>
+          </form>
         </div>
       </div>
     </>
@@ -251,31 +469,86 @@ function NovoParceirModal({ onClose }: { onClose: () => void }) {
 }
 
 export default function Parceiros() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [showModal, setShowModal] = useState(false);
-  const [statuses, setStatuses] = useState<Record<number, "ativo" | "inativo">>({});
 
-  const getData = () => parceirosData.filter(p =>
-    p.nome.toLowerCase().includes(search.toLowerCase()) ||
-    p.documento.includes(search)
-  );
+  const { data: departamentos = [] } = useQuery({
+    queryKey: ["departamentos"],
+    queryFn: () => fetchApiData<DepartamentoRow[]>("/departamentos"),
+  });
 
-  const getStatus = (p: typeof parceirosData[0]) => (statuses[p.id] ?? p.status) as "ativo" | "inativo";
-  const toggleStatus = (id: number, current: "ativo" | "inativo") => setStatuses(s => ({ ...s, [id]: current === "ativo" ? "inativo" : "ativo" }));
+  const deptNomeById = useMemo(() => new Map(departamentos.map((d) => [d.id, d.nome])), [departamentos]);
+
+  const { data: parceirosLista = [], isLoading } = useQuery({
+    queryKey: ["parceiros", search],
+    queryFn: () => {
+      const q = search.trim();
+      const qs = new URLSearchParams({ limit: "200", page: "1" });
+      if (q) qs.set("search", q);
+      return fetchApiData<ParceiroRow[]>(`/parceiros?${qs.toString()}`);
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, ativo }: { id: number; ativo: boolean }) =>
+      fetchApiData<ParceiroRow>(`/parceiros/${id}`, {
+        method: "PUT",
+        body: JSON.stringify({ ativo }),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["parceiros"] });
+      toast({ title: "Status atualizado", description: "O parceiro foi atualizado." });
+    },
+    onError: (e: unknown) => {
+      toast({
+        variant: "destructive",
+        title: "Erro",
+        description: e instanceof Error ? e.message : String(e),
+      });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => fetchApiData<{ deleted?: boolean }>(`/parceiros/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["parceiros"] });
+      toast({ title: "Parceiro removido", description: "O cadastro foi excluído." });
+    },
+    onError: (e: unknown) => {
+      toast({
+        variant: "destructive",
+        title: "Erro",
+        description: e instanceof Error ? e.message : String(e),
+      });
+    },
+  });
+
+  const getDocDisplay = (p: ParceiroRow) => {
+    if (!p.cpf_cnpj) return "—";
+    const tipo = (p.tipo_pessoa === "PF" ? "PF" : "PJ") as "PF" | "PJ";
+    return mascararDocumento(String(p.cpf_cnpj).replace(/\D/g, ""), tipo);
+  };
 
   return (
     <div className="space-y-6">
-      {showModal && <NovoParceirModal onClose={() => setShowModal(false)} />}
+      {showModal && <NovoParceiroModal onClose={() => setShowModal(false)} />}
 
       <PageHeader
         title="Clientes / Fornecedores"
         description="Cadastro de clientes, fornecedores, funcionários, sócios e parceiros"
         actions={
           <div className="flex gap-3">
-            <button className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all">
+            <button
+              type="button"
+              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all">
               <Download className="w-4 h-4" /> Exportar
             </button>
-            <button onClick={() => setShowModal(true)} className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25">
+            <button
+              type="button"
+              onClick={() => setShowModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25">
               <Plus className="w-4 h-4" /> Cadastrar Novo
             </button>
           </div>
@@ -286,11 +559,17 @@ export default function Parceiros() {
         <div className="p-4 border-b border-white/5 flex items-center gap-3 bg-black/10">
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-black/20 border border-white/5 focus-within:border-primary/50 transition-all w-80">
             <Search className="w-4 h-4 text-muted-foreground shrink-0" />
-            <input value={search} onChange={e => setSearch(e.target.value)}
-              type="text" placeholder="Buscar por nome ou CPF/CNPJ..."
-              className="bg-transparent border-none outline-none text-sm w-full placeholder:text-muted-foreground text-white" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              type="text"
+              placeholder="Buscar por nome ou CPF/CNPJ..."
+              className="bg-transparent border-none outline-none text-sm w-full placeholder:text-muted-foreground text-white"
+            />
           </div>
-          <span className="text-xs text-muted-foreground ml-auto">{getData().length} cadastros</span>
+          <span className="text-xs text-muted-foreground ml-auto">
+            {isLoading ? "…" : `${parceirosLista.length} cadastros`}
+          </span>
         </div>
 
         <div className="overflow-x-auto">
@@ -307,39 +586,67 @@ export default function Parceiros() {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {getData().map(p => {
-                const status = getStatus(p);
+              {parceirosLista.map((p) => {
+                const tipoUi = p.tipo_pessoa === "PJ" ? "PJ" : "PF";
+                const statusAtivo = p.ativo && !p.bloqueado;
+                const lotacao = p.departamento_id ? deptNomeById.get(p.departamento_id) ?? "—" : "—";
+                const tipos = tiposArray(p.tipos);
                 return (
                   <tr key={p.id} className="hover:bg-white/5 transition-colors group">
                     <td className="px-5 py-4 text-center">
-                      <span className={`text-xs font-bold px-2 py-1 rounded ${p.tipo === "PJ" ? "bg-primary/20 text-primary" : "bg-teal-500/20 text-teal-400"}`}>{p.tipo}</span>
+                      <span
+                        className={`text-xs font-bold px-2 py-1 rounded ${
+                          tipoUi === "PJ" ? "bg-primary/20 text-primary" : "bg-teal-500/20 text-teal-400"
+                        }`}>
+                        {tipoUi}
+                      </span>
                     </td>
                     <td className="px-5 py-4 font-semibold text-white">{p.nome}</td>
-                    <td className="px-5 py-4 text-muted-foreground font-mono text-xs">{p.documento}</td>
+                    <td className="px-5 py-4 text-muted-foreground font-mono text-xs">{getDocDisplay(p)}</td>
                     <td className="px-5 py-4">
                       <div className="flex gap-1 flex-wrap">
-                        {p.tiposParceiro.map(t => (
-                          <span key={t} className="bg-white/10 text-white text-[10px] px-2 py-0.5 rounded-full border border-white/10">{t}</span>
-                        ))}
+                        {tipos.length === 0 ? (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        ) : (
+                          tipos.map((t) => (
+                            <span key={t} className="bg-white/10 text-white text-[10px] px-2 py-0.5 rounded-full border border-white/10">
+                              {t}
+                            </span>
+                          ))
+                        )}
                       </div>
                     </td>
-                    <td className="px-5 py-4 text-muted-foreground text-sm">{p.lotacao}</td>
+                    <td className="px-5 py-4 text-muted-foreground text-sm">{lotacao}</td>
                     <td className="px-5 py-4 text-center">
-                      <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${status === "ativo" ? "bg-success/20 text-success" : "bg-destructive/20 text-destructive"}`}>
-                        {status === "ativo" ? "Ativo" : "Inativo"}
+                      <span
+                        className={`text-xs px-2.5 py-1 rounded-full font-medium ${
+                          statusAtivo ? "bg-success/20 text-success" : "bg-destructive/20 text-destructive"
+                        }`}>
+                        {statusAtivo ? "Ativo" : "Inativo"}
                       </span>
                     </td>
                     <td className="px-5 py-4">
                       <div className="flex items-center justify-end gap-1">
-                        <button className="p-1.5 rounded-md hover:bg-white/10 text-muted-foreground hover:text-white transition-colors" title="Editar">
+                        <button
+                          type="button"
+                          className="p-1.5 rounded-md hover:bg-white/10 text-muted-foreground hover:text-white transition-colors"
+                          title="Editar (em breve)">
                           <Edit2 className="w-4 h-4" />
                         </button>
-                        <button onClick={() => toggleStatus(p.id, status)}
-                          className={`p-1.5 rounded-md transition-colors ${status === "ativo" ? "hover:bg-success/20 text-success" : "hover:bg-destructive/20 text-destructive"}`}
-                          title={status === "ativo" ? "Bloquear" : "Ativar"}>
-                          {status === "ativo" ? <CheckCircle className="w-4 h-4" /> : <Ban className="w-4 h-4" />}
+                        <button
+                          type="button"
+                          onClick={() => updateMutation.mutate({ id: p.id, ativo: !statusAtivo })}
+                          className={`p-1.5 rounded-md transition-colors ${
+                            statusAtivo ? "hover:bg-success/20 text-success" : "hover:bg-destructive/20 text-destructive"
+                          }`}
+                          title={statusAtivo ? "Desativar" : "Ativar"}>
+                          {statusAtivo ? <CheckCircle className="w-4 h-4" /> : <Ban className="w-4 h-4" />}
                         </button>
-                        <button className="p-1.5 rounded-md hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors" title="Excluir">
+                        <button
+                          type="button"
+                          onClick={() => confirm("Excluir este parceiro?") && deleteMutation.mutate(p.id)}
+                          className="p-1.5 rounded-md hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
+                          title="Excluir">
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>

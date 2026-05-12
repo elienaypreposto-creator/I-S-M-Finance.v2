@@ -1,24 +1,27 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useForm, Controller } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { PageHeader } from "@/components/shared/page-header";
-import { 
-  Plus, 
-  Landmark, 
-  Eye, 
-  EyeOff, 
-  CheckCircle, 
-  AlertCircle, 
-  X, 
-  Pencil, 
-  Lock, 
+import {
+  Plus,
+  Landmark,
+  Eye,
+  EyeOff,
+  CheckCircle,
+  AlertCircle,
+  X,
+  Pencil,
+  Lock,
   Unlock,
   Loader2,
-  Trash2
+  Trash2,
 } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, cn } from "@/lib/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
-
-import { fetchApi, fetchApiData } from "@/lib/api-config";
+import { fetchApiData } from "@/lib/api-config";
+import { contaBancariaFormSchema, type ContaBancariaFormValues } from "@/validations/cadastros.schema";
+import { apiValorToValorBr, brMoneyDisplayToApiString, formatValorBrInput } from "@/validations/lancamentos.schema";
 
 type ContaBancaria = {
   id: number;
@@ -29,12 +32,18 @@ type ContaBancaria = {
   tipo: string;
   status: string;
   cor: string;
-  /** API devolve `numeric` como string para evitar perda de precisão */
   saldo_inicial: number | string;
   saldo_atual: number | string;
+  data_inicio?: string | null;
 };
 
-interface ModalProps { 
+function toCents(v: string | number): number {
+  if (typeof v === "number") return Math.round(v * 100);
+  const str = String(v).replace(",", ".");
+  return Math.round(Number(str) * 100);
+}
+
+interface ModalProps {
   onClose: () => void;
   initialData?: ContaBancaria | null;
 }
@@ -43,34 +52,84 @@ function NovaContaModal({ onClose, initialData }: ModalProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [step, setStep] = useState(1);
-  const [form, setForm] = useState({ 
-    nome: initialData?.nome || "",
-    banco: initialData?.banco || "", 
-    agencia: initialData?.agencia || "", 
-    conta: initialData?.conta || "", 
-    tipo: initialData?.tipo || "Conta Corrente",
-    saldo_inicial: Number(initialData?.saldo_inicial ?? 0),
-    cor: initialData?.cor || "#3BA8DC"
+
+  const defaultValues = useMemo<ContaBancariaFormValues>(
+    () => ({
+      nome: initialData?.nome ?? "",
+      banco: initialData?.banco ?? "",
+      agencia: initialData?.agencia ?? "",
+      conta: initialData?.conta ?? "",
+      tipo: initialData?.tipo ?? "Conta Corrente",
+      saldo_inicial_br: initialData ? apiValorToValorBr(initialData.saldo_inicial) : "",
+      cor: initialData?.cor?.match(/^#[0-9A-Fa-f]{6}$/i) ? initialData.cor : "#3BA8DC",
+    }),
+    [initialData],
+  );
+
+  const form = useForm<ContaBancariaFormValues>({
+    resolver: zodResolver(contaBancariaFormSchema),
+    defaultValues,
   });
 
+  const {
+    register,
+    control,
+    handleSubmit,
+    trigger,
+    reset,
+    watch,
+    formState: { errors },
+  } = form;
+
+  useEffect(() => {
+    reset(defaultValues);
+    setStep(1);
+  }, [defaultValues, reset]);
+
   const mutation = useMutation({
-    mutationFn: (data: any) => {
+    mutationFn: (values: ContaBancariaFormValues) => {
       const isEdit = !!initialData;
-      const path = `/contas-bancarias${isEdit ? `/${initialData.id}` : ""}`;
-      return fetchApi(path, {
+      const saldoApi = brMoneyDisplayToApiString(values.saldo_inicial_br) || "0.00";
+      const body = {
+        nome: values.nome.trim(),
+        banco: values.banco?.trim() || null,
+        agencia: values.agencia?.trim() || null,
+        conta: values.conta?.trim() || null,
+        tipo: values.tipo,
+        saldo_inicial: saldoApi,
+        data_inicio: initialData?.data_inicio ?? new Date().toISOString().split("T")[0],
+        cor: values.cor,
+        ...(isEdit && initialData ? { status: initialData.status } : {}),
+      };
+      const path = isEdit ? `/contas-bancarias/${initialData.id}` : "/contas-bancarias";
+      return fetchApiData<ContaBancaria>(path, {
         method: isEdit ? "PUT" : "POST",
-        body: JSON.stringify({ ...data, data_inicio: new Date().toISOString().split("T")[0] }),
+        body: JSON.stringify(body),
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["contas-bancarias"] });
-      toast({ title: initialData ? "Conta atualizada" : "Conta cadastrada", description: "As informações foram salvas com sucesso." });
+      void queryClient.invalidateQueries({ queryKey: ["contas-bancarias"] });
+      toast({
+        title: initialData ? "Conta atualizada" : "Conta cadastrada",
+        description: "As informações foram salvas com sucesso.",
+      });
       onClose();
     },
-    onError: (e) => {
-      toast({ title: "Erro", description: String(e), variant: "destructive" });
-    }
+    onError: (e: unknown) => {
+      toast({
+        title: "Erro",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    },
   });
+
+  const goNext = async () => {
+    const ok = await trigger(["nome", "tipo"]);
+    if (ok) setStep(2);
+  };
+
+  const cor = watch("cor");
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -80,35 +139,54 @@ function NovaContaModal({ onClose, initialData }: ModalProps) {
             <h2 className="text-lg font-bold text-white">{initialData ? "Editar Conta" : "Nova Conta Bancária"}</h2>
             <p className="text-xs text-muted-foreground mt-0.5">Passo {step} de 2</p>
           </div>
-          <button onClick={onClose} className="p-1.5 hover:bg-white/5 rounded-lg transition-colors"><X className="w-5 h-5" /></button>
+          <button type="button" onClick={onClose} className="p-1.5 hover:bg-white/5 rounded-lg transition-colors">
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         <div className="flex gap-1 px-6 pt-4">
-          {[1, 2].map(s => (
-            <div key={s} className={`flex-1 h-1 rounded-full transition-all ${s <= step ? 'bg-primary' : 'bg-white/10'}`} />
+          {[1, 2].map((s) => (
+            <div key={s} className={`flex-1 h-1 rounded-full transition-all ${s <= step ? "bg-primary" : "bg-white/10"}`} />
           ))}
         </div>
 
-        <div className="p-6 space-y-4">
+        <form onSubmit={handleSubmit((v) => mutation.mutate(v))} className="flex flex-col">
+          <div className="p-6 space-y-4">
           {step === 1 && (
             <>
               <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Nome Exibição (Apelido)</label>
-                <input value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors" placeholder="Ex: Itaú PJ Principal" />
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                  Nome Exibição (Apelido)
+                </label>
+                <input
+                  {...register("nome")}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+                  placeholder="Ex: Itaú PJ Principal"
+                />
+                {errors.nome && <p className="text-[11px] text-destructive mt-1">{errors.nome.message}</p>}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Banco</label>
-                  <input value={form.banco} onChange={e => setForm({ ...form, banco: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors" placeholder="Itaú" />
+                  <input
+                    {...register("banco")}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+                    placeholder="Itaú"
+                  />
                 </div>
                 <div>
-                   <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Tipo de Conta</label>
-                   <select value={form.tipo} onChange={e => setForm({ ...form, tipo: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-black outline-none focus:border-primary/50 transition-colors">
-                     <option value="Conta Corrente">Conta Corrente</option>
-                     <option value="Conta PJ">Conta PJ</option>
-                     <option value="Poupança">Poupança</option>
-                     <option value="Investimento">Investimento</option>
-                   </select>
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                    Tipo de Conta
+                  </label>
+                  <select
+                    {...register("tipo")}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-black outline-none focus:border-primary/50 transition-colors">
+                    <option value="Conta Corrente">Conta Corrente</option>
+                    <option value="Conta PJ">Conta PJ</option>
+                    <option value="Poupança">Poupança</option>
+                    <option value="Investimento">Investimento</option>
+                  </select>
+                  {errors.tipo && <p className="text-[11px] text-destructive mt-1">{errors.tipo.message}</p>}
                 </div>
               </div>
             </>
@@ -118,57 +196,101 @@ function NovaContaModal({ onClose, initialData }: ModalProps) {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Agência</label>
-                  <input value={form.agencia} onChange={e => setForm({ ...form, agencia: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors" placeholder="0000" />
+                  <input
+                    {...register("agencia")}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+                    placeholder="0000"
+                  />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Conta</label>
-                  <input value={form.conta} onChange={e => setForm({ ...form, conta: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors" placeholder="00000-0" />
-                </div>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Saldo Inicial (Sistema começará com este valor)</label>
-                <div className="relative">
-                   <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground text-sm font-bold">R$</span>
-                   <input 
-                    type="number"
-                    step="0.01"
-                    value={form.saldo_inicial} 
-                    onChange={e => setForm({ ...form, saldo_inicial: parseFloat(e.target.value) })} 
-                    className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors font-bold" 
-                    placeholder="0,00" 
+                  <input
+                    {...register("conta")}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+                    placeholder="00000-0"
                   />
                 </div>
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Cor de Identificação</label>
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                  Saldo Inicial (Sistema começará com este valor)
+                </label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground text-sm font-bold">R$</span>
+                  <Controller
+                    name="saldo_inicial_br"
+                    control={control}
+                    render={({ field }) => (
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        value={field.value}
+                        onChange={(e) => field.onChange(formatValorBrInput(e.target.value))}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors font-bold"
+                        placeholder="0,00"
+                      />
+                    )}
+                  />
+                </div>
+                {errors.saldo_inicial_br && <p className="text-[11px] text-destructive mt-1">{errors.saldo_inicial_br.message}</p>}
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                  Cor de Identificação
+                </label>
                 <div className="flex gap-2 p-2 bg-white/5 border border-white/10 rounded-xl">
-                  {["#3BA8DC", "#E67E22", "#8B5CF6", "#27AE60", "#E74C3C"].map(c => (
-                    <button 
-                      key={c} 
-                      onClick={() => setForm({ ...form, cor: c })}
-                      className={`w-8 h-8 rounded-lg border-2 transition-all ${form.cor === c ? 'border-white scale-110' : 'border-transparent opacity-50 hover:opacity-100'}`}
+                  {["#3BA8DC", "#E67E22", "#8B5CF6", "#27AE60", "#E74C3C"].map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => form.setValue("cor", c, { shouldValidate: true })}
+                      className={cn(
+                        "w-8 h-8 rounded-lg border-2 transition-all",
+                        cor === c ? "border-white scale-110" : "border-transparent opacity-50 hover:opacity-100",
+                      )}
                       style={{ backgroundColor: c }}
                     />
                   ))}
                 </div>
+                {errors.cor && <p className="text-[11px] text-destructive mt-1">{errors.cor.message}</p>}
               </div>
             </>
           )}
-        </div>
+          </div>
 
-        <div className="flex gap-3 p-6 pt-0">
-          {step > 1 && <button onClick={() => setStep(s => s - 1)} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium transition-all">Voltar</button>}
-          {step < 2
-            ? <button onClick={() => setStep(s => s + 1)} className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium transition-all">Próximo</button>
-            : <button 
-                onClick={() => mutation.mutate(form)} 
-                disabled={mutation.isPending}
-                className="flex-1 py-2.5 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-bold transition-all disabled:opacity-50"
-              >
-                {mutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : (initialData ? "Salvar Alterações" : "Confirmar Cadastro")}
+          <div className="flex gap-3 p-6 pt-0 border-t border-white/5">
+            {step > 1 && (
+              <button
+                type="button"
+                onClick={() => setStep((s) => s - 1)}
+                className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium transition-all">
+                Voltar
               </button>
-          }
-        </div>
+            )}
+            {step < 2 ? (
+              <button
+                type="button"
+                onClick={() => void goNext()}
+                className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium transition-all">
+                Próximo
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={mutation.isPending}
+                className="flex-1 py-2.5 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-bold transition-all disabled:opacity-50">
+                {mutation.isPending ? (
+                  <Loader2 className="w-4 h-4 animate-spin mx-auto" />
+                ) : initialData ? (
+                  "Salvar Alterações"
+                ) : (
+                  "Confirmar Cadastro"
+                )}
+              </button>
+            )}
+          </div>
+        </form>
       </div>
     </div>
   );
@@ -183,45 +305,66 @@ export default function ContasBancarias() {
 
   const { data: contas = [], isLoading } = useQuery<ContaBancaria[]>({
     queryKey: ["contas-bancarias"],
-    queryFn: () => fetchApiData("/contas-bancarias")
+    queryFn: () => fetchApiData<ContaBancaria[]>("/contas-bancarias"),
   });
 
   const blockMutation = useMutation({
-    mutationFn: ({ id, status }: { id: number; status: string }) => {
-      return fetchApi(`/contas-bancarias/${id}`, {
+    mutationFn: ({ id, status }: { id: number; status: string }) =>
+      fetchApiData<ContaBancaria>(`/contas-bancarias/${id}`, {
         method: "PUT",
         body: JSON.stringify({ status }),
+      }),
+    onSuccess: (_, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ["contas-bancarias"] });
+      toast({
+        title: variables.status === "ativo" ? "Conta desbloqueada" : "Conta bloqueada",
+        description: `O status da conta foi alterado para ${variables.status}.`,
       });
     },
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["contas-bancarias"] });
-      toast({ 
-        title: variables.status === "ativo" ? "Conta desbloqueada" : "Conta bloqueada", 
-        description: `O status da conta foi alterado para ${variables.status}.` 
+    onError: (e: unknown) => {
+      toast({
+        variant: "destructive",
+        title: "Erro",
+        description: e instanceof Error ? e.message : String(e),
       });
-    }
+    },
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => fetchApi(`/contas-bancarias/${id}`, { method: "DELETE" }),
+    mutationFn: (id: number) =>
+      fetchApiData<{ deleted?: boolean }>(`/contas-bancarias/${id}`, { method: "DELETE" }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["contas-bancarias"] });
+      void queryClient.invalidateQueries({ queryKey: ["contas-bancarias"] });
       toast({ title: "Conta removida", description: "A conta foi deletada com sucesso." });
-    }
+    },
+    onError: (e: unknown) => {
+      toast({
+        variant: "destructive",
+        title: "Erro",
+        description: e instanceof Error ? e.message : String(e),
+      });
+    },
   });
 
-  const totalSaldo = contas
-    .filter((c) => c.status === "ativo")
-    .reduce((acc, c) => acc + Number(c.saldo_atual), 0);
+  const totalSaldoCents = contas.filter((c) => c.status === "ativo").reduce((acc, c) => acc + toCents(c.saldo_atual), 0);
 
-  if (isLoading) return <div className="flex items-center justify-center h-64"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
+  if (isLoading)
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
 
   return (
     <div className="space-y-6">
       {(showModal || editingConta) && (
-        <NovaContaModal 
+        <NovaContaModal
+          key={editingConta?.id ?? "new"}
           initialData={editingConta}
-          onClose={() => { setShowModal(false); setEditingConta(null); }} 
+          onClose={() => {
+            setShowModal(false);
+            setEditingConta(null);
+          }}
         />
       )}
 
@@ -230,11 +373,17 @@ export default function ContasBancarias() {
         description="Gerencie as contas bancárias reais da empresa. O saldo é atualizado automaticamente via conciliação."
         actions={
           <div className="flex gap-3">
-            <button onClick={() => setShowSaldos(v => !v)} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all">
+            <button
+              type="button"
+              onClick={() => setShowSaldos((v) => !v)}
+              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all">
               {showSaldos ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               {showSaldos ? "Ocultar" : "Mostrar"} Saldos
             </button>
-            <button onClick={() => setShowModal(true)} className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25">
+            <button
+              type="button"
+              onClick={() => setShowModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25">
               <Plus className="w-4 h-4" /> Nova Conta Bancária
             </button>
           </div>
@@ -246,7 +395,7 @@ export default function ContasBancarias() {
           <div>
             <p className="text-sm text-muted-foreground">Saldo Consolidado (contas ativas)</p>
             <p className="text-3xl font-bold text-white mt-1">
-              {showSaldos ? formatCurrency(totalSaldo) : "R$ ••••••"}
+              {showSaldos ? formatCurrency(totalSaldoCents / 100) : "R$ ••••••"}
             </p>
           </div>
           <div className="w-14 h-14 bg-primary/20 rounded-2xl flex items-center justify-center">
@@ -256,35 +405,47 @@ export default function ContasBancarias() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {contas.map(conta => (
-          <div key={conta.id} className={`glass-panel rounded-2xl p-6 border transition-all ${conta.status === 'bloqueado' ? 'opacity-60 border-destructive/20 grayscale-[0.5]' : 'border-white/5 hover:border-white/20'}`}>
+        {contas.map((conta) => (
+          <div
+            key={conta.id}
+            className={`glass-panel rounded-2xl p-6 border transition-all ${
+              conta.status === "bloqueado"
+                ? "opacity-60 border-destructive/20 grayscale-[0.5]"
+                : "border-white/5 hover:border-white/20"
+            }`}>
             <div className="flex items-start justify-between mb-6">
               <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ backgroundColor: conta.cor + '20' }}>
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ backgroundColor: `${conta.cor}20` }}>
                   <Landmark className="w-6 h-6" style={{ color: conta.cor }} />
                 </div>
                 <div>
                   <h3 className="font-bold text-white leading-tight">{conta.nome}</h3>
-                  <p className="text-xs text-muted-foreground mt-0.5">{conta.banco} · {conta.tipo}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {conta.banco} · {conta.tipo}
+                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                 <button 
+                <button
+                  type="button"
                   onClick={() => setEditingConta(conta)}
-                  className="p-2 bg-white/5 hover:bg-white/10 rounded-lg text-muted-foreground hover:text-white transition-colors"
-                >
+                  className="p-2 bg-white/5 hover:bg-white/10 rounded-lg text-muted-foreground hover:text-white transition-colors">
                   <Pencil className="w-4 h-4" />
                 </button>
-                <button 
-                  onClick={() => blockMutation.mutate({ id: conta.id, status: conta.status === 'ativo' ? 'bloqueado' : 'ativo' })}
-                  className={`p-2 rounded-lg transition-colors ${conta.status === 'ativo' ? 'bg-white/5 hover:bg-orange-500/20 text-muted-foreground hover:text-orange-400' : 'bg-success/20 text-success hover:bg-success/30'}`}
-                >
-                  {conta.status === 'ativo' ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+                <button
+                  type="button"
+                  onClick={() => blockMutation.mutate({ id: conta.id, status: conta.status === "ativo" ? "bloqueado" : "ativo" })}
+                  className={`p-2 rounded-lg transition-colors ${
+                    conta.status === "ativo"
+                      ? "bg-white/5 hover:bg-orange-500/20 text-muted-foreground hover:text-orange-400"
+                      : "bg-success/20 text-success hover:bg-success/30"
+                  }`}>
+                  {conta.status === "ativo" ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
                 </button>
-                <button 
+                <button
+                  type="button"
                   onClick={() => confirm("Deseja realmente deletar?") && deleteMutation.mutate(conta.id)}
-                  className="p-2 bg-white/5 hover:bg-destructive/20 rounded-lg text-muted-foreground hover:text-destructive transition-colors"
-                >
+                  className="p-2 bg-white/5 hover:bg-destructive/20 rounded-lg text-muted-foreground hover:text-destructive transition-colors">
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>
@@ -292,12 +453,12 @@ export default function ContasBancarias() {
 
             <div className="grid grid-cols-2 gap-4 mb-6">
               <div className="bg-white/5 rounded-xl p-3">
-                 <p className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1">Agência</p>
-                 <p className="text-sm text-white font-mono font-bold">{conta.agencia || "—"}</p>
+                <p className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1">Agência</p>
+                <p className="text-sm text-white font-mono font-bold">{conta.agencia || "—"}</p>
               </div>
               <div className="bg-white/5 rounded-xl p-3">
-                 <p className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1">Conta</p>
-                 <p className="text-sm text-white font-mono font-bold">{conta.conta || "—"}</p>
+                <p className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1">Conta</p>
+                <p className="text-sm text-white font-mono font-bold">{conta.conta || "—"}</p>
               </div>
             </div>
 
@@ -305,13 +466,16 @@ export default function ContasBancarias() {
               <div>
                 <p className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1">Saldo Atual</p>
                 <p className="text-2xl font-bold" style={{ color: conta.cor }}>
-                  {showSaldos ? formatCurrency(Number(conta.saldo_atual)) : "R$ ••••••"}
+                  {showSaldos ? formatCurrency(toCents(conta.saldo_atual) / 100) : "R$ ••••••"}
                 </p>
               </div>
               <div className="text-right">
                 <p className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1">Status</p>
-                <span className={`inline-flex items-center gap-1.5 text-[10px] font-black uppercase px-2 py-1 rounded-lg ${conta.status === 'ativo' ? 'bg-success/20 text-success' : 'bg-destructive/20 text-destructive'}`}>
-                  {conta.status === 'ativo' ? <CheckCircle className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                <span
+                  className={`inline-flex items-center gap-1.5 text-[10px] font-black uppercase px-2 py-1 rounded-lg ${
+                    conta.status === "ativo" ? "bg-success/20 text-success" : "bg-destructive/20 text-destructive"
+                  }`}>
+                  {conta.status === "ativo" ? <CheckCircle className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
                   {conta.status}
                 </span>
               </div>
@@ -321,9 +485,11 @@ export default function ContasBancarias() {
 
         {contas.length === 0 && !isLoading && (
           <div className="col-span-full py-16 text-center glass-panel rounded-2xl border-dashed border-2 border-white/10">
-             <Landmark className="w-12 h-12 text-muted-foreground/30 mx-auto mb-4" />
-             <p className="text-muted-foreground text-sm font-medium">Nenhuma conta cadastrada ainda.</p>
-             <button onClick={() => setShowModal(true)} className="text-primary text-sm font-bold hover:underline mt-2">Clique aqui para criar sua primeira conta</button>
+            <Landmark className="w-12 h-12 text-muted-foreground/30 mx-auto mb-4" />
+            <p className="text-muted-foreground text-sm font-medium">Nenhuma conta cadastrada ainda.</p>
+            <button type="button" onClick={() => setShowModal(true)} className="text-primary text-sm font-bold hover:underline mt-2">
+              Clique aqui para criar sua primeira conta
+            </button>
           </div>
         )}
       </div>
