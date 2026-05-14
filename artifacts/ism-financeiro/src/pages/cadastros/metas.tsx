@@ -1,164 +1,531 @@
-import { useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "@/components/shared/page-header";
-import { Download, Target, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { Download, Target, TrendingUp, TrendingDown, Loader2, ChevronDown, ChevronRight } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
+import { fetchApiData } from "@/lib/api-config";
+import {
+  formatValorBrInput,
+  brMoneyDisplayToApiString,
+  apiValorToValorBr,
+} from "@/validations/lancamentos.schema";
 
-const meses = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+// ─── Tipos ─────────────────────────────────────────────────────────────────────
+type PlanoConta = {
+  id: number;
+  tipo: string;
+  categoria: string;
+  subcategoria: string | null;
+  ativo: boolean;
+};
 
-const metasData = [
-  {
-    id: 1, categoria: "Receita Total", tipo: "receita",
-    valores: [120000, 125000, 130000, 128000, 135000, 140000, 138000, 142000, 145000, 150000, 148000, 155000],
-    realizado: [118500, 131200, 127800, 132000, 139000, 143500, 0, 0, 0, 0, 0, 0],
-  },
-  {
-    id: 2, categoria: "Custos CSP", tipo: "custo",
-    valores: [55000, 55000, 57000, 57000, 58000, 58000, 60000, 60000, 60000, 62000, 62000, 65000],
-    realizado: [54200, 56800, 57500, 58100, 57200, 59000, 0, 0, 0, 0, 0, 0],
-  },
-  {
-    id: 3, categoria: "Despesas Administrativas", tipo: "despesa",
-    valores: [18000, 18000, 18000, 18000, 18000, 18000, 18000, 18000, 18000, 18000, 18000, 18000],
-    realizado: [17800, 18200, 17500, 18100, 17900, 18300, 0, 0, 0, 0, 0, 0],
-  },
-  {
-    id: 4, categoria: "Folha de Pagamento PJ", tipo: "custo",
-    valores: [40000, 40000, 42000, 42000, 44000, 44000, 44000, 46000, 46000, 46000, 48000, 48000],
-    realizado: [40000, 40000, 42000, 42000, 44000, 44000, 0, 0, 0, 0, 0, 0],
-  },
-  {
-    id: 5, categoria: "Lucro Líquido", tipo: "resultado",
-    valores: [7000, 12000, 13000, 11000, 15000, 20000, 16000, 18000, 21000, 24000, 20000, 24000],
-    realizado: [6500, 16200, 10800, 13900, 19900, 22200, 0, 0, 0, 0, 0, 0],
-  },
-];
+type MetaRow = {
+  id: number;
+  plano_conta_id: number;
+  ano: number;
+  mes: number;
+  valor_projetado: string;
+};
 
-const [anoAtual] = [2024];
+type ActiveCell = {
+  plano_conta_id: number;
+  mes: number;
+  value: string;
+};
 
-function varPercent(meta: number, real: number) {
-  if (!real) return null;
-  return ((real - meta) / meta) * 100;
+// ─── Constantes ────────────────────────────────────────────────────────────────
+const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+const CURRENT_YEAR = new Date().getFullYear();
+const YEARS = Array.from({ length: 7 }, (_, i) => CURRENT_YEAR + 3 - i);
+
+const TIPO_CONFIG: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  receita: {
+    label: "Receitas (+)",
+    color: "text-teal-400",
+    bg: "bg-teal-500/10",
+    border: "border-teal-500/20",
+  },
+  custo: {
+    label: "Custos (-)",
+    color: "text-blue-400",
+    bg: "bg-blue-500/10",
+    border: "border-blue-500/20",
+  },
+  despesa: {
+    label: "Despesas (-)",
+    color: "text-orange-400",
+    bg: "bg-orange-500/10",
+    border: "border-orange-500/20",
+  },
+};
+const TIPO_ORDER = ["receita", "custo", "despesa"];
+
+// ─── Utilitário de exibição compacta (sem "R$") ─────────────────────────────
+function compactBrl(valor: string | undefined): string {
+  if (!valor) return "—";
+  const n = parseFloat(valor);
+  if (!n) return "—";
+  return n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// ─── Célula editável ───────────────────────────────────────────────────────────
+interface MetaCellProps {
+  plano_conta_id: number;
+  mes: number;
+  currentValue: string;
+  activeCell: ActiveCell | null;
+  onActivate: (cell: ActiveCell) => void;
+  onChange: (value: string) => void;
+  onSave: (plano_conta_id: number, mes: number) => void;
+  onCancel: () => void;
+}
+
+function MetaCell({
+  plano_conta_id,
+  mes,
+  currentValue,
+  activeCell,
+  onActivate,
+  onChange,
+  onSave,
+  onCancel,
+}: MetaCellProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const isActive =
+    activeCell?.plano_conta_id === plano_conta_id && activeCell?.mes === mes;
+
+  useEffect(() => {
+    if (isActive) inputRef.current?.select();
+  }, [isActive]);
+
+  if (isActive) {
+    return (
+      <input
+        ref={inputRef}
+        value={activeCell.value}
+        onChange={(e) => onChange(formatValorBrInput(e.target.value))}
+        onBlur={() => onSave(plano_conta_id, mes)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            onSave(plano_conta_id, mes);
+          }
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+          }
+        }}
+        className="w-full text-right bg-primary/15 border border-primary/50 rounded px-1.5 py-0.5 text-xs text-white outline-none font-mono"
+        placeholder="0,00"
+      />
+    );
+  }
+
+  const hasValue = currentValue && parseFloat(currentValue) > 0;
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        onActivate({
+          plano_conta_id,
+          mes,
+          value: hasValue ? apiValorToValorBr(currentValue) : "",
+        })
+      }
+      className={`w-full text-right text-xs rounded px-1 py-0.5 transition-colors hover:bg-white/10 font-mono ${
+        hasValue ? "text-white" : "text-muted-foreground/30"
+      }`}
+    >
+      {hasValue ? compactBrl(currentValue) : "—"}
+    </button>
+  );
+}
+
+// ─── Página ────────────────────────────────────────────────────────────────────
 export default function Metas() {
-  const [ano, setAno] = useState(anoAtual);
-  const mesAtual = 6;
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const [ano, setAno] = useState(CURRENT_YEAR);
+  const [activeCell, setActiveCell] = useState<ActiveCell | null>(null);
+  const [collapsedTipos, setCollapsedTipos] = useState<Set<string>>(new Set());
+
+  // Reset active cell when year changes
+  useEffect(() => {
+    setActiveCell(null);
+  }, [ano]);
+
+  // ── Queries ────────────────────────────────────────────────────────────────
+  const { data: planoContas = [], isLoading: loadingPC } = useQuery<PlanoConta[]>({
+    queryKey: ["plano-contas"],
+    queryFn: () => fetchApiData<PlanoConta[]>("/plano-contas"),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: metas = [], isLoading: loadingMetas } = useQuery<MetaRow[]>({
+    queryKey: ["metas", ano],
+    queryFn: () => fetchApiData<MetaRow[]>(`/metas?ano=${ano}`),
+  });
+
+  // ── Mutation com Optimistic Update ────────────────────────────────────────
+  const saveMeta = useMutation({
+    mutationFn: (payload: {
+      plano_conta_id: number;
+      ano: number;
+      mes: number;
+      valor_projetado: string;
+    }) =>
+      fetchApiData<MetaRow>("/metas", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+
+    onMutate: async (payload) => {
+      await queryClient.cancelQueries({ queryKey: ["metas", ano] });
+      const previous = queryClient.getQueryData<MetaRow[]>(["metas", ano]);
+
+      queryClient.setQueryData<MetaRow[]>(["metas", ano], (old = []) => {
+        const exists = old.find(
+          (m) => m.plano_conta_id === payload.plano_conta_id && m.mes === payload.mes,
+        );
+        if (exists) {
+          return old.map((m) =>
+            m.plano_conta_id === payload.plano_conta_id && m.mes === payload.mes
+              ? { ...m, valor_projetado: payload.valor_projetado }
+              : m,
+          );
+        }
+        return [
+          ...old,
+          {
+            id: -(Date.now()),
+            plano_conta_id: payload.plano_conta_id,
+            ano: payload.ano,
+            mes: payload.mes,
+            valor_projetado: payload.valor_projetado,
+          },
+        ];
+      });
+
+      return { previous };
+    },
+
+    onError: (_e, _payload, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["metas", ano], context.previous);
+      }
+      toast({
+        variant: "destructive",
+        title: "Erro ao salvar meta",
+        description: "Não foi possível guardar o valor. Tente novamente.",
+      });
+    },
+
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["metas", ano] });
+    },
+  });
+
+  // ── Lookup: "plano_conta_id-mes" → valor_projetado ────────────────────────
+  const metasMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const m of metas) {
+      map.set(`${m.plano_conta_id}-${m.mes}`, m.valor_projetado);
+    }
+    return map;
+  }, [metas]);
+
+  // ── Agrupamento: tipo → categoria → PlanoConta[] ──────────────────────────
+  const grouped = useMemo(() => {
+    const result = new Map<string, Map<string, PlanoConta[]>>();
+    TIPO_ORDER.forEach((t) => result.set(t, new Map()));
+
+    for (const pc of planoContas) {
+      if (!pc.ativo) continue;
+      const catMap = result.get(pc.tipo);
+      if (!catMap) continue;
+      const arr = catMap.get(pc.categoria);
+      if (arr) arr.push(pc);
+      else catMap.set(pc.categoria, [pc]);
+    }
+    return result;
+  }, [planoContas]);
+
+  // ── Stats ──────────────────────────────────────────────────────────────────
+  const stats = useMemo(() => {
+    const byTipo: Record<string, number> = { receita: 0, custo: 0, despesa: 0 };
+    const pcById = new Map(planoContas.map((p) => [p.id, p]));
+
+    for (const m of metas) {
+      const pc = pcById.get(m.plano_conta_id);
+      if (!pc) continue;
+      const v = parseFloat(m.valor_projetado) || 0;
+      if (pc.tipo in byTipo) byTipo[pc.tipo] += v;
+    }
+
+    const receitas = byTipo.receita;
+    const saidas = byTipo.custo + byTipo.despesa;
+    const resultado = receitas - saidas;
+    const categoriasComMeta = new Set(metas.map((m) => m.plano_conta_id)).size;
+
+    return { receitas, saidas, resultado, categoriasComMeta };
+  }, [metas, planoContas]);
+
+  // ── Handlers de célula ─────────────────────────────────────────────────────
+  const handleActivate = (cell: ActiveCell) => setActiveCell(cell);
+
+  const handleChange = (value: string) => {
+    if (!activeCell) return;
+    setActiveCell({ ...activeCell, value });
+  };
+
+  const handleSave = (plano_conta_id: number, mes: number) => {
+    if (!activeCell) return;
+    setActiveCell(null);
+
+    // Campo vazio → "0.00" para zerar a meta; valor preenchido → converte a máscara.
+    const apiValue = brMoneyDisplayToApiString(activeCell.value) || "0.00";
+    const current = metasMap.get(`${plano_conta_id}-${mes}`) ?? "";
+
+    // Só chama a API se o valor realmente mudou.
+    if (apiValue === current) return;
+
+    saveMeta.mutate({ plano_conta_id, ano, mes, valor_projetado: apiValue });
+  };
+
+  const handleCancel = () => setActiveCell(null);
+
+  const toggleTipo = (tipo: string) =>
+    setCollapsedTipos((prev) => {
+      const next = new Set(prev);
+      if (next.has(tipo)) next.delete(tipo);
+      else next.add(tipo);
+      return next;
+    });
+
+  // ── Total anual de uma linha ───────────────────────────────────────────────
+  function rowTotal(pcId: number): number {
+    let sum = 0;
+    for (let m = 1; m <= 12; m++) {
+      sum += parseFloat(metasMap.get(`${pcId}-${m}`) ?? "0") || 0;
+    }
+    return sum;
+  }
+
+  const isLoading = loadingPC || loadingMetas;
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Metas Financeiras"
-        description="Planejamento orçamentário e acompanhamento de metas"
+        description="Planeamento orçamentário por categoria — clique numa célula para editar"
         actions={
           <div className="flex gap-3">
-            <select value={ano} onChange={e => setAno(Number(e.target.value))} className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-black outline-none">
-              <option value={2030}>2030</option>
-              <option value={2029}>2029</option>
-              <option value={2028}>2028</option>
-              <option value={2027}>2027</option>
-              <option value={2026}>2026</option>
-              <option value={2025}>2025</option>
-              <option value={2024}>2024</option>
+            <select
+              value={ano}
+              onChange={(e) => setAno(Number(e.target.value))}
+              className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white outline-none cursor-pointer"
+            >
+              {YEARS.map((y) => (
+                <option key={y} value={y} className="bg-card text-white">
+                  {y}
+                </option>
+              ))}
             </select>
-            <button className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all">
+            <button
+              type="button"
+              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all opacity-50 cursor-not-allowed"
+              disabled
+              title="Disponível na Fase 5"
+            >
               <Download className="w-4 h-4" /> Exportar
             </button>
           </div>
         }
       />
 
+      {/* ── KPI Cards ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {[
-          { label: "Meta Receita Anual", value: formatCurrency(metasData[0].valores.reduce((a, b) => a + b, 0)), icon: <Target className="w-5 h-5 text-primary" />, color: "text-primary" },
-          { label: "Realizado até Junho", value: formatCurrency(metasData[0].realizado.filter(v => v > 0).reduce((a, b) => a + b, 0)), icon: <TrendingUp className="w-5 h-5 text-success" />, color: "text-success" },
-          { label: "Lucro Projetado Anual", value: formatCurrency(metasData[4].valores.reduce((a, b) => a + b, 0)), icon: <TrendingUp className="w-5 h-5 text-teal-400" />, color: "text-teal-400" },
-          { label: "% Metas Atingidas", value: "4 de 6", icon: <Target className="w-5 h-5 text-orange-400" />, color: "text-orange-400" },
-        ].map(item => (
-          <div key={item.label} className="glass-panel rounded-2xl p-4">
-            <div className="flex items-center gap-2 mb-2">{item.icon}<p className="text-xs text-muted-foreground">{item.label}</p></div>
-            <p className={`text-lg font-bold ${item.color}`}>{item.value}</p>
+        <div className="glass-panel rounded-2xl p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Target className="w-5 h-5 text-teal-400" />
+            <p className="text-xs text-muted-foreground">Meta Receita {ano}</p>
           </div>
-        ))}
+          <p className="text-lg font-bold text-teal-400">
+            {isLoading ? "…" : formatCurrency(stats.receitas)}
+          </p>
+        </div>
+        <div className="glass-panel rounded-2xl p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <TrendingDown className="w-5 h-5 text-destructive" />
+            <p className="text-xs text-muted-foreground">Despesas + Custos</p>
+          </div>
+          <p className="text-lg font-bold text-destructive">
+            {isLoading ? "…" : formatCurrency(stats.saidas)}
+          </p>
+        </div>
+        <div className="glass-panel rounded-2xl p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <TrendingUp className={`w-5 h-5 ${stats.resultado >= 0 ? "text-success" : "text-destructive"}`} />
+            <p className="text-xs text-muted-foreground">Resultado Projetado</p>
+          </div>
+          <p className={`text-lg font-bold ${stats.resultado >= 0 ? "text-success" : "text-destructive"}`}>
+            {isLoading ? "…" : formatCurrency(stats.resultado)}
+          </p>
+        </div>
+        <div className="glass-panel rounded-2xl p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Target className="w-5 h-5 text-orange-400" />
+            <p className="text-xs text-muted-foreground">Categorias com Meta</p>
+          </div>
+          <p className="text-lg font-bold text-orange-400">
+            {isLoading ? "…" : `${stats.categoriasComMeta} / ${planoContas.filter((p) => p.ativo).length}`}
+          </p>
+        </div>
       </div>
 
+      {/* ── Tabela ── */}
       <div className="glass-panel rounded-2xl overflow-hidden">
-        <div className="p-5 border-b border-white/5">
-          <h3 className="font-bold text-white">Planilha de Metas × Realizado — {ano}</h3>
+        <div className="p-5 border-b border-white/5 flex items-center justify-between">
+          <h3 className="font-bold text-white">
+            Planilha de Metas Orçamentárias — {ano}
+          </h3>
+          {saveMeta.isPending && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Salvando…
+            </div>
+          )}
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-white/5">
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground sticky left-0 bg-card/80 backdrop-blur-sm min-w-[200px]">Categoria</th>
-                {meses.map((mes, i) => (
-                  <th key={mes} className={`px-3 py-3 text-right font-medium min-w-[100px] ${i < mesAtual ? 'text-white' : 'text-muted-foreground'}`}>
-                    {mes}
-                    {i < mesAtual && <div className="text-[10px] font-normal text-muted-foreground">Real</div>}
+
+        {isLoading ? (
+          <div className="flex items-center justify-center py-16 gap-3 text-muted-foreground">
+            <Loader2 className="w-6 h-6 animate-spin" />
+            <span className="text-sm">Carregando plano de contas e metas…</span>
+          </div>
+        ) : planoContas.filter((p) => p.ativo).length === 0 ? (
+          <div className="py-16 text-center text-muted-foreground text-sm">
+            Nenhuma categoria ativa no plano de contas.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm border-collapse">
+              <thead>
+                <tr className="bg-white/5 border-b border-white/5">
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground sticky left-0 bg-card/95 backdrop-blur-sm min-w-[200px] z-10">
+                    Categoria / Subcategoria
                   </th>
-                ))}
-                <th className="px-4 py-3 text-right font-semibold text-white min-w-[120px]">Total Ano</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {metasData.map(meta => (
-                <>
-                  <tr key={`meta-${meta.id}`} className="hover:bg-white/5 transition-colors">
-                    <td className="px-4 py-3 font-semibold text-white sticky left-0 bg-card/60 backdrop-blur-sm">
-                      <div className="flex items-center gap-2">
-                        <span className={`w-2 h-2 rounded-full ${meta.tipo === 'receita' ? 'bg-teal-400' : meta.tipo === 'resultado' ? 'bg-primary' : 'bg-destructive'}`} />
-                        {meta.categoria}
-                        <span className="text-[10px] font-normal text-muted-foreground ml-1">META</span>
-                      </div>
-                    </td>
-                    {meta.valores.map((v, i) => (
-                      <td key={i} className="px-3 py-3 text-right text-muted-foreground">
-                        {formatCurrency(v).replace("R$\u00a0", "R$ ")}
-                      </td>
-                    ))}
-                    <td className="px-4 py-3 text-right font-bold text-white">
-                      {formatCurrency(meta.valores.reduce((a, b) => a + b, 0))}
-                    </td>
-                  </tr>
-                  <tr key={`real-${meta.id}`} className="hover:bg-white/5 transition-colors">
-                    <td className="px-4 py-3 sticky left-0 bg-card/60 backdrop-blur-sm">
-                      <div className="flex items-center gap-2 pl-4">
-                        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Realizado</span>
-                      </div>
-                    </td>
-                    {meta.realizado.map((v, i) => {
-                      const vari = v ? varPercent(meta.valores[i], v) : null;
-                      const positiveIsBetter = meta.tipo === 'receita' || meta.tipo === 'resultado';
-                      const good = vari !== null && (positiveIsBetter ? vari >= 0 : vari <= 0);
-                      return (
-                        <td key={i} className="px-3 py-3 text-right">
-                          {v > 0 ? (
-                            <div>
-                              <div className={`font-medium ${good ? 'text-success' : 'text-destructive'}`}>
-                                {formatCurrency(v).replace("R$\u00a0", "R$ ")}
-                              </div>
-                              {vari !== null && (
-                                <div className={`text-[10px] flex items-center justify-end gap-0.5 ${good ? 'text-success' : 'text-destructive'}`}>
-                                  {vari > 0 ? <TrendingUp className="w-2.5 h-2.5" /> : vari < 0 ? <TrendingDown className="w-2.5 h-2.5" /> : <Minus className="w-2.5 h-2.5" />}
-                                  {Math.abs(vari).toFixed(1)}%
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-muted-foreground/40">—</span>
-                          )}
+                  {MESES.map((mes) => (
+                    <th
+                      key={mes}
+                      className="px-2 py-3 text-right font-medium text-muted-foreground min-w-[90px] text-xs"
+                    >
+                      {mes}
+                    </th>
+                  ))}
+                  <th className="px-4 py-3 text-right font-semibold text-white min-w-[110px] text-xs">
+                    Total Ano
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {TIPO_ORDER.map((tipo) => {
+                  const catMap = grouped.get(tipo);
+                  if (!catMap || catMap.size === 0) return null;
+                  const cfg = TIPO_CONFIG[tipo] ?? TIPO_CONFIG.despesa;
+                  const isCollapsed = collapsedTipos.has(tipo);
+
+                  return (
+                    <Fragment key={`tipo-${tipo}`}>
+                      {/* ── Cabeçalho de Tipo ── */}
+                      <tr
+                        className={`${cfg.bg} border-y ${cfg.border} cursor-pointer select-none`}
+                        onClick={() => toggleTipo(tipo)}
+                      >
+                        <td
+                          className={`px-4 py-2.5 font-bold ${cfg.color} sticky left-0 bg-inherit z-10`}
+                          colSpan={14}
+                        >
+                          <div className="flex items-center gap-2">
+                            {isCollapsed ? (
+                              <ChevronRight className="w-4 h-4" />
+                            ) : (
+                              <ChevronDown className="w-4 h-4" />
+                            )}
+                            {cfg.label}
+                          </div>
                         </td>
-                      );
-                    })}
-                    <td className="px-4 py-3 text-right font-bold text-white">
-                      {formatCurrency(meta.realizado.filter(v => v > 0).reduce((a, b) => a + b, 0))}
-                    </td>
-                  </tr>
-                </>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                      </tr>
+
+                      {!isCollapsed &&
+                        Array.from(catMap.entries()).map(([categoria, items]) => (
+                          <Fragment key={`cat-${tipo}-${categoria}`}>
+                            {/* ── Cabeçalho de Categoria ── */}
+                            <tr
+                              className="bg-white/[0.03] border-b border-white/5"
+                            >
+                              <td
+                                className="px-4 py-2 text-xs font-semibold text-white/70 uppercase tracking-wide sticky left-0 bg-card/90 z-10 pl-8"
+                                colSpan={14}
+                              >
+                                {categoria}
+                              </td>
+                            </tr>
+
+                            {/* ── Linhas de Subcategoria (folhas editáveis) ── */}
+                            {items.map((pc) => {
+                              const total = rowTotal(pc.id);
+                              return (
+                                <tr
+                                  key={`pc-${pc.id}`}
+                                  className="border-b border-white/5 hover:bg-white/[0.02] transition-colors"
+                                >
+                                  <td className="px-4 py-2.5 sticky left-0 bg-card/80 backdrop-blur-sm z-10 pl-12">
+                                    <span className="text-sm text-white/80 capitalize">
+                                      {pc.subcategoria ?? pc.categoria}
+                                    </span>
+                                  </td>
+                                  {Array.from({ length: 12 }, (_, i) => i + 1).map((mes) => (
+                                    <td key={mes} className="px-2 py-2">
+                                      <MetaCell
+                                        plano_conta_id={pc.id}
+                                        mes={mes}
+                                        currentValue={metasMap.get(`${pc.id}-${mes}`) ?? ""}
+                                        activeCell={activeCell}
+                                        onActivate={handleActivate}
+                                        onChange={handleChange}
+                                        onSave={handleSave}
+                                        onCancel={handleCancel}
+                                      />
+                                    </td>
+                                  ))}
+                                  <td className="px-4 py-2 text-right">
+                                    <span
+                                      className={`text-xs font-semibold ${total > 0 ? cfg.color : "text-muted-foreground/40"}`}
+                                    >
+                                      {total > 0 ? formatCurrency(total) : "—"}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </Fragment>
+                        ))}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
+
+      <p className="text-xs text-muted-foreground text-center">
+        Clique em qualquer célula para definir ou editar o valor projetado.
+        Pressione <kbd className="px-1.5 py-0.5 bg-white/10 rounded text-[10px] font-mono">Enter</kbd> para confirmar
+        ou <kbd className="px-1.5 py-0.5 bg-white/10 rounded text-[10px] font-mono">Esc</kbd> para cancelar.
+      </p>
     </div>
   );
 }

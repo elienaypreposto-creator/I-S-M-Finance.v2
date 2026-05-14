@@ -1,151 +1,458 @@
+import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/shared/page-header";
-import { Download, Target, TrendingUp, TrendingDown, CheckCircle, XCircle } from "lucide-react";
+import {
+  Download,
+  Target,
+  TrendingUp,
+  TrendingDown,
+  Loader2,
+  AlertCircle,
+} from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell } from "recharts";
+import { useQuery } from "@tanstack/react-query";
+import { fetchApiData } from "@/lib/api-config";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+  Cell,
+} from "recharts";
 
-const meses = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun"];
-
-const metasVsRealizado = [
-  {
-    categoria: "Receita Total",
-    meta: 769000, realizado: 792000,
-    porMes: meses.map((m, i) => ({
-      mes: m,
-      meta: [120000, 125000, 130000, 128000, 135000, 140000][i],
-      realizado: [118500, 131200, 127800, 132000, 139000, 143500][i],
-    })),
-    tipo: "receita",
-  },
-  {
-    categoria: "Custos CSP",
-    meta: 330000, realizado: 342600,
-    porMes: meses.map((m, i) => ({
-      mes: m,
-      meta: [55000, 55000, 57000, 57000, 58000, 58000][i],
-      realizado: [54200, 56800, 57500, 58100, 57200, 59000][i],
-    })),
-    tipo: "custo",
-  },
-  {
-    categoria: "Lucro Líquido",
-    meta: 201000, realizado: 214961,
-    porMes: meses.map((m, i) => ({
-      mes: m,
-      meta: [34000, 36000, 37000, 35000, 28000, 31000][i],
-      realizado: [34288, 41380, 39395, 41162, 48011, 49725][i],
-    })),
-    tipo: "resultado",
-  },
+// ─── Constantes ────────────────────────────────────────────────────────────────
+const MESES_CURTOS = [
+  "Jan", "Fev", "Mar", "Abr", "Mai", "Jun",
+  "Jul", "Ago", "Set", "Out", "Nov", "Dez",
 ];
+const CURRENT_YEAR = new Date().getFullYear();
+const YEARS = Array.from({ length: 6 }, (_, i) => CURRENT_YEAR + 2 - i);
 
-const indicadores = [
-  { nome: "Ticket Médio", meta: 25000, realizado: 26800, unidade: "R$" },
-  { nome: "Nº Contratos Ativos", meta: 18, realizado: 21, unidade: "" },
-  { nome: "Prazo Médio Recebimento", meta: 25, realizado: 22, unidade: "dias" },
-  { nome: "Inadimplência", meta: 3, realizado: 2.1, unidade: "%" },
-];
-
-const CustomTooltip = ({ active, payload, label }: any) => {
-  if (active && payload && payload.length) {
-    return (
-      <div className="bg-card/95 backdrop-blur-md border border-white/10 p-3 rounded-lg shadow-xl">
-        <p className="text-white font-medium mb-2">{label}</p>
-        {payload.map((entry: any, i: number) => (
-          <p key={i} style={{ color: entry.color }} className="text-sm">
-            {entry.name}: {formatCurrency(entry.value)}
-          </p>
-        ))}
-      </div>
-    );
-  }
-  return null;
+// ─── Tipos ─────────────────────────────────────────────────────────────────────
+type MetaItem = {
+  plano_conta_id: number;
+  /** categoria vem do JOIN com plano_contas */
+  categoria: string;
+  /** mes 1-12 */
+  mes: number;
+  /** já convertido para number pelo backend */
+  valor_projetado: number;
 };
 
+type DreLinha = {
+  codigo: string;
+  descricao: string;
+  /** chaves "01"…"12" → valor mensal */
+  valores: Record<string, number>;
+  total: number;
+};
+
+type DreResponse = {
+  ano: number;
+  regime: string;
+  meses: string[];
+  linhas: DreLinha[];
+};
+
+// ─── Tooltip customizado do recharts ──────────────────────────────────────────
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-card/95 backdrop-blur-md border border-white/10 p-3 rounded-lg shadow-xl">
+      <p className="text-white font-medium mb-2">{label}</p>
+      {payload.map((entry: any, i: number) => (
+        <p key={i} style={{ color: entry.color }} className="text-sm">
+          {entry.name}: {formatCurrency(entry.value)}
+        </p>
+      ))}
+    </div>
+  );
+};
+
+// ─── Página ────────────────────────────────────────────────────────────────────
 export default function MetasRelatorio() {
+  const [ano, setAno] = useState(CURRENT_YEAR);
+
+  // ── Queries ────────────────────────────────────────────────────────────────
+  const { data: metas = [], isLoading: loadingMetas, isError: errMetas } = useQuery<
+    MetaItem[]
+  >({
+    queryKey: ["relatorio-metas", ano],
+    queryFn: () => fetchApiData<MetaItem[]>(`/relatorios/metas?ano=${ano}`),
+  });
+
+  const { data: dre, isLoading: loadingDre, isError: errDre } = useQuery<DreResponse>(
+    {
+      queryKey: ["relatorio-dre", ano],
+      queryFn: () => fetchApiData<DreResponse>(`/relatorios/dre?ano=${ano}`),
+    },
+  );
+
+  const isLoading = loadingMetas || loadingDre;
+
+  // ── Agregações de metas ────────────────────────────────────────────────────
+  /** Total orçado por mês (mes 1-12 → soma de todas as categorias) */
+  const metasPorMes = useMemo(() => {
+    const m: Record<number, number> = {};
+    for (const item of metas) {
+      m[item.mes] = (m[item.mes] ?? 0) + item.valor_projetado;
+    }
+    return m;
+  }, [metas]);
+
+  /** Orçado por categoria → Record<mes, valor> */
+  const metasPorCategoria = useMemo(() => {
+    const cat = new Map<string, Record<number, number>>();
+    for (const item of metas) {
+      if (!cat.has(item.categoria)) cat.set(item.categoria, {});
+      const m = cat.get(item.categoria)!;
+      m[item.mes] = (m[item.mes] ?? 0) + item.valor_projetado;
+    }
+    return cat;
+  }, [metas]);
+
+  // ── Linhas do DRE ──────────────────────────────────────────────────────────
+  /** linha "1" = RECEITA BRUTA DE SERVIÇOS */
+  const dreReceita = dre?.linhas.find((l) => l.codigo === "1");
+  /** linha "7" = LUCRO LÍQUIDO DO PERÍODO */
+  const dreResultado = dre?.linhas.find((l) => l.codigo === "7");
+
+  // ── Dados do gráfico mensal ────────────────────────────────────────────────
+  const chartData = useMemo(
+    () =>
+      MESES_CURTOS.map((mes, i) => {
+        const mesKey = String(i + 1).padStart(2, "0");
+        return {
+          mes,
+          orcado: metasPorMes[i + 1] ?? 0,
+          realizado: dreReceita?.valores[mesKey] ?? 0,
+        };
+      }),
+    [metasPorMes, dreReceita],
+  );
+
+  // ── KPIs ───────────────────────────────────────────────────────────────────
+  const totalOrcado = Object.values(metasPorMes).reduce((a, b) => a + b, 0);
+  const totalRealizadoReceita = dreReceita?.total ?? 0;
+  const totalResultado = dreResultado?.total ?? 0;
+  const variacaoPct =
+    totalOrcado > 0
+      ? ((totalRealizadoReceita - totalOrcado) / totalOrcado) * 100
+      : null;
+
+  const hasChartData = totalOrcado > 0 || totalRealizadoReceita > 0;
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Relatório de Metas"
-        description="Acompanhamento de metas × realizado por categoria"
+        description={`Orçado × Realizado — ${ano}`}
         actions={
-          <button className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all">
-            <Download className="w-4 h-4" /> Exportar PDF
-          </button>
+          <div className="flex gap-3">
+            <select
+              value={ano}
+              onChange={(e) => setAno(Number(e.target.value))}
+              className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white outline-none cursor-pointer"
+            >
+              {YEARS.map((y) => (
+                <option key={y} value={y} className="bg-card text-white">
+                  {y}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled
+              title="Disponível na Fase 5"
+              className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-sm font-medium opacity-40 cursor-not-allowed"
+            >
+              <Download className="w-4 h-4" /> Exportar PDF
+            </button>
+          </div>
         }
       />
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {indicadores.map(ind => {
-          const positiveIsBetter = ind.nome !== "Prazo Médio Recebimento" && ind.nome !== "Inadimplência";
-          const atingido = positiveIsBetter ? ind.realizado >= ind.meta : ind.realizado <= ind.meta;
-          const pct = ((ind.realizado / ind.meta) * 100).toFixed(1);
-          return (
-            <div key={ind.nome} className="glass-panel rounded-2xl p-4">
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-xs text-muted-foreground">{ind.nome}</p>
-                {atingido ? <CheckCircle className="w-4 h-4 text-success" /> : <XCircle className="w-4 h-4 text-destructive" />}
+      {/* ── Loading ── */}
+      {isLoading && (
+        <div className="flex items-center justify-center h-48 gap-3 text-muted-foreground">
+          <Loader2 className="w-6 h-6 animate-spin" />
+          <span className="text-sm">Carregando relatório de metas…</span>
+        </div>
+      )}
+
+      {/* ── Erros parciais ── */}
+      {(errMetas || errDre) && !isLoading && (
+        <div className="glass-panel rounded-2xl p-5 border border-warning/20 flex items-center gap-3">
+          <AlertCircle className="w-5 h-5 text-warning shrink-0" />
+          <p className="text-sm text-muted-foreground">
+            {errMetas && errDre
+              ? "Erro ao carregar metas e DRE."
+              : errMetas
+                ? "Erro ao carregar metas — realizado disponível abaixo."
+                : "Erro ao carregar DRE — orçamento disponível abaixo."}
+          </p>
+        </div>
+      )}
+
+      {!isLoading && (
+        <>
+          {/* ── KPI Cards ── */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {/* Total Orçado */}
+            <div className="glass-panel rounded-2xl p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Target className="w-5 h-5 text-primary" />
+                <p className="text-xs text-muted-foreground">Total Orçado</p>
               </div>
-              <p className={`text-xl font-bold ${atingido ? 'text-success' : 'text-destructive'}`}>
-                {ind.unidade === "R$" ? formatCurrency(ind.realizado) : `${ind.realizado}${ind.unidade}`}
+              <p className="text-xl font-bold text-primary">
+                {formatCurrency(totalOrcado)}
               </p>
               <p className="text-xs text-muted-foreground mt-1">
-                Meta: {ind.unidade === "R$" ? formatCurrency(ind.meta) : `${ind.meta}${ind.unidade}`}
+                {metasPorCategoria.size} categoria{metasPorCategoria.size !== 1 ? "s" : ""}
               </p>
-              <div className="mt-2 w-full bg-white/5 rounded-full h-1.5">
-                <div className={`h-1.5 rounded-full ${atingido ? 'bg-success' : 'bg-destructive'}`} style={{ width: `${Math.min(100, Number(pct))}%` }} />
-              </div>
             </div>
-          );
-        })}
-      </div>
 
-      {metasVsRealizado.map(meta => {
-        const variacao = ((meta.realizado - meta.meta) / meta.meta) * 100;
-        const positiveIsBetter = meta.tipo === "receita" || meta.tipo === "resultado";
-        const atingido = positiveIsBetter ? meta.realizado >= meta.meta : meta.realizado <= meta.meta;
-
-        return (
-          <div key={meta.categoria} className="glass-panel rounded-2xl p-6">
-            <div className="flex items-start justify-between mb-6">
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <Target className="w-4 h-4 text-primary" />
-                  <h3 className="font-bold text-white">{meta.categoria}</h3>
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex items-center gap-1 ${atingido ? 'bg-success/20 text-success' : 'bg-destructive/20 text-destructive'}`}>
-                    {atingido ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                    {atingido ? 'Meta Atingida' : 'Abaixo da Meta'}
-                  </span>
-                </div>
-                <p className="text-sm text-muted-foreground">Acumulado Jan–Jun 2024</p>
+            {/* Receita Realizada (DRE linha 1) */}
+            <div className="glass-panel rounded-2xl p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <TrendingUp className="w-5 h-5 text-teal-400" />
+                <p className="text-xs text-muted-foreground">Receita Realizada</p>
               </div>
-              <div className="text-right">
-                <p className="text-xs text-muted-foreground mb-1">Realizado vs Meta</p>
-                <p className={`text-2xl font-bold ${atingido ? 'text-success' : 'text-destructive'}`}>
-                  {variacao > 0 ? "+" : ""}{variacao.toFixed(1)}%
+              <p className="text-xl font-bold text-teal-400">
+                {formatCurrency(totalRealizadoReceita)}
+              </p>
+              {totalOrcado > 0 && (
+                <p
+                  className={`text-xs mt-1 ${
+                    totalRealizadoReceita >= totalOrcado
+                      ? "text-success"
+                      : "text-warning"
+                  }`}
+                >
+                  {((totalRealizadoReceita / totalOrcado) * 100).toFixed(1)}% do orçado
                 </p>
-                <p className="text-xs text-muted-foreground">{formatCurrency(meta.realizado)} / {formatCurrency(meta.meta)}</p>
-              </div>
+              )}
             </div>
-            <div className="h-[200px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={meta.porMes} margin={{ top: 0, right: 0, left: 0, bottom: 0 }} barSize={20} barGap={4}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
-                  <XAxis dataKey="mes" stroke="#ffffff50" fontSize={12} tickLine={false} axisLine={false} />
-                  <YAxis stroke="#ffffff50" fontSize={12} tickLine={false} axisLine={false} tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} />
-                  <Tooltip content={<CustomTooltip />} cursor={{ fill: '#ffffff05' }} />
-                  <Legend iconType="circle" wrapperStyle={{ fontSize: '12px' }} />
-                  <Bar dataKey="meta" name="Meta" fill="#3BA8DC" fillOpacity={0.5} radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="realizado" name="Realizado" radius={[3, 3, 0, 0]}>
-                    {meta.porMes.map((entry, i) => (
-                      <Cell key={i} fill={entry.realizado >= entry.meta ? '#27AE60' : '#E74C3C'} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+
+            {/* Resultado Realizado (DRE linha 7) */}
+            <div className="glass-panel rounded-2xl p-4">
+              <div className="flex items-center gap-2 mb-3">
+                {totalResultado >= 0 ? (
+                  <TrendingUp className="w-5 h-5 text-success" />
+                ) : (
+                  <TrendingDown className="w-5 h-5 text-destructive" />
+                )}
+                <p className="text-xs text-muted-foreground">Resultado Realizado</p>
+              </div>
+              <p
+                className={`text-xl font-bold ${
+                  totalResultado >= 0 ? "text-success" : "text-destructive"
+                }`}
+              >
+                {formatCurrency(totalResultado)}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">Lucro líquido (DRE)</p>
+            </div>
+
+            {/* Δ Orçado vs Realizado */}
+            <div className="glass-panel rounded-2xl p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Target className="w-5 h-5 text-orange-400" />
+                <p className="text-xs text-muted-foreground">Δ Receita vs Meta</p>
+              </div>
+              <p
+                className={`text-xl font-bold ${
+                  variacaoPct === null
+                    ? "text-muted-foreground"
+                    : variacaoPct >= 0
+                      ? "text-success"
+                      : "text-destructive"
+                }`}
+              >
+                {variacaoPct === null
+                  ? "—"
+                  : `${variacaoPct >= 0 ? "+" : ""}${variacaoPct.toFixed(1)}%`}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {variacaoPct === null
+                  ? "Sem metas cadastradas"
+                  : variacaoPct >= 0
+                    ? "Acima da meta"
+                    : "Abaixo da meta"}
+              </p>
             </div>
           </div>
-        );
-      })}
+
+          {/* ── Gráfico Mensal: Orçado vs Realizado Receita ── */}
+          {hasChartData && (
+            <div className="glass-panel rounded-2xl p-6">
+              <div className="mb-5">
+                <h3 className="font-bold text-white">
+                  Orçado × Receita Realizada — {ano}
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Realizado = Receita Bruta de Serviços (regime competência).
+                  Verde = atingiu meta; Vermelho = abaixo da meta.
+                </p>
+              </div>
+              <div className="h-[220px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={chartData}
+                    barSize={18}
+                    barGap={4}
+                    margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
+                  >
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      stroke="#ffffff10"
+                      vertical={false}
+                    />
+                    <XAxis
+                      dataKey="mes"
+                      stroke="#ffffff50"
+                      fontSize={12}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <YAxis
+                      stroke="#ffffff50"
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(v) =>
+                        v >= 1000 ? `R$${(v / 1000).toFixed(0)}k` : `R$${v}`
+                      }
+                    />
+                    <Tooltip
+                      content={<CustomTooltip />}
+                      cursor={{ fill: "#ffffff05" }}
+                    />
+                    <Legend
+                      iconType="circle"
+                      wrapperStyle={{ fontSize: "12px" }}
+                    />
+                    <Bar
+                      dataKey="orcado"
+                      name="Orçado"
+                      fill="#3BA8DC"
+                      fillOpacity={0.5}
+                      radius={[3, 3, 0, 0]}
+                    />
+                    <Bar
+                      dataKey="realizado"
+                      name="Realizado"
+                      radius={[3, 3, 0, 0]}
+                    >
+                      {chartData.map((entry, i) => (
+                        <Cell
+                          key={i}
+                          fill={
+                            entry.realizado >= entry.orcado ? "#27AE60" : "#E74C3C"
+                          }
+                        />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          {/* ── Tabela de orçamento por categoria ── */}
+          {metasPorCategoria.size > 0 && (
+            <div className="glass-panel rounded-2xl overflow-hidden">
+              <div className="p-5 border-b border-white/5">
+                <h3 className="font-bold text-white">
+                  Orçamento por Categoria — {ano}
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Valores planeados. Realizado por categoria disponível numa fase
+                  futura.
+                </p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-white/5">
+                    <tr>
+                      <th className="px-4 py-3 text-left font-medium text-muted-foreground sticky left-0 bg-card/95 min-w-[180px] text-xs">
+                        Categoria
+                      </th>
+                      {MESES_CURTOS.map((m) => (
+                        <th
+                          key={m}
+                          className="px-3 py-3 text-right font-medium text-muted-foreground min-w-[80px] text-xs"
+                        >
+                          {m}
+                        </th>
+                      ))}
+                      <th className="px-4 py-3 text-right font-semibold text-white text-xs min-w-[100px]">
+                        Total
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {Array.from(metasPorCategoria.entries()).map(([cat, meses]) => {
+                      const total = Object.values(meses).reduce(
+                        (a, b) => a + b,
+                        0,
+                      );
+                      return (
+                        <tr key={cat} className="hover:bg-white/5 transition-colors">
+                          <td className="px-4 py-3 font-medium text-white sticky left-0 bg-card/80 backdrop-blur-sm capitalize text-sm">
+                            {cat}
+                          </td>
+                          {Array.from({ length: 12 }, (_, i) => i + 1).map(
+                            (mes) => {
+                              const v = meses[mes] ?? 0;
+                              return (
+                                <td
+                                  key={mes}
+                                  className="px-3 py-3 text-right text-xs text-muted-foreground font-mono"
+                                >
+                                  {v > 0
+                                    ? v.toLocaleString("pt-BR", {
+                                        minimumFractionDigits: 0,
+                                        maximumFractionDigits: 0,
+                                      })
+                                    : "—"}
+                                </td>
+                              );
+                            },
+                          )}
+                          <td className="px-4 py-3 text-right font-bold text-primary text-xs">
+                            {formatCurrency(total)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* ── Estado vazio ── */}
+          {metas.length === 0 && !errMetas && (
+            <div className="glass-panel rounded-2xl py-14 text-center border border-white/5">
+              <Target className="w-10 h-10 text-muted-foreground/30 mx-auto mb-4" />
+              <p className="text-muted-foreground text-sm">
+                Nenhuma meta cadastrada para {ano}.
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Acesse{" "}
+                <strong className="text-white">
+                  Cadastros → Metas Financeiras
+                </strong>{" "}
+                para definir o orçamento.
+              </p>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

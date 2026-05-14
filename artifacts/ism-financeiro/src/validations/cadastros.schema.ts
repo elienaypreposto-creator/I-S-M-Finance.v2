@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+export const departamentoFormSchema = z.object({
+  nome: z.string().trim().min(2, "Nome deve ter ao menos 2 caracteres."),
+});
+
+export type DepartamentoFormValues = z.infer<typeof departamentoFormSchema>;
+
 /** Formulário de conta bancária (UI); `saldo_inicial_br` em máscara BR. */
 export const contaBancariaFormSchema = z.object({
   nome: z.string().trim().min(1, "Informe o nome da conta."),
