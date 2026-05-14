@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { PageHeader } from "@/components/shared/page-header";
@@ -45,6 +45,27 @@ function mascararTelefone(valor: string) {
 
 function docNumeros(s: string) {
   return s.replace(/\D/g, "");
+}
+
+function parceiroRowToFormValues(p: ParceiroRow): ParceiroFormValues {
+  const tipo = (p.tipo_pessoa === "PF" ? "PF" : "PJ") as "PF" | "PJ";
+  const rawDoc = docNumeros(String(p.cpf_cnpj ?? ""));
+  return {
+    tipoPessoa: tipo,
+    nomeRazao: p.nome,
+    documento: rawDoc ? mascararDocumento(rawDoc, tipo) : "",
+    departamento_id: p.departamento_id ? String(p.departamento_id) : "",
+    tiposParceiro: tiposArray(p.tipos),
+    formaPagamento: "PIX",
+    email: "",
+    telefone: "",
+    pixTipoRecebedor: tipo,
+    pixChave: "",
+    agencia: "",
+    contaTipo: "Corrente",
+    contaNumero: "",
+    cpfCnpjBancario: "",
+  };
 }
 
 type DepartamentoRow = { id: number; nome: string };
@@ -143,10 +164,11 @@ const defaultParceiroForm: ParceiroFormValues = {
   cpfCnpjBancario: "",
 };
 
-function NovoParceiroModal({ onClose }: { onClose: () => void }) {
+function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; initialData?: ParceiroRow }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [showConfirmCancel, setShowConfirmCancel] = useState(false);
+  const isEdit = !!initialData;
 
   const { data: departamentos = [] } = useQuery({
     queryKey: ["departamentos"],
@@ -155,7 +177,7 @@ function NovoParceiroModal({ onClose }: { onClose: () => void }) {
 
   const form = useForm<ParceiroFormValues>({
     resolver: zodResolver(parceiroFormSchema),
-    defaultValues: defaultParceiroForm,
+    defaultValues: isEdit ? parceiroRowToFormValues(initialData) : defaultParceiroForm,
   });
 
   const {
@@ -168,20 +190,40 @@ function NovoParceiroModal({ onClose }: { onClose: () => void }) {
     formState: { errors, isDirty },
   } = form;
 
+  useEffect(() => {
+    if (isEdit) {
+      reset(parceiroRowToFormValues(initialData));
+    } else {
+      reset(defaultParceiroForm);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const tipoPessoa = watch("tipoPessoa");
   const formaPagamento = watch("formaPagamento");
   const tiposParceiro = watch("tiposParceiro");
   const pixTipoRecebedor = watch("pixTipoRecebedor");
 
-  const createMutation = useMutation({
-    mutationFn: (values: ParceiroFormValues) =>
-      fetchApiData<ParceiroRow>("/parceiros", {
+  const saveMutation = useMutation({
+    mutationFn: (values: ParceiroFormValues) => {
+      const body = parceiroFormToApiBody(values);
+      if (isEdit) {
+        return fetchApiData<ParceiroRow>(`/parceiros/${initialData.id}`, {
+          method: "PUT",
+          body: JSON.stringify(body),
+        });
+      }
+      return fetchApiData<ParceiroRow>("/parceiros", {
         method: "POST",
-        body: JSON.stringify(parceiroFormToApiBody(values)),
-      }),
+        body: JSON.stringify(body),
+      });
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["parceiros"] });
-      toast({ title: "Parceiro cadastrado", description: "O registro foi salvo com sucesso." });
+      toast({
+        title: isEdit ? "Parceiro atualizado" : "Parceiro cadastrado",
+        description: "O registro foi salvo com sucesso.",
+      });
       reset(defaultParceiroForm);
       onClose();
     },
@@ -213,13 +255,15 @@ function NovoParceiroModal({ onClose }: { onClose: () => void }) {
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
         <div className="bg-card border border-white/10 rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
           <div className="flex items-center justify-between p-6 border-b border-white/5 sticky top-0 bg-card z-10">
-            <h2 className="text-lg font-bold text-white">Novo Cadastro — Clientes/Fornecedores</h2>
+            <h2 className="text-lg font-bold text-white">
+              {isEdit ? "Editar Cadastro" : "Novo Cadastro"} — Clientes/Fornecedores
+            </h2>
             <button type="button" onClick={handleCancel} className="p-1.5 hover:bg-white/5 rounded-lg">
               <X className="w-5 h-5" />
             </button>
           </div>
 
-          <form onSubmit={handleSubmit((v) => createMutation.mutate(v))} className="flex flex-col">
+          <form onSubmit={handleSubmit((v) => saveMutation.mutate(v))} className="flex flex-col">
             <div className="p-6 space-y-5">
               <div>
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">Tipo de Pessoa *</label>
@@ -456,9 +500,9 @@ function NovoParceiroModal({ onClose }: { onClose: () => void }) {
               </button>
               <button
                 type="submit"
-                disabled={createMutation.isPending}
+                disabled={saveMutation.isPending}
                 className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium shadow-lg shadow-primary/25 disabled:opacity-50">
-                {createMutation.isPending ? "Salvando…" : "Salvar Cadastro"}
+                {saveMutation.isPending ? "Salvando…" : isEdit ? "Salvar Alterações" : "Salvar Cadastro"}
               </button>
             </div>
           </form>
@@ -473,6 +517,7 @@ export default function Parceiros() {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [showModal, setShowModal] = useState(false);
+  const [editingParceiro, setEditingParceiro] = useState<ParceiroRow | null>(null);
 
   const { data: departamentos = [] } = useQuery({
     queryKey: ["departamentos"],
@@ -533,7 +578,16 @@ export default function Parceiros() {
 
   return (
     <div className="space-y-6">
-      {showModal && <NovoParceiroModal onClose={() => setShowModal(false)} />}
+      {(showModal || editingParceiro) && (
+        <NovoParceiroModal
+          key={editingParceiro?.id ?? "new"}
+          initialData={editingParceiro ?? undefined}
+          onClose={() => {
+            setShowModal(false);
+            setEditingParceiro(null);
+          }}
+        />
+      )}
 
       <PageHeader
         title="Clientes / Fornecedores"
@@ -629,8 +683,9 @@ export default function Parceiros() {
                       <div className="flex items-center justify-end gap-1">
                         <button
                           type="button"
+                          onClick={() => setEditingParceiro(p)}
                           className="p-1.5 rounded-md hover:bg-white/10 text-muted-foreground hover:text-white transition-colors"
-                          title="Editar (em breve)">
+                          title="Editar">
                           <Edit2 className="w-4 h-4" />
                         </button>
                         <button

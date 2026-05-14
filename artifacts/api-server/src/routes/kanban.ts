@@ -4,6 +4,18 @@ import { errorResponse, successResponse } from "../utils/response";
 
 const router = Router();
 
+function isPermissionError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { code?: string; message?: string };
+  return (
+    e.code === "42501" ||
+    e.code === "PGRST301" ||
+    (typeof e.message === "string" &&
+      (e.message.includes("permission denied") ||
+        e.message.includes("row-level security")))
+  );
+}
+
 // GET /api/kanban/cards
 router.get("/cards", async (req, res) => {
   try {
@@ -50,6 +62,9 @@ router.get("/cards", async (req, res) => {
     return successResponse(res, cards);
   } catch (error) {
     console.error("Erro ao buscar cards:", error);
+    if (isPermissionError(error)) {
+      return errorResponse(res, 403, "FORBIDDEN", "Sem permissão para acessar os cards do kanban.");
+    }
     return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao buscar cards do kanban.");
   }
 });
@@ -94,8 +109,11 @@ router.post("/cards", async (req, res) => {
     return successResponse(res, data, null, 201);
   } catch (error) {
     console.error("Erro ao criar card:", error);
-    
-    // Log do erro no banco via Supabase (mesmo se o log falhar, retornamos o erro original)
+
+    if (isPermissionError(error)) {
+      return errorResponse(res, 403, "FORBIDDEN", "Sem permissão para criar cards no kanban.");
+    }
+
     try {
       await supabase.from("logs_sistema").insert([{
         servico: "api-kanban",
@@ -105,7 +123,7 @@ router.post("/cards", async (req, res) => {
     } catch (logErr) {
       console.error("Falha ao salvar log:", logErr);
     }
-    
+
     return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao criar card do kanban.");
   }
 });
@@ -140,6 +158,9 @@ router.patch("/cards/:id", async (req, res) => {
     return successResponse(res, data);
   } catch (error) {
     console.error("Erro ao atualizar card:", error);
+    if (isPermissionError(error)) {
+      return errorResponse(res, 403, "FORBIDDEN", "Sem permissão para atualizar este card do kanban.");
+    }
     return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao atualizar card do kanban.");
   }
 });
@@ -156,6 +177,9 @@ router.get("/usuarios", async (req, res) => {
     return successResponse(res, data);
   } catch (error) {
     console.error("Erro ao buscar usuários:", error);
+    if (isPermissionError(error)) {
+      return errorResponse(res, 403, "FORBIDDEN", "Sem permissão para acessar os usuários do kanban.");
+    }
     return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao buscar usuários do kanban.");
   }
 });

@@ -79,6 +79,7 @@ export default function PlanoContas() {
   
   const [modalOpen, setModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<PlanoConta | null>(null);
+  const [modalKey, setModalKey] = useState(0);
 
   const { data: contas = [], isLoading } = useQuery<PlanoConta[]>({
     queryKey: ['plano-contas'],
@@ -115,11 +116,13 @@ export default function PlanoContas() {
 
   const handleCreate = (typeDef?: string) => {
     setEditingItem(typeDef ? { tipo: typeDef } as any : null);
+    setModalKey((k) => k + 1);
     setModalOpen(true);
   };
 
   const handleEdit = (item: PlanoConta) => {
     setEditingItem(item);
+    setModalKey((k) => k + 1);
     setModalOpen(true);
   };
 
@@ -222,10 +225,11 @@ export default function PlanoContas() {
         }, despesas, 'despesa')}
       </div>
 
-      <FormModal 
-        isOpen={modalOpen} 
-        onClose={() => { setModalOpen(false); setEditingItem(null); }} 
-        onSubmit={handleSubmit} 
+      <FormModal
+        key={modalKey}
+        isOpen={modalOpen}
+        onClose={() => { setModalOpen(false); setEditingItem(null); }}
+        onSubmit={handleSubmit}
         initialData={editingItem}
       />
     </div>
