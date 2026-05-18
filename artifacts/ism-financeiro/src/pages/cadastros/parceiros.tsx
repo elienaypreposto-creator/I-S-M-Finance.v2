@@ -7,6 +7,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { fetchApiData } from "@/lib/api-config";
 import { parceiroFormSchema, type ParceiroFormValues } from "@/validations/cadastros.schema";
+import { exportToExcel } from "@/lib/export";
 
 const tiposParceiroOptions = [
   "Cliente",
@@ -576,6 +577,29 @@ export default function Parceiros() {
     return mascararDocumento(String(p.cpf_cnpj).replace(/\D/g, ""), tipo);
   };
 
+  // ── Exportação ──────────────────────────────────────────────────────────────
+  const EXPORT_COLUMNS_PARCEIROS = [
+    { header: "Tipo Pessoa",     key: "tipo_pessoa",   width: 12 },
+    { header: "Nome / Razão",    key: "nome",          width: 40 },
+    { header: "CPF / CNPJ",      key: "cpf_cnpj_fmt",  width: 22 },
+    { header: "Tipos Parceiro",  key: "tipos_fmt",     width: 34 },
+    { header: "Departamento",    key: "dept_nome",     width: 26 },
+    { header: "Status",          key: "status",        width: 12 },
+  ];
+
+  function handleExportParceiros() {
+    const rows = parceirosLista.map((p) => ({
+      tipo_pessoa:  p.tipo_pessoa,
+      nome:         p.nome,
+      cpf_cnpj_fmt: getDocDisplay(p),
+      tipos_fmt:    tiposArray(p.tipos).join(", ") || "—",
+      dept_nome:    p.departamento_id ? (deptNomeById.get(p.departamento_id) ?? "—") : "—",
+      status:       p.ativo && !p.bloqueado ? "Ativo" : "Inativo",
+    })) as Record<string, unknown>[];
+
+    exportToExcel(`Parceiros_${new Date().toISOString().split("T")[0]}`, rows, EXPORT_COLUMNS_PARCEIROS);
+  }
+
   return (
     <div className="space-y-6">
       {(showModal || editingParceiro) && (
@@ -596,8 +620,11 @@ export default function Parceiros() {
           <div className="flex gap-3">
             <button
               type="button"
-              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all">
-              <Download className="w-4 h-4" /> Exportar
+              onClick={handleExportParceiros}
+              disabled={parceirosLista.length === 0 || isLoading}
+              title="Exportar XLSX"
+              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+              <Download className="w-4 h-4" /> Exportar XLSX
             </button>
             <button
               type="button"

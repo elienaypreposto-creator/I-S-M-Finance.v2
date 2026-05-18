@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/shared/page-header";
 import {
   Download,
+  FileText,
   Target,
   TrendingUp,
   TrendingDown,
@@ -11,6 +12,7 @@ import {
 import { formatCurrency } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import { fetchApiData } from "@/lib/api-config";
+import { exportToExcel, exportToPDF, fmtBRL } from "@/lib/export";
 import {
   BarChart,
   Bar,
@@ -145,6 +147,53 @@ export default function MetasRelatorio() {
 
   const hasChartData = totalOrcado > 0 || totalRealizadoReceita > 0;
 
+  // ── Exportação ──────────────────────────────────────────────────────────────
+  const EXPORT_COLUMNS = [
+    { header: "Categoria",       key: "categoria", width: 34 },
+    ...MESES_CURTOS.map((m, i) => ({
+      header: m,
+      key: `mes_${i + 1}`,
+      width: 14,
+      formatter: (v: unknown) => fmtBRL(v ?? 0),
+    })),
+    { header: "Total Orçado", key: "total", width: 18, formatter: (v: unknown) => fmtBRL(v ?? 0) },
+  ];
+
+  function buildMetasExportRows(): Record<string, unknown>[] {
+    const rows: Record<string, unknown>[] = [];
+    for (const [cat, mesMapa] of metasPorCategoria.entries()) {
+      const row: Record<string, unknown> = { categoria: cat };
+      let total = 0;
+      for (let m = 1; m <= 12; m++) {
+        const v = mesMapa[m] ?? 0;
+        row[`mes_${m}`] = v;
+        total += v;
+      }
+      row["total"] = total;
+      rows.push(row);
+    }
+    // Linha de totais
+    const totRow: Record<string, unknown> = { categoria: "TOTAL" };
+    for (let m = 1; m <= 12; m++) totRow[`mes_${m}`] = metasPorMes[m] ?? 0;
+    totRow["total"] = totalOrcado;
+    rows.push(totRow);
+    return rows;
+  }
+
+  const exportFilename = `Metas_${ano}`;
+
+  function handleExportExcel() {
+    exportToExcel(exportFilename, buildMetasExportRows(), EXPORT_COLUMNS);
+  }
+
+  function handleExportPDF() {
+    exportToPDF(exportFilename, buildMetasExportRows(), EXPORT_COLUMNS, {
+      title: `Relatório de Metas — ${ano}`,
+      subtitle: `Total Orçado: ${fmtBRL(totalOrcado)}  |  Receita Realizada: ${fmtBRL(totalRealizadoReceita)}`,
+      orientation: "landscape",
+    });
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -165,11 +214,21 @@ export default function MetasRelatorio() {
             </select>
             <button
               type="button"
-              disabled
-              title="Disponível na Fase 5"
-              className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-sm font-medium opacity-40 cursor-not-allowed"
+              onClick={handleExportPDF}
+              disabled={metas.length === 0 || isLoading}
+              title="Exportar PDF"
+              className="flex items-center gap-2 px-4 py-2 bg-primary/10 hover:bg-primary/20 border border-primary/30 rounded-xl text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <Download className="w-4 h-4" /> Exportar PDF
+              <FileText className="w-4 h-4" /> Exportar PDF
+            </button>
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              disabled={metas.length === 0 || isLoading}
+              title="Exportar XLSX"
+              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Download className="w-4 h-4" /> Exportar XLSX
             </button>
           </div>
         }

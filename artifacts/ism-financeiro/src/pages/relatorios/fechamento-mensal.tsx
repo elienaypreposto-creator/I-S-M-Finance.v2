@@ -2,6 +2,7 @@ import { useState } from "react";
 import { PageHeader } from "@/components/shared/page-header";
 import {
   Download,
+  FileText,
   Wallet,
   TrendingUp,
   TrendingDown,
@@ -13,6 +14,7 @@ import {
 import { formatCurrency } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import { fetchApiData } from "@/lib/api-config";
+import { exportToExcel, exportToPDF, fmtBRL } from "@/lib/export";
 
 // ─── Constantes ────────────────────────────────────────────────────────────────
 const MESES = [
@@ -89,6 +91,42 @@ export default function FechamentoMensal() {
         100
       : null;
 
+  // ── Exportação ──────────────────────────────────────────────────────────────
+  const EXPORT_COLUMNS = [
+    { header: "Indicador",    key: "indicador",  width: 36 },
+    { header: "Valor (R$)",   key: "valor",      width: 22 },
+  ];
+
+  function buildExportRows() {
+    if (!data) return [];
+    return [
+      { indicador: "Meta Receita (Orçado)",    valor: fmtBRL(data.planejado_receber) },
+      { indicador: "Receitas Realizadas (CR)", valor: fmtBRL(data.realizado_receber) },
+      { indicador: "Saídas Realizadas (CP)",   valor: fmtBRL(data.realizado_gastar)  },
+      { indicador: "Resultado Líquido",        valor: fmtBRL(saldo)                 },
+    ] as Record<string, unknown>[];
+  }
+
+  function handleExportExcel() {
+    exportToExcel(
+      `Fechamento_Mensal_${MESES[mes - 1]}_${ano}`,
+      buildExportRows(),
+      EXPORT_COLUMNS,
+    );
+  }
+
+  function handleExportPDF() {
+    exportToPDF(
+      `Fechamento_Mensal_${MESES[mes - 1]}_${ano}`,
+      buildExportRows(),
+      EXPORT_COLUMNS,
+      {
+        title: `Fechamento Mensal — ${MESES[mes - 1]} ${ano}`,
+        subtitle: "Valores referentes a lançamentos quitados no período",
+      },
+    );
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -120,11 +158,21 @@ export default function FechamentoMensal() {
             </select>
             <button
               type="button"
-              disabled
-              title="Exportar PDF — disponível na Fase 5"
-              className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-sm font-medium opacity-40 cursor-not-allowed"
+              onClick={handleExportPDF}
+              disabled={!data}
+              title="Exportar PDF"
+              className="flex items-center gap-2 px-4 py-2 bg-primary/10 hover:bg-primary/20 border border-primary/30 rounded-xl text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <Download className="w-4 h-4" /> Exportar PDF
+              <FileText className="w-4 h-4" /> Exportar PDF
+            </button>
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              disabled={!data}
+              title="Exportar XLSX"
+              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Download className="w-4 h-4" /> Exportar XLSX
             </button>
           </div>
         }

@@ -12,6 +12,7 @@ import {
 import { formatCurrency } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import { fetchApiData } from "@/lib/api-config";
+import { exportToExcel, exportToPDF, fmtBRL, fmtDate } from "@/lib/export";
 
 // ─── Constantes ────────────────────────────────────────────────────────────────
 const MESES_LONGOS = [
@@ -88,6 +89,35 @@ export default function ContabilFiscal() {
   const handleAno = (v: number) => { setAnoFiltro(v); setPagina(1); };
   const handleTipo = (v: TipoFiltro) => { setTipoFiltro(v); setPagina(1); };
 
+  // ── Exportação ──────────────────────────────────────────────────────────────
+  const EXPORT_COLUMNS = [
+    { header: "Data Pgto",    key: "data_pgto",      width: 14, formatter: (v: unknown) => fmtDate(v) },
+    { header: "Tipo",         key: "tipo",           width: 8,  formatter: (v: unknown) => v === "CR" ? "Entrada" : "Saída" },
+    { header: "Descrição",    key: "descricao",      width: 36 },
+    { header: "Parceiro",     key: "nome_parceiro",  width: 30 },
+    { header: "Categoria",    key: "categoria",      width: 28 },
+    { header: "Conta",        key: "conta_bancaria", width: 24 },
+    { header: "Valor (R$)",   key: "valor",          width: 18, formatter: (v: unknown) => fmtBRL(v) },
+  ] as const;
+
+  const exportFilename = `Contabil_Fiscal_${MESES_LONGOS[mesFiltro - 1]}_${anoFiltro}`;
+  const exportTitle    = `Relatório Contábil / Fiscal — ${MESES_LONGOS[mesFiltro - 1]} ${anoFiltro}`;
+  const exportSubtitle = `Filtro: ${tipoFiltro === "ambos" ? "Entradas e Saídas" : tipoFiltro === "CR" ? "Entradas (CR)" : "Saídas (CP)"}  |  ${todos.length} registos`;
+
+  const exportData = todos as unknown as Record<string, unknown>[];
+
+  function handleExportExcel() {
+    exportToExcel(exportFilename, exportData, [...EXPORT_COLUMNS]);
+  }
+
+  function handleExportPDF() {
+    exportToPDF(exportFilename, exportData, [...EXPORT_COLUMNS], {
+      title: exportTitle,
+      subtitle: exportSubtitle,
+      orientation: "landscape",
+    });
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -97,17 +127,19 @@ export default function ContabilFiscal() {
           <div className="flex gap-3">
             <button
               type="button"
-              disabled
-              title="Disponível na Fase 5"
-              className="flex items-center gap-2 px-4 py-2 bg-primary/10 border border-primary/30 rounded-xl text-sm font-medium opacity-40 cursor-not-allowed"
+              onClick={handleExportPDF}
+              disabled={todos.length === 0 || isLoading}
+              title="Exportar PDF"
+              className="flex items-center gap-2 px-4 py-2 bg-primary/10 hover:bg-primary/20 border border-primary/30 rounded-xl text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <FileText className="w-4 h-4" /> Exportar PDF
             </button>
             <button
               type="button"
-              disabled
-              title="Disponível na Fase 5"
-              className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-sm font-medium opacity-40 cursor-not-allowed"
+              onClick={handleExportExcel}
+              disabled={todos.length === 0 || isLoading}
+              title="Exportar XLSX"
+              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Download className="w-4 h-4" /> Exportar XLSX
             </button>
