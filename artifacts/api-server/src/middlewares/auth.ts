@@ -1,19 +1,22 @@
+/**
+ * withAuth — middleware de autenticação stateless via JWE.
+ *
+ * O(1) — apenas operação criptográfica local, zero I/O de banco por request.
+ *
+ * Trade-off aceito: um utilizador bloqueado após a emissão de um Access Token
+ * pode continuar a usá-lo até ao fim do TTL (máx 15 min). Para revogação
+ * imediata, a única solução é reduzir o TTL ou adicionar uma consulta ao banco
+ * aqui (com custo de I/O em cada request).
+ */
+
 import type { NextFunction, Request, Response } from "express";
-import jwt from "jsonwebtoken";
-import { and, eq } from "drizzle-orm";
-import { db } from "@workspace/db";
-import { permissoesTable, usuariosTable } from "@workspace/db/schema";
+import type { AccessTokenPayload } from "../services/token.service";
+import { verifyAccessToken } from "../services/token.service";
 
-type JwtPayload = {
+export type AuthUser = {
   id: number;
   email: string;
-  iat?: number;
-  exp?: number;
-};
-
-type AuthUser = {
-  id: number;
-  email: string;
+  permissions: string[];
 };
 
 declare global {
@@ -24,81 +27,35 @@ declare global {
   }
 }
 
-const jsonError = (res: Response, status: number, code: string, message: string) => {
-  return res.status(status).json({
-    data: null,
-    meta: null,
-    errors: [{ code, message }],
-  });
-};
+const jsonError = (res: Response, status: number, code: string, message: string) =>
+  res.status(status).json({ data: null, meta: null, errors: [{ code, message }] });
 
-const getBearerToken = (authHeader?: string) => {
+const extractBearerToken = (authHeader?: string): string | null => {
   if (!authHeader) return null;
-  const [scheme, token] = authHeader.split(" ");
-  if (scheme !== "Bearer" || !token) return null;
-  return token;
+  const parts = authHeader.split(" ");
+  return parts[0] === "Bearer" && parts[1] ? parts[1] : null;
 };
 
-export const authMiddleware = async (req: Request, res: Response, next: NextFunction) => {
+export const withAuth = async (req: Request, res: Response, next: NextFunction) => {
+  const token = extractBearerToken(req.headers.authorization);
+  if (!token) {
+    return jsonError(res, 401, "UNAUTHORIZED", "Token de autenticação ausente ou inválido.");
+  }
+
+  let payload: AccessTokenPayload;
   try {
-    const token = getBearerToken(req.headers.authorization);
-    if (!token) {
-      return jsonError(res, 401, "UNAUTHORIZED", "Token de autenticação ausente ou inválido.");
-    }
-
-    const jwtSecret = process.env.JWT_SECRET;
-    if (!jwtSecret) {
-      return jsonError(res, 500, "CONFIG_ERROR", "JWT_SECRET não configurado.");
-    }
-
-    const payload = jwt.verify(token, jwtSecret) as JwtPayload;
-    if (!payload?.id || !payload?.email) {
-      return jsonError(res, 401, "UNAUTHORIZED", "Token inválido.");
-    }
-
-    const [usuario] = await db
-      .select({ id: usuariosTable.id, email: usuariosTable.email, bloqueado: usuariosTable.bloqueado })
-      .from(usuariosTable)
-      .where(eq(usuariosTable.id, payload.id))
-      .limit(1);
-
-    if (!usuario || usuario.bloqueado) {
-      return jsonError(res, 401, "UNAUTHORIZED", "Usuário inválido ou bloqueado.");
-    }
-
-    req.user = { id: payload.id, email: payload.email };
-    return next();
+    payload = await verifyAccessToken(token);
   } catch {
     return jsonError(res, 401, "UNAUTHORIZED", "Token expirado ou inválido.");
   }
+
+  const id = parseInt(payload.sub, 10);
+  if (isNaN(id)) {
+    return jsonError(res, 401, "UNAUTHORIZED", "Token malformado: sub inválido.");
+  }
+
+  req.user = { id, email: payload.email, permissions: payload.permissions };
+  return next();
 };
 
-export const requirePermission = (codigoPermissao: string) => {
-  return async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      if (!req.user?.id) {
-        return jsonError(res, 401, "UNAUTHORIZED", "Usuário não autenticado.");
-      }
-
-      const [permissao] = await db
-        .select({ id: permissoesTable.id })
-        .from(permissoesTable)
-        .where(
-          and(
-            eq(permissoesTable.usuario_id, req.user.id),
-            eq(permissoesTable.codigo_permissao, codigoPermissao),
-          ),
-        )
-        .limit(1);
-
-      if (!permissao) {
-        return jsonError(res, 403, "FORBIDDEN", `Permissão necessária: ${codigoPermissao}.`);
-      }
-
-      return next();
-    } catch {
-      return jsonError(res, 500, "INTERNAL_ERROR", "Erro ao validar permissão do usuário.");
-    }
-  };
-};
-
+export const authMiddleware = withAuth;
