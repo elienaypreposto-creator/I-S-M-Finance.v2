@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { withPermission } from "../../../middlewares/withPermission";
 import { asyncHandler } from "../../../utils/async-handler";
 import { successResponse } from "../../../utils/response";
 import { contasBancariasService } from "./contas-bancarias.service";
@@ -20,6 +21,7 @@ router.get(
 
 router.post(
   "/contas-bancarias",
+  withPermission("configuracoes:contas-bancarias:criar"),
   asyncHandler(async (req, res) => {
     const payload = createContaBancariaBodySchema.parse(req.body);
     const item = await contasBancariasService.create(payload);
@@ -29,6 +31,7 @@ router.post(
 
 router.put(
   "/contas-bancarias/:id",
+  withPermission("configuracoes:contas-bancarias:editar"),
   asyncHandler(async (req, res) => {
     const { id } = contaBancariaIdParamSchema.parse(req.params);
     const payload = updateContaBancariaBodySchema.parse(req.body);
@@ -39,6 +42,7 @@ router.put(
 
 router.delete(
   "/contas-bancarias/:id",
+  withPermission("configuracoes:contas-bancarias:deletar"),
   asyncHandler(async (req, res) => {
     const { id } = contaBancariaIdParamSchema.parse(req.params);
     const result = await contasBancariasService.remove(id);

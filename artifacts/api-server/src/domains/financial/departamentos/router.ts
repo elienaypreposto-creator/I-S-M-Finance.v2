@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { withPermission } from "../../../middlewares/withPermission";
 import { asyncHandler } from "../../../utils/async-handler";
 import { successResponse } from "../../../utils/response";
 import { departamentosService } from "./departamentos.service";
@@ -20,6 +21,7 @@ router.get(
 
 router.post(
   "/departamentos",
+  withPermission("configuracoes:departamentos:criar"),
   asyncHandler(async (req, res) => {
     const payload = createDepartamentoBodySchema.parse(req.body);
     const item = await departamentosService.create(payload);
@@ -29,6 +31,7 @@ router.post(
 
 router.put(
   "/departamentos/:id",
+  withPermission("configuracoes:departamentos:editar"),
   asyncHandler(async (req, res) => {
     const { id } = departamentoIdParamSchema.parse(req.params);
     const payload = updateDepartamentoBodySchema.parse(req.body);
@@ -39,6 +42,7 @@ router.put(
 
 router.delete(
   "/departamentos/:id",
+  withPermission("configuracoes:departamentos:deletar"),
   asyncHandler(async (req, res) => {
     const { id } = departamentoIdParamSchema.parse(req.params);
     const result = await departamentosService.remove(id);

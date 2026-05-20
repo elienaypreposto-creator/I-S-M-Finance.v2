@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { withPermission } from "../../../middlewares/withPermission";
 import { asyncHandler } from "../../../utils/async-handler";
 import { successResponse } from "../../../utils/response";
 import { metasService } from "./metas.service";
@@ -17,6 +18,7 @@ router.get(
 
 router.post(
   "/metas",
+  withPermission("financeiro:metas:editar"),
   asyncHandler(async (req, res) => {
     const payload = upsertMetaBodySchema.parse(req.body);
     const item = await metasService.upsert(payload);
