@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { withPermission } from "../../../middlewares/withPermission";
 import { asyncHandler } from "../../../utils/async-handler";
 import { successResponse } from "../../../utils/response";
 import { filiaisService } from "./filiais.service";
@@ -16,6 +17,7 @@ router.get(
 
 router.post(
   "/filiais",
+  withPermission("configuracoes:filiais:criar"),
   asyncHandler(async (req, res) => {
     const payload = createFilialBodySchema.parse(req.body);
     const item = await filiaisService.create(payload);
@@ -25,6 +27,7 @@ router.post(
 
 router.put(
   "/filiais/:id",
+  withPermission("configuracoes:filiais:editar"),
   asyncHandler(async (req, res) => {
     const { id } = filialIdParamSchema.parse(req.params);
     const payload = updateFilialBodySchema.parse(req.body);
@@ -35,6 +38,7 @@ router.put(
 
 router.delete(
   "/filiais/:id",
+  withPermission("configuracoes:filiais:deletar"),
   asyncHandler(async (req, res) => {
     const { id } = filialIdParamSchema.parse(req.params);
     const result = await filiaisService.remove(id);

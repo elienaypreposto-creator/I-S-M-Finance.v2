@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { withPermission } from "../../../middlewares/withPermission";
 import { asyncHandler } from "../../../utils/async-handler";
 import { successResponse } from "../../../utils/response";
 import { parceirosService } from "./parceiros.service";
@@ -22,6 +23,7 @@ router.get(
 
 router.post(
   "/parceiros",
+  withPermission("financeiro:parceiros:criar"),
   asyncHandler(async (req, res) => {
     const payload = createParceiroBodySchema.parse(req.body);
     const item = await parceirosService.create(payload);
@@ -40,6 +42,7 @@ router.get(
 
 router.put(
   "/parceiros/:id",
+  withPermission("financeiro:parceiros:editar"),
   asyncHandler(async (req, res) => {
     const { id } = parceiroIdParamSchema.parse(req.params);
     const payload = updateParceiroBodySchema.parse(req.body);
@@ -50,6 +53,7 @@ router.put(
 
 router.delete(
   "/parceiros/:id",
+  withPermission("financeiro:parceiros:deletar"),
   asyncHandler(async (req, res) => {
     const { id } = parceiroIdParamSchema.parse(req.params);
     const result = await parceirosService.remove(id);

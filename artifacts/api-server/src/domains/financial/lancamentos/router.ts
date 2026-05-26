@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requirePermission } from "../../../middlewares/auth";
+import { withPermission } from "../../../middlewares/withPermission";
 import { asyncHandler } from "../../../utils/async-handler";
 import { successResponse } from "../../../utils/response";
 import { lancamentosService } from "./lancamentos.service";
@@ -23,6 +23,7 @@ router.get(
 
 router.post(
   "/lancamentos",
+  withPermission("financeiro:lancamentos:criar"),
   asyncHandler(async (req, res) => {
     const payload = createLancamentoBodySchema.parse(req.body);
     const item = await lancamentosService.create(payload);
@@ -41,6 +42,7 @@ router.get(
 
 router.put(
   "/lancamentos/:id",
+  withPermission("financeiro:lancamentos:editar"),
   asyncHandler(async (req, res) => {
     const { id } = lancamentoIdParamSchema.parse(req.params);
     const payload = updateLancamentoBodySchema.parse(req.body);
@@ -51,7 +53,7 @@ router.put(
 
 router.delete(
   "/lancamentos/:id",
-  requirePermission("Baixa de Contas a Pagar"),
+  withPermission("financeiro:lancamentos:deletar"),
   asyncHandler(async (req, res) => {
     const { id } = lancamentoIdParamSchema.parse(req.params);
     const result = await lancamentosService.remove(id);

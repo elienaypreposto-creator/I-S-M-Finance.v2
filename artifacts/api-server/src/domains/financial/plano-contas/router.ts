@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { withPermission } from "../../../middlewares/withPermission";
 import { asyncHandler } from "../../../utils/async-handler";
 import { successResponse } from "../../../utils/response";
 import { planoContasService } from "./plano-contas.service";
@@ -20,6 +21,7 @@ router.get(
 
 router.post(
   "/plano-contas",
+  withPermission("configuracoes:plano-contas:criar"),
   asyncHandler(async (req, res) => {
     const payload = createPlanoContaBodySchema.parse(req.body);
     const item = await planoContasService.create(payload);
@@ -29,6 +31,7 @@ router.post(
 
 router.put(
   "/plano-contas/:id",
+  withPermission("configuracoes:plano-contas:editar"),
   asyncHandler(async (req, res) => {
     const { id } = planoContaIdParamSchema.parse(req.params);
     const payload = updatePlanoContaBodySchema.parse(req.body);
@@ -39,6 +42,7 @@ router.put(
 
 router.delete(
   "/plano-contas/:id",
+  withPermission("configuracoes:plano-contas:deletar"),
   asyncHandler(async (req, res) => {
     const { id } = planoContaIdParamSchema.parse(req.params);
     const result = await planoContasService.remove(id);

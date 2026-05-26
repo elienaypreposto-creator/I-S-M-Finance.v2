@@ -7,6 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Plus, Search, Filter, Download, Loader2, AlertCircle, Calendar, Pencil, Trash2 } from "lucide-react";
 import { ApiEnvelope, fetchApi, fetchApiData } from "@/lib/api-config";
 import { LancamentoModal } from "@/components/lancamentos/lancamento-modal";
+import { exportToExcel, fmtBRL, fmtDate as fmtDateExport } from "@/lib/export";
 
 type Lancamento = {
   id: number;
@@ -114,6 +115,44 @@ export default function Lancamentos() {
   const total = data?.total ?? 0;
   const totalPages = Math.ceil(total / limit);
 
+  // ── Exportação ──────────────────────────────────────────────────────────────
+  const [isExporting, setIsExporting] = useState(false);
+
+  const EXPORT_COLUMNS_LANC = [
+    { header: "Tipo",       key: "tipo",           width: 8  },
+    { header: "Vencimento", key: "vencimento",     width: 14, formatter: (v: unknown) => fmtDateExport(v) },
+    { header: "Parceiro",   key: "parceiro_nome",  width: 32 },
+    { header: "Descrição",  key: "descricao",      width: 38 },
+    { header: "Categoria",  key: "plano_conta_nome", width: 28 },
+    { header: "Conta",      key: "conta_nome",     width: 24 },
+    { header: "Valor (R$)", key: "valor_fmt",      width: 18 },
+    { header: "Status",     key: "status",         width: 14 },
+  ];
+
+  async function handleExportLancamentos() {
+    setIsExporting(true);
+    try {
+      const params = new URLSearchParams();
+      if (tipo) params.set("tipo", tipo);
+      if (debouncedSearch) params.set("search", debouncedSearch);
+      if (dateStart) params.set("data_inicio", dateStart);
+      if (dateEnd) params.set("data_fim", dateEnd);
+      params.set("page", "1");
+      params.set("limit", "5000");
+      const envelope = await fetchApi<ApiEnvelope<Lancamento[]>>(`/lancamentos?${params}`);
+      const rows = envelope.data.map((l) => ({
+        ...l,
+        valor_fmt: fmtBRL(Number(l.valor)),
+      })) as Record<string, unknown>[];
+      const suffix = activeTab !== "todos" ? `_${activeTab.toUpperCase()}` : "";
+      exportToExcel(`Lancamentos${suffix}_${new Date().toISOString().split("T")[0]}`, rows, EXPORT_COLUMNS_LANC);
+    } catch {
+      toast({ variant: "destructive", title: "Erro", description: "Não foi possível exportar os lançamentos." });
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
   const TABS = [
     { key: "todos", label: "Todos" },
     { key: "cr", label: "C.R" },
@@ -143,9 +182,14 @@ export default function Lancamentos() {
           <p className="text-xs text-muted-foreground">Gerencie suas contas a pagar e a receber</p>
         </div>
         <div className="flex items-center gap-2">
-          <button className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-medium transition-all">
-            <Download className="w-3.5 h-3.5" />
-            Exportar
+          <button
+            onClick={handleExportLancamentos}
+            disabled={isExporting || total === 0}
+            title="Exportar XLSX"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+            {isExporting ? "Exportando…" : "Exportar XLSX"}
           </button>
           <button
             onClick={() => setModalOpen(true)}
