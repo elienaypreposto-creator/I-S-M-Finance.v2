@@ -60,6 +60,10 @@ type ParceiroRow = {
   centro_custo_id: number | null;
   ativo: boolean;
   bloqueado: boolean;
+  email?: string | null;
+  telefone?: string | null;
+  chaves_pix?: Array<{ tipo: string; chave: string }>;
+  dados_bancarios?: Array<{ banco: string; agencia: string; conta: string }>;
 };
 
 function tiposArray(t: unknown): string[] {
@@ -106,13 +110,40 @@ function parceiroFormToApiBody(values: ParceiroFormValues) {
   };
 }
 
+function parceiroRowToFormValues(p: ParceiroRow): ParceiroFormValues {
+  const tipoPessoa = (p.tipo_pessoa === "PF" ? "PF" : "PJ") as "PF" | "PJ";
+  const cpf_cnpj = p.cpf_cnpj ? mascararDocumento(String(p.cpf_cnpj).replace(/\D/g, ""), tipoPessoa) : "";
+
+  const pixChave = p.chaves_pix?.[0]?.chave ?? "";
+  const pixTipoRecebedor = (p.chaves_pix?.[0]?.tipo ?? "PJ") as "PF" | "PJ";
+  const db = p.dados_bancarios?.[0];
+  const formaPagamento = db ? (db.banco as "Boleto" | "TED" | "DOC") : pixChave ? "PIX" : "PIX";
+
+  return {
+    tipoPessoa,
+    nomeRazao: p.nome ?? "",
+    documento: cpf_cnpj,
+    departamento_id: p.departamento_id ? String(p.departamento_id) : "",
+    tiposParceiro: tiposArray(p.tipos),
+    formaPagamento,
+    email: p.email ?? "",
+    telefone: p.telefone ? mascararTelefone(String(p.telefone).replace(/\D/g, "")) : "",
+    pixTipoRecebedor,
+    pixChave,
+    agencia: db?.agencia ?? "",
+    contaTipo: "Corrente",
+    contaNumero: db?.conta ?? "",
+    cpfCnpjBancario: "",
+  };
+}
+
 function ConfirmacaoCancelModal({ onConfirm, onDismiss }: { onConfirm: () => void; onDismiss: () => void }) {
   return (
     <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
       <div className="bg-card border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl p-6 text-center">
         <AlertTriangle className="w-10 h-10 text-warning mx-auto mb-3" />
-        <h3 className="font-bold text-white text-lg mb-1">Cancelar cadastro?</h3>
-        <p className="text-sm text-muted-foreground mb-5">As informações preenchidas serão perdidas. Deseja realmente cancelar?</p>
+        <h3 className="font-bold text-white text-lg mb-1">Cancelar edição?</h3>
+        <p className="text-sm text-muted-foreground mb-5">As alterações não salvas serão perdidas. Deseja realmente cancelar?</p>
         <div className="flex gap-3">
           <button type="button" onClick={onDismiss} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">
             Não, continuar
@@ -143,9 +174,20 @@ const defaultParceiroForm: ParceiroFormValues = {
   cpfCnpjBancario: "",
 };
 
-function NovoParceiroModal({ onClose }: { onClose: () => void }) {
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
+// ─── Formulário compartilhado (criar e editar) ───────────────────────────────
+function ParceiroFormModal({
+  title,
+  defaultValues,
+  isPending,
+  onSubmit,
+  onClose,
+}: {
+  title: string;
+  defaultValues: ParceiroFormValues;
+  isPending: boolean;
+  onSubmit: (values: ParceiroFormValues) => void;
+  onClose: () => void;
+}) {
   const [showConfirmCancel, setShowConfirmCancel] = useState(false);
 
   const { data: departamentos = [] } = useQuery({
@@ -155,7 +197,7 @@ function NovoParceiroModal({ onClose }: { onClose: () => void }) {
 
   const form = useForm<ParceiroFormValues>({
     resolver: zodResolver(parceiroFormSchema),
-    defaultValues: defaultParceiroForm,
+    defaultValues,
   });
 
   const {
@@ -172,27 +214,6 @@ function NovoParceiroModal({ onClose }: { onClose: () => void }) {
   const formaPagamento = watch("formaPagamento");
   const tiposParceiro = watch("tiposParceiro");
   const pixTipoRecebedor = watch("pixTipoRecebedor");
-
-  const createMutation = useMutation({
-    mutationFn: (values: ParceiroFormValues) =>
-      fetchApiData<ParceiroRow>("/parceiros", {
-        method: "POST",
-        body: JSON.stringify(parceiroFormToApiBody(values)),
-      }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["parceiros"] });
-      toast({ title: "Parceiro cadastrado", description: "O registro foi salvo com sucesso." });
-      reset(defaultParceiroForm);
-      onClose();
-    },
-    onError: (e: unknown) => {
-      toast({
-        variant: "destructive",
-        title: "Erro ao salvar",
-        description: e instanceof Error ? e.message : String(e),
-      });
-    },
-  });
 
   const handleCancel = () => {
     if (isDirty) setShowConfirmCancel(true);
@@ -213,13 +234,13 @@ function NovoParceiroModal({ onClose }: { onClose: () => void }) {
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
         <div className="bg-card border border-white/10 rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
           <div className="flex items-center justify-between p-6 border-b border-white/5 sticky top-0 bg-card z-10">
-            <h2 className="text-lg font-bold text-white">Novo Cadastro — Clientes/Fornecedores</h2>
+            <h2 className="text-lg font-bold text-white">{title}</h2>
             <button type="button" onClick={handleCancel} className="p-1.5 hover:bg-white/5 rounded-lg">
               <X className="w-5 h-5" />
             </button>
           </div>
 
-          <form onSubmit={handleSubmit((v) => createMutation.mutate(v))} className="flex flex-col">
+          <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col">
             <div className="p-6 space-y-5">
               <div>
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">Tipo de Pessoa *</label>
@@ -456,9 +477,9 @@ function NovoParceiroModal({ onClose }: { onClose: () => void }) {
               </button>
               <button
                 type="submit"
-                disabled={createMutation.isPending}
+                disabled={isPending}
                 className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium shadow-lg shadow-primary/25 disabled:opacity-50">
-                {createMutation.isPending ? "Salvando…" : "Salvar Cadastro"}
+                {isPending ? "Salvando…" : "Salvar"}
               </button>
             </div>
           </form>
@@ -468,11 +489,85 @@ function NovoParceiroModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+// ─── Modal Novo ───────────────────────────────────────────────────────────────
+function NovoParceiroModal({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const createMutation = useMutation({
+    mutationFn: (values: ParceiroFormValues) =>
+      fetchApiData<ParceiroRow>("/parceiros", {
+        method: "POST",
+        body: JSON.stringify(parceiroFormToApiBody(values)),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["parceiros"] });
+      toast({ title: "Parceiro cadastrado", description: "O registro foi salvo com sucesso." });
+      onClose();
+    },
+    onError: (e: unknown) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao salvar",
+        description: e instanceof Error ? e.message : String(e),
+      });
+    },
+  });
+
+  return (
+    <ParceiroFormModal
+      title="Novo Cadastro — Clientes/Fornecedores"
+      defaultValues={defaultParceiroForm}
+      isPending={createMutation.isPending}
+      onSubmit={(v) => createMutation.mutate(v)}
+      onClose={onClose}
+    />
+  );
+}
+
+// ─── Modal Editar ─────────────────────────────────────────────────────────────
+function EditarParceiroModal({ parceiro, onClose }: { parceiro: ParceiroRow; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const updateMutation = useMutation({
+    mutationFn: (values: ParceiroFormValues) =>
+      fetchApiData<ParceiroRow>(`/parceiros/${parceiro.id}`, {
+        method: "PUT",
+        body: JSON.stringify(parceiroFormToApiBody(values)),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["parceiros"] });
+      toast({ title: "Parceiro atualizado", description: "As alterações foram salvas com sucesso." });
+      onClose();
+    },
+    onError: (e: unknown) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao atualizar",
+        description: e instanceof Error ? e.message : String(e),
+      });
+    },
+  });
+
+  return (
+    <ParceiroFormModal
+      title="Editar Cadastro — Clientes/Fornecedores"
+      defaultValues={parceiroRowToFormValues(parceiro)}
+      isPending={updateMutation.isPending}
+      onSubmit={(v) => updateMutation.mutate(v)}
+      onClose={onClose}
+    />
+  );
+}
+
+// ─── Página principal ─────────────────────────────────────────────────────────
 export default function Parceiros() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [showModal, setShowModal] = useState(false);
+  const [editingParceiro, setEditingParceiro] = useState<ParceiroRow | null>(null);
 
   const { data: departamentos = [] } = useQuery({
     queryKey: ["departamentos"],
@@ -491,7 +586,7 @@ export default function Parceiros() {
     },
   });
 
-  const updateMutation = useMutation({
+  const updateStatusMutation = useMutation({
     mutationFn: ({ id, ativo }: { id: number; ativo: boolean }) =>
       fetchApiData<ParceiroRow>(`/parceiros/${id}`, {
         method: "PUT",
@@ -534,6 +629,12 @@ export default function Parceiros() {
   return (
     <div className="space-y-6">
       {showModal && <NovoParceiroModal onClose={() => setShowModal(false)} />}
+      {editingParceiro && (
+        <EditarParceiroModal
+          parceiro={editingParceiro}
+          onClose={() => setEditingParceiro(null)}
+        />
+      )}
 
       <PageHeader
         title="Clientes / Fornecedores"
@@ -629,13 +730,14 @@ export default function Parceiros() {
                       <div className="flex items-center justify-end gap-1">
                         <button
                           type="button"
+                          onClick={() => setEditingParceiro(p)}
                           className="p-1.5 rounded-md hover:bg-white/10 text-muted-foreground hover:text-white transition-colors"
-                          title="Editar (em breve)">
+                          title="Editar">
                           <Edit2 className="w-4 h-4" />
                         </button>
                         <button
                           type="button"
-                          onClick={() => updateMutation.mutate({ id: p.id, ativo: !statusAtivo })}
+                          onClick={() => updateStatusMutation.mutate({ id: p.id, ativo: !statusAtivo })}
                           className={`p-1.5 rounded-md transition-colors ${
                             statusAtivo ? "hover:bg-success/20 text-success" : "hover:bg-destructive/20 text-destructive"
                           }`}
