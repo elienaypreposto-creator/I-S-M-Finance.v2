@@ -50,89 +50,127 @@ const permissoesGranulares = [
   {
     grupo: "Dashboard & Relatórios",
     itens: [
-      "Dashboard", "Demonstrativo de Resultado", "Fluxo de Caixa Diário",
-      "Fluxo de Caixa Mensal", "Relatório Econômico", "Relatório Financeiro",
-      "Relatório por Vencimento", "Extrato Financeiro", "Análise de Metas",
+      { nome: "Dashboard", codigo: "dashboard:ver" },
+      { nome: "Demonstrativo de Resultado", codigo: "relatorios:dre" },
+      { nome: "Fluxo de Caixa Diário", codigo: "relatorios:fluxo-caixa-diario" },
+      { nome: "Fluxo de Caixa Mensal", codigo: "relatorios:fluxo-caixa-mensal" },
+      { nome: "Relatório Econômico", codigo: "relatorios:economico" },
+      { nome: "Relatório Financeiro", codigo: "relatorios:financeiro" },
+      { nome: "Relatório por Vencimento", codigo: "relatorios:vencimento" },
+      { nome: "Extrato Financeiro", codigo: "relatorios:extrato" },
+      { nome: "Análise de Metas", codigo: "relatorios:metas" },
     ],
   },
   {
     grupo: "Contas a Pagar",
     itens: [
-      "Cadastro de Contas a Pagar", "Consulta de Contas a Pagar",
-      "Baixa de Contas a Pagar", "Cancelamento de Contas a Pagar", "Importar CR e CP",
+      { nome: "Cadastro de Contas a Pagar", codigo: "financeiro:contas-pagar:criar" },
+      { nome: "Consulta de Contas a Pagar", codigo: "financeiro:contas-pagar:listar" },
+      { nome: "Baixa de Contas a Pagar", codigo: "financeiro:contas-pagar:baixar" },
+      { nome: "Cancelamento de Contas a Pagar", codigo: "financeiro:contas-pagar:cancelar" },
+      { nome: "Importar CR e CP", codigo: "financeiro:importar" },
     ],
   },
   {
     grupo: "Contas a Receber",
     itens: [
-      "Cadastro de Contas a Receber", "Consulta de Contas a Receber",
-      "Baixa de Contas a Receber", "Cancelamento de Contas a Receber",
-      "Exportar Contas a Receber",
+      { nome: "Cadastro de Contas a Receber", codigo: "financeiro:contas-receber:criar" },
+      { nome: "Consulta de Contas a Receber", codigo: "financeiro:contas-receber:listar" },
+      { nome: "Baixa de Contas a Receber", codigo: "financeiro:contas-receber:baixar" },
+      { nome: "Cancelamento de Contas a Receber", codigo: "financeiro:contas-receber:cancelar" },
+      { nome: "Exportar Contas a Receber", codigo: "financeiro:contas-receber:exportar" },
     ],
   },
   {
     grupo: "Conciliação Bancária",
     itens: [
-      "Conciliação Bancária", "Conciliação Bancária - Conciliar Transações",
-      "Conciliação Bancária - Importar Arquivo",
+      { nome: "Conciliação Bancária", codigo: "financeiro:conciliacao:acessar" },
+      { nome: "Conciliação Bancária - Conciliar Transações", codigo: "financeiro:conciliacao:conciliar" },
+      { nome: "Conciliação Bancária - Importar Arquivo", codigo: "financeiro:conciliacao:importar" },
     ],
   },
-  { grupo: "Cadastro de Contas", itens: ["Cadastro de Contas", "Consulta de Contas", "Exclusão de Contas"] },
-  { grupo: "Cadastro de Pessoas", itens: ["Cadastro de Pessoa", "Consulta de Pessoa", "Exclusão de Pessoa"] },
+  {
+    grupo: "Cadastro de Contas",
+    itens: [
+      { nome: "Cadastro de Contas", codigo: "configuracoes:contas-bancarias:criar" },
+      { nome: "Consulta de Contas", codigo: "configuracoes:contas-bancarias:listar" },
+      { nome: "Exclusão de Contas", codigo: "configuracoes:contas-bancarias:deletar" },
+    ],
+  },
+  {
+    grupo: "Cadastro de Pessoas",
+    itens: [
+      { nome: "Cadastro de Pessoa", codigo: "financeiro:parceiros:criar" },
+      { nome: "Consulta de Pessoa", codigo: "financeiro:parceiros:listar" },
+      { nome: "Exclusão de Pessoa", codigo: "financeiro:parceiros:deletar" },
+    ],
+  },
   {
     grupo: "Plano de Contas",
     itens: [
-      "Cadastro de Plano de Contas", "Consulta de Plano de Contas", "Exclusão de Plano de Contas",
-      "Exportar Plano de Contas", "Cadastro de Categoria do Plano de Contas",
-      "Consulta de Categoria do Plano de Contas", "Exclusão de Categoria do Plano de Contas",
+      { nome: "Cadastro de Plano de Contas", codigo: "configuracoes:plano-contas:criar" },
+      { nome: "Consulta de Plano de Contas", codigo: "configuracoes:plano-contas:listar" },
+      { nome: "Exclusão de Plano de Contas", codigo: "configuracoes:plano-contas:deletar" },
+      { nome: "Exportar Plano de Contas", codigo: "configuracoes:plano-contas:exportar" },
+      { nome: "Cadastro de Categoria do Plano de Contas", codigo: "configuracoes:categorias:criar" },
+      { nome: "Consulta de Categoria do Plano de Contas", codigo: "configuracoes:categorias:listar" },
+      { nome: "Exclusão de Categoria do Plano de Contas", codigo: "configuracoes:categorias:deletar" },
     ],
   },
   {
     grupo: "Metas & Fechamentos",
     itens: [
-      "Cadastro de Metas", "Consulta de Metas", "Exclusão de Metas",
-      "Cadastro de Fechamentos Financeiros", "Consulta de Fechamentos Financeiros",
-      "Exclusão de Fechamentos Financeiros",
+      { nome: "Cadastro de Metas", codigo: "financeiro:metas:criar" },
+      { nome: "Consulta de Metas", codigo: "financeiro:metas:listar" },
+      { nome: "Exclusão de Metas", codigo: "financeiro:metas:deletar" },
+      { nome: "Cadastro de Fechamentos Financeiros", codigo: "financeiro:fechamentos:criar" },
+      { nome: "Consulta de Fechamentos Financeiros", codigo: "financeiro:fechamentos:listar" },
+      { nome: "Exclusão de Fechamentos Financeiros", codigo: "financeiro:fechamentos:deletar" },
     ],
   },
   {
     grupo: "Movimentações",
     itens: [
-      "Cadastro de Movimentação Financeira", "Consulta de Movimentação Financeira",
-      "Exclusão de Movimentação Financeira",
+      { nome: "Cadastro de Movimentação Financeira", codigo: "financeiro:lancamentos:criar" },
+      { nome: "Consulta de Movimentação Financeira", codigo: "financeiro:lancamentos:listar" },
+      { nome: "Exclusão de Movimentação Financeira", codigo: "financeiro:lancamentos:deletar" },
     ],
   },
   {
     grupo: "Configurações do Sistema",
     itens: [
-      "Cadastro de Usuários", "Consulta de Usuários", "Exclusão de Usuários",
-      "Cadastro de Token de API", "Consulta de Tokens de API", "Exclusão de Token de API",
+      { nome: "Cadastro de Usuários", codigo: "admin:usuarios:criar" },
+      { nome: "Consulta de Usuários", codigo: "admin:usuarios:listar" },
+      { nome: "Exclusão de Usuários", codigo: "admin:usuarios:deletar" },
+      { nome: "Cadastro de Token de API", codigo: "admin:tokens-api:criar" },
+      { nome: "Consulta de Tokens de API", codigo: "admin:tokens-api:listar" },
+      { nome: "Exclusão de Token de API", codigo: "admin:tokens-api:deletar" },
     ],
   },
 ];
 
-const todasPermissoes = permissoesGranulares.flatMap((g) => g.itens);
+const todasPermissoes = permissoesGranulares.flatMap((g) => g.itens.map(i => i.codigo));
 
 /** Perfis base para pré-preenchimento rápido no modal de permissões */
 const perfisBase: Record<string, string[]> = {
   Admin: todasPermissoes,
   Financeiro: [
-    "Dashboard", "Extrato Financeiro", "Fluxo de Caixa Mensal", "Demonstrativo de Resultado",
-    "Cadastro de Contas a Pagar", "Consulta de Contas a Pagar", "Baixa de Contas a Pagar",
-    "Cadastro de Contas a Receber", "Consulta de Contas a Receber", "Baixa de Contas a Receber",
-    "Conciliação Bancária", "Conciliação Bancária - Conciliar Transações",
-    "Consulta de Contas", "Consulta de Pessoa", "Consulta de Plano de Contas",
-    "Cadastro de Movimentação Financeira", "Consulta de Movimentação Financeira",
-    "Cadastro de Metas", "Consulta de Metas",
+    "dashboard:ver", "relatorios:extrato", "relatorios:fluxo-caixa-mensal", "relatorios:dre",
+    "financeiro:contas-pagar:criar", "financeiro:contas-pagar:listar", "financeiro:contas-pagar:baixar",
+    "financeiro:contas-receber:criar", "financeiro:contas-receber:listar", "financeiro:contas-receber:baixar",
+    "financeiro:conciliacao:acessar", "financeiro:conciliacao:conciliar",
+    "configuracoes:contas-bancarias:listar", "financeiro:parceiros:listar", "configuracoes:plano-contas:listar",
+    "financeiro:lancamentos:criar", "financeiro:lancamentos:listar",
+    "financeiro:metas:criar", "financeiro:metas:listar",
   ],
   Gestor: [
-    "Dashboard", "Demonstrativo de Resultado", "Fluxo de Caixa Mensal", "Análise de Metas",
-    "Consulta de Contas a Pagar", "Consulta de Contas a Receber",
-    "Consulta de Contas", "Consulta de Pessoa", "Consulta de Plano de Contas",
-    "Consulta de Movimentação Financeira", "Consulta de Metas",
+    "dashboard:ver", "relatorios:dre", "relatorios:fluxo-caixa-mensal", "relatorios:metas",
+    "financeiro:contas-pagar:listar", "financeiro:contas-receber:listar",
+    "configuracoes:contas-bancarias:listar", "financeiro:parceiros:listar", "configuracoes:plano-contas:listar",
+    "financeiro:lancamentos:listar", "financeiro:metas:listar",
   ],
   Visualizador: [
-    "Dashboard", "Consulta de Contas a Pagar", "Consulta de Contas a Receber", "Consulta de Metas",
+    "dashboard:ver", "financeiro:contas-pagar:listar", "financeiro:contas-receber:listar", "financeiro:metas:listar",
   ],
 };
 
@@ -185,10 +223,10 @@ function PermissoesModal({ usuario, onClose }: { usuario: UsuarioRow; onClose: (
   const toggleGrupo = (grupo: string) =>
     setExpandidos((e) => (e.includes(grupo) ? e.filter((x) => x !== grupo) : [...e, grupo]));
 
-  const toggleTodosGrupo = (grupo: string, itens: string[]) => {
-    const todos = itens.every((i) => selecionadas.includes(i));
+  const toggleTodosGrupo = (grupo: string, itens: { nome: string; codigo: string }[]) => {
+    const todos = itens.every((i) => selecionadas.includes(i.codigo));
     setSelecionadas((s) =>
-      todos ? s.filter((x) => !itens.includes(x)) : [...new Set([...s, ...itens])],
+      todos ? s.filter((x) => !itens.map(i => i.codigo).includes(x)) : [...new Set([...s, ...itens.map(i => i.codigo)])],
     );
   };
 
@@ -198,7 +236,7 @@ function PermissoesModal({ usuario, onClose }: { usuario: UsuarioRow; onClose: (
 
   const filtered = busca
     ? permissoesGranulares
-        .map((g) => ({ ...g, itens: g.itens.filter((i) => i.toLowerCase().includes(busca.toLowerCase())) }))
+        .map((g) => ({ ...g, itens: g.itens.filter((i) => i.nome.toLowerCase().includes(busca.toLowerCase())) }))
         .filter((g) => g.itens.length > 0)
     : permissoesGranulares;
 
@@ -265,13 +303,13 @@ function PermissoesModal({ usuario, onClose }: { usuario: UsuarioRow; onClose: (
                     <input
                       type="checkbox"
                       className="accent-primary w-4 h-4 shrink-0"
-                      checked={grupo.itens.every((i) => selecionadas.includes(i))}
+                      checked={grupo.itens.every((i) => selecionadas.includes(i.codigo))}
                       onChange={() => toggleTodosGrupo(grupo.grupo, grupo.itens)}
                       onClick={(e) => e.stopPropagation()}
                     />
                     <span className="font-semibold text-white text-xs sm:text-sm">{grupo.grupo}</span>
                     <span className="text-xs text-muted-foreground">
-                      {grupo.itens.filter((i) => selecionadas.includes(i)).length}/{grupo.itens.length}
+                      {grupo.itens.filter((i) => selecionadas.includes(i.codigo)).length}/{grupo.itens.length}
                     </span>
                   </div>
                   {expandidos.includes(grupo.grupo) ? (
@@ -284,17 +322,17 @@ function PermissoesModal({ usuario, onClose }: { usuario: UsuarioRow; onClose: (
                   <div className="divide-y divide-white/5">
                     {grupo.itens.map((item) => (
                       <label
-                        key={item}
+                        key={item.codigo}
                         className="flex items-center gap-3 px-4 sm:px-5 py-2.5 cursor-pointer hover:bg-white/5 transition-colors"
                       >
                         <input
                           type="checkbox"
                           className="accent-primary w-4 h-4 shrink-0"
-                          checked={selecionadas.includes(item)}
-                          onChange={() => toggle(item)}
+                          checked={selecionadas.includes(item.codigo)}
+                          onChange={() => toggle(item.codigo)}
                         />
-                        <span className="text-xs sm:text-sm text-muted-foreground flex-1">{item}</span>
-                        {selecionadas.includes(item) && (
+                        <span className="text-xs sm:text-sm text-muted-foreground flex-1">{item.nome}</span>
+                        {selecionadas.includes(item.codigo) && (
                           <CheckCircle className="w-3.5 h-3.5 text-success shrink-0" />
                         )}
                       </label>
@@ -860,7 +898,7 @@ export default function Usuarios() {
                                 : "—"}
                             </td>
                             <td className="px-5 py-4 text-right">
-                              <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <div className="flex justify-end gap-1 transition-opacity">
                                 <button
                                   type="button"
                                   title="Permissões"
