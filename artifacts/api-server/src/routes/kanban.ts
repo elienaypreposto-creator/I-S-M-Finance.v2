@@ -1,5 +1,7 @@
 import {Router} from "express";
-import {supabase} from "../lib/supabase";
+import {db} from "@workspace/db";
+import {kanbanCardsTable, kanbanComentariosTable, kanbanAnexosTable, kanbanHistoricoTable, usuariosTable} from "@workspace/db/schema";
+import {eq, lt, lte, gte, and, desc, sql} from "drizzle-orm";
 import {errorResponse, successResponse} from "../utils/response";
 
 const router = Router();
@@ -10,70 +12,73 @@ const PRIORIDADES_VALIDAS = ["baixa", "media", "alta", "critica"] as const;
 type Coluna = typeof COLUNAS_VALIDAS[number];
 type Prioridade = typeof PRIORIDADES_VALIDAS[number];
 
-function isPermissionError(err: unknown): boolean {
-    if (!err || typeof err !== "object") return false;
-    const e = err as { code?: string; message?: string };
-    return (
-        e.code === "42501" ||
-        e.code === "PGRST301" ||
-        (typeof e.message === "string" &&
-            (e.message.includes("permission denied") || e.message.includes("row-level security")))
-    );
-}
-
 router.get("/cards", async (req, res) => {
     try {
         const {prioridade, responsavel_id, prazo} = req.query;
-
-        let query = supabase
-            .from("kanban_cards")
-            .select(`
-        *,
-        responsavel:usuarios!responsavel_id(id, nome),
-        comentarios:kanban_comentarios(count),
-        anexos:kanban_anexos(count)
-      `);
+        let conditions = [];
 
         if (prioridade && PRIORIDADES_VALIDAS.includes(prioridade as Prioridade)) {
-            query = query.eq("prioridade", prioridade as string);
+            conditions.push(eq(kanbanCardsTable.prioridade, prioridade as string));
         }
 
         if (responsavel_id) {
             const rid = parseInt(String(responsavel_id), 10);
-            if (!isNaN(rid)) query = query.eq("responsavel_id", rid);
+            if (!isNaN(rid)) conditions.push(eq(kanbanCardsTable.responsavel_id, rid));
         }
 
         if (prazo) {
             const hoje = new Date().toISOString().split("T")[0];
             if (prazo === "atrasado") {
-                query = query.lt("prazo", hoje);
+                conditions.push(lt(kanbanCardsTable.prazo, hoje));
             } else if (prazo === "hoje") {
-                query = query.eq("prazo", hoje);
+                conditions.push(eq(kanbanCardsTable.prazo, hoje));
             } else if (prazo === "proximos") {
                 const proximaSemana = new Date();
                 proximaSemana.setDate(proximaSemana.getDate() + 7);
-                query = query
-                    .lte("prazo", proximaSemana.toISOString().split("T")[0])
-                    .gte("prazo", hoje);
+                const limit = proximaSemana.toISOString().split("T")[0];
+                conditions.push(and(gte(kanbanCardsTable.prazo, hoje), lte(kanbanCardsTable.prazo, limit)));
             }
         }
 
-        const {data, error} = await query.order("created_at", {ascending: false});
-        if (error) throw error;
+        const data = await db.select({
+            id: kanbanCardsTable.id,
+            titulo: kanbanCardsTable.titulo,
+            descricao: kanbanCardsTable.descricao,
+            prioridade: kanbanCardsTable.prioridade,
+            coluna: kanbanCardsTable.coluna,
+            prazo: kanbanCardsTable.prazo,
+            departamentos: kanbanCardsTable.departamentos,
+            checklist: kanbanCardsTable.checklist,
+            tags: kanbanCardsTable.tags,
+            responsavel_id: kanbanCardsTable.responsavel_id,
+            created_at: kanbanCardsTable.created_at,
+            updated_at: kanbanCardsTable.updated_at,
+            responsavel: {
+                id: usuariosTable.id,
+                nome: usuariosTable.nome
+            },
+            comentarios_count: sql<number>`count(distinct ${kanbanComentariosTable.id})::int`,
+            anexos_count: sql<number>`count(distinct ${kanbanAnexosTable.id})::int`
+        })
+        .from(kanbanCardsTable)
+        .leftJoin(usuariosTable, eq(kanbanCardsTable.responsavel_id, usuariosTable.id))
+        .leftJoin(kanbanComentariosTable, eq(kanbanCardsTable.id, kanbanComentariosTable.card_id))
+        .leftJoin(kanbanAnexosTable, eq(kanbanCardsTable.id, kanbanAnexosTable.card_id))
+        .where(conditions.length > 0 ? and(...conditions) : undefined)
+        .groupBy(kanbanCardsTable.id, usuariosTable.id)
+        .orderBy(desc(kanbanCardsTable.created_at));
 
-        const cards = data.map((card) => ({
-            ...card,
-            comentarios_count: card.comentarios?.[0]?.count ?? 0,
-            anexos_count: card.anexos?.[0]?.count ?? 0,
-            comentarios: undefined,
-            anexos: undefined,
-        }));
+        // Formata o responsavel para undefined se for nulo (comportamento do leftJoin)
+        const cards = data.map((card) => {
+            const responsavel = card.responsavel?.id ? card.responsavel : null;
+            return {
+                ...card,
+                responsavel
+            };
+        });
 
         return successResponse(res, cards);
     } catch (error) {
-        if (isPermissionError(error)) {
-            return errorResponse(res, 403, "FORBIDDEN", "Sem permissão para acessar os cards do kanban.");
-        }
         console.error("Erro ao buscar cards:", error);
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao buscar cards do kanban.");
     }
@@ -81,7 +86,6 @@ router.get("/cards", async (req, res) => {
 
 router.post("/cards", async (req, res) => {
     try {
-        // Whitelist explícita — bloqueia mass assignment
         const titulo = typeof req.body?.titulo === "string" ? req.body.titulo.trim() : null;
         const descricao = typeof req.body?.descricao === "string" ? req.body.descricao.trim() : null;
         const prazo = typeof req.body?.prazo === "string" ? req.body.prazo : null;
@@ -103,23 +107,17 @@ router.post("/cards", async (req, res) => {
             ? (rawColuna as Coluna)
             : "solicitado";
 
-        const {data, error} = await supabase
-            .from("kanban_cards")
-            .insert([{titulo, descricao, prioridade, coluna, prazo, departamentos, checklist, tags}])
-            .select()
-            .single();
+        const [data] = await db
+            .insert(kanbanCardsTable)
+            .values({titulo, descricao, prioridade, coluna, prazo, departamentos, checklist, tags})
+            .returning();
 
-        if (error) throw error;
-
-        await supabase
-            .from("kanban_historico")
-            .insert([{card_id: data.id, tipo: "criacao", descricao: `Tarefa "${titulo}" criada`}]);
+        await db
+            .insert(kanbanHistoricoTable)
+            .values({card_id: data.id, tipo: "criacao", descricao: `Tarefa "${titulo}" criada`});
 
         return successResponse(res, data, null, 201);
     } catch (error) {
-        if (isPermissionError(error)) {
-            return errorResponse(res, 403, "FORBIDDEN", "Sem permissão para criar cards no kanban.");
-        }
         console.error("Erro ao criar card:", error);
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao criar card do kanban.");
     }
@@ -132,7 +130,6 @@ router.patch("/cards/:id", async (req, res) => {
             return errorResponse(res, 400, "VALIDATION_ERROR", "ID inválido.");
         }
 
-        // Whitelist explícita dos campos mutáveis
         type KanbanUpdate = {
             titulo?: string;
             descricao?: string;
@@ -151,11 +148,11 @@ router.patch("/cards/:id", async (req, res) => {
         if (typeof req.body?.prazo === "string") updates.prazo = req.body.prazo;
         if (req.body?.prazo === null) updates.prazo = null;
 
-        if (typeof req.body?.prioridade === "string" && PRIORIDADES_VALIDAS.includes(req.body.prioridade)) {
-            updates.prioridade = req.body.prioridade;
+        if (typeof req.body?.prioridade === "string" && PRIORIDADES_VALIDAS.includes(req.body.prioridade as Prioridade)) {
+            updates.prioridade = req.body.prioridade as Prioridade;
         }
-        if (typeof req.body?.coluna === "string" && COLUNAS_VALIDAS.includes(req.body.coluna)) {
-            updates.coluna = req.body.coluna;
+        if (typeof req.body?.coluna === "string" && COLUNAS_VALIDAS.includes(req.body.coluna as Coluna)) {
+            updates.coluna = req.body.coluna as Coluna;
         }
         if (Array.isArray(req.body?.departamentos)) updates.departamentos = req.body.departamentos;
         if (Array.isArray(req.body?.checklist)) updates.checklist = req.body.checklist;
@@ -165,29 +162,27 @@ router.patch("/cards/:id", async (req, res) => {
             return errorResponse(res, 400, "VALIDATION_ERROR", "Nenhum campo válido para atualizar.");
         }
 
-        const {data, error} = await supabase
-            .from("kanban_cards")
-            .update(updates)
-            .eq("id", id)
-            .select()
-            .single();
-
-        if (error) throw error;
+        const [data] = await db
+            .update(kanbanCardsTable)
+            .set(updates)
+            .where(eq(kanbanCardsTable.id, id))
+            .returning();
+            
+        if (!data) {
+            return errorResponse(res, 404, "NOT_FOUND", "Card não encontrado.");
+        }
 
         if (updates.coluna) {
-            await supabase.from("kanban_historico").insert([{
+            await db.insert(kanbanHistoricoTable).values({
                 card_id: id,
                 tipo: "movimentacao",
                 descricao: `Movido para ${updates.coluna}`,
                 coluna_destino: updates.coluna,
-            }]);
+            });
         }
 
         return successResponse(res, data);
     } catch (error) {
-        if (isPermissionError(error)) {
-            return errorResponse(res, 403, "FORBIDDEN", "Sem permissão para atualizar este card do kanban.");
-        }
         console.error("Erro ao atualizar card:", error);
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao atualizar card do kanban.");
     }
@@ -195,17 +190,16 @@ router.patch("/cards/:id", async (req, res) => {
 
 router.get("/usuarios", async (_req, res) => {
     try {
-        const {data, error} = await supabase
-            .from("usuarios")
-            .select("id, nome, email")
-            .order("nome");
+        const data = await db.select({
+            id: usuariosTable.id,
+            nome: usuariosTable.nome,
+            email: usuariosTable.email
+        })
+        .from(usuariosTable)
+        .orderBy(usuariosTable.nome);
 
-        if (error) throw error;
         return successResponse(res, data);
     } catch (error) {
-        if (isPermissionError(error)) {
-            return errorResponse(res, 403, "FORBIDDEN", "Sem permissão para acessar os usuários do kanban.");
-        }
         console.error("Erro ao buscar usuários:", error);
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao buscar usuários do kanban.");
     }

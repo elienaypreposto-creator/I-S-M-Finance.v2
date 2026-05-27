@@ -41,10 +41,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.web
-      args:
-        # Pega do seu .env local durante o build do frontend para o Kanban/Supabase
-        - VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
-        - VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
+
     container_name: ism_web
     restart: always
     depends_on:
