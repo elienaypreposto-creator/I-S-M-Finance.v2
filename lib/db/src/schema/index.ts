@@ -1,4 +1,5 @@
 export * from "./usuarios";
+export * from "./enums";
 export * from "./filiais";
 export * from "./parceiros";
 export * from "./contas-bancarias";

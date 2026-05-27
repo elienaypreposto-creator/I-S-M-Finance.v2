@@ -1,52 +1,39 @@
+/**
+ * SSL + Supabase Pooler (PgBouncer): ao usar `connectionString`, o driver `pg`
+ * pode extrair `sslmode=require` da URL e criar um TLSSocket que valida o
+ * certificado — ignorando `ssl: { rejectUnauthorized: false }` do Pool.
+ *
+ * Definir esta variável ANTES de criar o pool garante que o Node.js aceite o
+ * certificado da CA intermediária do Supabase sem rejeitar a conexão.
+ *
+ * Não desabilita criptografia — apenas a validação do certificado CA.
+ * Remover quando o cert Supabase for adicionado ao bundle: `ssl: { ca: ... }`.
+ */
+(process.env as Record<string, string>).NODE_TLS_REJECT_UNAUTHORIZED = "0";
+
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import * as schema from "./schema";
 
-const { Pool } = pg;
-pg.defaults.ssl = { rejectUnauthorized: false };
-
-// Lazy initialization: only create the pool when first needed.
-// This prevents the serverless function from crashing on cold start
-// if DATABASE_URL is missing or the connection times out.
-let _pool: pg.Pool | null = null;
-let _db: ReturnType<typeof drizzle<typeof schema>> | null = null;
-
-function getPool(): pg.Pool {
-  if (!_pool) {
-    const connectionString = process.env.DATABASE_URL;
-    if (!connectionString) {
-      throw new Error(
-        "DATABASE_URL environment variable is not set. Please configure it in your Vercel project settings."
-      );
-    }
-    _pool = new Pool({
-      connectionString,
-      // Limit connections in serverless environment
-      max: 5,
-      ssl: {
-        rejectUnauthorized: false
-      },
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
-    });
-  }
-  return _pool;
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL não configurado.");
 }
 
-// Proxy that lazily initializes drizzle on first property access
-export const db = new Proxy({} as ReturnType<typeof drizzle<typeof schema>>, {
-  get(_target, prop) {
-    if (!_db) {
-      _db = drizzle(getPool(), { schema });
-    }
-    return (_db as any)[prop];
-  },
+export const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: 5,
+  // O SSL é necessário para Supabase ou bancos remotos, mas para o contêiner Docker local ele deve estar desligado por padrão
+  ssl: process.env.DB_REQUIRE_SSL === "true" || process.env.DATABASE_URL.includes("supabase.co")
+    ? { rejectUnauthorized: false }
+    : undefined,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
 });
 
-export const pool = new Proxy({} as pg.Pool, {
-  get(_target, prop) {
-    return (getPool() as any)[prop];
-  },
+pool.on("error", (err) => {
+  console.error("Pool Postgres — erro inesperado:", err.message);
 });
+
+export const db = drizzle(pool, { schema });
 
 export * from "./schema";

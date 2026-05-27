@@ -1,217 +1,325 @@
-import { Router } from "express";
-import { db } from "@workspace/db";
-import { lancamentosTable, metasTable, planoContasTable, contasBancariasTable, parceirosTable } from "@workspace/db/schema";
-import { sql, and, eq, gte, lte } from "drizzle-orm";
+import {Router} from "express";
+import {and, eq, gte, inArray, lte, sql} from "drizzle-orm";
+import {db} from "@workspace/db";
+import {
+    contasBancariasTable,
+    lancamentosTable,
+    metasTable,
+    parceirosTable,
+    planoContasTable
+} from "@workspace/db/schema";
+import {errorResponse, successResponse} from "../utils/response";
 
 const router = Router();
+const STATUS_QUITADO = ["pago", "recebido"] as const;
+const toNumber = (value: unknown) => Number(value ?? 0);
+const monthKey = (month: number) => String(month).padStart(2, "0");
+const monthNames = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 
 router.get("/relatorios/fechamento-mensal", async (req, res) => {
-  try {
-    const mes = parseInt(req.query.mes as string);
-    const ano = parseInt(req.query.ano as string);
+    try {
+        const mes = parseInt(req.query.mes as string);
+        const ano = parseInt(req.query.ano as string);
+        const mesStr = String(mes).padStart(2, "0");
+        const dataInicio = `${ano}-${mesStr}-01`;
+        const dataFim = new Date(ano, mes, 0).toISOString().split("T")[0];
 
-    const mesStr = String(mes).padStart(2, "0");
-    const dataInicio = `${ano}-${mesStr}-01`;
-    const dataFim = new Date(ano, mes, 0).toISOString().split("T")[0];
+        const [totalCR] = await db.select({
+            total: sql<number>`coalesce(sum(
+            ${lancamentosTable.valor}
+            :
+            :
+            numeric
+            ),
+            0
+            )`
+        })
+            .from(lancamentosTable)
+            .where(and(eq(lancamentosTable.tipo, "CR"), gte(lancamentosTable.vencimento, dataInicio), lte(lancamentosTable.vencimento, dataFim)));
 
-    const [totalCR] = await db.select({ total: sql<number>`coalesce(sum(${lancamentosTable.valor}::numeric), 0)` })
-      .from(lancamentosTable)
-      .where(and(eq(lancamentosTable.tipo, "CR"), gte(lancamentosTable.vencimento, dataInicio), lte(lancamentosTable.vencimento, dataFim)));
+        const [totalCP] = await db.select({
+            total: sql<number>`coalesce(sum(
+            ${lancamentosTable.valor}
+            :
+            :
+            numeric
+            ),
+            0
+            )`
+        })
+            .from(lancamentosTable)
+            .where(and(eq(lancamentosTable.tipo, "CP"), gte(lancamentosTable.vencimento, dataInicio), lte(lancamentosTable.vencimento, dataFim)));
 
-    const [totalCP] = await db.select({ total: sql<number>`coalesce(sum(${lancamentosTable.valor}::numeric), 0)` })
-      .from(lancamentosTable)
-      .where(and(eq(lancamentosTable.tipo, "CP"), gte(lancamentosTable.vencimento, dataInicio), lte(lancamentosTable.vencimento, dataFim)));
+        const metas = await db.select().from(metasTable).where(and(eq(metasTable.ano, ano), eq(metasTable.mes, mes)));
+        const planejadoReceber = metas.reduce((acc, m) => acc + Number(m.valor_projetado), 0);
 
-    const metas = await db.select().from(metasTable).where(and(eq(metasTable.ano, ano), eq(metasTable.mes, mes)));
-    const planejadoReceber = metas.filter(m => m.plano_conta_id).reduce((acc, m) => acc + Number(m.valor_projetado), 0);
-
-    const recebimentos = [
-      { categoria: "Suporte Mensal (Fixa)", planejado: planejadoReceber * 0.65 || 60000, realizado: Number(totalCR?.total ?? 0) * 0.65, percentual: 65 },
-      { categoria: "USTs e Treinamentos", planejado: planejadoReceber * 0.22 || 20000, realizado: Number(totalCR?.total ?? 0) * 0.22, percentual: 22 },
-      { categoria: "Outras Entradas", planejado: planejadoReceber * 0.13 || 12000, realizado: Number(totalCR?.total ?? 0) * 0.13, percentual: 13 },
-    ];
-
-    const despesas = [
-      { categoria: "Despesas Administrativas", planejado: 25000, realizado: Number(totalCP?.total ?? 0) * 0.28, percentual: 80 },
-      { categoria: "Pessoal e Encargos", planejado: 35000, realizado: Number(totalCP?.total ?? 0) * 0.39, percentual: 95 },
-      { categoria: "Despesas de Ocupação", planejado: 12000, realizado: Number(totalCP?.total ?? 0) * 0.13, percentual: 100 },
-      { categoria: "Despesas Financeiras", planejado: 8000, realizado: Number(totalCP?.total ?? 0) * 0.09, percentual: 60 },
-      { categoria: "Impostos", planejado: 10000, realizado: Number(totalCP?.total ?? 0) * 0.11, percentual: 88 },
-    ];
-
-    recebimentos.forEach(r => r.percentual = r.planejado > 0 ? Math.round((r.realizado / r.planejado) * 100) : 0);
-    despesas.forEach(d => d.percentual = d.planejado > 0 ? Math.round((d.realizado / d.planejado) * 100) : 0);
-
-    return res.json({
-      mes, ano,
-      planejado_receber: planejadoReceber || 90000,
-      realizado_receber: Number(totalCR?.total ?? 0),
-      planejado_gastar: 90000,
-      realizado_gastar: Number(totalCP?.total ?? 0),
-      recebimentos,
-      despesas,
-    });
-  } catch (e) {
-    return res.status(500).json({ error: String(e) });
-  }
+        return successResponse(res, {
+            mes,
+            ano,
+            planejado_receber: planejadoReceber,
+            realizado_receber: toNumber(totalCR?.total),
+            planejado_gastar: planejadoReceber,
+            realizado_gastar: toNumber(totalCP?.total),
+        });
+    } catch (e) {
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar fechamento mensal.", String(e));
+    }
 });
 
 router.get("/relatorios/dre", async (req, res) => {
-  try {
-    const ano = parseInt(req.query.ano as string);
-    const regime = req.query.regime || "competencia";
-    const meses = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+    try {
+        const ano = parseInt(req.query.ano as string) || new Date().getFullYear();
+        const regime = (req.query.regime as string) === "caixa" ? "caixa" : "competencia";
+        const dateColumn = regime === "caixa" ? lancamentosTable.data_quitacao : lancamentosTable.vencimento;
 
-    const buildValores = (base: number) => {
-      const valores: Record<string, { valor: number; percentual: number }> = {};
-      meses.forEach(m => {
-        const v = base * (0.8 + Math.random() * 0.4);
-        valores[m] = { valor: Math.round(v), percentual: Math.round(v / 10000) };
-      });
-      const total = Object.values(valores).reduce((a, b) => a + b.valor, 0);
-      valores.total = { valor: total, percentual: Math.round(total / 120000) };
-      return valores;
-    };
+        const whereBase = regime === "caixa"
+            ? and(sql`extract(year from
+                ${dateColumn}
+                :
+                :
+                date
+                )
+                =
+                ${ano}`, inArray(lancamentosTable.status, STATUS_QUITADO as unknown as string[]))
+            : and(sql`extract(year from
+                ${dateColumn}
+                :
+                :
+                date
+                )
+                =
+                ${ano}`, sql`${lancamentosTable.status}
+                != 'cancelado'`);
 
-    const linhas = [
-      { descricao: "RECEITA BRUTA DE SERVIÇOS", tipo: "header", valores: buildValores(90000) },
-      { descricao: "Suporte Mensal (Fixa)", tipo: "categoria", valores: buildValores(60000) },
-      { descricao: "USTs e Treinamentos", tipo: "categoria", valores: buildValores(30000) },
-      { descricao: "(-) IMPOSTOS SOBRE VENDAS (DEDUÇÕES)", tipo: "header", valores: buildValores(-12000) },
-      { descricao: "RECEITA LÍQUIDA", tipo: "total", valores: buildValores(78000) },
-      { descricao: "(-) CUSTO DOS SERVIÇOS PRESTADOS (CSP)", tipo: "header", valores: buildValores(-35000) },
-      { descricao: "MARGEM DE CONTRIBUIÇÃO", tipo: "total", valores: buildValores(43000) },
-      { descricao: "(-) DESPESAS FIXAS ADMINISTRATIVAS", tipo: "header", valores: buildValores(-25000) },
-      { descricao: "EBITDA (LUCRO OPERACIONAL)", tipo: "total", valores: buildValores(18000) },
-      { descricao: "(+/-) RESULTADO FINANCEIRO", tipo: "categoria", valores: buildValores(-2000) },
-      { descricao: "(-) IMPOSTOS SOBRE O LUCRO", tipo: "categoria", valores: buildValores(-4000) },
-      { descricao: "LUCRO LÍQUIDO DO PERÍODO", tipo: "subtotal", valores: buildValores(12000) },
-    ];
+        const rows = await db
+            .select({
+                mes: sql<number>`extract(month from
+                ${dateColumn}
+                :
+                :
+                date
+                )`,
+                tipo: lancamentosTable.tipo,
+                categoria: planoContasTable.categoria,
+                total: sql<number>`coalesce(sum(
+                ${lancamentosTable.valor}
+                :
+                :
+                numeric
+                ),
+                0
+                )`,
+            })
+            .from(lancamentosTable)
+            .leftJoin(planoContasTable, eq(lancamentosTable.plano_conta_id, planoContasTable.id))
+            .where(whereBase)
+            .groupBy(sql`extract(month from
+            ${dateColumn}
+            :
+            :
+            date
+            )`, lancamentosTable.tipo, planoContasTable.categoria);
 
-    return res.json({ ano, regime, linhas });
-  } catch (e) {
-    return res.status(500).json({ error: String(e) });
-  }
+        const receitaBruta = new Map<number, number>();
+        const impostos = new Map<number, number>();
+        const custos = new Map<number, number>();
+        const despesas = new Map<number, number>();
+
+        for (const row of rows) {
+            const m = Number(row.mes);
+            const valor = toNumber(row.total);
+            const categoria = (row.categoria ?? "").toLowerCase();
+            if (row.tipo === "CR") receitaBruta.set(m, (receitaBruta.get(m) ?? 0) + valor);
+            else if (categoria.includes("imposto")) impostos.set(m, (impostos.get(m) ?? 0) + valor);
+            else if (categoria.includes("custo")) custos.set(m, (custos.get(m) ?? 0) + valor);
+            else despesas.set(m, (despesas.get(m) ?? 0) + valor);
+        }
+
+        const montarLinha = (codigo: string, descricao: string, formula: (m: number) => number) => {
+            const valores: Record<string, number> = {};
+            let total = 0;
+            for (let m = 1; m <= 12; m++) {
+                const v = Number(formula(m).toFixed(2));
+                valores[monthKey(m)] = v;
+                total += v;
+            }
+            return {codigo, descricao, valores, total: Number(total.toFixed(2))};
+        };
+
+        const linhas = [
+            montarLinha("1", "RECEITA BRUTA DE SERVIÇOS", (m) => receitaBruta.get(m) ?? 0),
+            montarLinha("2", "(-) IMPOSTOS", (m) => -(impostos.get(m) ?? 0)),
+            montarLinha("3", "RECEITA LÍQUIDA", (m) => (receitaBruta.get(m) ?? 0) - (impostos.get(m) ?? 0)),
+            montarLinha("4", "(-) CUSTO DOS SERVIÇOS PRESTADOS", (m) => -(custos.get(m) ?? 0)),
+            montarLinha("5", "MARGEM DE CONTRIBUIÇÃO", (m) => (receitaBruta.get(m) ?? 0) - (impostos.get(m) ?? 0) - (custos.get(m) ?? 0)),
+            montarLinha("6", "(-) DESPESAS OPERACIONAIS", (m) => -(despesas.get(m) ?? 0)),
+            montarLinha("7", "LUCRO LÍQUIDO DO PERÍODO", (m) => (receitaBruta.get(m) ?? 0) - (impostos.get(m) ?? 0) - (custos.get(m) ?? 0) - (despesas.get(m) ?? 0)),
+        ];
+
+        return successResponse(res, {ano, regime, meses: monthNames, linhas});
+    } catch (e) {
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar DRE.", String(e));
+    }
 });
 
 router.get("/relatorios/fluxo-caixa", async (req, res) => {
-  try {
-    const ano = parseInt(req.query.ano as string);
-    const meses = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+    try {
+        const ano = parseInt(req.query.ano as string) || new Date().getFullYear();
+        const meses = Array.from({length: 12}, (_, i) => i + 1);
 
-    const buildValores = (base: number) => {
-      const valores: Record<string, number> = {};
-      meses.forEach(m => { valores[m] = Math.round(base * (0.7 + Math.random() * 0.6)); });
-      valores.total = Object.values(valores).reduce((a, b) => a + b, 0);
-      return valores;
-    };
+        const rows = await db
+            .select({
+                mes: sql<number>`extract(month from
+                ${lancamentosTable.data_quitacao}
+                :
+                :
+                date
+                )`,
+                tipo: lancamentosTable.tipo,
+                categoria: planoContasTable.categoria,
+                transferencia_grupo_id: lancamentosTable.transferencia_grupo_id,
+                total: sql<number>`coalesce(sum(
+                ${lancamentosTable.valor}
+                :
+                :
+                numeric
+                ),
+                0
+                )`,
+            })
+            .from(lancamentosTable)
+            .leftJoin(planoContasTable, eq(lancamentosTable.plano_conta_id, planoContasTable.id))
+            .where(
+                and(
+                    sql`extract(year from
+                    ${lancamentosTable.data_quitacao}
+                    :
+                    :
+                    date
+                    )
+                    =
+                    ${ano}`,
+                    inArray(lancamentosTable.status, STATUS_QUITADO as unknown as string[]),
+                ),
+            )
+            .groupBy(sql`extract(month from
+            ${lancamentosTable.data_quitacao}
+            :
+            :
+            date
+            )`, lancamentosTable.tipo, planoContasTable.categoria, lancamentosTable.transferencia_grupo_id);
 
-    const secoes = [
-      { titulo: "Saldo Inicial", tipo: "saldo_inicial", linhas: [{ descricao: "Saldo Inicial", codigo: "SI", valores: buildValores(50000) }] },
-      {
-        titulo: "ENTRADAS", tipo: "entradas", linhas: [
-          { descricao: "Receita de Serviços", codigo: "1.01", valores: buildValores(90000) },
-          { descricao: "Outras Entradas", codigo: "1.02", valores: buildValores(5000) },
-          { descricao: "Receitas Financeiras", codigo: "1.03", valores: buildValores(2000) },
-        ]
-      },
-      {
-        titulo: "SAÍDAS", tipo: "saidas", linhas: [
-          { descricao: "Folha PJ", codigo: "2.01", valores: buildValores(-20000) },
-          { descricao: "Despesas Administrativas", codigo: "2.02", valores: buildValores(-15000) },
-          { descricao: "Impostos s/ Serviços", codigo: "2.03", valores: buildValores(-8000) },
-          { descricao: "Pessoal e Encargos", codigo: "2.04", valores: buildValores(-25000) },
-          { descricao: "Despesas de Ocupação", codigo: "2.05", valores: buildValores(-5000) },
-        ]
-      },
-      {
-        titulo: "TRANSFERÊNCIAS", tipo: "transferencias", linhas: [
-          { descricao: "Créditos", codigo: "3.01", valores: buildValores(10000) },
-          { descricao: "Débitos", codigo: "3.02", valores: buildValores(-10000) },
-        ]
-      },
-      { titulo: "MOVIMENTAÇÃO TOTAL", tipo: "total", linhas: [{ descricao: "Total", codigo: "MT", valores: buildValores(15000) }] },
-      { titulo: "Saldo Final", tipo: "saldo_final", linhas: [{ descricao: "Saldo Final", codigo: "SF", valores: buildValores(65000) }] },
-    ];
+        const entradasPorCategoria = new Map<string, Map<number, number>>();
+        const saidasPorCategoria = new Map<string, Map<number, number>>();
+        const transferenciasCredito = new Map<number, number>();
+        const transferenciasDebito = new Map<number, number>();
 
-    return res.json({ ano, secoes });
-  } catch (e) {
-    return res.status(500).json({ error: String(e) });
-  }
+        for (const row of rows) {
+            const mes = Number(row.mes);
+            const valor = toNumber(row.total);
+            const categoria = row.categoria ?? "Sem Categoria";
+            const ehTransferencia = Boolean(row.transferencia_grupo_id);
+            if (ehTransferencia) {
+                if (row.tipo === "CR") transferenciasCredito.set(mes, (transferenciasCredito.get(mes) ?? 0) + valor);
+                else transferenciasDebito.set(mes, (transferenciasDebito.get(mes) ?? 0) + valor);
+                continue;
+            }
+            const target = row.tipo === "CR" ? entradasPorCategoria : saidasPorCategoria;
+            if (!target.has(categoria)) target.set(categoria, new Map());
+            const map = target.get(categoria)!;
+            map.set(mes, (map.get(mes) ?? 0) + valor);
+        }
+
+        const linhaCategoria = (codigo: string, descricao: string, source: Map<number, number>, sinal = 1) => {
+            const valores: Record<string, number> = {};
+            let total = 0;
+            for (const m of meses) {
+                const value = Number(((source.get(m) ?? 0) * sinal).toFixed(2));
+                valores[monthKey(m)] = value;
+                total += value;
+            }
+            return {codigo, descricao, valores, total: Number(total.toFixed(2))};
+        };
+
+        const entradas = Array.from(entradasPorCategoria.entries()).map(([categoria, map], idx) => linhaCategoria(`E.${idx + 1}`, categoria, map, 1));
+        const saidas = Array.from(saidasPorCategoria.entries()).map(([categoria, map], idx) => linhaCategoria(`S.${idx + 1}`, categoria, map, -1));
+        const transferenciaCreditoLinha = linhaCategoria("T.1", "Transferências (Créditos)", transferenciasCredito, 1);
+        const transferenciaDebitoLinha = linhaCategoria("T.2", "Transferências (Débitos)", transferenciasDebito, -1);
+
+        return successResponse(res, {
+            ano,
+            meses: monthNames,
+            secoes: [
+                {titulo: "ENTRADAS", tipo: "entradas", linhas: entradas},
+                {titulo: "SAÍDAS", tipo: "saidas", linhas: saidas},
+                {
+                    titulo: "TRANSFERÊNCIAS",
+                    tipo: "transferencias",
+                    linhas: [transferenciaCreditoLinha, transferenciaDebitoLinha]
+                },
+            ],
+        });
+    } catch (e) {
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar fluxo de caixa.", String(e));
+    }
 });
 
 router.get("/relatorios/metas", async (req, res) => {
-  try {
-    const ano = parseInt(req.query.ano as string);
-    const meses = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+    try {
+        const ano = parseInt(req.query.ano as string) || new Date().getFullYear();
+        const metas = await db
+            .select({
+                plano_conta_id: metasTable.plano_conta_id,
+                categoria: planoContasTable.categoria,
+                mes: metasTable.mes,
+                valor_projetado: metasTable.valor_projetado,
+            })
+            .from(metasTable)
+            .leftJoin(planoContasTable, eq(metasTable.plano_conta_id, planoContasTable.id))
+            .where(eq(metasTable.ano, ano));
 
-    const buildValores = (base: number) => {
-      const valores: Record<string, { previsto: number; realizado: number }> = {};
-      meses.forEach(m => {
-        valores[m] = {
-          previsto: Math.round(base * (0.9 + Math.random() * 0.2)),
-          realizado: Math.round(base * (0.7 + Math.random() * 0.5)),
-        };
-      });
-      const totalPrevisto = Object.values(valores).reduce((a, b) => a + b.previsto, 0);
-      const totalRealizado = Object.values(valores).reduce((a, b) => a + b.realizado, 0);
-      valores.total = { previsto: totalPrevisto, realizado: totalRealizado };
-      return valores;
-    };
-
-    return res.json({
-      ano,
-      recebimentos: [
-        { categoria: "Suporte Mensal (Fixa)", valores: buildValores(60000) },
-        { categoria: "USTs e Treinamentos", valores: buildValores(20000) },
-        { categoria: "Outras Entradas", valores: buildValores(5000) },
-      ],
-      despesas: [
-        { categoria: "Despesas Administrativas", valores: buildValores(25000) },
-        { categoria: "Pessoal e Encargos", valores: buildValores(35000) },
-        { categoria: "Despesas de Ocupação", valores: buildValores(8000) },
-        { categoria: "Impostos", valores: buildValores(12000) },
-      ],
-      resultado: [
-        { categoria: "Resultado", valores: buildValores(5000) },
-      ],
-    });
-  } catch (e) {
-    return res.status(500).json({ error: String(e) });
-  }
+        return successResponse(res, metas.map((m) => ({...m, valor_projetado: toNumber(m.valor_projetado)})), {ano});
+    } catch (e) {
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar relatório de metas.", String(e));
+    }
 });
 
 router.get("/relatorios/contabil-fiscal", async (req, res) => {
-  try {
-    const { data_inicio, data_fim, conta_id, tipo = "ambos" } = req.query;
+    try {
+        const {data_inicio, data_fim, conta_id, tipo = "ambos"} = req.query;
+        const conditions = [
+            inArray(lancamentosTable.status, STATUS_QUITADO as unknown as string[]),
+            data_inicio ? gte(lancamentosTable.data_quitacao, String(data_inicio)) : undefined,
+            data_fim ? lte(lancamentosTable.data_quitacao, String(data_fim)) : undefined,
+            conta_id ? eq(lancamentosTable.conta_id, parseInt(String(conta_id))) : undefined,
+            tipo !== "ambos" ? eq(lancamentosTable.tipo, String(tipo)) : undefined,
+        ].filter(Boolean) as any[];
 
-    let conditions = [];
-    if (data_inicio) conditions.push(gte(lancamentosTable.vencimento, data_inicio as string));
-    if (data_fim) conditions.push(lte(lancamentosTable.vencimento, data_fim as string));
-    if (conta_id) conditions.push(eq(lancamentosTable.conta_id, parseInt(conta_id as string)));
-    if (tipo !== "ambos") conditions.push(eq(lancamentosTable.tipo, tipo as string));
+        const items = await db
+            .select({
+                conta_bancaria: contasBancariasTable.nome,
+                data_pgto: lancamentosTable.data_quitacao,
+                descricao: lancamentosTable.descricao,
+                nome_parceiro: parceirosTable.nome,
+                valor: lancamentosTable.valor,
+                categoria: sql<string>`coalesce(
+                ${planoContasTable.subcategoria},
+                ${planoContasTable.categoria},
+                'Sem Categoria'
+                )`,
+                tipo: lancamentosTable.tipo,
+            })
+            .from(lancamentosTable)
+            .leftJoin(contasBancariasTable, eq(lancamentosTable.conta_id, contasBancariasTable.id))
+            .leftJoin(parceirosTable, eq(lancamentosTable.parceiro_id, parceirosTable.id))
+            .leftJoin(planoContasTable, eq(lancamentosTable.plano_conta_id, planoContasTable.id))
+            .where(conditions.length > 0 ? and(...conditions) : undefined)
+            .orderBy(lancamentosTable.data_quitacao);
 
-    const items = await db
-      .select({
-        conta_bancaria: contasBancariasTable.nome,
-        data: lancamentosTable.vencimento,
-        descricao: lancamentosTable.descricao,
-        nome_parceiro: parceirosTable.nome,
-        valor: lancamentosTable.valor,
-        categoria: planoContasTable.subcategoria,
-        tipo: lancamentosTable.tipo,
-      })
-      .from(lancamentosTable)
-      .leftJoin(contasBancariasTable, eq(lancamentosTable.conta_id, contasBancariasTable.id))
-      .leftJoin(parceirosTable, eq(lancamentosTable.parceiro_id, parceirosTable.id))
-      .leftJoin(planoContasTable, eq(lancamentosTable.plano_conta_id, planoContasTable.id))
-      .where(conditions.length > 0 ? and(...conditions) : undefined)
-      .orderBy(lancamentosTable.vencimento);
-
-    return res.json(items.map(i => ({ ...i, valor: Number(i.valor) })));
-  } catch (e) {
-    return res.status(500).json({ error: String(e) });
-  }
+        return successResponse(res, items.map((i) => ({...i, valor: toNumber(i.valor)})), {total: items.length});
+    } catch (e) {
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar relatório contábil/fiscal.", String(e));
+    }
 });
 
 export default router;

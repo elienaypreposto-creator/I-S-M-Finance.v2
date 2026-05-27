@@ -4,7 +4,7 @@ import { Plus, Edit, Trash2 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 
-import { API_URL, fetchApi } from "@/lib/api-config";
+import { fetchApi, fetchApiData } from "@/lib/api-config";
 
 type PlanoConta = {
   id: number;
@@ -36,7 +36,7 @@ function FormModal({ isOpen, onClose, onSubmit, initialData }: any) {
             <label className="text-sm font-medium text-muted-foreground">Tipo</label>
             <select 
               value={tipo} onChange={e => setTipo(e.target.value)}
-              className="mt-1 w-full bg-black/20 border border-white/10 rounded-lg p-2.5 text-white outline-none focus:border-primary/50"
+              className="mt-1 w-full bg-white/20 border border-white/10 rounded-lg p-2.5 text-black outline-none focus:border-primary/50"
             >
               <option value="receita">Receita</option>
               <option value="custo">Custo</option>
@@ -79,10 +79,11 @@ export default function PlanoContas() {
   
   const [modalOpen, setModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<PlanoConta | null>(null);
+  const [modalKey, setModalKey] = useState(0);
 
   const { data: contas = [], isLoading } = useQuery<PlanoConta[]>({
     queryKey: ['plano-contas'],
-    queryFn: () => fetchApi("/plano-contas")
+    queryFn: () => fetchApiData("/plano-contas")
   });
 
   const saveMutation = useMutation({
@@ -115,11 +116,13 @@ export default function PlanoContas() {
 
   const handleCreate = (typeDef?: string) => {
     setEditingItem(typeDef ? { tipo: typeDef } as any : null);
+    setModalKey((k) => k + 1);
     setModalOpen(true);
   };
 
   const handleEdit = (item: PlanoConta) => {
     setEditingItem(item);
+    setModalKey((k) => k + 1);
     setModalOpen(true);
   };
 
@@ -222,10 +225,11 @@ export default function PlanoContas() {
         }, despesas, 'despesa')}
       </div>
 
-      <FormModal 
-        isOpen={modalOpen} 
-        onClose={() => { setModalOpen(false); setEditingItem(null); }} 
-        onSubmit={handleSubmit} 
+      <FormModal
+        key={modalKey}
+        isOpen={modalOpen}
+        onClose={() => { setModalOpen(false); setEditingItem(null); }}
+        onSubmit={handleSubmit}
         initialData={editingItem}
       />
     </div>

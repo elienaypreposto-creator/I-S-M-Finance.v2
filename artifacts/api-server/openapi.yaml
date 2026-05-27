@@ -1,0 +1,756 @@
+openapi: 3.0.3
+info:
+  title: ISM Finance API
+  version: 1.2.0
+  description: API REST do SaaS financeiro com painel JWT e integração Power BI (v1 token).
+servers:
+  - url: http://localhost:3000/api
+    description: Local
+tags:
+  - name: Auth
+  - name: Lancamentos
+  - name: Conciliacoes
+  - name: Dashboard
+  - name: Relatorios
+  - name: PowerBI v1
+paths:
+  /healthz:
+    get:
+      tags: [Auth]
+      operationId: healthCheck
+      responses:
+        "200":
+          description: OK
+  /auth/login:
+    post:
+      tags: [Auth]
+      operationId: postAuthLogin
+      summary: Login com email e senha
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, senha]
+              properties:
+                email: { type: string, format: email }
+                senha: { type: string }
+      responses:
+        "200":
+          description: Login efetuado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiEnvelopeAuthLogin"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /auth/me:
+    get:
+      tags: [Auth]
+      operationId: getAuthMe
+      summary: Usuário autenticado + permissões
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Usuário atual
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiEnvelopeMe"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /lancamentos:
+    get:
+      tags: [Lancamentos]
+      operationId: getLancamentos
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20 }
+        - in: query
+          name: tipo
+          schema: { type: string, enum: [CP, CR] }
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: conta_id
+          schema: { type: integer }
+        - in: query
+          name: parceiro_id
+          schema: { type: integer }
+        - in: query
+          name: data_inicio
+          schema: { type: string, format: date }
+        - in: query
+          name: data_fim
+          schema: { type: string, format: date }
+        - in: query
+          name: search
+          schema: { type: string }
+      responses:
+        "200":
+          description: Lista de lançamentos
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopePaginated" }
+    post:
+      tags: [Lancamentos]
+      operationId: postLancamentos
+      security: [{ bearerAuth: [] }]
+      description: Aplica preenchimento automático de departamento e centro de custo via parceiro quando esses campos não forem enviados.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LancamentoInput" }
+      responses:
+        "201":
+          description: Lançamento criado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /lancamentos/{id}:
+    get:
+      tags: [Lancamentos]
+      operationId: getLancamentoById
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      responses:
+        "200":
+          description: Lançamento
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+    put:
+      tags: [Lancamentos]
+      operationId: putLancamentoById
+      security: [{ bearerAuth: [] }]
+      description: Também aplica preenchimento automático por parceiro quando necessário.
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LancamentoInput" }
+      responses:
+        "200":
+          description: Lançamento atualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+    delete:
+      tags: [Lancamentos]
+      operationId: deleteLancamentoById
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      responses:
+        "200":
+          description: Lançamento removido
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+  /conciliacoes:
+    get:
+      tags: [Conciliacoes]
+      operationId: getConciliacoes
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Lista de conciliações
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /conciliacoes/importar:
+    post:
+      tags: [Conciliacoes]
+      operationId: postConciliacoesImportar
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [conta_id, arquivo]
+              properties:
+                conta_id:
+                  type: integer
+                arquivo:
+                  type: string
+                  format: binary
+            encoding:
+              arquivo:
+                contentType: application/octet-stream
+      responses:
+        "201":
+          description: Extrato importado para conciliação
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /conciliacoes/{extrato_id}:
+    get:
+      tags: [Conciliacoes]
+      operationId: getConciliacaoExtratoDetalhe
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: extrato_id
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Detalhe da conciliação
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /conciliacoes/buscar-lancamentos:
+    get:
+      tags: [Conciliacoes]
+      operationId: getConciliacoesBuscarLancamentos
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: linha_id
+          required: true
+          schema: { type: integer }
+        - in: query
+          name: dias_janela
+          schema: { type: integer, default: 7 }
+      responses:
+        "200":
+          description: Busca lançamentos compatíveis para vincular
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /conciliacoes/linhas/{linha_id}/ignorar:
+    post:
+      tags: [Conciliacoes]
+      operationId: postConciliacoesLinhaIgnorar
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: linha_id
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Linha ignorada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /conciliacoes/linhas/{linha_id}/vincular:
+    post:
+      tags: [Conciliacoes]
+      operationId: postConciliacoesLinhaVincular
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: linha_id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VincularLinhaRequest"
+            examples:
+              exemploVinculoParcial:
+                value:
+                  lancamentos:
+                    - lancamento_id: 101
+                      desconto: 0
+                      acrescimo: 10
+                    - lancamento_id: 205
+                      desconto: 5
+                      acrescimo: 0
+                  gerar_parcial: true
+      responses:
+        "200":
+          description: Linha vinculada com sucesso
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /conciliacoes/{extrato_id}/finalizar:
+    post:
+      tags: [Conciliacoes]
+      operationId: postConciliacoesFinalizarExtrato
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: extrato_id
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Extrato finalizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /dashboard/kpis:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboardKpis
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: KPIs do dashboard
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /dashboard/projecao-mes:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboardProjecaoMes
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Projeção mensal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /dashboard/projecao-dias:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboardProjecaoDias
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: dias
+          schema: { type: integer, default: 30 }
+      responses:
+        "200":
+          description: Projeção por dias
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /dashboard/inadimplencia-clientes:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboardInadimplenciaClientes
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: tab
+          schema: { type: string, enum: [vencidos, proximos_vencer], default: vencidos }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 10 }
+      responses:
+        "200":
+          description: Inadimplência clientes
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /dashboard/inadimplencia-fornecedores:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboardInadimplenciaFornecedores
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: tab
+          schema: { type: string, enum: [vencidos, proximos_vencer], default: vencidos }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 10 }
+      responses:
+        "200":
+          description: Inadimplência fornecedores
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /dashboard/alertas-atraso:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboardAlertasAtraso
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: risco
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 50 }
+      responses:
+        "200":
+          description: Alertas de atraso por risco
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /dashboard/nivel-risco:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboardNivelRisco
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Nível de risco
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /dashboard/fluxo-caixa-mensal:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboardFluxoCaixaMensal
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: ano
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Fluxo de caixa mensal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /dashboard/saidas-plano-contas:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboardSaidasPlanoContas
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Saídas por plano de contas
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /dashboard/entradas-plano-contas:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboardEntradasPlanoContas
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Entradas por plano de contas
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /relatorios/fechamento-mensal:
+    get:
+      tags: [Relatorios]
+      operationId: getRelatoriosFechamentoMensal
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: mes
+          required: true
+          schema: { type: integer }
+        - in: query
+          name: ano
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Fechamento mensal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /relatorios/dre:
+    get:
+      tags: [Relatorios]
+      operationId: getRelatoriosDre
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: ano
+          schema: { type: integer }
+        - in: query
+          name: regime
+          schema: { type: string, enum: [competencia, caixa], default: competencia }
+      responses:
+        "200":
+          description: Relatório DRE
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /relatorios/fluxo-caixa:
+    get:
+      tags: [Relatorios]
+      operationId: getRelatoriosFluxoCaixa
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: ano
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Fluxo de caixa
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /relatorios/metas:
+    get:
+      tags: [Relatorios]
+      operationId: getRelatoriosMetas
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: ano
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Relatório de metas
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /relatorios/contabil-fiscal:
+    get:
+      tags: [Relatorios]
+      operationId: getRelatoriosContabilFiscal
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: data_inicio
+          schema: { type: string, format: date }
+        - in: query
+          name: data_fim
+          schema: { type: string, format: date }
+        - in: query
+          name: conta_id
+          schema: { type: integer }
+        - in: query
+          name: tipo
+          schema: { type: string, enum: [CP, CR, ambos], default: ambos }
+      responses:
+        "200":
+          description: Relatório contábil/fiscal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /v1/bancos:
+    get:
+      tags: [PowerBI v1]
+      operationId: getV1Bancos
+      security: [{ bearerV1Token: [] }]
+      responses:
+        "200":
+          description: Contas bancárias (extração)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /v1/contasPagar:
+    get:
+      tags: [PowerBI v1]
+      operationId: getV1ContasPagar
+      security: [{ bearerV1Token: [] }]
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 10000 }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+      responses:
+        "200":
+          description: Lançamentos CP com joins para BI
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /v1/contasReceber:
+    get:
+      tags: [PowerBI v1]
+      operationId: getV1ContasReceber
+      security: [{ bearerV1Token: [] }]
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 10000 }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+      responses:
+        "200":
+          description: Lançamentos CR com joins para BI
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /v1/pessoas:
+    get:
+      tags: [PowerBI v1]
+      operationId: getV1Pessoas
+      security: [{ bearerV1Token: [] }]
+      responses:
+        "200":
+          description: Parceiros/pessoas
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /v1/filiais:
+    get:
+      tags: [PowerBI v1]
+      operationId: getV1Filiais
+      security: [{ bearerV1Token: [] }]
+      responses:
+        "200":
+          description: Filiais
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /v1/planoContas:
+    get:
+      tags: [PowerBI v1]
+      operationId: getV1PlanoContas
+      security: [{ bearerV1Token: [] }]
+      responses:
+        "200":
+          description: Plano de contas
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+  /v1/categoriaPlanoConta:
+    get:
+      tags: [PowerBI v1]
+      operationId: getV1CategoriaPlanoConta
+      security: [{ bearerV1Token: [] }]
+      responses:
+        "200":
+          description: Categorias do plano de contas
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    bearerV1Token:
+      type: http
+      scheme: bearer
+      description: Token estático validado na tabela `tokens_api`.
+  responses:
+    UnauthorizedError:
+      description: Não autenticado
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiEnvelopeError"
+    ForbiddenError:
+      description: Sem permissão
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiEnvelopeError"
+  schemas:
+    ApiErrorItem:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details: {}
+    ApiEnvelopeGeneric:
+      type: object
+      properties:
+        data: {}
+        meta:
+          nullable: true
+          type: object
+          additionalProperties: true
+        errors:
+          nullable: true
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiErrorItem"
+    ApiEnvelopePaginated:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelopeGeneric"
+        - type: object
+          properties:
+            meta:
+              type: object
+              properties:
+                total: { type: integer }
+                page: { type: integer }
+                limit: { type: integer }
+    ApiEnvelopeAuthLogin:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelopeGeneric"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                token: { type: string }
+                user:
+                  $ref: "#/components/schemas/Usuario"
+            meta:
+              type: object
+              properties:
+                tokenType: { type: string, example: Bearer }
+                expiresIn: { type: string, example: 24h }
+    ApiEnvelopeMe:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelopeGeneric"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                user:
+                  $ref: "#/components/schemas/Usuario"
+                permissoes:
+                  type: array
+                  items: { type: string }
+    ApiEnvelopeError:
+      type: object
+      properties:
+        data:
+          nullable: true
+        meta:
+          nullable: true
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiErrorItem"
+    Usuario:
+      type: object
+      properties:
+        id: { type: integer }
+        nome: { type: string }
+        email: { type: string, format: email }
+    VincularLinhaRequest:
+      type: object
+      required: [lancamentos]
+      properties:
+        lancamentos:
+          type: array
+          items:
+            type: object
+            required: [lancamento_id]
+            properties:
+              lancamento_id: { type: integer }
+              desconto: { type: number, default: 0 }
+              acrescimo: { type: number, default: 0 }
+        gerar_parcial:
+          type: boolean
+          default: false
+    LancamentoInput:
+      type: object
+      required: [tipo, vencimento, valor]
+      properties:
+        tipo: { type: string, enum: [CP, CR] }
+        vencimento: { type: string, format: date }
+        competencia: { type: string, format: date }
+        conta_id: { type: integer }
+        parceiro_id: { type: integer }
+        descricao: { type: string }
+        valor: { type: number }
+        status: { type: string }
+        plano_conta_id: { type: integer }
+        departamento_id: { type: integer, nullable: true }
+        centro_custo_id: { type: integer, nullable: true }
+        parcela_atual: { type: integer }
+        total_parcelas: { type: integer }
+        riscos:
+          type: array
+          items: { type: string }

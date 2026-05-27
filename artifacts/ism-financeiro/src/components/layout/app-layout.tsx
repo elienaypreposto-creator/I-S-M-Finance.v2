@@ -1,9 +1,16 @@
 import { ReactNode } from "react";
 import { AppSidebar } from "./app-sidebar";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { Bell, User } from "lucide-react";
+import { Bell, User, LogOut } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
+
+function getInitials(nome: string): string {
+  return nome.trim().split(/\s+/).slice(0, 2).map((p) => p[0]?.toUpperCase() ?? "").join("");
+}
 
 export function AppLayout({ children }: { children: ReactNode }) {
+  const { user, logout } = useAuth();
+
   const style = {
     "--sidebar-width": "17rem",
     "--sidebar-width-icon": "4.5rem",
@@ -20,18 +27,34 @@ export function AppLayout({ children }: { children: ReactNode }) {
             </div>
             
             <div className="flex items-center gap-2 md:gap-4">
-              <button className="relative p-2 rounded-full hover:bg-white/5 transition-colors text-muted-foreground hover:text-foreground">
+              <button
+                type="button"
+                title="Notificações (em breve)"
+                className="relative p-2 rounded-full hover:bg-white/5 transition-colors text-muted-foreground hover:text-foreground"
+              >
                 <Bell className="w-5 h-5" />
-                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-destructive border-2 border-card"></span>
+                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-destructive border-2 border-card" />
               </button>
-              
+
               <div className="flex items-center gap-3 pl-2 md:pl-4 border-l border-white/10">
                 <div className="text-right hidden sm:block">
-                  <p className="text-sm font-semibold leading-none text-foreground">Admin User</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">CFO</p>
+                  <p className="text-sm font-semibold leading-none text-foreground">
+                    {user?.nome ?? "—"}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{user?.cargo || "Administrador"}</p>
                 </div>
-                <button className="w-9 h-9 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-white shadow-lg border border-white/10 hover:opacity-90 transition-opacity">
-                  <User className="w-5 h-5" />
+                <div
+                  className="w-9 h-9 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-white text-xs font-bold shadow-lg border border-white/10"
+                >
+                  {user?.nome ? getInitials(user.nome) : <User className="w-5 h-5" />}
+                </div>
+                <button
+                  type="button"
+                  title="Sair do sistema"
+                  onClick={logout}
+                  className="ml-1 w-9 h-9 flex items-center justify-center rounded-xl bg-white/5 hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors border border-white/10"
+                >
+                  <LogOut className="w-4 h-4" />
                 </button>
               </div>
             </div>

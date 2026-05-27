@@ -49,7 +49,7 @@ const cadastrosItems = [
   { title: "Clientes/Fornecedores", url: "/cadastros/parceiros", icon: UserCheck },
   { title: "Contas Bancárias", url: "/cadastros/contas-bancarias", icon: Landmark },
   { title: "Plano de Contas", url: "/cadastros/plano-contas", icon: Briefcase },
-  { title: "Metas", url: "/cadastros/metas", icon: Target },
+  { title: "Metas Financeiras", url: "/cadastros/metas", icon: Target },
   { title: "Categorias", url: "/cadastros/categorias", icon: Tags },
   { title: "Departamentos", url: "/cadastros/departamentos", icon: Building2 },
 ];
@@ -59,7 +59,7 @@ const relatoriosItems = [
   { title: "Contábil/Fiscal", url: "/relatorios/contabil-fiscal", icon: FileText },
   { title: "DRE Gerencial", url: "/relatorios/dre", icon: BarChart3 },
   { title: "Fluxo de Caixa", url: "/relatorios/fluxo-caixa", icon: LineChart },
-  { title: "Metas", url: "/relatorios/metas", icon: Target },
+  { title: "Relatório de Metas", url: "/relatorios/metas", icon: Target },
 ];
 
 const configItems = [

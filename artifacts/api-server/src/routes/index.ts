@@ -1,36 +1,37 @@
+/**
+ * Router principal da API.
+ *
+ * Ordem de montagem:
+ * 1. /healthz              — sem autenticação
+ * 2. /auth/*               — sem autenticação (login, refresh, logout)
+ *    └─ /auth/me           — requer withAuth (declarado dentro do router de auth)
+ *    └─ /auth/migrate-*    — requer withAuth + withPermission (declarado dentro)
+ * 3. /v1/*                 — autenticação por API Token (v1AuthMiddleware)
+ * 4. withAuth              — TODAS as rotas abaixo exigem JWT válido
+ *    ├─ reports
+ *    ├─ financial (lancamentos, parceiros, contas-bancarias, etc.)
+ *    └─ reconciliation (conciliacoes, kanban)
+ */
+
 import { Router, type IRouter } from "express";
 import healthRouter from "./health";
-import dashboardRouter from "./dashboard";
-import lancamentosRouter from "./lancamentos";
-import parceirosRouter from "./parceiros";
-import contasBancariasRouter from "./contas-bancarias";
-import planoContasRouter from "./plano-contas";
-import metasRouter from "./metas";
-import conciliacoesRouter from "./conciliacoes";
-import kanbanRouter from "./kanban";
-import relatoriosRouter from "./relatorios";
-import usuariosRouter from "./usuarios";
-import filiaisRouter from "./filiais";
-import tokensApiRouter from "./tokens-api";
-import departamentosRouter from "./departamentos";
 import v1Router from "./v1";
+import { withAuth } from "../middlewares/auth";
+import authDomainRouter from "../domains/auth/router";
+import financialDomainRouter from "../domains/financial/router";
+import reconciliationDomainRouter from "../domains/reconciliation/router";
+import reportsDomainRouter from "../domains/reports/router";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
-router.use(dashboardRouter);
-router.use(lancamentosRouter);
-router.use(parceirosRouter);
-router.use(contasBancariasRouter);
-router.use(planoContasRouter);
-router.use(metasRouter);
-router.use(conciliacoesRouter);
-router.use("/kanban", kanbanRouter);
-router.use(relatoriosRouter);
-router.use(usuariosRouter);
-router.use(filiaisRouter);
-router.use(tokensApiRouter);
-router.use(departamentosRouter);
+router.use(authDomainRouter);
 router.use("/v1", v1Router);
+
+// Barreira de autenticação — todas as rotas abaixo requerem Access Token JWE válido
+router.use(withAuth);
+router.use(reportsDomainRouter);
+router.use(financialDomainRouter);
+router.use(reconciliationDomainRouter);
 
 export default router;

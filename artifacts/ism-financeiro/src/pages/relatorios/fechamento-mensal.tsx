@@ -1,141 +1,344 @@
 import { useState } from "react";
 import { PageHeader } from "@/components/shared/page-header";
-import { Download, FileText, CheckCircle, XCircle, AlertCircle } from "lucide-react";
+import {
+  Download,
+  FileText,
+  Wallet,
+  TrendingUp,
+  TrendingDown,
+  Loader2,
+  AlertCircle,
+  ArrowUpCircle,
+  ArrowDownCircle,
+} from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
+import { useQuery } from "@tanstack/react-query";
+import { fetchApiData } from "@/lib/api-config";
+import { exportToExcel, exportToPDF, fmtBRL } from "@/lib/export";
 
-const meses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
-
-const fechamentos = [
-  { mes: 5, ano: 2024, status: "fechado", receitas: 143500, custos: 59000, despesas: 18300, resultado: 66200 },
-  { mes: 4, ano: 2024, status: "fechado", receitas: 139000, custos: 57200, despesas: 17900, resultado: 63900 },
-  { mes: 3, ano: 2024, status: "fechado", receitas: 132000, custos: 58100, despesas: 18100, resultado: 55800 },
-  { mes: 2, ano: 2024, status: "fechado", receitas: 127800, custos: 57500, despesas: 17500, resultado: 52800 },
-  { mes: 1, ano: 2024, status: "fechado", receitas: 131200, custos: 56800, despesas: 18200, resultado: 56200 },
-  { mes: 0, ano: 2024, status: "fechado", receitas: 118500, custos: 54200, despesas: 17800, resultado: 46500 },
+// ─── Constantes ────────────────────────────────────────────────────────────────
+const MESES = [
+  "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+  "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
 ];
+const CURRENT_YEAR = new Date().getFullYear();
+const YEARS = Array.from({ length: 8 }, (_, i) => CURRENT_YEAR + 2 - i);
 
-const lancamentosAbertos = [
-  { id: 1, descricao: "Mensalidade Tech Solutions", valor: 15000, vencimento: "30/06/2024", tipo: "cr" },
-  { id: 2, descricao: "Hospedagem AWS Junho", valor: -4500, vencimento: "25/06/2024", tipo: "cp" },
-  { id: 3, descricao: "Salários PJ Junho", valor: -44000, vencimento: "30/06/2024", tipo: "cp" },
-  { id: 4, descricao: "Projeto Global Industries", valor: 35000, vencimento: "28/06/2024", tipo: "cr" },
-];
+// ─── Tipos ─────────────────────────────────────────────────────────────────────
+type FechamentoData = {
+  mes: number;
+  ano: number;
+  planejado_receber: number;
+  realizado_receber: number;
+  planejado_gastar: number;
+  realizado_gastar: number;
+};
 
+// Aritmética de centavos para evitar ponto flutuante ao calcular saldo
+function toCents(v: number): number {
+  return Math.round(v * 100);
+}
+
+// ─── Componente de KPI individual ──────────────────────────────────────────────
+function KpiCard({
+  label,
+  value,
+  sub,
+  colorClass,
+  icon,
+}: {
+  label: string;
+  value: string;
+  sub?: React.ReactNode;
+  colorClass: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <div className="bg-white/5 rounded-2xl p-5">
+      <div className="flex items-center gap-2 mb-3">
+        {icon}
+        <p className="text-xs text-muted-foreground">{label}</p>
+      </div>
+      <p className={`text-2xl font-bold ${colorClass}`}>{value}</p>
+      {sub && <div className="mt-1.5">{sub}</div>}
+    </div>
+  );
+}
+
+// ─── Página ────────────────────────────────────────────────────────────────────
 export default function FechamentoMensal() {
-  const [mesSelecionado, setMesSelecionado] = useState(5);
-  const [anoSelecionado, setAnoSelecionado] = useState(2024);
-  const fechamentoAtual = fechamentos.find(f => f.mes === mesSelecionado && f.ano === anoSelecionado);
+  const [mes, setMes] = useState(new Date().getMonth() + 1);
+  const [ano, setAno] = useState(CURRENT_YEAR);
+
+  const { data, isLoading, isError } = useQuery<FechamentoData>({
+    queryKey: ["fechamento-mensal", mes, ano],
+    queryFn: () =>
+      fetchApiData<FechamentoData>(
+        `/relatorios/fechamento-mensal?mes=${mes}&ano=${ano}`,
+      ),
+  });
+
+  // Saldo calculado em centavos para precisão
+  const saldoCents = data
+    ? toCents(data.realizado_receber) - toCents(data.realizado_gastar)
+    : 0;
+  const saldo = saldoCents / 100;
+
+  const variacaoCR =
+    data && data.planejado_receber > 0
+      ? ((data.realizado_receber - data.planejado_receber) /
+          data.planejado_receber) *
+        100
+      : null;
+
+  // ── Exportação ──────────────────────────────────────────────────────────────
+  const EXPORT_COLUMNS = [
+    { header: "Indicador",    key: "indicador",  width: 36 },
+    { header: "Valor (R$)",   key: "valor",      width: 22 },
+  ];
+
+  function buildExportRows() {
+    if (!data) return [];
+    return [
+      { indicador: "Meta Receita (Orçado)",    valor: fmtBRL(data.planejado_receber) },
+      { indicador: "Receitas Realizadas (CR)", valor: fmtBRL(data.realizado_receber) },
+      { indicador: "Saídas Realizadas (CP)",   valor: fmtBRL(data.realizado_gastar)  },
+      { indicador: "Resultado Líquido",        valor: fmtBRL(saldo)                 },
+    ] as Record<string, unknown>[];
+  }
+
+  function handleExportExcel() {
+    exportToExcel(
+      `Fechamento_Mensal_${MESES[mes - 1]}_${ano}`,
+      buildExportRows(),
+      EXPORT_COLUMNS,
+    );
+  }
+
+  function handleExportPDF() {
+    exportToPDF(
+      `Fechamento_Mensal_${MESES[mes - 1]}_${ano}`,
+      buildExportRows(),
+      EXPORT_COLUMNS,
+      {
+        title: `Fechamento Mensal — ${MESES[mes - 1]} ${ano}`,
+        subtitle: "Valores referentes a lançamentos quitados no período",
+      },
+    );
+  }
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Fechamento Mensal"
-        description="Consolidação e fechamento contábil mensal"
+        description="Consolidação financeira do período selecionado"
         actions={
           <div className="flex gap-3">
-            <select value={mesSelecionado} onChange={e => setMesSelecionado(Number(e.target.value))} className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white outline-none">
-              {meses.map((m, i) => <option key={i} value={i}>{m}</option>)}
+            <select
+              value={mes}
+              onChange={(e) => setMes(Number(e.target.value))}
+              className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white outline-none cursor-pointer"
+            >
+              {MESES.map((m, i) => (
+                <option key={i} value={i + 1} className="bg-card text-white">
+                  {m}
+                </option>
+              ))}
             </select>
-            <select value={anoSelecionado} onChange={e => setAnoSelecionado(Number(e.target.value))} className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white outline-none">
-              <option value={2024}>2024</option>
-              <option value={2023}>2023</option>
+            <select
+              value={ano}
+              onChange={(e) => setAno(Number(e.target.value))}
+              className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white outline-none cursor-pointer"
+            >
+              {YEARS.map((y) => (
+                <option key={y} value={y} className="bg-card text-white">
+                  {y}
+                </option>
+              ))}
             </select>
-            <button className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all">
-              <Download className="w-4 h-4" /> Exportar PDF
+            <button
+              type="button"
+              onClick={handleExportPDF}
+              disabled={!data}
+              title="Exportar PDF"
+              className="flex items-center gap-2 px-4 py-2 bg-primary/10 hover:bg-primary/20 border border-primary/30 rounded-xl text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <FileText className="w-4 h-4" /> Exportar PDF
+            </button>
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              disabled={!data}
+              title="Exportar XLSX"
+              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Download className="w-4 h-4" /> Exportar XLSX
             </button>
           </div>
         }
       />
 
-      {fechamentoAtual ? (
+      {/* ── Loading ── */}
+      {isLoading && (
+        <div className="flex items-center justify-center h-48 gap-3 text-muted-foreground">
+          <Loader2 className="w-6 h-6 animate-spin" />
+          <span className="text-sm">Carregando fechamento…</span>
+        </div>
+      )}
+
+      {/* ── Erro ── */}
+      {isError && !isLoading && (
+        <div className="glass-panel rounded-2xl p-6 border border-destructive/20 flex items-center gap-3">
+          <AlertCircle className="w-5 h-5 text-destructive shrink-0" />
+          <p className="text-sm text-muted-foreground">
+            Erro ao carregar dados do período. Tente novamente.
+          </p>
+        </div>
+      )}
+
+      {/* ── Dados ── */}
+      {data && !isLoading && (
         <>
-          <div className="glass-panel rounded-2xl p-6 border border-success/20">
-            <div className="flex items-center gap-3 mb-4">
-              <CheckCircle className="w-5 h-5 text-success" />
-              <h3 className="font-bold text-white">Fechamento de {meses[mesSelecionado]} {anoSelecionado} — Concluído</h3>
+          {/* Cabeçalho do período */}
+          <div className="glass-panel rounded-2xl p-6 border border-white/5">
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center">
+                <Wallet className="w-5 h-5 text-primary" />
+              </div>
+              <div>
+                <h3 className="font-bold text-white">
+                  {MESES[mes - 1]} {ano}
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Valores referentes a lançamentos quitados no período
+                </p>
+              </div>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              {[
-                { label: "Total Receitas", value: fechamentoAtual.receitas, color: "text-teal-400" },
-                { label: "Total Custos (CSP)", value: -fechamentoAtual.custos, color: "text-destructive" },
-                { label: "Total Despesas", value: -fechamentoAtual.despesas, color: "text-orange-400" },
-                { label: "Resultado Líquido", value: fechamentoAtual.resultado, color: "text-success" },
-              ].map(item => (
-                <div key={item.label} className="bg-white/5 rounded-xl p-4">
-                  <p className="text-xs text-muted-foreground mb-1">{item.label}</p>
-                  <p className={`text-lg font-bold ${item.color}`}>{formatCurrency(Math.abs(item.value))}</p>
+
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Meta (planejado) */}
+              <KpiCard
+                label="Meta Receita (Orçado)"
+                value={formatCurrency(data.planejado_receber)}
+                colorClass="text-primary"
+                icon={<Wallet className="w-4 h-4 text-primary" />}
+                sub={
+                  <p className="text-xs text-muted-foreground">Orçado para o período</p>
+                }
+              />
+
+              {/* Realizado CR */}
+              <KpiCard
+                label="Receitas Realizadas (CR)"
+                value={formatCurrency(data.realizado_receber)}
+                colorClass={
+                  data.realizado_receber >= data.planejado_receber
+                    ? "text-success"
+                    : "text-warning"
+                }
+                icon={<ArrowUpCircle className="w-4 h-4 text-teal-400" />}
+                sub={
+                  variacaoCR !== null ? (
+                    <p
+                      className={`text-xs flex items-center gap-1 ${variacaoCR >= 0 ? "text-success" : "text-warning"}`}
+                    >
+                      {variacaoCR >= 0 ? (
+                        <TrendingUp className="w-3 h-3" />
+                      ) : (
+                        <TrendingDown className="w-3 h-3" />
+                      )}
+                      {variacaoCR > 0 ? "+" : ""}
+                      {variacaoCR.toFixed(1)}% vs meta
+                    </p>
+                  ) : null
+                }
+              />
+
+              {/* Realizado CP */}
+              <KpiCard
+                label="Saídas Realizadas (CP)"
+                value={formatCurrency(data.realizado_gastar)}
+                colorClass="text-destructive"
+                icon={<ArrowDownCircle className="w-4 h-4 text-destructive" />}
+                sub={
+                  <p className="text-xs text-muted-foreground">Saídas quitadas</p>
+                }
+              />
+
+              {/* Resultado */}
+              <div
+                className={`rounded-2xl p-5 border ${
+                  saldo >= 0
+                    ? "bg-success/10 border-success/20"
+                    : "bg-destructive/10 border-destructive/20"
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-3">
+                  {saldo >= 0 ? (
+                    <TrendingUp className="w-4 h-4 text-success" />
+                  ) : (
+                    <TrendingDown className="w-4 h-4 text-destructive" />
+                  )}
+                  <p className="text-xs text-muted-foreground">Resultado Líquido</p>
                 </div>
-              ))}
+                <p
+                  className={`text-2xl font-bold ${saldo >= 0 ? "text-success" : "text-destructive"}`}
+                >
+                  {formatCurrency(saldo)}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1.5">
+                  Receitas − Saídas realizadas
+                </p>
+              </div>
             </div>
           </div>
 
-          <div className="glass-panel rounded-2xl overflow-hidden">
-            <div className="p-5 border-b border-white/5">
-              <h3 className="font-bold text-white">Histórico de Fechamentos</h3>
+          {/* Barra de comparação visual */}
+          {data.planejado_receber > 0 && (
+            <div className="glass-panel rounded-2xl p-5 border border-white/5">
+              <p className="text-sm font-semibold text-white mb-4">
+                Execução do Orçamento
+              </p>
+              <div className="space-y-3">
+                <div>
+                  <div className="flex justify-between text-xs text-muted-foreground mb-1.5">
+                    <span>Receita Realizada</span>
+                    <span>
+                      {Math.min(
+                        100,
+                        (data.realizado_receber / data.planejado_receber) * 100,
+                      ).toFixed(1)}
+                      % da meta
+                    </span>
+                  </div>
+                  <div className="h-2 w-full bg-white/5 rounded-full overflow-hidden">
+                    <div
+                      className={`h-2 rounded-full transition-all ${
+                        data.realizado_receber >= data.planejado_receber
+                          ? "bg-success"
+                          : "bg-warning"
+                      }`}
+                      style={{
+                        width: `${Math.min(100, (data.realizado_receber / data.planejado_receber) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-white/5">
-                  <tr>
-                    <th className="px-5 py-3 text-left font-medium text-muted-foreground">Período</th>
-                    <th className="px-5 py-3 text-right font-medium text-muted-foreground">Receitas</th>
-                    <th className="px-5 py-3 text-right font-medium text-muted-foreground">Custos+Despesas</th>
-                    <th className="px-5 py-3 text-right font-medium text-muted-foreground">Resultado</th>
-                    <th className="px-5 py-3 text-center font-medium text-muted-foreground">Status</th>
-                    <th className="px-5 py-3 text-right font-medium text-muted-foreground">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {fechamentos.map((f, i) => (
-                    <tr key={i} className="hover:bg-white/5 transition-colors">
-                      <td className="px-5 py-4 font-semibold text-white">{meses[f.mes]} {f.ano}</td>
-                      <td className="px-5 py-4 text-right text-teal-400 font-medium">{formatCurrency(f.receitas)}</td>
-                      <td className="px-5 py-4 text-right text-destructive font-medium">{formatCurrency(f.custos + f.despesas)}</td>
-                      <td className="px-5 py-4 text-right font-bold text-success">{formatCurrency(f.resultado)}</td>
-                      <td className="px-5 py-4 text-center">
-                        <span className="inline-flex items-center gap-1 text-xs bg-success/20 text-success px-2 py-1 rounded-full">
-                          <CheckCircle className="w-3 h-3" /> Fechado
-                        </span>
-                      </td>
-                      <td className="px-5 py-4 text-right">
-                        <button className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors ml-auto">
-                          <FileText className="w-3 h-3" /> Ver PDF
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          )}
+
+          {/* Nota sobre histórico */}
+          <div className="glass-panel rounded-2xl p-4 border border-white/5">
+            <div className="flex items-center gap-3 text-muted-foreground/70">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <p className="text-xs">
+                Histórico de múltiplos meses estará disponível em versão futura. Use
+                os seletores acima para navegar entre períodos.
+              </p>
             </div>
           </div>
         </>
-      ) : (
-        <div className="glass-panel rounded-2xl p-6 border border-warning/20">
-          <div className="flex items-start gap-4">
-            <AlertCircle className="w-5 h-5 text-warning mt-0.5 shrink-0" />
-            <div>
-              <h3 className="font-bold text-white mb-1">Fechamento em Aberto — {meses[mesSelecionado]} {anoSelecionado}</h3>
-              <p className="text-sm text-muted-foreground mb-4">Existem {lancamentosAbertos.length} lançamentos pendentes de aprovação antes do fechamento.</p>
-              <div className="space-y-2 mb-4">
-                {lancamentosAbertos.map(l => (
-                  <div key={l.id} className="flex items-center justify-between bg-white/5 rounded-xl p-3">
-                    <div className="flex items-center gap-2">
-                      <span className={`w-2 h-2 rounded-full ${l.tipo === 'cr' ? 'bg-teal-400' : 'bg-destructive'}`} />
-                      <span className="text-sm text-white">{l.descricao}</span>
-                    </div>
-                    <div className="text-right">
-                      <p className={`text-sm font-semibold ${l.valor > 0 ? 'text-teal-400' : 'text-destructive'}`}>{formatCurrency(Math.abs(l.valor))}</p>
-                      <p className="text-xs text-muted-foreground">{l.vencimento}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <button className="flex items-center gap-2 px-6 py-2.5 bg-warning hover:bg-warning/90 text-black rounded-xl text-sm font-bold transition-all">
-                <CheckCircle className="w-4 h-4" /> Aprovar e Fechar Mês
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );
