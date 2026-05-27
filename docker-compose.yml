@@ -42,10 +42,9 @@ services:
     restart: always
     depends_on:
       - api
-    ports:
-      - "${WEB_PORT:-85}:80" # Mapeia a porta dinâmica do host para a porta 80 do Nginx
     networks:
       - ism_network
+      - proxy-network
 
 volumes:
   pgdata:
@@ -54,3 +53,5 @@ volumes:
 networks:
   ism_network:
     driver: bridge
+  proxy-network:
+    external: true
