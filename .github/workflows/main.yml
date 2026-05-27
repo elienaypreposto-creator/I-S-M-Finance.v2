@@ -23,10 +23,10 @@ jobs:
           script: |
             # Define as variáveis baseadas na branch que disparou a action
             if [ "${{ github.ref_name }}" = "master" ]; then
-              TARGET_DIR="~/ism-hml"
+              TARGET_DIR="$HOME/ism-hml"
               ENV_CONTENT="$ENV_HML"
             else
-              TARGET_DIR="~/ism-tst"
+              TARGET_DIR="$HOME/ism-tst"
               ENV_CONTENT="$ENV_TST"
             fi
             
