@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ism_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ism_user
+      POSTGRES_PASSWORD: ism_password
+      POSTGRES_DB: ismfinance
+    ports:
+      - "5434:5432" # Exposto para acesso externo se necessário (DBeaver, psql, etc)
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - ism_network
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: ism_api
+    restart: always
+    depends_on:
+      - postgres
+    environment:
+      # Sobrescreve o DATABASE_URL para apontar para o contêiner interno do postgres
+      - DATABASE_URL=postgresql://ism_user:ism_password@postgres:5432/ismfinance
+      - PORT=5000
+      - NODE_ENV=production
+      - RUN_LOCAL=true
+    env_file:
+      - .env # Carrega os demais segredos como SMTP e JWT_SECRET
+    ports:
+      - "5007:5000" # Exposto localmente, útil para debug direto
+    networks:
+      - ism_network
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        # Pega do seu .env local durante o build do frontend para o Kanban/Supabase
+        - VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+        - VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
+    container_name: ism_web
+    restart: always
+    depends_on:
+      - api
+    ports:
+      - "85:80" # Mapeia a porta 85 do host (VM) para a porta 80 do Nginx
+    networks:
+      - ism_network
+
+volumes:
+  pgdata:
+    driver: local
+
+networks:
+  ism_network:
+    driver: bridge

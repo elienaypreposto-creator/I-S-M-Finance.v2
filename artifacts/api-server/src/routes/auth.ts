@@ -330,13 +330,20 @@ router.post("/auth/setup-password", async (req, res) => {
     try {
         const setupToken = typeof req.body?.setupToken === "string" ? req.body.setupToken : null;
         const novaSenha = typeof req.body?.novaSenha === "string" ? req.body.novaSenha : null;
+        const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : null;
 
-        if (!setupToken || !novaSenha) {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "Campos obrigatórios: setupToken e novaSenha.");
+        if (!setupToken || !novaSenha || !email) {
+            return errorResponse(res, 400, "VALIDATION_ERROR", "Campos obrigatórios: email, setupToken e novaSenha.");
         }
 
         if (novaSenha.length < 8) {
             return errorResponse(res, 400, "VALIDATION_ERROR", "A senha deve ter pelo menos 8 caracteres.");
+        }
+        if (!/[A-Z]/.test(novaSenha)) {
+            return errorResponse(res, 400, "VALIDATION_ERROR", "A senha deve conter ao menos 1 letra maiúscula.");
+        }
+        if (!/[0-9]/.test(novaSenha)) {
+            return errorResponse(res, 400, "VALIDATION_ERROR", "A senha deve conter ao menos 1 número.");
         }
 
         let tokenPayload: { sub: string; email: string };
@@ -344,6 +351,10 @@ router.post("/auth/setup-password", async (req, res) => {
             tokenPayload = await verifyPurposeToken(setupToken, "password_setup");
         } catch {
             return errorResponse(res, 401, "INVALID_TOKEN", "setupToken inválido ou expirado.");
+        }
+
+        if (tokenPayload.email !== email) {
+            return errorResponse(res, 403, "FORBIDDEN", "Tentativa de manipulação de e-mail detectada.");
         }
 
         const usuarioId = parseInt(tokenPayload.sub, 10);
@@ -416,6 +427,12 @@ router.post("/auth/reset-password", async (req, res) => {
 
         if (novaSenha.length < 8) {
             return errorResponse(res, 400, "VALIDATION_ERROR", "A senha deve ter pelo menos 8 caracteres.");
+        }
+        if (!/[A-Z]/.test(novaSenha)) {
+            return errorResponse(res, 400, "VALIDATION_ERROR", "A senha deve conter ao menos 1 letra maiúscula.");
+        }
+        if (!/[0-9]/.test(novaSenha)) {
+            return errorResponse(res, 400, "VALIDATION_ERROR", "A senha deve conter ao menos 1 número.");
         }
 
         let tokenPayload: { sub: string; email: string };

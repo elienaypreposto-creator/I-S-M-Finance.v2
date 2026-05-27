@@ -51,20 +51,37 @@ function docNumeros(s: string) {
 function parceiroRowToFormValues(p: ParceiroRow): ParceiroFormValues {
   const tipo = (p.tipo_pessoa === "PF" ? "PF" : "PJ") as "PF" | "PJ";
   const rawDoc = docNumeros(String(p.cpf_cnpj ?? ""));
+
+  let pixChave = "";
+  let pixTipoRecebedor = tipo;
+  const cpix = p.chaves_pix as Array<{ tipo: string; chave: string }> | null;
+  if (cpix && Array.isArray(cpix) && cpix.length > 0) {
+    pixChave = cpix[0].chave;
+    pixTipoRecebedor = cpix[0].tipo as "PF" | "PJ";
+  }
+
+  let agencia = "";
+  let contaNumero = "";
+  const dbanc = p.dados_bancarios as Array<any> | null;
+  if (dbanc && Array.isArray(dbanc) && dbanc.length > 0) {
+    agencia = dbanc[0].agencia || "";
+    contaNumero = dbanc[0].conta || "";
+  }
+
   return {
     tipoPessoa: tipo,
     nomeRazao: p.nome,
     documento: rawDoc ? mascararDocumento(rawDoc, tipo) : "",
     departamento_id: p.departamento_id ? String(p.departamento_id) : "",
     tiposParceiro: tiposArray(p.tipos),
-    formaPagamento: "PIX",
-    email: "",
-    telefone: "",
-    pixTipoRecebedor: tipo,
-    pixChave: "",
-    agencia: "",
+    formaPagamento: p.forma_pagamento_preferencial || "PIX",
+    email: p.email || "",
+    telefone: p.telefone ? mascararTelefone(p.telefone) : "",
+    pixTipoRecebedor,
+    pixChave,
+    agencia,
     contaTipo: "Corrente",
-    contaNumero: "",
+    contaNumero,
     cpfCnpjBancario: "",
   };
 }
@@ -77,11 +94,16 @@ type ParceiroRow = {
   cpf_cnpj: string | null;
   nome: string;
   nome_fantasia: string | null;
+  email: string | null;
+  telefone: string | null;
+  forma_pagamento_preferencial: string | null;
   tipos: unknown;
   departamento_id: number | null;
   centro_custo_id: number | null;
   ativo: boolean;
   bloqueado: boolean;
+  chaves_pix: unknown;
+  dados_bancarios: unknown;
 };
 
 function tiposArray(t: unknown): string[] {
@@ -118,6 +140,9 @@ function parceiroFormToApiBody(values: ParceiroFormValues) {
     cpf_cnpj: dig || null,
     nome: values.nomeRazao.trim(),
     nome_fantasia: null as string | null,
+    email: values.email.trim() || null,
+    telefone: docNumeros(values.telefone) || null,
+    forma_pagamento_preferencial: values.formaPagamento,
     tipos: values.tiposParceiro,
     departamento_id: departamento_id ?? null,
     centro_custo_id: null as number | null,
@@ -356,7 +381,7 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                 </label>
                 <select
                   {...register("departamento_id")}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-black outline-none focus:border-primary/50 transition-colors">
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors [&>option]:bg-[#1A1A24] [&>option]:text-white">
                   <option value="">Selecione...</option>
                   {departamentos.map((d) => (
                     <option key={d.id} value={String(d.id)}>
@@ -419,7 +444,7 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                       <label className="text-xs text-muted-foreground mb-1 block">Tipo do Recebedor</label>
                       <select
                         {...register("pixTipoRecebedor")}
-                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-black outline-none">
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 [&>option]:bg-[#1A1A24] [&>option]:text-white">
                         <option value="PF">Pessoa Física</option>
                         <option value="PJ">Pessoa Jurídica</option>
                       </select>
@@ -442,7 +467,7 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                       <label className="text-xs text-muted-foreground mb-1 block">Tipo Recebedor</label>
                       <select
                         {...register("pixTipoRecebedor")}
-                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-black outline-none">
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 [&>option]:bg-[#1A1A24] [&>option]:text-white">
                         <option value="PF">Pessoa Física</option>
                         <option value="PJ">Pessoa Jurídica</option>
                       </select>
@@ -476,7 +501,7 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                     </div>
                     <div>
                       <label className="text-xs text-muted-foreground mb-1 block">Tipo de Conta *</label>
-                      <select {...register("contaTipo")} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-black outline-none">
+                      <select {...register("contaTipo")} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 [&>option]:bg-[#1A1A24] [&>option]:text-white">
                         <option>Corrente</option>
                         <option>Poupança</option>
                       </select>

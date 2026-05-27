@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { useForm } from "react-hook-form";
+import { useState, useEffect, useRef } from "react";
+import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { PageHeader } from "@/components/shared/page-header";
@@ -38,8 +38,8 @@ type UsuarioRow = {
 const usuarioFormSchema = z.object({
   nome: z.string().trim().min(2, "Nome deve ter ao menos 2 caracteres."),
   email: z.string().email("E-mail inválido."),
-  /** Obrigatória só na criação — validada no onSubmit */
-  senha: z.string().optional(),
+  cargo: z.string().optional(),
+  perfil_base: z.string().optional(),
   telefone: z.string().optional(),
   celular: z.string().optional(),
 });
@@ -337,31 +337,124 @@ interface UserModalProps {
   onSave: (values: UsuarioFormValues) => void;
 }
 
+function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
+  useEffect(() => {
+    const handler = setTimeout(() => setDebouncedValue(value), delay);
+    return () => clearTimeout(handler);
+  }, [value, delay]);
+  return debouncedValue;
+}
+
+function ParceiroAutocomplete({
+  value,
+  onChange,
+  onSelectFull,
+  disabled
+}: {
+  value: string;
+  onChange: (val: string) => void;
+  onSelectFull: (parceiro: any) => void;
+  disabled?: boolean;
+}) {
+  const [search, setSearch] = useState(value || "");
+  const debouncedSearch = useDebounce(search, 200);
+  const [isOpen, setIsOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const { data: parceiros = [], isLoading } = useQuery<{id: number, nome: string, email: string | null, telefone: string | null, celular: string | null}[]>({
+    queryKey: ["parceiros-search", debouncedSearch],
+    queryFn: () => fetchApiData(`/parceiros?limit=20&search=${encodeURIComponent(debouncedSearch)}`),
+    enabled: debouncedSearch.length >= 3,
+  });
+
+  return (
+    <div className="relative" ref={wrapperRef}>
+      <input
+        type="text"
+        disabled={disabled}
+        value={search}
+        onChange={(e) => {
+          setSearch(e.target.value);
+          onChange(e.target.value);
+          setIsOpen(true);
+        }}
+        onFocus={() => setIsOpen(true)}
+        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors disabled:opacity-50"
+        placeholder="Digite pelo menos 3 letras para buscar..."
+        autoComplete="off"
+      />
+      {isOpen && search.length >= 3 && !disabled && (
+        <div className="absolute top-full left-0 right-0 mt-2 bg-[#1A1A24] border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden max-h-60 overflow-y-auto">
+          {isLoading ? (
+            <div className="p-3 text-xs text-muted-foreground text-center flex items-center justify-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" /> Buscando...
+            </div>
+          ) : parceiros.length > 0 ? (
+            <ul className="py-1">
+              {parceiros.map((p) => (
+                <li
+                  key={p.id}
+                  onClick={() => {
+                    setSearch(p.nome);
+                    onChange(p.nome);
+                    onSelectFull(p);
+                    setIsOpen(false);
+                  }}
+                  className="px-4 py-2.5 text-sm text-white hover:bg-white/10 cursor-pointer transition-colors"
+                >
+                  {p.nome}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="p-3 text-xs text-muted-foreground text-center">Nenhum parceiro encontrado</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UserModal({ initialData, onClose, isPending, onSave }: UserModalProps) {
   const isEdit = !!initialData;
 
   const {
     register,
     handleSubmit,
+    setValue,
+    control,
     formState: { errors },
-    setError,
   } = useForm<UsuarioFormValues>({
     resolver: zodResolver(usuarioFormSchema),
     defaultValues: {
       nome: initialData?.nome ?? "",
       email: initialData?.email ?? "",
+      cargo: initialData?.cargo ?? "",
+      perfil_base: initialData?.perfil_base ?? "",
       telefone: initialData?.telefone ?? "",
       celular: initialData?.celular ?? "",
-      senha: "",
     },
   });
 
   const onSubmit = (values: UsuarioFormValues) => {
-    if (!isEdit && (!values.senha || values.senha.length < 6)) {
-      setError("senha", { message: "Senha deve ter ao menos 6 caracteres." });
-      return;
-    }
     onSave(values);
+  };
+
+  const handleParceiroSelect = (parceiro: any) => {
+    if (parceiro.email) setValue("email", parceiro.email, { shouldValidate: true });
+    if (parceiro.telefone) setValue("telefone", parceiro.telefone);
+    if (parceiro.celular) setValue("celular", parceiro.celular);
   };
 
   return (
@@ -383,11 +476,17 @@ function UserModal({ initialData, onClose, isPending, onSave }: UserModalProps) 
               <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
                 Nome Completo <span className="text-destructive">*</span>
               </label>
-              <input
-                {...register("nome")}
-                autoFocus
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
-                placeholder="Ex: João Silva"
+              <Controller
+                name="nome"
+                control={control}
+                render={({ field }) => (
+                  <ParceiroAutocomplete
+                    value={field.value}
+                    onChange={field.onChange}
+                    onSelectFull={handleParceiroSelect}
+                    disabled={isEdit}
+                  />
+                )}
               />
               {errors.nome && (
                 <p className="text-xs text-destructive mt-1">{errors.nome.message}</p>
@@ -397,12 +496,13 @@ function UserModal({ initialData, onClose, isPending, onSave }: UserModalProps) 
             {/* E-mail */}
             <div>
               <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                E-mail <span className="text-destructive">*</span>
+                E-mail (Login) <span className="text-destructive">*</span>
               </label>
               <input
                 {...register("email")}
                 type="email"
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+                disabled={isEdit}
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors disabled:opacity-50"
                 placeholder="joao@empresa.com.br"
               />
               {errors.email && (
@@ -410,24 +510,39 @@ function UserModal({ initialData, onClose, isPending, onSave }: UserModalProps) 
               )}
             </div>
 
-            {/* Senha — apenas na criação */}
-            {!isEdit && (
+            {/* Cargo e Perfil Base */}
+            <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                  Senha <span className="text-destructive">*</span>
+                  Cargo
                 </label>
                 <input
-                  {...register("senha")}
-                  type="password"
+                  {...register("cargo")}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
-                  placeholder="Mínimo 6 caracteres"
+                  placeholder="Ex: Analista"
                 />
-                {errors.senha && (
-                  <p className="text-xs text-destructive mt-1">{errors.senha.message}</p>
-                )}
-                <p className="text-xs text-muted-foreground mt-1">
-                  Na Fase 6, o login será migrado para Supabase Auth.
-                </p>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                  Perfil Base
+                </label>
+                <select
+                  {...register("perfil_base")}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors [&>option]:bg-[#1A1A24] [&>option]:text-white"
+                >
+                  <option value="">Nenhum</option>
+                  {Object.keys(perfisBase).map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {!isEdit && (
+              <div className="bg-primary/10 border border-primary/20 rounded-xl p-3 text-xs text-primary mt-2">
+                <strong>Atenção:</strong> Ao criar o usuário, será enviada uma senha de uso único para o e-mail cadastrado.
               </div>
             )}
 
@@ -506,7 +621,7 @@ export default function Usuarios() {
     setEditingUsuario(null);
   };
 
-  const { data: usuarios = [], isLoading, isError } = useQuery<UsuarioRow[]>({
+  const { data: usuarios = [], isLoading, isError, error } = useQuery<UsuarioRow[]>({
     queryKey: ["usuarios"],
     // limit=100 cobre a maioria dos casos; paginação avançada virá na Fase 4+
     queryFn: () => fetchApiData<UsuarioRow[]>("/usuarios?limit=100"),
@@ -520,12 +635,19 @@ export default function Usuarios() {
         body: JSON.stringify({
           nome: data.nome,
           email: data.email,
-          senha: data.senha,
+          cargo: data.cargo || undefined,
+          perfil_base: data.perfil_base || undefined,
           telefone: data.telefone || undefined,
           celular: data.celular || undefined,
         }),
       }),
-    onSuccess: () => {
+    onSuccess: async (createdUser, variables) => {
+      if (variables.perfil_base && perfisBase[variables.perfil_base]) {
+        await fetchApiData(`/usuarios/${createdUser.id}/permissoes`, {
+          method: "PUT",
+          body: JSON.stringify({ permissoes: perfisBase[variables.perfil_base] }),
+        }).catch(console.error);
+      }
       void queryClient.invalidateQueries({ queryKey: ["usuarios"] });
       toast({ title: "Usuário criado com sucesso." });
       closeUserModal();
@@ -542,11 +664,19 @@ export default function Usuarios() {
         body: JSON.stringify({
           nome: data.nome,
           email: data.email,
+          cargo: data.cargo || undefined,
+          perfil_base: data.perfil_base || undefined,
           telefone: data.telefone || undefined,
           celular: data.celular || undefined,
         }),
-      }),
-    onSuccess: () => {
+      }).then(res => ({ user: res, variables: data })),
+    onSuccess: async ({ user, variables }) => {
+      if (variables.perfil_base && perfisBase[variables.perfil_base]) {
+        await fetchApiData(`/usuarios/${user.id}/permissoes`, {
+          method: "PUT",
+          body: JSON.stringify({ permissoes: perfisBase[variables.perfil_base] }),
+        }).catch(console.error);
+      }
       void queryClient.invalidateQueries({ queryKey: ["usuarios"] });
       toast({ title: "Usuário atualizado com sucesso." });
       closeUserModal();
@@ -642,9 +772,14 @@ export default function Usuarios() {
           )}
 
           {isError && !isLoading && (
-            <div className="glass-panel rounded-2xl p-5 border border-destructive/20 flex items-center gap-3">
-              <AlertCircle className="w-5 h-5 text-destructive shrink-0" />
-              <p className="text-sm text-muted-foreground">Erro ao carregar usuários. Tente novamente.</p>
+            <div className="glass-panel rounded-2xl p-6 border border-destructive/20 flex flex-col items-center justify-center text-center gap-3 bg-destructive/5">
+              <div className="w-12 h-12 rounded-full bg-destructive/10 flex items-center justify-center text-destructive mb-2">
+                <Shield className="w-6 h-6" />
+              </div>
+              <h3 className="text-lg font-semibold text-white">Acesso Restrito</h3>
+              <p className="text-sm text-muted-foreground max-w-sm">
+                {error instanceof Error ? error.message : "Você não tem permissão para visualizar esta página ou ocorreu um erro."}
+              </p>
             </div>
           )}
 

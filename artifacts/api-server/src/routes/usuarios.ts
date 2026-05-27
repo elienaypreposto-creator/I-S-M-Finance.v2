@@ -131,7 +131,8 @@ router.post(
 
             // E-mail fora da transacção DB - se falhar, reverte o OTP para forçar retry
             try {
-                await sendWelcomeEmail(email, otp);
+                const originUrl = req.headers.origin || process.env.FRONTEND_URL || "http://localhost:5173";
+                await sendWelcomeEmail(email, nome, otp, originUrl);
             } catch (emailErr) {
                 await db
                     .update(usuariosTable)
