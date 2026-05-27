@@ -3,14 +3,13 @@ version: '3.8'
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: ism_postgres
     restart: always
     environment:
       POSTGRES_USER: ism_user
       POSTGRES_PASSWORD: ism_password
       POSTGRES_DB: ismfinance
     ports:
-      - "5434:5432" # Exposto para acesso externo se necessário (DBeaver, psql, etc)
+      - "${DB_PORT:-5434}:5432" # Exposto para acesso externo se necessário (DBeaver, psql, etc)
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
@@ -20,7 +19,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
-    container_name: ism_api
     restart: always
     depends_on:
       - postgres
@@ -33,7 +31,7 @@ services:
     env_file:
       - .env # Carrega os demais segredos como SMTP e JWT_SECRET
     ports:
-      - "5007:5000" # Exposto localmente, útil para debug direto
+      - "${API_PORT:-5007}:5000" # Exposto localmente, útil para debug direto
     networks:
       - ism_network
 
@@ -41,13 +39,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.web
-
-    container_name: ism_web
     restart: always
     depends_on:
       - api
     ports:
-      - "85:80" # Mapeia a porta 85 do host (VM) para a porta 80 do Nginx
+      - "${WEB_PORT:-85}:80" # Mapeia a porta dinâmica do host para a porta 80 do Nginx
     networks:
       - ism_network
 
