@@ -25,7 +25,7 @@ function FormModal({ isOpen, onClose, onSubmit, initialData }: any) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="bg-[#1a1c23] border border-white/10 rounded-2xl w-full max-w-md p-6 shadow-2xl">
-        <h2 className="text-lg font-bold text-white mb-4">{initialData ? 'Editar Categoria' : 'Nova Categoria'}</h2>
+        <h2 className="text-lg font-bold text-white mb-4">{initialData?.id ? 'Editar Categoria' : 'Nova Categoria'}</h2>
         
         <form onSubmit={(e) => {
           e.preventDefault();
@@ -76,10 +76,13 @@ function FormModal({ isOpen, onClose, onSubmit, initialData }: any) {
 export default function PlanoContas() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState<PlanoConta | null>(null);
-  const [modalKey, setModalKey] = useState(0);
+
+  //  Estado atômico: open, data e key sempre atualizados juntos no mesmo render
+  const [modal, setModal] = useState<{ open: boolean; data: PlanoConta | null; key: number }>({
+    open: false,
+    data: null,
+    key: 0,
+  });
 
   const { data: contas = [], isLoading } = useQuery<PlanoConta[]>({
     queryKey: ['plano-contas'],
@@ -97,8 +100,7 @@ export default function PlanoContas() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['plano-contas'] });
-      setModalOpen(false);
-      setEditingItem(null);
+      setModal(prev => ({ ...prev, open: false, data: null }));
       toast({ title: 'Sucesso', description: 'Categoria salva com sucesso.' });
     },
     onError: (error) => {
@@ -114,16 +116,20 @@ export default function PlanoContas() {
     }
   });
 
-  const handleCreate = (typeDef?: string) => {
-    setEditingItem(typeDef ? { tipo: typeDef } as any : null);
-    setModalKey((k) => k + 1);
-    setModalOpen(true);
+  const handleCreate = (tipoDef?: string) => {
+    setModal(prev => ({
+      open: true,
+      data: tipoDef ? { tipo: tipoDef } as any : null,
+      key: prev.key + 1,
+    }));
   };
 
   const handleEdit = (item: PlanoConta) => {
-    setEditingItem(item);
-    setModalKey((k) => k + 1);
-    setModalOpen(true);
+    setModal(prev => ({
+      open: true,
+      data: item,
+      key: prev.key + 1,
+    }));
   };
 
   const handleDelete = (id: number) => {
@@ -140,7 +146,6 @@ export default function PlanoContas() {
   const custos = contas.filter(c => c.tipo === 'custo');
   const despesas = contas.filter(c => c.tipo === 'despesa');
 
-  // helper to group by categoria inside a tipo
   const groupByCategoria = (items: PlanoConta[]) => {
     const grouped: Record<string, PlanoConta[]> = {};
     items.forEach(item => {
@@ -226,11 +231,11 @@ export default function PlanoContas() {
       </div>
 
       <FormModal
-        key={modalKey}
-        isOpen={modalOpen}
-        onClose={() => { setModalOpen(false); setEditingItem(null); }}
+        key={modal.key}
+        isOpen={modal.open}
+        onClose={() => setModal(prev => ({ ...prev, open: false, data: null }))}
         onSubmit={handleSubmit}
-        initialData={editingItem}
+        initialData={modal.data}
       />
     </div>
   );
