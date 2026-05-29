@@ -1,7 +1,7 @@
 import { ReactNode } from "react";
 import { AppSidebar } from "./app-sidebar";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { Bell, User } from "lucide-react";
+import { Bell, User, LogOut } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 
 function getInitials(nome: string): string {
@@ -9,7 +9,7 @@ function getInitials(nome: string): string {
 }
 
 export function AppLayout({ children }: { children: ReactNode }) {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
 
   const style = {
     "--sidebar-width": "17rem",
@@ -41,13 +41,20 @@ export function AppLayout({ children }: { children: ReactNode }) {
                   <p className="text-sm font-semibold leading-none text-foreground">
                     {user?.nome ?? "—"}
                   </p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Administrador</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{user?.cargo || "Administrador"}</p>
+                </div>
+                <div
+                  className="w-9 h-9 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-white text-xs font-bold shadow-lg border border-white/10"
+                >
+                  {user?.nome ? getInitials(user.nome) : <User className="w-5 h-5" />}
                 </div>
                 <button
                   type="button"
-                  className="w-9 h-9 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-white text-xs font-bold shadow-lg border border-white/10 hover:opacity-90 transition-opacity"
+                  title="Sair do sistema"
+                  onClick={logout}
+                  className="ml-1 w-9 h-9 flex items-center justify-center rounded-xl bg-white/5 hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors border border-white/10"
                 >
-                  {user?.nome ? getInitials(user.nome) : <User className="w-5 h-5" />}
+                  <LogOut className="w-4 h-4" />
                 </button>
               </div>
             </div>

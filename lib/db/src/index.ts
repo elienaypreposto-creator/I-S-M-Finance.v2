@@ -22,7 +22,10 @@ if (!process.env.DATABASE_URL) {
 export const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
   max: 5,
-  ssl: { rejectUnauthorized: false },
+  // O SSL é necessário para Supabase ou bancos remotos, mas para o contêiner Docker local ele deve estar desligado por padrão
+  ssl: process.env.DB_REQUIRE_SSL === "true" || process.env.DATABASE_URL.includes("supabase.co")
+    ? { rejectUnauthorized: false }
+    : undefined,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
 });

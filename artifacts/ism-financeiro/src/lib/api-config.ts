@@ -86,7 +86,9 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
         if (!newToken) {
             // Refresh falhou - força logout sem loop
             authStorage.clearTokens();
-            window.location.href = "/login";
+            if (window.location.pathname !== "/login") {
+                window.location.href = "/login";
+            }
             throw new Error("Sessão expirada. Faça login novamente.");
         }
 
@@ -95,7 +97,16 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
 
         if (!retryRes.ok) {
             const errBody = await retryRes.json().catch(() => ({}));
+            const code = errBody.errors?.[0]?.code;
             const message = errBody.errors?.[0]?.message ?? `Erro ${retryRes.status}`;
+            
+            if (code === "UNAUTHORIZED") {
+                authStorage.clearTokens();
+                if (window.location.pathname !== "/login") {
+                    window.location.href = "/login";
+                }
+                throw new Error("Sessão expirada. Faça login novamente.");
+            }
             throw new Error(message);
         }
 
@@ -104,7 +115,17 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
 
     if (!res.ok) {
         const errorBody = await res.json().catch(() => ({}));
+        const code = errorBody.errors?.[0]?.code;
         const message = errorBody.errors?.[0]?.message ?? errorBody.error ?? `Erro ${res.status}`;
+        
+        if (code === "UNAUTHORIZED" || res.status === 401) {
+            authStorage.clearTokens();
+            if (window.location.pathname !== "/login") {
+                window.location.href = "/login";
+            }
+            throw new Error("Sessão expirada. Faça login novamente.");
+        }
+        
         throw new Error(message);
     }
 

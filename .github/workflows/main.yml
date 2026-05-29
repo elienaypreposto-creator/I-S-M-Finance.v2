@@ -1,0 +1,48 @@
+name: Deploy ISM Finance
+
+on:
+  push:
+    branches:
+      - master
+      - develop
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Executando deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          ENV_HML: ${{ secrets.ENV_FILE_HML }}
+          ENV_TST: ${{ secrets.ENV_FILE_TST }}
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ubuntu
+          key: ${{ secrets.SSH_KEY }}
+          envs: ENV_HML,ENV_TST
+          script: |
+            # Define as variáveis baseadas na branch que disparou a action
+            if [ "${{ github.ref_name }}" = "master" ]; then
+              TARGET_DIR="$HOME/ism-hml"
+              ENV_CONTENT="$ENV_HML"
+            else
+              TARGET_DIR="$HOME/ism-tst"
+              ENV_CONTENT="$ENV_TST"
+            fi
+            
+            echo "Iniciando deploy no diretório: $TARGET_DIR para a branch: ${{ github.ref_name }}"
+            
+            # Entra na pasta do projeto
+            cd $TARGET_DIR
+            
+            # Puxa as atualizações do git
+            git fetch --all
+            git checkout ${{ github.ref_name }}
+            git pull origin ${{ github.ref_name }}
+            
+            # Sobrescreve o .env na VM com o secret do GitHub correspondente ao ambiente
+            echo "$ENV_CONTENT" > .env
+            
+            # Reinicia os containers aplicando as mudanças e recriando as imagens
+            docker compose down
+            docker compose up -d --build

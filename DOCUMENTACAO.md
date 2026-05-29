@@ -712,3 +712,22 @@ O I-S-M-Finance é um sistema **all-in-one** de gestão financeira que abrange:
 5. **Cadastro de parceiros** — Clientes, fornecedores com dados bancários e Pix
 6. **Business intelligence** — API REST para Power BI e dashboards externos
 7. **Relatórios** — Fechamento mensal, DRE gerencial, fluxo de caixa, análise de inadimplência
+
+
+Após conectar com sucesso os containers, tem que criar o banco de dados a primeira vez: 
+
+```sh
+docker exec -it 7324efc1f252 sh -c 'URL=$(echo $DATABASE_URL | sed "s/database=siga/database=master/"); echo "CREATE DATABASE siga;" | npx prisma db execute --url "$URL" --stdin'
+```
+
+depois rodar o prisma migrate
+
+```sh
+docker exec -it 7324efc1f252 npx prisma db push
+```
+
+depois botar pra executar o script de criar usuários:
+
+```sh
+ docker exec -it 7324efc1f252 node scripts/createUsers.js
+ ```

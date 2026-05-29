@@ -111,6 +111,7 @@ export const signRefreshToken = async (
         .setExpirationTime(`${REFRESH_TOKEN_TTL}s`)
         .setIssuer("ism-finance")
         .setAudience("ism-finance-refresh")
+        .setJti(crypto.randomUUID())
         .sign(getRefreshKey());
 
     const tokenHash = crypto.createHash("sha256").update(token, "utf8").digest("hex");

@@ -30,23 +30,48 @@ function createTransporter() {
 
 const FROM = process.env.SMTP_FROM ?? "ISM Finance <noreply@ism.finance>";
 
-export async function sendWelcomeEmail(to: string, otp: string): Promise<void> {
+export async function sendWelcomeEmail(to: string, nome: string, otp: string, originUrl: string): Promise<void> {
+    const link = `${originUrl}/primeiro-acesso?email=${encodeURIComponent(to)}`;
+
     await createTransporter().sendMail({
         from: FROM,
         to,
-        subject: "ISM Finance — Seu código de acesso inicial",
-        text: `Bem-vindo!\n\nO seu código de acesso é: ${otp}\n\nEste código é de uso único. Acesse o sistema para definir a sua senha.`,
+        subject: "ISM Finance — Bem-vindo! Acesso à plataforma",
+        text: `Olá, ${nome}!\n\nBem-vindo ao ISM Finance.\n\nSeu acesso inicial:\nLogin: ${to}\nSenha de Acesso Inicial: ${otp}\n\nAcesse o sistema para definir sua senha permanente:\n${link}`,
         html: `
-      <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
-        <h2 style="color:#1a1a1a">Bem-vindo ao ISM Finance</h2>
-        <p>O seu código de acesso inicial é:</p>
-        <div style="font-size:32px;font-weight:bold;letter-spacing:6px;color:#1a1a1a;background:#f4f4f4;padding:16px 24px;border-radius:8px;text-align:center">
-          ${otp}
+      <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 500px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+        <div style="background-color: #1a1a24; padding: 24px; text-align: center;">
+          <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600;">ISM Finance</h1>
         </div>
-        <p style="color:#666;font-size:13px;margin-top:16px">
-          Este código é de uso único e expira em 1 hora.
-          Acesse o sistema e siga as instruções para definir a sua senha permanente.
-        </p>
+        <div style="padding: 32px 24px;">
+          <h2 style="color: #111827; font-size: 20px; margin-top: 0;">Olá, ${nome}!</h2>
+          <p style="color: #4b5563; font-size: 15px; line-height: 1.6;">
+            Bem-vindo ao ISM Finance! Sua conta foi criada com sucesso. Abaixo estão as suas credenciais de acesso inicial:
+          </p>
+          
+          <div style="background-color: #f3f4f6; border-radius: 8px; padding: 20px; margin: 24px 0;">
+            <p style="margin: 0 0 12px 0; color: #374151; font-size: 14px;"><strong>Usuário (Login):</strong> <span style="color: #2563eb;">${to}</span></p>
+            <p style="margin: 0; color: #374151; font-size: 14px;"><strong>Senha Inicial:</strong></p>
+            <div style="font-size: 28px; font-weight: bold; letter-spacing: 4px; color: #111827; text-align: center; margin-top: 8px; padding: 12px; background-color: #e5e7eb; border-radius: 6px;">
+              ${otp}
+            </div>
+          </div>
+          
+          <p style="color: #4b5563; font-size: 15px; line-height: 1.6; margin-bottom: 24px;">
+            Essa senha é de uso único. No seu primeiro acesso, você será solicitado a criar uma senha definitiva e segura.
+          </p>
+          
+          <div style="text-align: center;">
+            <a href="${link}" style="display: inline-block; background-color: #0ea5e9; color: #ffffff; padding: 14px 28px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 16px; transition: background-color 0.2s;">
+              Acessar a Plataforma
+            </a>
+          </div>
+        </div>
+        <div style="background-color: #f9fafb; padding: 16px 24px; text-align: center; border-top: 1px solid #e5e7eb;">
+          <p style="color: #6b7280; font-size: 12px; margin: 0;">
+            Este e-mail é gerado automaticamente. Por favor, não responda.
+          </p>
+        </div>
       </div>`,
     });
 }

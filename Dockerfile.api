@@ -1,0 +1,23 @@
+FROM node:22-alpine
+
+WORKDIR /app
+
+# Instalar pnpm
+RUN npm install -g pnpm@9
+
+# Copiar arquivos de configuração do workspace
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json tsconfig.json ./
+
+# Copiar os pacotes necessários para o backend
+COPY lib/ ./lib/
+
+COPY artifacts/api-server/ ./artifacts/api-server/
+
+# Instalar dependências (ignora os pacotes ausentes como o frontend)
+RUN pnpm install --filter "@workspace/api-server..."
+
+# Fazer o build do backend
+RUN cd artifacts/api-server && pnpm run build
+
+# O comando de start entra na pasta do DB, roda o push (migrate), e depois inicia o servidor
+CMD sh -c "cd lib/db && pnpm run push && cd ../../artifacts/api-server && node dist/index.cjs"

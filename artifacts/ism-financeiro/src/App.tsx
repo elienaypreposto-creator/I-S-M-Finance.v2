@@ -31,6 +31,7 @@ import Usuarios from "./pages/configuracoes/usuarios";
 import Filiais from "./pages/configuracoes/filiais";
 import TokensApi from "./pages/configuracoes/tokens-api";
 import Login from "./pages/auth/login";
+import PrimeiroAcesso from "./pages/auth/primeiro-acesso";
 import { authStorage } from "./lib/api-config";
 
 const queryClient = new QueryClient({
@@ -66,6 +67,7 @@ function Router() {
     return (
         <Switch>
             <Route path="/login" component={Login} />
+            <Route path="/primeiro-acesso" component={PrimeiroAcesso} />
             <PrivateRoute path="/" component={Dashboard} />
 
             <PrivateRoute path="/kanban" component={Kanban} />

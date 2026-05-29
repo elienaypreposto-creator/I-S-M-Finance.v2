@@ -48,6 +48,44 @@ function docNumeros(s: string) {
   return s.replace(/\D/g, "");
 }
 
+function parceiroRowToFormValues(p: ParceiroRow): ParceiroFormValues {
+  const tipo = (p.tipo_pessoa === "PF" ? "PF" : "PJ") as "PF" | "PJ";
+  const rawDoc = docNumeros(String(p.cpf_cnpj ?? ""));
+
+  let pixChave = "";
+  let pixTipoRecebedor = tipo;
+  const cpix = p.chaves_pix as Array<{ tipo: string; chave: string }> | null;
+  if (cpix && Array.isArray(cpix) && cpix.length > 0) {
+    pixChave = cpix[0].chave;
+    pixTipoRecebedor = cpix[0].tipo as "PF" | "PJ";
+  }
+
+  let agencia = "";
+  let contaNumero = "";
+  const dbanc = p.dados_bancarios as Array<any> | null;
+  if (dbanc && Array.isArray(dbanc) && dbanc.length > 0) {
+    agencia = dbanc[0].agencia || "";
+    contaNumero = dbanc[0].conta || "";
+  }
+
+  return {
+    tipoPessoa: tipo,
+    nomeRazao: p.nome,
+    documento: rawDoc ? mascararDocumento(rawDoc, tipo) : "",
+    departamento_id: p.departamento_id ? String(p.departamento_id) : "",
+    tiposParceiro: tiposArray(p.tipos),
+    formaPagamento: p.forma_pagamento_preferencial || "PIX",
+    email: p.email || "",
+    telefone: p.telefone ? mascararTelefone(p.telefone) : "",
+    pixTipoRecebedor,
+    pixChave,
+    agencia,
+    contaTipo: "Corrente",
+    contaNumero,
+    cpfCnpjBancario: "",
+  };
+}
+
 type DepartamentoRow = { id: number; nome: string };
 
 type ParceiroRow = {
@@ -56,53 +94,20 @@ type ParceiroRow = {
   cpf_cnpj: string | null;
   nome: string;
   nome_fantasia: string | null;
+  email: string | null;
+  telefone: string | null;
+  forma_pagamento_preferencial: string | null;
   tipos: unknown;
   departamento_id: number | null;
   centro_custo_id: number | null;
   ativo: boolean;
   bloqueado: boolean;
-  email?: string | null;
-  telefone?: string | null;
-  chaves_pix?: Array<{ tipo: string; chave: string }>;
-  dados_bancarios?: Array<{ banco: string; agencia: string; conta: string }>;
+  chaves_pix: unknown;
+  dados_bancarios: unknown;
 };
 
 function tiposArray(t: unknown): string[] {
   return Array.isArray(t) ? (t as string[]) : [];
-}
-
-function parceiroRowToFormValues(p: ParceiroRow): ParceiroFormValues {
-  const tipoPessoa = (p.tipo_pessoa === "PF" ? "PF" : "PJ") as "PF" | "PJ";
-  const rawDoc = docNumeros(String(p.cpf_cnpj ?? ""));
-
-  const pixChave = p.chaves_pix?.[0]?.chave ?? "";
-  const pixTipoRecebedor = (p.chaves_pix?.[0]?.tipo ?? tipoPessoa) as "PF" | "PJ";
-  const db = p.dados_bancarios?.[0];
-  const formaPagamento = db
-    ? (db.banco as "Boleto" | "TED" | "DOC")
-    : pixChave
-      ? "PIX"
-      : "PIX";
-
-  // Normaliza telefone vindo da API (pode chegar como string numérica ou já formatado)
-  const telefoneRaw = p.telefone ? String(p.telefone).replace(/\D/g, "") : "";
-
-  return {
-    tipoPessoa,
-    nomeRazao: p.nome ?? "",
-    documento: rawDoc ? mascararDocumento(rawDoc, tipoPessoa) : "",
-    departamento_id: p.departamento_id ? String(p.departamento_id) : "",
-    tiposParceiro: tiposArray(p.tipos),
-    formaPagamento,
-    email: p.email ?? "",
-    telefone: telefoneRaw ? mascararTelefone(telefoneRaw) : "",
-    pixTipoRecebedor,
-    pixChave,
-    agencia: db?.agencia ?? "",
-    contaTipo: "Corrente",
-    contaNumero: db?.conta ?? "",
-    cpfCnpjBancario: "",
-  };
 }
 
 function parceiroFormToApiBody(values: ParceiroFormValues) {
@@ -115,16 +120,14 @@ function parceiroFormToApiBody(values: ParceiroFormValues) {
     banco: string;
     agencia: string;
     conta: string;
+    digito_agencia?: string;
+    digito_conta?: string;
   }> = [];
 
   if (values.formaPagamento === "PIX" && values.pixChave.trim()) {
     chaves_pix.push({ tipo: values.pixTipoRecebedor, chave: values.pixChave.trim() });
   }
-  if (
-    values.formaPagamento === "Boleto" ||
-    values.formaPagamento === "TED" ||
-    values.formaPagamento === "DOC"
-  ) {
+  if (values.formaPagamento === "Boleto" || values.formaPagamento === "TED" || values.formaPagamento === "DOC") {
     dados_bancarios.push({
       banco: values.formaPagamento,
       agencia: values.agencia.trim(),
@@ -137,37 +140,16 @@ function parceiroFormToApiBody(values: ParceiroFormValues) {
     cpf_cnpj: dig || null,
     nome: values.nomeRazao.trim(),
     nome_fantasia: null as string | null,
+    email: values.email.trim() || null,
+    telefone: docNumeros(values.telefone) || null,
+    forma_pagamento_preferencial: values.formaPagamento,
     tipos: values.tiposParceiro,
     departamento_id: departamento_id ?? null,
     centro_custo_id: null as number | null,
     ativo: true,
     bloqueado: false,
-    email: values.email?.trim() || null,
-    telefone: docNumeros(values.telefone) || null,
     chaves_pix,
     dados_bancarios,
-  };
-}
-
-/**
- * Monta o body de atualização parcial (toggle ativo/inativo) preservando
- * todos os campos existentes do parceiro para evitar sobrescrever dados.
- */
-function parceiroRowToApiBody(p: ParceiroRow) {
-  return {
-    tipo_pessoa: p.tipo_pessoa,
-    cpf_cnpj: p.cpf_cnpj ?? null,
-    nome: p.nome,
-    nome_fantasia: p.nome_fantasia ?? null,
-    tipos: p.tipos,
-    departamento_id: p.departamento_id ?? null,
-    centro_custo_id: p.centro_custo_id ?? null,
-    ativo: p.ativo,
-    bloqueado: p.bloqueado,
-    email: p.email ?? null,
-    telefone: p.telefone ? String(p.telefone).replace(/\D/g, "") : null,
-    chaves_pix: p.chaves_pix ?? [],
-    dados_bancarios: p.dados_bancarios ?? [],
   };
 }
 
@@ -177,22 +159,12 @@ function ConfirmacaoCancelModal({ onConfirm, onDismiss }: { onConfirm: () => voi
       <div className="bg-card border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl p-6 text-center">
         <AlertTriangle className="w-10 h-10 text-warning mx-auto mb-3" />
         <h3 className="font-bold text-white text-lg mb-1">Cancelar cadastro?</h3>
-        <p className="text-sm text-muted-foreground mb-5">
-          As informações preenchidas serão perdidas. Deseja realmente cancelar?
-        </p>
+        <p className="text-sm text-muted-foreground mb-5">As informações preenchidas serão perdidas. Deseja realmente cancelar?</p>
         <div className="flex gap-3">
-          <button
-            type="button"
-            onClick={onDismiss}
-            className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium"
-          >
+          <button type="button" onClick={onDismiss} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">
             Não, continuar
           </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            className="flex-1 py-2.5 bg-destructive hover:bg-destructive/90 text-white rounded-xl text-sm font-medium"
-          >
+          <button type="button" onClick={onConfirm} className="flex-1 py-2.5 bg-destructive hover:bg-destructive/90 text-white rounded-xl text-sm font-medium">
             Sim, cancelar
           </button>
         </div>
@@ -218,13 +190,7 @@ const defaultParceiroForm: ParceiroFormValues = {
   cpfCnpjBancario: "",
 };
 
-function NovoParceiroModal({
-  onClose,
-  initialData,
-}: {
-  onClose: () => void;
-  initialData?: ParceiroRow;
-}) {
+function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; initialData?: ParceiroRow }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [showConfirmCancel, setShowConfirmCancel] = useState(false);
@@ -235,16 +201,9 @@ function NovoParceiroModal({
     queryFn: () => fetchApiData<DepartamentoRow[]>("/departamentos"),
   });
 
-  // ✅ Computa os valores iniciais uma única vez com base em initialData
-  const computedDefaultValues = useMemo(
-    () => (isEdit ? parceiroRowToFormValues(initialData) : defaultParceiroForm),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  );
-
   const form = useForm<ParceiroFormValues>({
     resolver: zodResolver(parceiroFormSchema),
-    defaultValues: computedDefaultValues,
+    defaultValues: isEdit ? parceiroRowToFormValues(initialData) : defaultParceiroForm,
   });
 
   const {
@@ -257,15 +216,14 @@ function NovoParceiroModal({
     formState: { errors, isDirty },
   } = form;
 
-  // ✅ Garante que o formulário seja populado com os dados do parceiro ao abrir em modo edição
   useEffect(() => {
-    if (isEdit && initialData) {
+    if (isEdit) {
       reset(parceiroRowToFormValues(initialData));
     } else {
       reset(defaultParceiroForm);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialData?.id]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const tipoPessoa = watch("tipoPessoa");
   const formaPagamento = watch("formaPagamento");
@@ -334,9 +292,7 @@ function NovoParceiroModal({
           <form onSubmit={handleSubmit((v) => saveMutation.mutate(v))} className="flex flex-col">
             <div className="p-6 space-y-5">
               <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">
-                  Tipo de Pessoa *
-                </label>
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">Tipo de Pessoa *</label>
                 <Controller
                   name="tipoPessoa"
                   control={control}
@@ -351,8 +307,7 @@ function NovoParceiroModal({
                             field.value === t
                               ? "bg-primary text-white border-primary"
                               : "bg-white/5 text-muted-foreground border-white/10 hover:border-white/20"
-                          }`}
-                        >
+                          }`}>
                           {t === "PF" ? "Pessoa Física (PF)" : "Pessoa Jurídica (PJ)"}
                         </button>
                       ))}
@@ -371,9 +326,7 @@ function NovoParceiroModal({
                     className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
                     placeholder={tipoPessoa === "PF" ? "Ex: João da Silva" : "Ex: Tech Solutions S.A."}
                   />
-                  {errors.nomeRazao && (
-                    <p className="text-[11px] text-destructive mt-1">{errors.nomeRazao.message}</p>
-                  )}
+                  {errors.nomeRazao && <p className="text-[11px] text-destructive mt-1">{errors.nomeRazao.message}</p>}
                 </div>
                 <div>
                   <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
@@ -385,38 +338,28 @@ function NovoParceiroModal({
                     render={({ field }) => (
                       <input
                         value={field.value}
-                        onChange={(e) =>
-                          field.onChange(mascararDocumento(e.target.value, tipoPessoa as "PF" | "PJ"))
-                        }
+                        onChange={(e) => field.onChange(mascararDocumento(e.target.value, tipoPessoa as "PF" | "PJ"))}
                         className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
                         placeholder={tipoPessoa === "PF" ? "000.000.000-00" : "00.000.000/0000-00"}
                       />
                     )}
                   />
-                  {errors.documento && (
-                    <p className="text-[11px] text-destructive mt-1">{errors.documento.message}</p>
-                  )}
+                  {errors.documento && <p className="text-[11px] text-destructive mt-1">{errors.documento.message}</p>}
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                    E-mail
-                  </label>
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">E-mail</label>
                   <input
                     {...register("email")}
                     className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
                     placeholder="email@exemplo.com.br"
                   />
-                  {errors.email && (
-                    <p className="text-[11px] text-destructive mt-1">{errors.email.message}</p>
-                  )}
+                  {errors.email && <p className="text-[11px] text-destructive mt-1">{errors.email.message}</p>}
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                    Telefone
-                  </label>
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Telefone</label>
                   <Controller
                     name="telefone"
                     control={control}
@@ -438,8 +381,7 @@ function NovoParceiroModal({
                 </label>
                 <select
                   {...register("departamento_id")}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-black outline-none focus:border-primary/50 transition-colors"
-                >
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors [&>option]:bg-[#1A1A24] [&>option]:text-white">
                   <option value="">Selecione...</option>
                   {departamentos.map((d) => (
                     <option key={d.id} value={String(d.id)}>
@@ -450,22 +392,17 @@ function NovoParceiroModal({
               </div>
 
               <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">
-                  Tipo de Parceiro *
-                </label>
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">Tipo de Parceiro *</label>
                 <div className="grid grid-cols-2 gap-2">
                   {tiposParceiroOptions.map((t) => (
                     <label
                       key={t}
-                      className="flex items-center gap-2 cursor-pointer p-3 rounded-xl border border-white/10 hover:border-primary/40 hover:bg-primary/5 transition-all"
-                    >
+                      className="flex items-center gap-2 cursor-pointer p-3 rounded-xl border border-white/10 hover:border-primary/40 hover:bg-primary/5 transition-all">
                       <input
                         type="checkbox"
                         checked={tiposParceiro.includes(t)}
                         onChange={() => {
-                          const next = tiposParceiro.includes(t)
-                            ? tiposParceiro.filter((x) => x !== t)
-                            : [...tiposParceiro, t];
+                          const next = tiposParceiro.includes(t) ? tiposParceiro.filter((x) => x !== t) : [...tiposParceiro, t];
                           setValue("tiposParceiro", next, { shouldValidate: true, shouldDirty: true });
                         }}
                         className="accent-primary w-4 h-4"
@@ -474,15 +411,11 @@ function NovoParceiroModal({
                     </label>
                   ))}
                 </div>
-                {errors.tiposParceiro && (
-                  <p className="text-[11px] text-destructive mt-1">{errors.tiposParceiro.message}</p>
-                )}
+                {errors.tiposParceiro && <p className="text-[11px] text-destructive mt-1">{errors.tiposParceiro.message}</p>}
               </div>
 
               <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">
-                  Forma de Pagamento Preferencial
-                </label>
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">Forma de Pagamento Preferencial</label>
                 <Controller
                   name="formaPagamento"
                   control={control}
@@ -497,8 +430,7 @@ function NovoParceiroModal({
                             field.value === f
                               ? "bg-primary text-white border-primary"
                               : "bg-white/5 text-muted-foreground border-white/10 hover:border-white/20"
-                          }`}
-                        >
+                          }`}>
                           {f}
                         </button>
                       ))}
@@ -512,8 +444,7 @@ function NovoParceiroModal({
                       <label className="text-xs text-muted-foreground mb-1 block">Tipo do Recebedor</label>
                       <select
                         {...register("pixTipoRecebedor")}
-                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-black outline-none"
-                      >
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 [&>option]:bg-[#1A1A24] [&>option]:text-white">
                         <option value="PF">Pessoa Física</option>
                         <option value="PJ">Pessoa Jurídica</option>
                       </select>
@@ -525,31 +456,24 @@ function NovoParceiroModal({
                         className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50"
                         placeholder="CPF, CNPJ, e-mail ou telefone"
                       />
-                      {errors.pixChave && (
-                        <p className="text-[11px] text-destructive mt-1">{errors.pixChave.message}</p>
-                      )}
+                      {errors.pixChave && <p className="text-[11px] text-destructive mt-1">{errors.pixChave.message}</p>}
                     </div>
                   </div>
                 )}
 
-                {(formaPagamento === "Boleto" ||
-                  formaPagamento === "TED" ||
-                  formaPagamento === "DOC") && (
+                {(formaPagamento === "Boleto" || formaPagamento === "TED" || formaPagamento === "DOC") && (
                   <div className="grid grid-cols-2 gap-3 bg-white/5 rounded-xl p-4">
                     <div>
                       <label className="text-xs text-muted-foreground mb-1 block">Tipo Recebedor</label>
                       <select
                         {...register("pixTipoRecebedor")}
-                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-black outline-none"
-                      >
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 [&>option]:bg-[#1A1A24] [&>option]:text-white">
                         <option value="PF">Pessoa Física</option>
                         <option value="PJ">Pessoa Jurídica</option>
                       </select>
                     </div>
                     <div>
-                      <label className="text-xs text-muted-foreground mb-1 block">
-                        {pixTipoRecebedor === "PF" ? "CPF *" : "CNPJ *"}
-                      </label>
+                      <label className="text-xs text-muted-foreground mb-1 block">{pixTipoRecebedor === "PF" ? "CPF *" : "CNPJ *"}</label>
                       <Controller
                         name="cpfCnpjBancario"
                         control={control}
@@ -557,22 +481,14 @@ function NovoParceiroModal({
                           <input
                             value={field.value}
                             onChange={(e) =>
-                              field.onChange(
-                                mascararDocumento(e.target.value, pixTipoRecebedor as "PF" | "PJ"),
-                              )
+                              field.onChange(mascararDocumento(e.target.value, pixTipoRecebedor as "PF" | "PJ"))
                             }
                             className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50"
-                            placeholder={
-                              pixTipoRecebedor === "PF" ? "000.000.000-00" : "00.000.000/0000-00"
-                            }
+                            placeholder={pixTipoRecebedor === "PF" ? "000.000.000-00" : "00.000.000/0000-00"}
                           />
                         )}
                       />
-                      {errors.cpfCnpjBancario && (
-                        <p className="text-[11px] text-destructive mt-1">
-                          {errors.cpfCnpjBancario.message}
-                        </p>
-                      )}
+                      {errors.cpfCnpjBancario && <p className="text-[11px] text-destructive mt-1">{errors.cpfCnpjBancario.message}</p>}
                     </div>
                     <div>
                       <label className="text-xs text-muted-foreground mb-1 block">Agência *</label>
@@ -581,16 +497,11 @@ function NovoParceiroModal({
                         className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50"
                         placeholder="0000"
                       />
-                      {errors.agencia && (
-                        <p className="text-[11px] text-destructive mt-1">{errors.agencia.message}</p>
-                      )}
+                      {errors.agencia && <p className="text-[11px] text-destructive mt-1">{errors.agencia.message}</p>}
                     </div>
                     <div>
                       <label className="text-xs text-muted-foreground mb-1 block">Tipo de Conta *</label>
-                      <select
-                        {...register("contaTipo")}
-                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-black outline-none"
-                      >
+                      <select {...register("contaTipo")} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 [&>option]:bg-[#1A1A24] [&>option]:text-white">
                         <option>Corrente</option>
                         <option>Poupança</option>
                       </select>
@@ -602,9 +513,7 @@ function NovoParceiroModal({
                         className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50"
                         placeholder="00000-0"
                       />
-                      {errors.contaNumero && (
-                        <p className="text-[11px] text-destructive mt-1">{errors.contaNumero.message}</p>
-                      )}
+                      {errors.contaNumero && <p className="text-[11px] text-destructive mt-1">{errors.contaNumero.message}</p>}
                     </div>
                   </div>
                 )}
@@ -612,23 +521,14 @@ function NovoParceiroModal({
             </div>
 
             <div className="flex gap-3 p-6 pt-0 sticky bottom-0 bg-card border-t border-white/5">
-              <button
-                type="button"
-                onClick={handleCancel}
-                className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium"
-              >
+              <button type="button" onClick={handleCancel} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">
                 Cancelar
               </button>
               <button
                 type="submit"
                 disabled={saveMutation.isPending}
-                className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium shadow-lg shadow-primary/25 disabled:opacity-50"
-              >
-                {saveMutation.isPending
-                  ? "Salvando…"
-                  : isEdit
-                    ? "Salvar Alterações"
-                    : "Salvar Cadastro"}
+                className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium shadow-lg shadow-primary/25 disabled:opacity-50">
+                {saveMutation.isPending ? "Salvando…" : isEdit ? "Salvar Alterações" : "Salvar Cadastro"}
               </button>
             </div>
           </form>
@@ -644,33 +544,13 @@ export default function Parceiros() {
   const [search, setSearch] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [editingParceiro, setEditingParceiro] = useState<ParceiroRow | null>(null);
-  const [loadingEditId, setLoadingEditId] = useState<number | null>(null);
-
-  // ✅ Busca o parceiro completo (com email e telefone) antes de abrir o modal de edição,
-  // pois a listagem não retorna esses campos por padrão.
-  async function handleEditClick(p: ParceiroRow) {
-    setLoadingEditId(p.id);
-    try {
-      const full = await fetchApiData<ParceiroRow>(`/parceiros/${p.id}`);
-      setEditingParceiro(full);
-    } catch {
-      // Fallback: abre com os dados parciais da listagem
-      setEditingParceiro(p);
-      toast({ variant: "destructive", title: "Aviso", description: "Não foi possível carregar todos os dados do parceiro." });
-    } finally {
-      setLoadingEditId(null);
-    }
-  }
 
   const { data: departamentos = [] } = useQuery({
     queryKey: ["departamentos"],
     queryFn: () => fetchApiData<DepartamentoRow[]>("/departamentos"),
   });
 
-  const deptNomeById = useMemo(
-    () => new Map(departamentos.map((d) => [d.id, d.nome])),
-    [departamentos],
-  );
+  const deptNomeById = useMemo(() => new Map(departamentos.map((d) => [d.id, d.nome])), [departamentos]);
 
   const { data: parceirosLista = [], isLoading } = useQuery({
     queryKey: ["parceiros", search],
@@ -682,34 +562,37 @@ export default function Parceiros() {
     },
   });
 
-  // ✅ CORREÇÃO PRINCIPAL: envia o objeto completo do parceiro ao alternar ativo/inativo,
-  // preservando email, telefone e todos os demais campos — evita sobrescrita acidental.
   const updateMutation = useMutation({
-    mutationFn: ({ parceiro, ativo }: { parceiro: ParceiroRow; ativo: boolean }) => {
-      const body = parceiroRowToApiBody({ ...parceiro, ativo });
-      return fetchApiData<ParceiroRow>(`/parceiros/${parceiro.id}`, {
+    mutationFn: ({ id, ativo }: { id: number; ativo: boolean }) =>
+      fetchApiData<ParceiroRow>(`/parceiros/${id}`, {
         method: "PUT",
-        body: JSON.stringify(body),
-      });
-    },
+        body: JSON.stringify({ ativo }),
+      }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["parceiros"] });
       toast({ title: "Status atualizado", description: "O parceiro foi atualizado." });
     },
     onError: (e: unknown) => {
-      toast({ variant: "destructive", title: "Erro", description: e instanceof Error ? e.message : String(e) });
+      toast({
+        variant: "destructive",
+        title: "Erro",
+        description: e instanceof Error ? e.message : String(e),
+      });
     },
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) =>
-      fetchApiData<{ deleted?: boolean }>(`/parceiros/${id}`, { method: "DELETE" }),
+    mutationFn: (id: number) => fetchApiData<{ deleted?: boolean }>(`/parceiros/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["parceiros"] });
       toast({ title: "Parceiro removido", description: "O cadastro foi excluído." });
     },
     onError: (e: unknown) => {
-      toast({ variant: "destructive", title: "Erro", description: e instanceof Error ? e.message : String(e) });
+      toast({
+        variant: "destructive",
+        title: "Erro",
+        description: e instanceof Error ? e.message : String(e),
+      });
     },
   });
 
@@ -719,13 +602,14 @@ export default function Parceiros() {
     return mascararDocumento(String(p.cpf_cnpj).replace(/\D/g, ""), tipo);
   };
 
+  // ── Exportação ──────────────────────────────────────────────────────────────
   const EXPORT_COLUMNS_PARCEIROS = [
-    { header: "Tipo Pessoa",    key: "tipo_pessoa",  width: 12 },
-    { header: "Nome / Razão",   key: "nome",         width: 40 },
-    { header: "CPF / CNPJ",     key: "cpf_cnpj_fmt", width: 22 },
-    { header: "Tipos Parceiro", key: "tipos_fmt",    width: 34 },
-    { header: "Departamento",   key: "dept_nome",    width: 26 },
-    { header: "Status",         key: "status",       width: 12 },
+    { header: "Tipo Pessoa",     key: "tipo_pessoa",   width: 12 },
+    { header: "Nome / Razão",    key: "nome",          width: 40 },
+    { header: "CPF / CNPJ",      key: "cpf_cnpj_fmt",  width: 22 },
+    { header: "Tipos Parceiro",  key: "tipos_fmt",     width: 34 },
+    { header: "Departamento",    key: "dept_nome",     width: 26 },
+    { header: "Status",          key: "status",        width: 12 },
   ];
 
   function handleExportParceiros() {
@@ -764,15 +648,13 @@ export default function Parceiros() {
               onClick={handleExportParceiros}
               disabled={parceirosLista.length === 0 || isLoading}
               title="Exportar XLSX"
-              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-            >
+              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed">
               <Download className="w-4 h-4" /> Exportar XLSX
             </button>
             <button
               type="button"
               onClick={() => setShowModal(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25"
-            >
+              className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25">
               <Plus className="w-4 h-4" /> Cadastrar Novo
             </button>
           </div>
@@ -813,37 +695,27 @@ export default function Parceiros() {
               {parceirosLista.map((p) => {
                 const tipoUi = p.tipo_pessoa === "PJ" ? "PJ" : "PF";
                 const statusAtivo = p.ativo && !p.bloqueado;
-                const lotacao = p.departamento_id
-                  ? (deptNomeById.get(p.departamento_id) ?? "—")
-                  : "—";
+                const lotacao = p.departamento_id ? deptNomeById.get(p.departamento_id) ?? "—" : "—";
                 const tipos = tiposArray(p.tipos);
                 return (
                   <tr key={p.id} className="hover:bg-white/5 transition-colors group">
                     <td className="px-5 py-4 text-center">
                       <span
                         className={`text-xs font-bold px-2 py-1 rounded ${
-                          tipoUi === "PJ"
-                            ? "bg-primary/20 text-primary"
-                            : "bg-teal-500/20 text-teal-400"
-                        }`}
-                      >
+                          tipoUi === "PJ" ? "bg-primary/20 text-primary" : "bg-teal-500/20 text-teal-400"
+                        }`}>
                         {tipoUi}
                       </span>
                     </td>
                     <td className="px-5 py-4 font-semibold text-white">{p.nome}</td>
-                    <td className="px-5 py-4 text-muted-foreground font-mono text-xs">
-                      {getDocDisplay(p)}
-                    </td>
+                    <td className="px-5 py-4 text-muted-foreground font-mono text-xs">{getDocDisplay(p)}</td>
                     <td className="px-5 py-4">
                       <div className="flex gap-1 flex-wrap">
                         {tipos.length === 0 ? (
                           <span className="text-muted-foreground text-xs">—</span>
                         ) : (
                           tipos.map((t) => (
-                            <span
-                              key={t}
-                              className="bg-white/10 text-white text-[10px] px-2 py-0.5 rounded-full border border-white/10"
-                            >
+                            <span key={t} className="bg-white/10 text-white text-[10px] px-2 py-0.5 rounded-full border border-white/10">
                               {t}
                             </span>
                           ))
@@ -854,11 +726,8 @@ export default function Parceiros() {
                     <td className="px-5 py-4 text-center">
                       <span
                         className={`text-xs px-2.5 py-1 rounded-full font-medium ${
-                          statusAtivo
-                            ? "bg-success/20 text-success"
-                            : "bg-destructive/20 text-destructive"
-                        }`}
-                      >
+                          statusAtivo ? "bg-success/20 text-success" : "bg-destructive/20 text-destructive"
+                        }`}>
                         {statusAtivo ? "Ativo" : "Inativo"}
                       </span>
                     </td>
@@ -866,40 +735,25 @@ export default function Parceiros() {
                       <div className="flex items-center justify-end gap-1">
                         <button
                           type="button"
-                          onClick={() => handleEditClick(p)}
-                          disabled={loadingEditId === p.id}
-                          className="p-1.5 rounded-md hover:bg-white/10 text-muted-foreground hover:text-white transition-colors disabled:opacity-50"
-                          title="Editar"
-                        >
-                          {loadingEditId === p.id
-                            ? <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin block" />
-                            : <Edit2 className="w-4 h-4" />}
+                          onClick={() => setEditingParceiro(p)}
+                          className="p-1.5 rounded-md hover:bg-white/10 text-muted-foreground hover:text-white transition-colors"
+                          title="Editar">
+                          <Edit2 className="w-4 h-4" />
                         </button>
-                        {/* ✅ Passa o objeto completo para preservar email/telefone no PUT */}
                         <button
                           type="button"
-                          onClick={() => updateMutation.mutate({ parceiro: p, ativo: !statusAtivo })}
+                          onClick={() => updateMutation.mutate({ id: p.id, ativo: !statusAtivo })}
                           className={`p-1.5 rounded-md transition-colors ${
-                            statusAtivo
-                              ? "hover:bg-success/20 text-success"
-                              : "hover:bg-destructive/20 text-destructive"
+                            statusAtivo ? "hover:bg-success/20 text-success" : "hover:bg-destructive/20 text-destructive"
                           }`}
-                          title={statusAtivo ? "Desativar" : "Ativar"}
-                        >
-                          {statusAtivo ? (
-                            <CheckCircle className="w-4 h-4" />
-                          ) : (
-                            <Ban className="w-4 h-4" />
-                          )}
+                          title={statusAtivo ? "Desativar" : "Ativar"}>
+                          {statusAtivo ? <CheckCircle className="w-4 h-4" /> : <Ban className="w-4 h-4" />}
                         </button>
                         <button
                           type="button"
-                          onClick={() =>
-                            confirm("Excluir este parceiro?") && deleteMutation.mutate(p.id)
-                          }
+                          onClick={() => confirm("Excluir este parceiro?") && deleteMutation.mutate(p.id)}
                           className="p-1.5 rounded-md hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
-                          title="Excluir"
-                        >
+                          title="Excluir">
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
