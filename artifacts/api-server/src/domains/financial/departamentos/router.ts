@@ -1,9 +1,12 @@
 import { Router } from "express";
 import { withPermission } from "../../../middlewares/withPermission";
+import { validateBody } from "../../../middlewares/validate";
 import { asyncHandler } from "../../../utils/async-handler";
 import { successResponse } from "../../../utils/response";
 import { departamentosService } from "./departamentos.service";
 import {
+  type CreateDepartamentoBody,
+  type UpdateDepartamentoBody,
   createDepartamentoBodySchema,
   departamentoIdParamSchema,
   updateDepartamentoBodySchema,
@@ -22,9 +25,9 @@ router.get(
 router.post(
   "/departamentos",
   withPermission("configuracoes:departamentos:criar"),
+  validateBody(createDepartamentoBodySchema),
   asyncHandler(async (req, res) => {
-    const payload = createDepartamentoBodySchema.parse(req.body);
-    const item = await departamentosService.create(payload);
+    const item = await departamentosService.create(req.body as CreateDepartamentoBody);
     return successResponse(res, item, null, 201);
   }),
 );
@@ -32,10 +35,10 @@ router.post(
 router.put(
   "/departamentos/:id",
   withPermission("configuracoes:departamentos:editar"),
+  validateBody(updateDepartamentoBodySchema),
   asyncHandler(async (req, res) => {
     const { id } = departamentoIdParamSchema.parse(req.params);
-    const payload = updateDepartamentoBodySchema.parse(req.body);
-    const item = await departamentosService.update(id, payload);
+    const item = await departamentosService.update(id, req.body as UpdateDepartamentoBody);
     return successResponse(res, item);
   }),
 );

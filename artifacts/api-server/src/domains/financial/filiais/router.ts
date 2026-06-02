@@ -1,9 +1,16 @@
 import { Router } from "express";
 import { withPermission } from "../../../middlewares/withPermission";
+import { validateBody } from "../../../middlewares/validate";
 import { asyncHandler } from "../../../utils/async-handler";
 import { successResponse } from "../../../utils/response";
 import { filiaisService } from "./filiais.service";
-import { createFilialBodySchema, filialIdParamSchema, updateFilialBodySchema } from "./schemas";
+import {
+  type CreateFilialBody,
+  type UpdateFilialBody,
+  createFilialBodySchema,
+  filialIdParamSchema,
+  updateFilialBodySchema,
+} from "./schemas";
 
 const router = Router();
 
@@ -18,9 +25,9 @@ router.get(
 router.post(
   "/filiais",
   withPermission("configuracoes:filiais:criar"),
+  validateBody(createFilialBodySchema),
   asyncHandler(async (req, res) => {
-    const payload = createFilialBodySchema.parse(req.body);
-    const item = await filiaisService.create(payload);
+    const item = await filiaisService.create(req.body as CreateFilialBody);
     return successResponse(res, item, null, 201);
   }),
 );
@@ -28,10 +35,10 @@ router.post(
 router.put(
   "/filiais/:id",
   withPermission("configuracoes:filiais:editar"),
+  validateBody(updateFilialBodySchema),
   asyncHandler(async (req, res) => {
     const { id } = filialIdParamSchema.parse(req.params);
-    const payload = updateFilialBodySchema.parse(req.body);
-    const item = await filiaisService.update(id, payload);
+    const item = await filiaisService.update(id, req.body as UpdateFilialBody);
     return successResponse(res, item);
   }),
 );
