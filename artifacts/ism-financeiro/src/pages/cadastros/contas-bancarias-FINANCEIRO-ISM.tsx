@@ -44,14 +44,12 @@ function toCents(v: string | number): number {
 }
 
 // ─── Máscaras ──────────────────────────────────────────────────────────────────
-// Agência: até 4 dígitos + dígito verificador opcional → 0000 ou 0000-0
 function maskAgencia(value: string): string {
   const digits = value.replace(/\D/g, "").slice(0, 5);
   if (digits.length <= 4) return digits;
   return `${digits.slice(0, 4)}-${digits.slice(4)}`;
 }
 
-// Conta: até 7 dígitos + dígito verificador obrigatório → 00000-0
 function maskConta(value: string): string {
   const digits = value.replace(/\D/g, "").slice(0, 8);
   if (digits.length <= 1) return digits;
@@ -141,7 +139,10 @@ function NovaContaModal({ onClose, initialData }: ModalProps) {
     },
   });
 
-  const goNext = async () => {
+  // ── CORREÇÃO: recebe o evento para bloquear submit nativo ──
+  const goNext = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
     const ok = await trigger(["nome", "tipo"]);
     if (ok) setStep(2);
   };
@@ -182,7 +183,12 @@ function NovaContaModal({ onClose, initialData }: ModalProps) {
           ))}
         </div>
 
-        <form noValidate className="flex flex-col">
+        {/* ──onSubmit bloqueado para evitar submit nativo ── */}
+        <form
+          noValidate
+          className="flex flex-col"
+          onSubmit={(e) => e.preventDefault()}
+        >
           <div className="p-6 space-y-4">
             {/* ── Passo 1: Nome e Tipo ── */}
             {step === 1 && (
@@ -236,7 +242,6 @@ function NovaContaModal({ onClose, initialData }: ModalProps) {
             {step === 2 && (
               <>
                 <div className="grid grid-cols-2 gap-4">
-                  {/* Agência com máscara */}
                   <div>
                     <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
                       Agência
@@ -264,7 +269,6 @@ function NovaContaModal({ onClose, initialData }: ModalProps) {
                     )}
                   </div>
 
-                  {/* Conta com máscara */}
                   <div>
                     <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
                       Conta
@@ -367,7 +371,7 @@ function NovaContaModal({ onClose, initialData }: ModalProps) {
             {step < 2 ? (
               <button
                 type="button"
-                onClick={() => void goNext()}
+                onClick={(e) => void goNext(e)}
                 className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium transition-all"
               >
                 Próximo

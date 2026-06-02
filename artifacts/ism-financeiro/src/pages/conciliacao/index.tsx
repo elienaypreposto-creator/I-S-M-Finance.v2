@@ -52,8 +52,10 @@ export default function ConciliacaoList() {
       const params = new URLSearchParams();
       params.set("page", String(page));
       params.set("limit", String(limit));
-      const envelope = await fetchApi<ApiEnvelope<ConciliacaoListItem[]>>(`/conciliacoes?${params.toString()}`);
-      const meta = envelope.meta as { total?: number; page?: number; limit?: number } | null;
+      const envelope = await fetchApi<ApiEnvelope<ConciliacaoListItem[]>>(
+        `/conciliacoes?${params.toString()}`,
+      );
+      const meta = envelope.meta as { total?: number } | null;
       return {
         items: envelope.data,
         total: meta?.total ?? 0,
@@ -68,13 +70,14 @@ export default function ConciliacaoList() {
   return (
     <div className="flex flex-col gap-4 h-full">
       <PageHeader
-        title="Conciliação bancária"
+        title="Conciliação Bancária"
         description="Extratos importados e progresso de vínculo com lançamentos"
         actions={
           <button
             type="button"
             onClick={() => setImportOpen(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-semibold shadow-lg shadow-primary/25 transition-colors">
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-semibold shadow-lg shadow-primary/25 transition-colors"
+          >
             <Plus className="w-4 h-4" />
             Importar extrato
           </button>
@@ -84,7 +87,10 @@ export default function ConciliacaoList() {
       <ImportExtratoModal
         open={importOpen}
         onClose={() => setImportOpen(false)}
-        onImported={(extratoId) => setLocation(`/conciliacao/extrato/${extratoId}`)}
+        onImported={(extratoId) => {
+          setImportOpen(false);
+          setLocation(`/conciliacao/extrato/${extratoId}`);
+        }}
       />
 
       <div className="glass-panel rounded-2xl flex flex-col overflow-hidden flex-1 min-h-0 border border-white/10">
@@ -124,7 +130,8 @@ export default function ConciliacaoList() {
                       <button
                         type="button"
                         onClick={() => void refetch()}
-                        className="mt-2 text-xs underline text-white/70 hover:text-white">
+                        className="mt-2 text-xs underline text-white/70 hover:text-white"
+                      >
                         Tentar novamente
                       </button>
                     </div>
@@ -143,7 +150,8 @@ export default function ConciliacaoList() {
                   const ign = num(row.resumo_ignorados);
                   const pend = num(row.resumo_pendentes);
                   const tratadas = conc + ign;
-                  const pct = totalLinhas > 0 ? Math.round((tratadas / totalLinhas) * 100) : 0;
+                  const pct =
+                    totalLinhas > 0 ? Math.round((tratadas / totalLinhas) * 100) : 0;
 
                   return (
                     <tr
@@ -157,9 +165,15 @@ export default function ConciliacaoList() {
                           setLocation(`/conciliacao/extrato/${row.extrato_id}`);
                         }
                       }}
-                      className="hover:bg-white/[0.04] cursor-pointer transition-colors">
-                      <td className="px-4 py-3 text-white font-medium">{row.conta_nome ?? "—"}</td>
-                      <td className="px-4 py-3 text-white/80 max-w-[200px] truncate" title={row.arquivo_nome ?? ""}>
+                      className="hover:bg-white/[0.04] cursor-pointer transition-colors"
+                    >
+                      <td className="px-4 py-3 text-white font-medium">
+                        {row.conta_nome ?? "—"}
+                      </td>
+                      <td
+                        className="px-4 py-3 text-white/80 max-w-[200px] truncate"
+                        title={row.arquivo_nome ?? ""}
+                      >
                         {row.arquivo_nome ?? "—"}
                       </td>
                       <td className="px-4 py-3 text-white/70 whitespace-nowrap">
@@ -176,13 +190,16 @@ export default function ConciliacaoList() {
                             />
                           </div>
                           <span className="text-[10px] text-muted-foreground leading-tight">
-                            Vinculados: <span className="text-emerald-400 font-semibold">{conc}</span>
+                            Vinculados:{" "}
+                            <span className="text-emerald-400 font-semibold">{conc}</span>
                             {" · "}
-                            Pendentes: <span className="text-amber-300 font-semibold">{pend}</span>
+                            Pendentes:{" "}
+                            <span className="text-amber-300 font-semibold">{pend}</span>
                             {ign > 0 ? (
                               <>
                                 {" · "}
-                                Ignorados: <span className="text-white/50 font-semibold">{ign}</span>
+                                Ignorados:{" "}
+                                <span className="text-white/50 font-semibold">{ign}</span>
                               </>
                             ) : null}
                             {" · "}
@@ -192,11 +209,14 @@ export default function ConciliacaoList() {
                       </td>
                       <td className="px-4 py-3">
                         <span
-                          className={`inline-flex text-[10px] font-bold uppercase px-2 py-0.5 rounded-md border ${statusStyles(row.status)}`}>
+                          className={`inline-flex text-[10px] font-bold uppercase px-2 py-0.5 rounded-md border ${statusStyles(row.status)}`}
+                        >
                           {row.status}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-white/60 whitespace-nowrap">{formatDate(row.created_at)}</td>
+                      <td className="px-4 py-3 text-white/60 whitespace-nowrap">
+                        {formatDate(row.created_at)}
+                      </td>
                     </tr>
                   );
                 })
@@ -205,6 +225,7 @@ export default function ConciliacaoList() {
           </table>
         </div>
 
+        {/* Paginação */}
         <div className="px-4 py-3 border-t border-white/5 flex items-center justify-between text-xs text-muted-foreground bg-black/15">
           <span>
             Página {page} de {totalPages}
@@ -214,7 +235,8 @@ export default function ConciliacaoList() {
               type="button"
               disabled={page <= 1}
               onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className="px-2.5 py-1 rounded-lg border border-white/10 hover:bg-white/5 disabled:opacity-30 inline-flex items-center gap-1">
+              className="px-2.5 py-1 rounded-lg border border-white/10 hover:bg-white/5 disabled:opacity-30 inline-flex items-center gap-1"
+            >
               <ChevronLeft className="w-3.5 h-3.5" />
               Anterior
             </button>
@@ -222,7 +244,8 @@ export default function ConciliacaoList() {
               type="button"
               disabled={page >= totalPages}
               onClick={() => setPage((p) => p + 1)}
-              className="px-2.5 py-1 rounded-lg border border-white/10 hover:bg-white/5 disabled:opacity-30 inline-flex items-center gap-1">
+              className="px-2.5 py-1 rounded-lg border border-white/10 hover:bg-white/5 disabled:opacity-30 inline-flex items-center gap-1"
+            >
               Próxima
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
