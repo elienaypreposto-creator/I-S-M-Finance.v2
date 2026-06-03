@@ -267,13 +267,15 @@ router.put(
 
             const {permissoes} = req.body as UpdatePermissoesBody;
 
-            await db.delete(permissoesTable).where(eq(permissoesTable.usuario_id, id));
+            await db.transaction(async (tx) => {
+                await tx.delete(permissoesTable).where(eq(permissoesTable.usuario_id, id));
 
-            if (permissoes.length > 0) {
-                await db.insert(permissoesTable).values(
-                    permissoes.map((p) => ({usuario_id: id, codigo_permissao: p})),
-                );
-            }
+                if (permissoes.length > 0) {
+                    await tx.insert(permissoesTable).values(
+                        permissoes.map((p) => ({usuario_id: id, codigo_permissao: p})),
+                    );
+                }
+            });
 
             return successResponse(res, permissoes);
         } catch (e: unknown) {
