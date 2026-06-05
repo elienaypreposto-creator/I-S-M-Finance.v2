@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { DateRangePicker } from "@/components/shared/date-range-picker";
@@ -43,38 +43,67 @@ type ApiResponse = { data: Lancamento[]; total: number; page: number; limit: num
 type PlanoConta = { id: number; tipo: string; categoria: string; subcategoria: string | null };
 type Parceiro = { id: number; nome: string; tipo_pessoa: string };
 
-// Zod Schema — Lançamento
+// ─── Zod Schemas ────────────────────────────────────────────────────────────
 
 /**
- * Valor aceito no formato "1.234,56" (pt-BR) ou "1234.56".
- * Deve ser maior que zero.
+ * valorSchema — validação em três camadas:
+ *  1. Formato obrigatório: aceita "1.234,56" ou "0,00" (centavos sempre presentes)
+ *  2. Valor > 0
+ *  3. Valor <= 999.999.999,99 (limite operacional)
  */
 const valorSchema = z
   .string()
   .min(1, "Informe o valor")
+  .refine(
+    (v) => /^[\d.]*\d,\d{2}$/.test(v.trim()),
+    "Use o formato correto: 1.234,56 (centavos obrigatórios)"
+  )
   .refine((v) => {
-    const normalized = v.replace(/\./g, "").replace(",", ".");
-    const n = parseFloat(normalized);
+    const n = parseFloat(v.replace(/\./g, "").replace(",", "."));
     return !isNaN(n) && n > 0;
-  }, "O valor deve ser um número maior que zero");
+  }, "O valor deve ser maior que R$ 0,00")
+  .refine((v) => {
+    const n = parseFloat(v.replace(/\./g, "").replace(",", "."));
+    return n <= 999_999_999.99;
+  }, "Valor excede o limite permitido (R$ 999.999.999,99)");
 
 /**
- * Competência no formato MM/YYYY.
+ * competenciaSchema — validação estrita:
+ *  - Formato MM/AAAA
+ *  - Mês entre 01 e 12
+ *  - Ano entre 2000 e 2100
  */
 const competenciaSchema = z
   .string()
   .optional()
   .refine((v) => {
     if (!v || v === "") return true;
-    return /^\d{2}\/\d{4}$/.test(v);
-  }, "Competência inválida (use MM/AAAA)");
+    if (!/^\d{2}\/\d{4}$/.test(v)) return false;
+    const [mm, yyyy] = v.split("/").map(Number);
+    return mm >= 1 && mm <= 12 && yyyy >= 2000 && yyyy <= 2100;
+  }, "Competência inválida — use MM/AAAA com mês entre 01 e 12 (ex: 07/2025)");
 
 const lancamentoSchema = z.object({
   tipo: z.enum(["CP", "CR"], { required_error: "Selecione o tipo" }),
+
+  /**
+   * vencimento — validação em duas camadas:
+   *  1. É uma data real (não só regex — evita datas como 2024-02-31)
+   *  2. Dentro do range permitido: 01/01/2000 – 31/12/2100
+   */
   vencimento: z
     .string()
     .min(1, "Selecione a data de vencimento")
-    .refine((v) => /^\d{4}-\d{2}-\d{2}$/.test(v), "Data inválida"),
+    .refine((v) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+      const d = new Date(v + "T00:00:00");
+      return !isNaN(d.getTime());
+    }, "Data de vencimento inválida")
+    .refine((v) => {
+      const d = new Date(v + "T00:00:00");
+      return d >= new Date("2000-01-01") && d <= new Date("2100-12-31");
+    }, "Data fora do intervalo permitido (01/01/2000 a 31/12/2100)"),
+
   competencia: competenciaSchema,
   parceiro_id: z.string().optional(),
   descricao: z.string().optional(),
@@ -82,11 +111,26 @@ const lancamentoSchema = z.object({
   status: z.string().min(1, "Selecione o status"),
   plano_conta_id: z.string().optional(),
   riscos: z.array(z.string()).optional(),
+});
+
+// Schema separado para o estado de UI (inclui nivelRisco)
+const lancamentoUiSchema = lancamentoSchema.extend({
   nivelRisco: z.number().optional(),
 });
 
-type LancamentoFormData = z.infer<typeof lancamentoSchema>;
-// Bank badge helpers
+type LancamentoFormData = z.infer<typeof lancamentoUiSchema>;
+
+// ─── Máscara de valor monetário pt-BR ───────────────────────────────────────
+
+function formatarValor(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (!digits) return "";
+  const num = parseInt(digits, 10) / 100;
+  return num.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// ─── Bank badge helpers ──────────────────────────────────────────────────────
+
 const BANK_MAP: Record<string, { abbr: string; color: string; bg: string }> = {
   "itaú":           { abbr: "ITÁ",  color: "#FF6B00", bg: "rgba(255,107,0,0.18)" },
   "itau":           { abbr: "ITÁ",  color: "#FF6B00", bg: "rgba(255,107,0,0.18)" },
@@ -121,7 +165,8 @@ function getBankBadge(contaNome: string | null) {
   return { abbr: firstWord, color: "#94A3B8", bg: "rgba(148,163,184,0.15)" };
 }
 
-// CompetenciaPicker
+// ─── CompetenciaPicker ───────────────────────────────────────────────────────
+
 function CompetenciaPicker({
   value,
   onChange,
@@ -199,7 +244,14 @@ function CompetenciaPicker({
               </button>
             ))}
           </div>
-          <div className="flex justify-end mt-4 pt-3 border-t border-white/5">
+          <div className="flex justify-between mt-4 pt-3 border-t border-white/5 gap-2">
+            <button
+              type="button"
+              onClick={() => { onChange(""); setOpen(false); }}
+              className="px-4 py-1.5 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white rounded-lg text-xs font-bold transition-all"
+            >
+              Limpar
+            </button>
             <button
               type="button"
               onClick={() => setOpen(false)}
@@ -215,7 +267,7 @@ function CompetenciaPicker({
   );
 }
 
-// Risk levels
+// ─── Risk levels ─────────────────────────────────────────────────────────────
 
 const BASE_RISK_LEVELS: Record<number, { label: string; color: string; tags: string[] }> = {
   1: { label: "Nível 1 - Alerta",           color: "text-yellow-400", tags: ["Multas e Juros","Perda de Desconto","Restrição de Crédito"] },
@@ -224,7 +276,7 @@ const BASE_RISK_LEVELS: Record<number, { label: string; color: string; tags: str
   4: { label: "Nível 4 - Risco Crítico",    color: "text-purple-400", tags: ["Bloqueio de Contas (Sisbajud)","Penhora de Bens","Pedido de Falência","Impedimento de Certidão"] },
 };
 
-// Shared style constants
+// ─── Shared style constants ───────────────────────────────────────────────────
 
 const inputCls = (hasError?: boolean) =>
   cn(
@@ -244,7 +296,6 @@ const selectCls = (hasError?: boolean) =>
 
 const labelCls = "text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5 block";
 
-/** Inline error message shown below a field */
 function FieldError({ message }: { message?: string }) {
   if (!message) return null;
   return (
@@ -255,7 +306,7 @@ function FieldError({ message }: { message?: string }) {
   );
 }
 
-// LancamentoModal — now powered by react-hook-form + zod
+// ─── LancamentoModal ──────────────────────────────────────────────────────────
 
 function LancamentoModal({
   onClose,
@@ -271,7 +322,8 @@ function LancamentoModal({
   const [showAddTag, setShowAddTag] = useState(false);
   const [newTag, setNewTag] = useState({ name: "", level: 1 });
 
-  // ---- react-hook-form setup ----
+  const riskSuggestedRef = useRef(false);
+
   const {
     register,
     handleSubmit,
@@ -280,14 +332,14 @@ function LancamentoModal({
     setValue,
     formState: { errors, isSubmitting },
   } = useForm<LancamentoFormData>({
-    resolver: zodResolver(lancamentoSchema),
+    resolver: zodResolver(lancamentoUiSchema),
     defaultValues: {
       tipo:          editItem?.tipo        || "CP",
       vencimento:    editItem?.vencimento  || "",
       competencia:   editItem?.competencia || "",
       parceiro_id:   editItem?.parceiro_id?.toString()    || "",
       descricao:     editItem?.descricao   || "",
-      valor:         editItem?.valor?.toString()           || "",
+      valor:         editItem?.valor ? formatarValor(String(Math.round(editItem.valor * 100))) : "",
       status:        editItem?.status      || "pendente",
       plano_conta_id: editItem?.plano_conta_id?.toString() || "",
       riscos:        (editItem as any)?.riscos             || [],
@@ -301,9 +353,8 @@ function LancamentoModal({
   const riscos     = watch("riscos") ?? [];
   const isCP       = tipo === "CP";
 
-  // Auto-suggest risk level based on due date
   useEffect(() => {
-    if (vencimento && nivelRisco === 0) {
+    if (vencimento && !riskSuggestedRef.current) {
       const vcto = new Date(vencimento + "T00:00:00");
       const hoje = new Date();
       const diffDays = Math.floor((hoje.getTime() - vcto.getTime()) / (1000 * 60 * 60 * 24));
@@ -312,11 +363,14 @@ function LancamentoModal({
       else if (diffDays >= 16 && diffDays <= 30) level = 2;
       else if (diffDays >= 31 && diffDays <= 60) level = 3;
       else if (diffDays > 60)                    level = 4;
-      if (level > 0) setValue("nivelRisco", level);
+      if (level > 0) {
+        setValue("nivelRisco", level);
+        riskSuggestedRef.current = true;
+      }
     }
-  }, [vencimento]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [vencimento, setValue]);
 
-  // ---- Queries ----
+  // Queries
   const { data: parceiros = [] } = useQuery<Parceiro[]>({
     queryKey: ["parceiros-modal"],
     queryFn: async () => {
@@ -341,7 +395,7 @@ function LancamentoModal({
     },
   });
 
-  // ---- Mutation ----
+  // Mutation
   const mutation = useMutation({
     mutationFn: async (payload: any) => {
       const method = editItem ? "PUT" : "POST";
@@ -364,23 +418,31 @@ function LancamentoModal({
       toast({ variant: "destructive", title: "Erro", description: e.message }),
   });
 
-  // ---- Submit handler (only called when schema passes) ----
+  // Guard duplo: Zod já bloqueia antes de onSubmit, mas protegemos o parseFloat
   const onSubmit = (data: LancamentoFormData) => {
     const normalized = data.valor.replace(/\./g, "").replace(",", ".");
+    const valorNum = parseFloat(normalized);
+
+    // Defesa dupla — nunca envia NaN ou zero para a API
+    if (isNaN(valorNum) || valorNum <= 0) {
+      toast({ variant: "destructive", title: "Valor inválido", description: "Verifique o campo de valor antes de continuar." });
+      return;
+    }
+
     mutation.mutate({
       tipo:           data.tipo,
       vencimento:     data.vencimento,
       competencia:    data.competencia || null,
       parceiro_id:    data.parceiro_id ? parseInt(data.parceiro_id) : null,
       descricao:      data.descricao   || null,
-      valor:          parseFloat(normalized),
+      valor:          valorNum,
       status:         data.status,
       plano_conta_id: data.plano_conta_id ? parseInt(data.plano_conta_id) : null,
       riscos:         data.riscos ?? [],
+      // nivelRisco NÃO é enviado à API — estado de UI apenas
     });
   };
 
-  // ---- Risk tag helpers ----
   const handleToggleTag = (tag: string) => {
     const current = riscos;
     setValue(
@@ -401,6 +463,8 @@ function LancamentoModal({
   };
 
   const selectedRisk = riskLevels[nivelRisco];
+
+  const [vctoOpen, setVctoOpen] = useState(false);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-md p-0 sm:p-4 overflow-hidden">
@@ -457,19 +521,17 @@ function LancamentoModal({
                     </div>
                   )}
                 />
-                <FieldError message={errors.tipo?.message} />
               </div>
 
               {/* Vencimento + Competência */}
               <div className="grid grid-cols-2 gap-4">
-                {/* Vencimento */}
                 <div>
                   <label className={labelCls}>Data de Vencimento *</label>
                   <Controller
                     name="vencimento"
                     control={control}
                     render={({ field }) => (
-                      <Popover>
+                      <Popover open={vctoOpen} onOpenChange={setVctoOpen}>
                         <PopoverTrigger asChild>
                           <button
                             type="button"
@@ -489,9 +551,10 @@ function LancamentoModal({
                           <CalendarPicker
                             mode="single"
                             selected={field.value ? parseISO(field.value) : undefined}
-                            onSelect={(date) =>
-                              field.onChange(date ? formatBtn(date, "yyyy-MM-dd") : "")
-                            }
+                            onSelect={(date) => {
+                              field.onChange(date ? formatBtn(date, "yyyy-MM-dd") : "");
+                              setVctoOpen(false);
+                            }}
                             locale={ptBR}
                             initialFocus
                           />
@@ -571,14 +634,23 @@ function LancamentoModal({
 
               {/* Valor + Status */}
               <div className="grid grid-cols-2 gap-4">
-                {/* Valor */}
                 <div>
                   <label className={labelCls}>Valor Previsto (R$) *</label>
-                  <input
-                    type="text"
-                    {...register("valor")}
-                    className={cn(inputCls(!!errors.valor), "font-bold text-lg text-primary")}
-                    placeholder="0,00"
+                  <Controller
+                    name="valor"
+                    control={control}
+                    render={({ field }) => (
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={field.value}
+                        onChange={(e) => {
+                          field.onChange(formatarValor(e.target.value));
+                        }}
+                        className={cn(inputCls(!!errors.valor), "font-bold text-lg text-primary")}
+                        placeholder="0,00"
+                      />
+                    )}
                   />
                   <FieldError message={errors.valor?.message} />
                 </div>
@@ -619,10 +691,19 @@ function LancamentoModal({
                     render={({ field }) => (
                       <div className="relative group">
                         <select
-                          value={field.value ?? 0}
+                          // FIX: forçar string para evitar type mismatch number/string no DOM
+                          value={String(field.value ?? 0)}
                           onChange={(e) => {
-                            field.onChange(parseInt(e.target.value));
+                            const parsed = parseInt(e.target.value, 10);
+                            // FIX: NaN ou valor inválido → 0 (Sem Risco Definido)
+                            const next = isNaN(parsed) ? 0 : parsed;
+                            field.onChange(next);
+                            // Sempre limpa tags ao trocar nível (inclusive ao voltar para 0)
                             setValue("riscos", []);
+                            // FIX: reseta ref para permitir re-sugestão se usuário voltar para sem risco
+                            if (next === 0) {
+                              riskSuggestedRef.current = false;
+                            }
                           }}
                           className={cn(
                             selectCls(),
@@ -630,7 +711,8 @@ function LancamentoModal({
                             selectedRisk?.color || "text-white/40"
                           )}
                         >
-                          <option value={0}>Sem Risco Definido</option>
+                          {/* FIX: value como string "0" — consistente com o que o DOM retorna em e.target.value */}
+                          <option value="0">Sem Risco Definido</option>
                           {Object.entries(riskLevels).map(([lv, data]) => (
                             <option key={lv} value={lv} className="bg-[#1a1c23] py-2">
                               {data.label}
@@ -743,7 +825,7 @@ function LancamentoModal({
   );
 }
 
-// Lancamentos page (unchanged from original, only modal swapped)
+// ─── Lancamentos page ─────────────────────────────────────────────────────────
 
 export default function Lancamentos() {
   const [activeTab, setActiveTab]     = useState("todos");

@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { TaskCard } from "@/components/tasks/task-card";
 import { TaskModal } from "@/components/tasks/task-modal";
+import { SectionErrorFallback } from "@/components/error-boundary";
 import { fetchApi, fetchApiData } from "@/lib/api-config";
 import { toast } from "sonner";
 
@@ -167,7 +168,7 @@ export default function Kanban() {
   
   const queryClient = useQueryClient();
   
-  const { data: cardsData, isLoading, error } = useQuery<Card[]>({
+  const { data: cardsData, isLoading, isError, error, refetch } = useQuery<Card[]>({
     queryKey: ["kanban-cards"],
     queryFn: () => fetchApiData<Card[]>("/kanban/cards")
   });
@@ -327,6 +328,13 @@ export default function Kanban() {
       {isLoading ? (
         <div className="flex-1 flex items-center justify-center">
           <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+        </div>
+      ) : isError ? (
+        <div className="flex-1 flex items-center justify-center">
+          <SectionErrorFallback
+            message={error instanceof Error ? error.message : "Não foi possível carregar as tarefas."}
+            onRetry={() => refetch()}
+          />
         </div>
       ) : (
         <DndContext

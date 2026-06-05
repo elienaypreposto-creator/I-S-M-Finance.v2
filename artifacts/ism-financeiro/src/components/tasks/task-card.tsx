@@ -8,8 +8,6 @@ import {
   MoreVertical,
   Calendar,
   CheckSquare,
-  Square,
-  User
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -69,12 +67,12 @@ const PRIORIDADE_CONFIG = {
 };
 
 const DEPARTAMENTOS = [
-  { value: "financeiro", label: "Financeiro", color: "bg-gray-700" },
-  { value: "operacional", label: "Operacional", color: "bg-gray-700" },
-  { value: "contabil", label: "Contábil", color: "bg-gray-700" },
-  { value: "diretoria", label: "Diretoria", color: "bg-gray-700" },
-  { value: "rh_dp", label: "RH/DP", color: "bg-gray-700" },
-  { value: "administrativo", label: "Administrativo", color: "bg-gray-700" }
+  { value: "financeiro", label: "Financeiro" },
+  { value: "operacional", label: "Operacional" },
+  { value: "contabil", label: "Contábil" },
+  { value: "diretoria", label: "Diretoria" },
+  { value: "rh_dp", label: "RH/DP" },
+  { value: "administrativo", label: "Administrativo" }
 ];
 
 function getPrioridadeConfig(prioridade: string): typeof PRIORIDADE_CONFIG.media {
@@ -84,30 +82,28 @@ function getPrioridadeConfig(prioridade: string): typeof PRIORIDADE_CONFIG.media
 
 function getDepartamentoBadge(depto: string) {
   const d = DEPARTAMENTOS.find(d => d.value === depto.toLowerCase());
-  return d || { label: depto, color: "bg-gray-700" };
+  return d || { label: depto };
 }
 
 function DateIndicator({ prazo }: { prazo: string | null }) {
   if (!prazo) return null;
-  
+
   const data = new Date(prazo);
   const hoje = new Date();
   const isAtrasado = isPast(data) && !isToday(data);
   const isVencendoHoje = isToday(data);
   const diasDiff = differenceInDays(data, hoje);
-  
+
   let colorClass = "text-gray-400";
   let icon = <Calendar className="w-3.5 h-3.5" />;
-  
+
   if (isAtrasado) {
     colorClass = "text-red-500";
     icon = <Clock className="w-3.5 h-3.5" />;
-  } else if (isVencendoHoje) {
-    colorClass = "text-orange-400";
-  } else if (diasDiff <= 2 && diasDiff >= 0) {
+  } else if (isVencendoHoje || (diasDiff <= 2 && diasDiff >= 0)) {
     colorClass = "text-orange-400";
   }
-  
+
   return (
     <span className={cn("flex items-center gap-1 text-xs", colorClass)}>
       {icon}
@@ -118,11 +114,11 @@ function DateIndicator({ prazo }: { prazo: string | null }) {
 
 function AvatarStack({ responsaveis }: { responsaveis?: { id: number; nome: string; avatar?: string }[] }) {
   if (!responsaveis || responsaveis.length === 0) return null;
-  
+
   const displayCount = 3;
   const visible = responsaveis.slice(0, displayCount);
   const remaining = responsaveis.length - displayCount;
-  
+
   return (
     <div className="flex -space-x-2">
       {visible.map((resp, i) => (
@@ -146,7 +142,6 @@ function AvatarStack({ responsaveis }: { responsaveis?: { id: number; nome: stri
 
 export function TaskCard({
   titulo,
-  descricao,
   departamentos,
   checklist,
   comentarios_count,
@@ -158,11 +153,11 @@ export function TaskCard({
   isDragging
 }: TaskCardProps) {
   const prioridadeConfig = getPrioridadeConfig(prioridade);
-  
+
   const checklistTotal = checklist?.length || 0;
   const checklistCompleted = checklist?.filter(i => i.completed).length || 0;
   const checklistProgress = checklistTotal > 0 ? (checklistCompleted / checklistTotal) * 100 : 0;
-  
+
   return (
     <div
       onClick={onClick}
@@ -183,22 +178,27 @@ export function TaskCard({
         )}>
           {prioridadeConfig.label}
         </span>
-        <button className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-white/10 rounded">
+
+        {/* ✅ stopPropagation evita abrir o modal ao clicar nos três pontinhos */}
+        <button
+          onClick={(e) => e.stopPropagation()}
+          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-white/10 rounded"
+        >
           <MoreVertical className="w-4 h-4 text-gray-400" />
         </button>
       </div>
-      
+
       <h4 className="text-sm font-bold text-white mb-2 line-clamp-2 leading-snug">
         {titulo}
       </h4>
-      
+
       {departamentos && departamentos.length > 0 && (
         <div className="flex flex-wrap gap-1 mb-3">
           {departamentos.slice(0, 3).map((depto, i) => {
             const badge = getDepartamentoBadge(depto);
             return (
-              <span 
-                key={i} 
+              <span
+                key={i}
                 className="text-[10px] px-2 py-0.5 rounded-full bg-gray-700 text-gray-300"
               >
                 {badge.label}
@@ -212,7 +212,7 @@ export function TaskCard({
           )}
         </div>
       )}
-      
+
       {checklistTotal > 0 && (
         <div className="mb-3">
           <div className="flex items-center justify-between text-[10px] text-gray-400 mb-1">
@@ -223,14 +223,14 @@ export function TaskCard({
             <span>{checklistCompleted}/{checklistTotal}</span>
           </div>
           <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
-            <div 
+            <div
               className="h-full bg-blue-500 transition-all duration-300 rounded-full"
               style={{ width: `${checklistProgress}%` }}
             />
           </div>
         </div>
       )}
-      
+
       <div className="flex items-center justify-between pt-3 border-t border-white/5">
         <div className="flex items-center gap-3 text-gray-400">
           {prazo && <DateIndicator prazo={prazo} />}
@@ -247,7 +247,7 @@ export function TaskCard({
             </div>
           )}
         </div>
-        
+
         {responsaveis && responsaveis.length > 0 && (
           <AvatarStack responsaveis={responsaveis.slice(0, 3)} />
         )}

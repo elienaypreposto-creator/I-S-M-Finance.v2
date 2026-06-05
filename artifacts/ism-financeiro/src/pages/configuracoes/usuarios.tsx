@@ -17,6 +17,8 @@ import {
   Loader2,
   AlertCircle,
   UserCircle,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -27,6 +29,8 @@ type UsuarioRow = {
   id: number;
   nome: string;
   email: string;
+  cargo?: string;
+  perfil_base?: string;
   telefone: string | null;
   celular: string | null;
   bloqueado: boolean;
@@ -34,18 +38,110 @@ type UsuarioRow = {
   created_at: string;
 };
 
-// ─── Schemas ───────────────────────────────────────────────────────────────────
-const usuarioFormSchema = z.object({
-  nome: z.string().trim().min(2, "Nome deve ter ao menos 2 caracteres."),
-  email: z.string().email("E-mail inválido."),
-  cargo: z.string().optional(),
-  perfil_base: z.string().optional(),
-  telefone: z.string().optional(),
-  celular: z.string().optional(),
-});
-type UsuarioFormValues = z.infer<typeof usuarioFormSchema>;
+// ─── Helpers ───────────────────────────────────────────────────────────────────
+const digitsOnly = (v: string) => v.replace(/\D/g, "");
 
-// ─── Permissões (estáticas — códigos == nomes de exibição) ────────────────────
+function mascararTelefone(valor: string): string {
+  const n = digitsOnly(valor).slice(0, 11);
+  return n
+    .replace(/(\d{2})(\d)/, "($1) $2")
+    .replace(/(\d{5})(\d{1,4})$/, "$1-$2");
+}
+
+// ─── Schemas ───────────────────────────────────────────────────────────────────
+
+/**
+ * Regras compartilhadas entre criação e edição.
+ * Telefone/celular: opcionais, mas quando preenchidos exigem 10-11 dígitos (DDD + número).
+ */
+const baseUsuarioSchema = z.object({
+  nome: z
+    .string()
+    .trim()
+    .min(2, "Nome deve ter ao menos 2 caracteres.")
+    .max(120, "Nome muito longo (máx. 120 caracteres)."),
+
+  email: z
+    .string()
+    .min(1, "E-mail obrigatório.")
+    .refine(
+      (v) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim()),
+      "E-mail inválido — use o formato nome@dominio.com"
+    ),
+
+  cargo: z
+    .string()
+    .max(100, "Cargo muito longo (máx. 100 caracteres).")
+    .optional(),
+
+  perfil_base: z.string().optional(),
+
+  telefone: z
+    .string()
+    .optional()
+    .refine((v) => {
+      if (!v || v.trim() === "") return true;
+      const d = digitsOnly(v);
+      return d.length >= 10 && d.length <= 11;
+    }, "Telefone inválido — informe DDD + número (10 ou 11 dígitos)"),
+
+  celular: z
+    .string()
+    .optional()
+    .refine((v) => {
+      if (!v || v.trim() === "") return true;
+      const d = digitsOnly(v);
+      return d.length >= 10 && d.length <= 11;
+    }, "Celular inválido — informe DDD + número (10 ou 11 dígitos)"),
+});
+
+/**
+ * Schema de CRIAÇÃO — adiciona campos de senha e confirmação.
+ * Regras:
+ *   - mínimo 8 caracteres
+ *   - ao menos 1 letra maiúscula
+ *   - ao menos 1 número
+ *   - confirmarSenha deve ser idêntica
+ */
+const criarUsuarioSchema = baseUsuarioSchema
+  .extend({
+    senha: z
+      .string()
+      .min(8, "Senha deve ter ao menos 8 caracteres.")
+      .refine((v) => /[A-Z]/.test(v), "Senha deve conter ao menos 1 letra maiúscula.")
+      .refine((v) => /[0-9]/.test(v), "Senha deve conter ao menos 1 número."),
+    confirmarSenha: z.string().min(1, "Confirmação de senha obrigatória."),
+  })
+  .refine((data) => data.senha === data.confirmarSenha, {
+    message: "As senhas não coincidem.",
+    path: ["confirmarSenha"],
+  });
+
+/** Schema de EDIÇÃO — sem campos de senha. */
+const editarUsuarioSchema = baseUsuarioSchema;
+
+type CriarUsuarioFormValues  = z.infer<typeof criarUsuarioSchema>;
+type EditarUsuarioFormValues = z.infer<typeof editarUsuarioSchema>;
+type UsuarioFormValues = CriarUsuarioFormValues | EditarUsuarioFormValues;
+
+// ─── FieldError ────────────────────────────────────────────────────────────────
+function FieldError({ message }: { message?: string }) {
+  if (!message) return null;
+  return (
+    <p className="mt-1 text-xs text-destructive flex items-center gap-1">
+      <span className="inline-block w-1 h-1 rounded-full bg-destructive shrink-0" />
+      {message}
+    </p>
+  );
+}
+
+// ─── inputCls helper ───────────────────────────────────────────────────────────
+const inputCls = (hasError?: boolean) =>
+  `w-full bg-white/5 border rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors ${
+    hasError ? "border-destructive/60 focus:border-destructive" : "border-white/10"
+  }`;
+
+// ─── Permissões (estáticas) ────────────────────────────────────────────────────
 const permissoesGranulares = [
   {
     grupo: "Dashboard & Relatórios",
@@ -149,9 +245,8 @@ const permissoesGranulares = [
   },
 ];
 
-const todasPermissoes = permissoesGranulares.flatMap((g) => g.itens.map(i => i.codigo));
+const todasPermissoes = permissoesGranulares.flatMap((g) => g.itens.map((i) => i.codigo));
 
-/** Perfis base para pré-preenchimento rápido no modal de permissões */
 const perfisBase: Record<string, string[]> = {
   Admin: todasPermissoes,
   Financeiro: [
@@ -186,14 +281,7 @@ function PermissoesModal({ usuario, onClose }: { usuario: UsuarioRow; onClose: (
   const [expandidos, setExpandidos] = useState<string[]>([permissoesGranulares[0].grupo]);
   const [busca, setBusca] = useState("");
 
-  // Busca permissões reais do usuário
-  const { isLoading: loadingPerms } = useQuery<string[]>({
-    queryKey: ["usuario-permissoes", usuario.id],
-    queryFn: () => fetchApiData<string[]>(`/usuarios/${usuario.id}/permissoes`),
-  });
-
-  // Sync quando os dados chegam
-  const { data: fetchedPerms } = useQuery<string[]>({
+  const { isLoading: loadingPerms, data: fetchedPerms } = useQuery<string[]>({
     queryKey: ["usuario-permissoes", usuario.id],
     queryFn: () => fetchApiData<string[]>(`/usuarios/${usuario.id}/permissoes`),
   });
@@ -226,17 +314,18 @@ function PermissoesModal({ usuario, onClose }: { usuario: UsuarioRow; onClose: (
   const toggleTodosGrupo = (grupo: string, itens: { nome: string; codigo: string }[]) => {
     const todos = itens.every((i) => selecionadas.includes(i.codigo));
     setSelecionadas((s) =>
-      todos ? s.filter((x) => !itens.map(i => i.codigo).includes(x)) : [...new Set([...s, ...itens.map(i => i.codigo)])],
+      todos
+        ? s.filter((x) => !itens.map((i) => i.codigo).includes(x))
+        : [...new Set([...s, ...itens.map((i) => i.codigo)])],
     );
-  };
-
-  const aplicarPerfil = (perfil: string) => {
-    setSelecionadas(perfisBase[perfil] ?? []);
   };
 
   const filtered = busca
     ? permissoesGranulares
-        .map((g) => ({ ...g, itens: g.itens.filter((i) => i.nome.toLowerCase().includes(busca.toLowerCase())) }))
+        .map((g) => ({
+          ...g,
+          itens: g.itens.filter((i) => i.nome.toLowerCase().includes(busca.toLowerCase())),
+        }))
         .filter((g) => g.itens.length > 0)
     : permissoesGranulares;
 
@@ -245,9 +334,7 @@ function PermissoesModal({ usuario, onClose }: { usuario: UsuarioRow; onClose: (
       <div className="bg-card border border-white/10 rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between p-4 sm:p-5 border-b border-white/5">
           <div>
-            <h3 className="font-bold text-white text-sm sm:text-base">
-              Permissões — {usuario.nome}
-            </h3>
+            <h3 className="font-bold text-white text-sm sm:text-base">Permissões — {usuario.nome}</h3>
             <p className="text-xs text-muted-foreground">
               {selecionadas.length} de {todasPermissoes.length} permissões ativas
             </p>
@@ -257,14 +344,13 @@ function PermissoesModal({ usuario, onClose }: { usuario: UsuarioRow; onClose: (
           </button>
         </div>
 
-        {/* Perfis rápidos */}
         <div className="px-4 pt-3 pb-2 border-b border-white/5 flex flex-wrap gap-2 items-center">
           <span className="text-xs text-muted-foreground">Perfil rápido:</span>
           {Object.keys(perfisBase).map((p) => (
             <button
               key={p}
               type="button"
-              onClick={() => aplicarPerfil(p)}
+              onClick={() => setSelecionadas(perfisBase[p] ?? [])}
               className="text-xs px-2.5 py-1 bg-white/5 hover:bg-white/10 rounded-lg text-muted-foreground hover:text-white transition-colors border border-white/10"
             >
               {p}
@@ -272,7 +358,6 @@ function PermissoesModal({ usuario, onClose }: { usuario: UsuarioRow; onClose: (
           ))}
         </div>
 
-        {/* Busca */}
         <div className="p-3 sm:p-4 border-b border-white/5">
           <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-3 py-2.5">
             <Search className="w-4 h-4 text-muted-foreground shrink-0" />
@@ -345,11 +430,7 @@ function PermissoesModal({ usuario, onClose }: { usuario: UsuarioRow; onClose: (
         </div>
 
         <div className="flex gap-3 p-4 sm:p-5 border-t border-white/5">
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium"
-          >
+          <button type="button" onClick={onClose} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">
             Cancelar
           </button>
           <button
@@ -367,14 +448,7 @@ function PermissoesModal({ usuario, onClose }: { usuario: UsuarioRow; onClose: (
   );
 }
 
-// ─── Modal Criar / Editar Usuário ──────────────────────────────────────────────
-interface UserModalProps {
-  initialData?: UsuarioRow;
-  onClose: () => void;
-  isPending: boolean;
-  onSave: (values: UsuarioFormValues) => void;
-}
-
+// ─── Autocomplete de Parceiro ──────────────────────────────────────────────────
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState<T>(value);
   useEffect(() => {
@@ -388,12 +462,14 @@ function ParceiroAutocomplete({
   value,
   onChange,
   onSelectFull,
-  disabled
+  disabled,
+  hasError,
 }: {
   value: string;
   onChange: (val: string) => void;
   onSelectFull: (parceiro: any) => void;
   disabled?: boolean;
+  hasError?: boolean;
 }) {
   const [search, setSearch] = useState(value || "");
   const debouncedSearch = useDebounce(search, 200);
@@ -410,7 +486,9 @@ function ParceiroAutocomplete({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const { data: parceiros = [], isLoading } = useQuery<{id: number, nome: string, email: string | null, telefone: string | null, celular: string | null}[]>({
+  const { data: parceiros = [], isLoading } = useQuery<
+    { id: number; nome: string; email: string | null; telefone: string | null; celular: string | null }[]
+  >({
     queryKey: ["parceiros-search", debouncedSearch],
     queryFn: () => fetchApiData(`/parceiros?limit=20&search=${encodeURIComponent(debouncedSearch)}`),
     enabled: debouncedSearch.length >= 3,
@@ -428,7 +506,7 @@ function ParceiroAutocomplete({
           setIsOpen(true);
         }}
         onFocus={() => setIsOpen(true)}
-        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors disabled:opacity-50"
+        className={inputCls(hasError) + " disabled:opacity-50"}
         placeholder="Digite pelo menos 3 letras para buscar..."
         autoComplete="off"
       />
@@ -464,8 +542,21 @@ function ParceiroAutocomplete({
   );
 }
 
+// ─── Modal Criar / Editar Usuário ──────────────────────────────────────────────
+interface UserModalProps {
+  initialData?: UsuarioRow;
+  onClose: () => void;
+  isPending: boolean;
+  onSave: (values: UsuarioFormValues) => void;
+}
+
 function UserModal({ initialData, onClose, isPending, onSave }: UserModalProps) {
   const isEdit = !!initialData;
+  const [showSenha, setShowSenha] = useState(false);
+  const [showConfirmar, setShowConfirmar] = useState(false);
+
+  // Seleciona o schema correto conforme modo (criar vs editar)
+  const schema = isEdit ? editarUsuarioSchema : criarUsuarioSchema;
 
   const {
     register,
@@ -474,25 +565,25 @@ function UserModal({ initialData, onClose, isPending, onSave }: UserModalProps) 
     control,
     formState: { errors },
   } = useForm<UsuarioFormValues>({
-    resolver: zodResolver(usuarioFormSchema),
+    resolver: zodResolver(schema),
     defaultValues: {
-      nome: initialData?.nome ?? "",
-      email: initialData?.email ?? "",
-      cargo: initialData?.cargo ?? "",
-      perfil_base: initialData?.perfil_base ?? "",
-      telefone: initialData?.telefone ?? "",
-      celular: initialData?.celular ?? "",
-    },
+      nome:          initialData?.nome          ?? "",
+      email:         initialData?.email         ?? "",
+      cargo:         initialData?.cargo         ?? "",
+      perfil_base:   initialData?.perfil_base   ?? "",
+      telefone:      initialData?.telefone      ?? "",
+      celular:       initialData?.celular       ?? "",
+      // Campos de senha só existem na criação — não há defaultValue no modo edição
+      ...(!isEdit && { senha: "", confirmarSenha: "" }),
+    } as UsuarioFormValues,
   });
 
-  const onSubmit = (values: UsuarioFormValues) => {
-    onSave(values);
-  };
+  const e = errors as any; // cast para acessar campos condicionais sem type error
 
   const handleParceiroSelect = (parceiro: any) => {
-    if (parceiro.email) setValue("email", parceiro.email, { shouldValidate: true });
-    if (parceiro.telefone) setValue("telefone", parceiro.telefone);
-    if (parceiro.celular) setValue("celular", parceiro.celular);
+    if (parceiro.email)    setValue("email",    parceiro.email,    { shouldValidate: true });
+    if (parceiro.telefone) setValue("telefone", mascararTelefone(parceiro.telefone));
+    if (parceiro.celular)  setValue("celular",  mascararTelefone(parceiro.celular));
   };
 
   return (
@@ -507,8 +598,9 @@ function UserModal({ initialData, onClose, isPending, onSave }: UserModalProps) 
           </button>
         </div>
 
-        <form onSubmit={handleSubmit(onSubmit)}>
+        <form onSubmit={handleSubmit(onSave)} noValidate>
           <div className="p-4 sm:p-6 space-y-4">
+
             {/* Nome */}
             <div>
               <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
@@ -523,12 +615,11 @@ function UserModal({ initialData, onClose, isPending, onSave }: UserModalProps) 
                     onChange={field.onChange}
                     onSelectFull={handleParceiroSelect}
                     disabled={isEdit}
+                    hasError={!!e.nome}
                   />
                 )}
               />
-              {errors.nome && (
-                <p className="text-xs text-destructive mt-1">{errors.nome.message}</p>
-              )}
+              <FieldError message={e.nome?.message} />
             </div>
 
             {/* E-mail */}
@@ -540,15 +631,13 @@ function UserModal({ initialData, onClose, isPending, onSave }: UserModalProps) 
                 {...register("email")}
                 type="email"
                 disabled={isEdit}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors disabled:opacity-50"
+                className={inputCls(!!e.email) + " disabled:opacity-50"}
                 placeholder="joao@empresa.com.br"
               />
-              {errors.email && (
-                <p className="text-xs text-destructive mt-1">{errors.email.message}</p>
-              )}
+              <FieldError message={e.email?.message} />
             </div>
 
-            {/* Cargo e Perfil Base */}
+            {/* Cargo + Perfil Base */}
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
@@ -556,9 +645,10 @@ function UserModal({ initialData, onClose, isPending, onSave }: UserModalProps) 
                 </label>
                 <input
                   {...register("cargo")}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+                  className={inputCls(!!e.cargo)}
                   placeholder="Ex: Analista"
                 />
+                <FieldError message={e.cargo?.message} />
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
@@ -566,47 +656,125 @@ function UserModal({ initialData, onClose, isPending, onSave }: UserModalProps) 
                 </label>
                 <select
                   {...register("perfil_base")}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors [&>option]:bg-[#1A1A24] [&>option]:text-white"
+                  className={`w-full bg-white/5 border rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors [&>option]:bg-[#1A1A24] [&>option]:text-white ${
+                    e.perfil_base ? "border-destructive/60" : "border-white/10"
+                  }`}
                 >
                   <option value="">Nenhum</option>
                   {Object.keys(perfisBase).map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
+                    <option key={p} value={p}>{p}</option>
                   ))}
                 </select>
               </div>
             </div>
 
-            {!isEdit && (
-              <div className="bg-primary/10 border border-primary/20 rounded-xl p-3 text-xs text-primary mt-2">
-                <strong>Atenção:</strong> Ao criar o usuário, será enviada uma senha de uso único para o e-mail cadastrado.
-              </div>
-            )}
-
-            {/* Telefone / Celular */}
+            {/* Telefone + Celular — com máscara em tempo real */}
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
                   Telefone
                 </label>
-                <input
-                  {...register("telefone")}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
-                  placeholder="(11) 3456-7890"
+                <Controller
+                  name="telefone"
+                  control={control}
+                  render={({ field }) => (
+                    <input
+                      value={field.value ?? ""}
+                      onChange={(ev) => field.onChange(mascararTelefone(ev.target.value))}
+                      className={inputCls(!!e.telefone)}
+                      placeholder="(11) 3456-7890"
+                      inputMode="tel"
+                    />
+                  )}
                 />
+                <FieldError message={e.telefone?.message} />
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
                   Celular
                 </label>
-                <input
-                  {...register("celular")}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
-                  placeholder="(11) 9 9999-9999"
+                <Controller
+                  name="celular"
+                  control={control}
+                  render={({ field }) => (
+                    <input
+                      value={field.value ?? ""}
+                      onChange={(ev) => field.onChange(mascararTelefone(ev.target.value))}
+                      className={inputCls(!!e.celular)}
+                      placeholder="(11) 9 9999-9999"
+                      inputMode="tel"
+                    />
+                  )}
                 />
+                <FieldError message={e.celular?.message} />
               </div>
             </div>
+
+            {/* Senha — apenas no modo criação */}
+            {!isEdit && (
+              <>
+                <div className="border-t border-white/5 pt-4">
+                  <p className="text-xs text-muted-foreground mb-3 font-medium uppercase tracking-wide">
+                    Credenciais de Acesso
+                  </p>
+
+                  {/* Aviso */}
+                  <div className="bg-primary/10 border border-primary/20 rounded-xl p-3 text-xs text-primary mb-4">
+                    <strong>Atenção:</strong> A senha definida será enviada ao e-mail cadastrado junto com as instruções de primeiro acesso.
+                  </div>
+
+                  {/* Senha */}
+                  <div className="mb-4">
+                    <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                      Senha <span className="text-destructive">*</span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        {...register("senha" as any)}
+                        type={showSenha ? "text" : "password"}
+                        className={inputCls(!!e.senha) + " pr-10"}
+                        placeholder="Mín. 8 caracteres, 1 maiúscula, 1 número"
+                        autoComplete="new-password"
+                      />
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        onClick={() => setShowSenha((v) => !v)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-white transition-colors"
+                      >
+                        {showSenha ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <FieldError message={e.senha?.message} />
+                  </div>
+
+                  {/* Confirmar Senha */}
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                      Confirmar Senha <span className="text-destructive">*</span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        {...register("confirmarSenha" as any)}
+                        type={showConfirmar ? "text" : "password"}
+                        className={inputCls(!!e.confirmarSenha) + " pr-10"}
+                        placeholder="Repita a senha"
+                        autoComplete="new-password"
+                      />
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        onClick={() => setShowConfirmar((v) => !v)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-white transition-colors"
+                      >
+                        {showConfirmar ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <FieldError message={e.confirmarSenha?.message} />
+                  </div>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="flex gap-3 p-4 sm:p-6 pt-0">
@@ -661,22 +829,21 @@ export default function Usuarios() {
 
   const { data: usuarios = [], isLoading, isError, error } = useQuery<UsuarioRow[]>({
     queryKey: ["usuarios"],
-    // limit=100 cobre a maioria dos casos; paginação avançada virá na Fase 4+
     queryFn: () => fetchApiData<UsuarioRow[]>("/usuarios?limit=100"),
   });
 
-  // ── Criar ───────────────────────────────────────────────────────────────────
   const createMutation = useMutation({
-    mutationFn: (data: UsuarioFormValues) =>
+    mutationFn: (data: CriarUsuarioFormValues) =>
       fetchApiData<UsuarioRow>("/usuarios", {
         method: "POST",
         body: JSON.stringify({
-          nome: data.nome,
-          email: data.email,
-          cargo: data.cargo || undefined,
+          nome:        data.nome,
+          email:       data.email,
+          senha:       data.senha,
+          cargo:       data.cargo       || undefined,
           perfil_base: data.perfil_base || undefined,
-          telefone: data.telefone || undefined,
-          celular: data.celular || undefined,
+          telefone:    data.telefone    || undefined,
+          celular:     data.celular     || undefined,
         }),
       }),
     onSuccess: async (createdUser, variables) => {
@@ -694,20 +861,19 @@ export default function Usuarios() {
       toast({ title: "Erro ao criar usuário", description: err.message, variant: "destructive" }),
   });
 
-  // ── Editar ──────────────────────────────────────────────────────────────────
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: UsuarioFormValues }) =>
+    mutationFn: ({ id, data }: { id: number; data: EditarUsuarioFormValues }) =>
       fetchApiData<UsuarioRow>(`/usuarios/${id}`, {
         method: "PUT",
         body: JSON.stringify({
-          nome: data.nome,
-          email: data.email,
-          cargo: data.cargo || undefined,
+          nome:        data.nome,
+          email:       data.email,
+          cargo:       data.cargo       || undefined,
           perfil_base: data.perfil_base || undefined,
-          telefone: data.telefone || undefined,
-          celular: data.celular || undefined,
+          telefone:    data.telefone    || undefined,
+          celular:     data.celular     || undefined,
         }),
-      }).then(res => ({ user: res, variables: data })),
+      }).then((res) => ({ user: res, variables: data })),
     onSuccess: async ({ user, variables }) => {
       if (variables.perfil_base && perfisBase[variables.perfil_base]) {
         await fetchApiData(`/usuarios/${user.id}/permissoes`, {
@@ -723,7 +889,6 @@ export default function Usuarios() {
       toast({ title: "Erro ao atualizar usuário", description: err.message, variant: "destructive" }),
   });
 
-  // ── Toggle bloqueado (soft-delete / inativação) ─────────────────────────────
   const toggleBloqueadoMutation = useMutation({
     mutationFn: ({ id, bloqueado }: { id: number; bloqueado: boolean }) =>
       fetchApiData<UsuarioRow>(`/usuarios/${id}`, {
@@ -740,9 +905,9 @@ export default function Usuarios() {
 
   const handleSave = (values: UsuarioFormValues) => {
     if (editingUsuario) {
-      updateMutation.mutate({ id: editingUsuario.id, data: values });
+      updateMutation.mutate({ id: editingUsuario.id, data: values as EditarUsuarioFormValues });
     } else {
-      createMutation.mutate(values);
+      createMutation.mutate(values as CriarUsuarioFormValues);
     }
   };
 
@@ -751,7 +916,6 @@ export default function Usuarios() {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      {/* Modais */}
       {showUserModal && (
         <UserModal
           key={`user-modal-${modalKey}`}
@@ -762,10 +926,7 @@ export default function Usuarios() {
         />
       )}
       {permissoesUsuario && (
-        <PermissoesModal
-          usuario={permissoesUsuario}
-          onClose={() => setPermissoesUsuario(null)}
-        />
+        <PermissoesModal usuario={permissoesUsuario} onClose={() => setPermissoesUsuario(null)} />
       )}
 
       <PageHeader
@@ -783,7 +944,6 @@ export default function Usuarios() {
         }
       />
 
-      {/* Tabs */}
       <div className="flex gap-1 p-1 bg-white/5 rounded-xl w-full sm:w-fit">
         {(["usuarios", "perfis"] as const).map((t) => (
           <button
@@ -799,7 +959,6 @@ export default function Usuarios() {
         ))}
       </div>
 
-      {/* ── Tab Usuários ── */}
       {tab === "usuarios" && (
         <>
           {isLoading && (
@@ -823,19 +982,10 @@ export default function Usuarios() {
 
           {!isLoading && !isError && (
             <>
-              {/* Summary strip */}
               <div className="flex gap-4 text-xs text-muted-foreground">
-                <span>
-                  <span className="font-semibold text-white">{usuarios.length}</span> usuário
-                  {usuarios.length !== 1 ? "s" : ""}
-                </span>
-                <span className="text-success">
-                  <span className="font-semibold">{ativos}</span> ativo{ativos !== 1 ? "s" : ""}
-                </span>
-                <span className="text-muted-foreground/60">
-                  <span className="font-semibold">{usuarios.length - ativos}</span> bloqueado
-                  {usuarios.length - ativos !== 1 ? "s" : ""}
-                </span>
+                <span><span className="font-semibold text-white">{usuarios.length}</span> usuário{usuarios.length !== 1 ? "s" : ""}</span>
+                <span className="text-success"><span className="font-semibold">{ativos}</span> ativo{ativos !== 1 ? "s" : ""}</span>
+                <span className="text-muted-foreground/60"><span className="font-semibold">{usuarios.length - ativos}</span> bloqueado{usuarios.length - ativos !== 1 ? "s" : ""}</span>
               </div>
 
               {usuarios.length === 0 ? (
@@ -893,12 +1043,10 @@ export default function Usuarios() {
                               )}
                             </td>
                             <td className="px-5 py-4 text-center text-xs text-muted-foreground">
-                              {u.ultimo_acesso
-                                ? new Date(u.ultimo_acesso).toLocaleDateString("pt-BR")
-                                : "—"}
+                              {u.ultimo_acesso ? new Date(u.ultimo_acesso).toLocaleDateString("pt-BR") : "—"}
                             </td>
                             <td className="px-5 py-4 text-right">
-                              <div className="flex justify-end gap-1 transition-opacity">
+                              <div className="flex justify-end gap-1">
                                 <button
                                   type="button"
                                   title="Permissões"
@@ -921,13 +1069,9 @@ export default function Usuarios() {
                                   title={u.bloqueado ? "Desbloquear" : "Bloquear"}
                                   disabled={toggleBloqueadoMutation.isPending}
                                   className="p-1.5 hover:bg-warning/20 rounded-lg disabled:opacity-40"
-                                  onClick={() =>
-                                    toggleBloqueadoMutation.mutate({ id: u.id, bloqueado: !u.bloqueado })
-                                  }
+                                  onClick={() => toggleBloqueadoMutation.mutate({ id: u.id, bloqueado: !u.bloqueado })}
                                 >
-                                  <Trash2
-                                    className={`w-3.5 h-3.5 ${u.bloqueado ? "text-success" : "text-destructive"}`}
-                                  />
+                                  <Trash2 className={`w-3.5 h-3.5 ${u.bloqueado ? "text-success" : "text-destructive"}`} />
                                 </button>
                               </div>
                             </td>
@@ -960,9 +1104,7 @@ export default function Usuarios() {
                             </div>
                             <p className="text-xs text-muted-foreground truncate">{u.email}</p>
                             {(u.telefone || u.celular) && (
-                              <p className="text-xs text-muted-foreground mt-0.5">
-                                {u.telefone ?? u.celular}
-                              </p>
+                              <p className="text-xs text-muted-foreground mt-0.5">{u.telefone ?? u.celular}</p>
                             )}
                           </div>
                         </div>
@@ -974,24 +1116,16 @@ export default function Usuarios() {
                           >
                             <Shield className="w-3.5 h-3.5" /> Permissões
                           </button>
-                          <button
-                            type="button"
-                            className="p-2 hover:bg-white/10 rounded-lg"
-                            onClick={() => openEdit(u)}
-                          >
+                          <button type="button" className="p-2 hover:bg-white/10 rounded-lg" onClick={() => openEdit(u)}>
                             <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
                           </button>
                           <button
                             type="button"
                             disabled={toggleBloqueadoMutation.isPending}
                             className="p-2 hover:bg-warning/20 rounded-lg disabled:opacity-40"
-                            onClick={() =>
-                              toggleBloqueadoMutation.mutate({ id: u.id, bloqueado: !u.bloqueado })
-                            }
+                            onClick={() => toggleBloqueadoMutation.mutate({ id: u.id, bloqueado: !u.bloqueado })}
                           >
-                            <Trash2
-                              className={`w-3.5 h-3.5 ${u.bloqueado ? "text-success" : "text-destructive"}`}
-                            />
+                            <Trash2 className={`w-3.5 h-3.5 ${u.bloqueado ? "text-success" : "text-destructive"}`} />
                           </button>
                         </div>
                       </div>
@@ -1004,7 +1138,6 @@ export default function Usuarios() {
         </>
       )}
 
-      {/* ── Tab Perfis (estático — referência visual) ── */}
       {tab === "perfis" && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {Object.entries(perfisBase).map(([nome, perms]) => (
@@ -1020,10 +1153,7 @@ export default function Usuarios() {
               </div>
               <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto">
                 {perms.slice(0, 12).map((p) => (
-                  <span
-                    key={p}
-                    className="text-[10px] bg-white/5 border border-white/10 text-muted-foreground px-2 py-0.5 rounded"
-                  >
+                  <span key={p} className="text-[10px] bg-white/5 border border-white/10 text-muted-foreground px-2 py-0.5 rounded">
                     {p}
                   </span>
                 ))}

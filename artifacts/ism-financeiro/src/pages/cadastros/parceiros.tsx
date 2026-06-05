@@ -17,7 +17,15 @@ const tiposParceiroOptions = [
   "Funcionário(a)",
   "Prestador(a) de Serviços PJ",
 ];
-const formaPagamentoOpcoes = ["PIX", "Boleto", "TED", "DOC", "Cheque"];
+const formaPagamentoOpcoes = ["PIX", "Boleto", "TED", "DOC", "Cheque"] as const;
+
+type FormaPagamentoOption = typeof formaPagamentoOpcoes[number];
+
+function parseFormaPagamento(value: string | null | undefined): FormaPagamentoOption {
+  return formaPagamentoOpcoes.includes(value as FormaPagamentoOption)
+    ? (value as FormaPagamentoOption)
+    : "PIX";
+}
 
 function mascararDocumento(valor: string, tipo: "PJ" | "PF") {
   const numeros = valor.replace(/\D/g, "");
@@ -74,7 +82,7 @@ function parceiroRowToFormValues(p: ParceiroRow): ParceiroFormValues {
     documento: rawDoc ? mascararDocumento(rawDoc, tipo) : "",
     departamento_id: p.departamento_id ? String(p.departamento_id) : "",
     tiposParceiro: tiposArray(p.tipos),
-    formaPagamento: p.forma_pagamento_preferencial || "PIX",
+    formaPagamento: parseFormaPagamento(p.forma_pagamento_preferencial),
     email: p.email || "",
     telefone: p.telefone ? mascararTelefone(p.telefone) : "",
     pixTipoRecebedor,
@@ -112,7 +120,7 @@ function tiposArray(t: unknown): string[] {
 
 function parceiroFormToApiBody(values: ParceiroFormValues) {
   const dig = docNumeros(values.documento);
-  const deptRaw = values.departamento_id.trim();
+  const deptRaw = values.departamento_id?.trim() ?? "";
   const departamento_id = deptRaw ? Number(deptRaw) : undefined;
 
   const chaves_pix: Array<{ tipo: string; chave: string }> = [];
@@ -124,14 +132,14 @@ function parceiroFormToApiBody(values: ParceiroFormValues) {
     digito_conta?: string;
   }> = [];
 
-  if (values.formaPagamento === "PIX" && values.pixChave.trim()) {
+  if (values.formaPagamento === "PIX" && values.pixChave?.trim()) {
     chaves_pix.push({ tipo: values.pixTipoRecebedor, chave: values.pixChave.trim() });
   }
   if (values.formaPagamento === "Boleto" || values.formaPagamento === "TED" || values.formaPagamento === "DOC") {
     dados_bancarios.push({
       banco: values.formaPagamento,
-      agencia: values.agencia.trim(),
-      conta: values.contaNumero.trim(),
+      agencia: values.agencia?.trim() ?? "",
+      conta: values.contaNumero?.trim() ?? "",
     });
   }
 
@@ -140,8 +148,8 @@ function parceiroFormToApiBody(values: ParceiroFormValues) {
     cpf_cnpj: dig || null,
     nome: values.nomeRazao.trim(),
     nome_fantasia: null as string | null,
-    email: values.email.trim() || null,
-    telefone: docNumeros(values.telefone) || null,
+    email: values.email?.trim() || null,
+    telefone: docNumeros(values.telefone ?? "") || null,
     forma_pagamento_preferencial: values.formaPagamento,
     tipos: values.tiposParceiro,
     departamento_id: departamento_id ?? null,
@@ -203,6 +211,9 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
 
   const form = useForm<ParceiroFormValues>({
     resolver: zodResolver(parceiroFormSchema),
+    // FIX: "onTouched" dispara validação local assim que o usuário sai do campo,
+    //      bloqueando o submit sem precisar chegar na API.
+    mode: "onTouched",
     defaultValues: isEdit ? parceiroRowToFormValues(initialData) : defaultParceiroForm,
   });
 
@@ -213,6 +224,7 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
     watch,
     setValue,
     reset,
+    trigger,
     formState: { errors, isDirty },
   } = form;
 
@@ -225,10 +237,32 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const tipoPessoa = watch("tipoPessoa");
-  const formaPagamento = watch("formaPagamento");
-  const tiposParceiro = watch("tiposParceiro");
+  const tipoPessoa      = watch("tipoPessoa");
+  const formaPagamento  = watch("formaPagamento");
+  const tiposParceiro   = watch("tiposParceiro");
   const pixTipoRecebedor = watch("pixTipoRecebedor");
+
+  // FIX: revalida `documento` ao trocar PF ↔ PJ para atualizar a mensagem CPF/CNPJ.
+  //      Usa trigger incondicional — em "onTouched" o campo só mostra erro se já foi
+  //      tocado, então revalidar sem `touchedFields` é seguro.
+  useEffect(() => {
+    void trigger("documento");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tipoPessoa]);
+
+  // FIX: ao trocar forma de pagamento, revalida todos os campos condicionais para
+  //      limpar erros de campos que deixaram de ser obrigatórios e marcar os novos.
+  useEffect(() => {
+    void trigger(["pixChave", "agencia", "contaNumero", "cpfCnpjBancario"]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formaPagamento]);
+
+  // FIX: ao trocar pixTipoRecebedor (PF/PJ dentro de Boleto/TED/DOC),
+  //      revalida o campo cpfCnpjBancario para exigir o dígito correto (11 vs 14).
+  useEffect(() => {
+    void trigger("cpfCnpjBancario");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pixTipoRecebedor]);
 
   const saveMutation = useMutation({
     mutationFn: (values: ParceiroFormValues) => {
@@ -267,6 +301,12 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
     else onClose();
   };
 
+  // Classe utilitária para campos com/sem erro
+  const fieldCls = (hasError?: boolean) =>
+    `w-full bg-white/5 border rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors ${
+      hasError ? "border-destructive/60 focus:border-destructive" : "border-white/10"
+    }`;
+
   return (
     <>
       {showConfirmCancel && (
@@ -289,8 +329,9 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
             </button>
           </div>
 
-          <form onSubmit={handleSubmit((v) => saveMutation.mutate(v))} className="flex flex-col">
+          <form onSubmit={handleSubmit((v) => saveMutation.mutate(v))} noValidate className="flex flex-col">
             <div className="p-6 space-y-5">
+              {/* Tipo de Pessoa */}
               <div>
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">Tipo de Pessoa *</label>
                 <Controller
@@ -302,7 +343,11 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                         <button
                           key={t}
                           type="button"
-                          onClick={() => field.onChange(t)}
+                          onClick={() => {
+                            field.onChange(t);
+                            // Limpa documento ao trocar tipo para evitar CPF salvo num campo de CNPJ
+                            setValue("documento", "", { shouldDirty: true });
+                          }}
                           className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all border ${
                             field.value === t
                               ? "bg-primary text-white border-primary"
@@ -316,6 +361,7 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                 />
               </div>
 
+              {/* Nome + Documento */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
@@ -323,7 +369,7 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                   </label>
                   <input
                     {...register("nomeRazao")}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+                    className={fieldCls(!!errors.nomeRazao)}
                     placeholder={tipoPessoa === "PF" ? "Ex: João da Silva" : "Ex: Tech Solutions S.A."}
                   />
                   {errors.nomeRazao && <p className="text-[11px] text-destructive mt-1">{errors.nomeRazao.message}</p>}
@@ -339,7 +385,8 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                       <input
                         value={field.value}
                         onChange={(e) => field.onChange(mascararDocumento(e.target.value, tipoPessoa as "PF" | "PJ"))}
-                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+                        onBlur={field.onBlur}
+                        className={fieldCls(!!errors.documento)}
                         placeholder={tipoPessoa === "PF" ? "000.000.000-00" : "00.000.000/0000-00"}
                       />
                     )}
@@ -348,12 +395,14 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                 </div>
               </div>
 
+              {/* E-mail + Telefone */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">E-mail</label>
                   <input
                     {...register("email")}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+                    type="email"
+                    className={fieldCls(!!errors.email)}
                     placeholder="email@exemplo.com.br"
                   />
                   {errors.email && <p className="text-[11px] text-destructive mt-1">{errors.email.message}</p>}
@@ -367,14 +416,17 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                       <input
                         value={field.value}
                         onChange={(e) => field.onChange(mascararTelefone(e.target.value))}
-                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+                        onBlur={field.onBlur}
+                        className={fieldCls(!!errors.telefone)}
                         placeholder="(11) 99999-0000"
                       />
                     )}
                   />
+                  {errors.telefone && <p className="text-[11px] text-destructive mt-1">{errors.telefone.message}</p>}
                 </div>
               </div>
 
+              {/* Departamento */}
               <div>
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
                   Lotação / Departamento
@@ -391,6 +443,7 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                 </select>
               </div>
 
+              {/* Tipos de Parceiro */}
               <div>
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">Tipo de Parceiro *</label>
                 <div className="grid grid-cols-2 gap-2">
@@ -403,7 +456,7 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                         checked={tiposParceiro.includes(t)}
                         onChange={() => {
                           const next = tiposParceiro.includes(t) ? tiposParceiro.filter((x) => x !== t) : [...tiposParceiro, t];
-                          setValue("tiposParceiro", next, { shouldValidate: true, shouldDirty: true });
+                          setValue("tiposParceiro", next, { shouldValidate: true, shouldDirty: true, shouldTouch: true });
                         }}
                         className="accent-primary w-4 h-4"
                       />
@@ -414,6 +467,7 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                 {errors.tiposParceiro && <p className="text-[11px] text-destructive mt-1">{errors.tiposParceiro.message}</p>}
               </div>
 
+              {/* Forma de Pagamento */}
               <div>
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">Forma de Pagamento Preferencial</label>
                 <Controller
@@ -438,6 +492,7 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                   )}
                 />
 
+                {/* ── Campos PIX ── */}
                 {formaPagamento === "PIX" && (
                   <div className="grid grid-cols-2 gap-3 bg-white/5 rounded-xl p-4">
                     <div>
@@ -453,7 +508,9 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                       <label className="text-xs text-muted-foreground mb-1 block">Chave PIX *</label>
                       <input
                         {...register("pixChave")}
-                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50"
+                        className={`w-full bg-white/5 border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 ${
+                          errors.pixChave ? "border-destructive/60" : "border-white/10"
+                        }`}
                         placeholder="CPF, CNPJ, e-mail ou telefone"
                       />
                       {errors.pixChave && <p className="text-[11px] text-destructive mt-1">{errors.pixChave.message}</p>}
@@ -461,6 +518,7 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                   </div>
                 )}
 
+                {/* ── Campos Boleto / TED / DOC ── */}
                 {(formaPagamento === "Boleto" || formaPagamento === "TED" || formaPagamento === "DOC") && (
                   <div className="grid grid-cols-2 gap-3 bg-white/5 rounded-xl p-4">
                     <div>
@@ -483,7 +541,10 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                             onChange={(e) =>
                               field.onChange(mascararDocumento(e.target.value, pixTipoRecebedor as "PF" | "PJ"))
                             }
-                            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50"
+                            onBlur={field.onBlur}
+                            className={`w-full bg-white/5 border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 ${
+                              errors.cpfCnpjBancario ? "border-destructive/60" : "border-white/10"
+                            }`}
                             placeholder={pixTipoRecebedor === "PF" ? "000.000.000-00" : "00.000.000/0000-00"}
                           />
                         )}
@@ -494,7 +555,9 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                       <label className="text-xs text-muted-foreground mb-1 block">Agência *</label>
                       <input
                         {...register("agencia")}
-                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50"
+                        className={`w-full bg-white/5 border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 ${
+                          errors.agencia ? "border-destructive/60" : "border-white/10"
+                        }`}
                         placeholder="0000"
                       />
                       {errors.agencia && <p className="text-[11px] text-destructive mt-1">{errors.agencia.message}</p>}
@@ -510,7 +573,9 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                       <label className="text-xs text-muted-foreground mb-1 block">Número da Conta *</label>
                       <input
                         {...register("contaNumero")}
-                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50"
+                        className={`w-full bg-white/5 border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 ${
+                          errors.contaNumero ? "border-destructive/60" : "border-white/10"
+                        }`}
                         placeholder="00000-0"
                       />
                       {errors.contaNumero && <p className="text-[11px] text-destructive mt-1">{errors.contaNumero.message}</p>}
@@ -602,7 +667,6 @@ export default function Parceiros() {
     return mascararDocumento(String(p.cpf_cnpj).replace(/\D/g, ""), tipo);
   };
 
-  // ── Exportação ──────────────────────────────────────────────────────────────
   const EXPORT_COLUMNS_PARCEIROS = [
     { header: "Tipo Pessoa",     key: "tipo_pessoa",   width: 12 },
     { header: "Nome / Razão",    key: "nome",          width: 40 },
