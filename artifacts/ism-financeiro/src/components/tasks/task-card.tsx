@@ -1,25 +1,15 @@
-import { useState } from "react";
 import { format, isPast, differenceInDays, isToday } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
-  Clock,
-  MessageSquare,
-  Paperclip,
-  MoreVertical,
-  Calendar,
-  CheckSquare,
+  Clock, MessageSquare, Paperclip, Calendar, CheckSquare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const COLORS = {
-  fundoPrincipal: "#121212",
-  colunas: "#1A1A1A",
-  cards: "#262626",
-};
+const COLORS = { cards: "#262626" };
 
 type ChecklistItem = { id: string; texto: string; completed: boolean };
 
-interface TaskCardProps {
+export interface TaskCardProps {
   id: number;
   titulo: string;
   descricao: string | null;
@@ -37,98 +27,69 @@ interface TaskCardProps {
   responsaveis?: { id: number; nome: string; avatar?: string }[];
   onClick?: () => void;
   isDragging?: boolean;
+  /** Slot para o menu de ações (três pontinhos) — injetado pelo SortableCard */
+  menuSlot?: React.ReactNode;
 }
 
 const PRIORIDADE_CONFIG = {
-  urgente: {
-    label: "URGENTE",
-    bg: "bg-red-600",
-    text: "text-white",
-    border: "border-red-500"
-  },
-  alta: {
-    label: "ALTA",
-    bg: "bg-[#D4A574]",
-    text: "text-[#4A3728]",
-    border: "border-[#C49A6C]"
-  },
-  media: {
-    label: "MÉDIA",
-    bg: "bg-blue-600",
-    text: "text-white",
-    border: "border-blue-500"
-  },
-  baixa: {
-    label: "BAIXA",
-    bg: "bg-green-800",
-    text: "text-green-300",
-    border: "border-green-700"
-  }
+  urgente: { label: "URGENTE", bg: "bg-red-600",   text: "text-white",     border: "border-red-500"   },
+  alta:    { label: "ALTA",    bg: "bg-[#D4A574]", text: "text-[#4A3728]", border: "border-[#C49A6C]" },
+  media:   { label: "MÉDIA",   bg: "bg-blue-600",  text: "text-white",     border: "border-blue-500"  },
+  baixa:   { label: "BAIXA",   bg: "bg-green-800", text: "text-green-300", border: "border-green-700" },
 };
 
 const DEPARTAMENTOS = [
-  { value: "financeiro", label: "Financeiro" },
-  { value: "operacional", label: "Operacional" },
-  { value: "contabil", label: "Contábil" },
-  { value: "diretoria", label: "Diretoria" },
-  { value: "rh_dp", label: "RH/DP" },
-  { value: "administrativo", label: "Administrativo" }
+  { value: "financeiro",     label: "Financeiro"     },
+  { value: "operacional",    label: "Operacional"    },
+  { value: "contabil",       label: "Contábil"       },
+  { value: "diretoria",      label: "Diretoria"      },
+  { value: "rh_dp",          label: "RH/DP"          },
+  { value: "administrativo", label: "Administrativo" },
 ];
 
-function getPrioridadeConfig(prioridade: string): typeof PRIORIDADE_CONFIG.media {
+function getPrioridadeConfig(prioridade: string) {
   const key = prioridade.toLowerCase() as keyof typeof PRIORIDADE_CONFIG;
-  return PRIORIDADE_CONFIG[key] || PRIORIDADE_CONFIG.media;
+  return PRIORIDADE_CONFIG[key] ?? PRIORIDADE_CONFIG.media;
 }
 
 function getDepartamentoBadge(depto: string) {
-  const d = DEPARTAMENTOS.find(d => d.value === depto.toLowerCase());
-  return d || { label: depto };
+  return DEPARTAMENTOS.find(d => d.value === depto.toLowerCase()) ?? { label: depto };
 }
 
 function DateIndicator({ prazo }: { prazo: string | null }) {
   if (!prazo) return null;
-
-  const data = new Date(prazo);
-  const hoje = new Date();
-  const isAtrasado = isPast(data) && !isToday(data);
-  const isVencendoHoje = isToday(data);
+  const data     = new Date(prazo);
+  const hoje     = new Date();
+  const atrasado = isPast(data) && !isToday(data);
   const diasDiff = differenceInDays(data, hoje);
 
-  let colorClass = "text-gray-400";
-  let icon = <Calendar className="w-3.5 h-3.5" />;
-
-  if (isAtrasado) {
-    colorClass = "text-red-500";
-    icon = <Clock className="w-3.5 h-3.5" />;
-  } else if (isVencendoHoje || (diasDiff <= 2 && diasDiff >= 0)) {
-    colorClass = "text-orange-400";
-  }
+  const colorClass =
+    atrasado                           ? "text-red-500"    :
+    isToday(data) || diasDiff <= 2     ? "text-orange-400" :
+                                         "text-gray-400";
 
   return (
     <span className={cn("flex items-center gap-1 text-xs", colorClass)}>
-      {icon}
+      {atrasado ? <Clock className="w-3.5 h-3.5" /> : <Calendar className="w-3.5 h-3.5" />}
       <span>{format(data, "dd/MM", { locale: ptBR })}</span>
     </span>
   );
 }
 
 function AvatarStack({ responsaveis }: { responsaveis?: { id: number; nome: string; avatar?: string }[] }) {
-  if (!responsaveis || responsaveis.length === 0) return null;
-
-  const displayCount = 3;
-  const visible = responsaveis.slice(0, displayCount);
-  const remaining = responsaveis.length - displayCount;
-
+  if (!responsaveis?.length) return null;
+  const visible   = responsaveis.slice(0, 3);
+  const remaining = responsaveis.length - 3;
   return (
     <div className="flex -space-x-2">
-      {visible.map((resp, i) => (
+      {visible.map((r, i) => (
         <div
-          key={resp.id}
-          className="w-6 h-6 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500 flex items-center justify-center text-[10px] text-white font-bold border-2 border-[#262626]"
-          title={resp.nome}
+          key={r.id}
+          title={r.nome}
           style={{ zIndex: visible.length - i }}
+          className="w-6 h-6 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500 flex items-center justify-center text-[10px] text-white font-bold border-2 border-[#262626]"
         >
-          {resp.nome.charAt(0).toUpperCase()}
+          {r.nome.charAt(0).toUpperCase()}
         </div>
       ))}
       {remaining > 0 && (
@@ -150,61 +111,52 @@ export function TaskCard({
   prioridade,
   responsaveis,
   onClick,
-  isDragging
+  isDragging,
+  menuSlot,   // ← recebe o menu injetado pelo SortableCard
 }: TaskCardProps) {
-  const prioridadeConfig = getPrioridadeConfig(prioridade);
-
-  const checklistTotal = checklist?.length || 0;
-  const checklistCompleted = checklist?.filter(i => i.completed).length || 0;
-  const checklistProgress = checklistTotal > 0 ? (checklistCompleted / checklistTotal) * 100 : 0;
+  const config           = getPrioridadeConfig(prioridade);
+  const checklistTotal   = checklist?.length ?? 0;
+  const checklistDone    = checklist?.filter(i => i.completed).length ?? 0;
+  const checklistPct     = checklistTotal > 0 ? (checklistDone / checklistTotal) * 100 : 0;
 
   return (
     <div
       onClick={onClick}
+      style={{ backgroundColor: COLORS.cards }}
       className={cn(
         "group relative p-4 rounded-xl border transition-all cursor-pointer",
         "hover:border-white/20 hover:shadow-lg hover:shadow-black/20",
         isDragging ? "shadow-2xl scale-105 rotate-2" : "border-white/10",
-        "bg-[#262626]"
       )}
-      style={{ backgroundColor: COLORS.cards }}
     >
+      {/* Linha topo: badge de prioridade + menu (injetado pelo pai) */}
       <div className="flex justify-between items-start mb-2">
         <span className={cn(
           "text-[10px] font-bold px-2 py-1 rounded-md uppercase tracking-wider",
-          prioridadeConfig.bg,
-          prioridadeConfig.text,
-          prioridadeConfig.border
+          config.bg, config.text, config.border,
         )}>
-          {prioridadeConfig.label}
+          {config.label}
         </span>
 
-        {/* ✅ stopPropagation evita abrir o modal ao clicar nos três pontinhos */}
-        <button
-          onClick={(e) => e.stopPropagation()}
-          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-white/10 rounded"
-        >
-          <MoreVertical className="w-4 h-4 text-gray-400" />
-        </button>
+        {/* menuSlot vem do SortableCard — nenhum botão duplicado aqui */}
+        <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+          {menuSlot}
+        </div>
       </div>
 
+      {/* Título */}
       <h4 className="text-sm font-bold text-white mb-2 line-clamp-2 leading-snug">
         {titulo}
       </h4>
 
+      {/* Departamentos */}
       {departamentos && departamentos.length > 0 && (
         <div className="flex flex-wrap gap-1 mb-3">
-          {departamentos.slice(0, 3).map((depto, i) => {
-            const badge = getDepartamentoBadge(depto);
-            return (
-              <span
-                key={i}
-                className="text-[10px] px-2 py-0.5 rounded-full bg-gray-700 text-gray-300"
-              >
-                {badge.label}
-              </span>
-            );
-          })}
+          {departamentos.slice(0, 3).map((d, i) => (
+            <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-gray-700 text-gray-300">
+              {getDepartamentoBadge(d).label}
+            </span>
+          ))}
           {departamentos.length > 3 && (
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-800 text-gray-400">
               +{departamentos.length - 3}
@@ -213,44 +165,40 @@ export function TaskCard({
         </div>
       )}
 
+      {/* Checklist progress */}
       {checklistTotal > 0 && (
         <div className="mb-3">
           <div className="flex items-center justify-between text-[10px] text-gray-400 mb-1">
-            <div className="flex items-center gap-1">
-              <CheckSquare className="w-3 h-3" />
-              <span>Checklist</span>
-            </div>
-            <span>{checklistCompleted}/{checklistTotal}</span>
+            <span className="flex items-center gap-1">
+              <CheckSquare className="w-3 h-3" /> Checklist
+            </span>
+            <span>{checklistDone}/{checklistTotal}</span>
           </div>
           <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
             <div
               className="h-full bg-blue-500 transition-all duration-300 rounded-full"
-              style={{ width: `${checklistProgress}%` }}
+              style={{ width: `${checklistPct}%` }}
             />
           </div>
         </div>
       )}
 
+      {/* Rodapé: data, comentários, anexos, avatares */}
       <div className="flex items-center justify-between pt-3 border-t border-white/5">
         <div className="flex items-center gap-3 text-gray-400">
-          {prazo && <DateIndicator prazo={prazo} />}
+          <DateIndicator prazo={prazo} />
           {comentarios_count > 0 && (
-            <div className="flex items-center gap-1 text-xs">
-              <MessageSquare className="w-3.5 h-3.5" />
-              <span>{comentarios_count}</span>
-            </div>
+            <span className="flex items-center gap-1 text-xs">
+              <MessageSquare className="w-3.5 h-3.5" />{comentarios_count}
+            </span>
           )}
           {anexos_count > 0 && (
-            <div className="flex items-center gap-1 text-xs">
-              <Paperclip className="w-3.5 h-3.5" />
-              <span>{anexos_count}</span>
-            </div>
+            <span className="flex items-center gap-1 text-xs">
+              <Paperclip className="w-3.5 h-3.5" />{anexos_count}
+            </span>
           )}
         </div>
-
-        {responsaveis && responsaveis.length > 0 && (
-          <AvatarStack responsaveis={responsaveis.slice(0, 3)} />
-        )}
+        <AvatarStack responsaveis={responsaveis} />
       </div>
     </div>
   );

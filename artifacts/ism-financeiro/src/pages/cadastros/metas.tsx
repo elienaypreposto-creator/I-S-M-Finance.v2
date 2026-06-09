@@ -10,8 +10,9 @@ import {
   brMoneyDisplayToApiString,
   apiValorToValorBr,
 } from "@/validations/lancamentos.schema";
+import { invalidateRelated } from "@/App"; 
 
-// ─── Tipos ─────────────────────────────────────────────────────────────────────
+// ─── Tipos 
 type PlanoConta = {
   id: number;
   tipo: string;
@@ -34,7 +35,7 @@ type ActiveCell = {
   value: string;
 };
 
-// ─── Constantes ────────────────────────────────────────────────────────────────
+// ─── Constantes 
 const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 const CURRENT_YEAR = new Date().getFullYear();
 const YEARS = Array.from({ length: 7 }, (_, i) => CURRENT_YEAR + 3 - i);
@@ -282,7 +283,7 @@ export default function Metas() {
     },
 
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: ["metas", ano] });
+      invalidateRelated(queryClient, "metas"); // ← ALTERADO: era invalidateQueries(["metas", ano])
     },
   });
 

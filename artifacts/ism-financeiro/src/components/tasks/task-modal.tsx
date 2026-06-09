@@ -1,169 +1,225 @@
-import { useState, useRef } from "react";
-import { X, Plus, CheckSquare, Square, Upload, GripVertical, Trash2, Send, Clock, User, Tag, ListChecks, Paperclip, Bold, Italic, List, ListOrdered } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import {
+  X, Plus, CheckSquare, Square, Upload, GripVertical, Trash2,
+  Send, Clock, Tag, ListChecks, Paperclip, Bold, Italic, List, ListOrdered
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
+// ─── Tipos ────────────────────────────────────────────────────────────────────
 type ChecklistItem = { id: string; texto: string; completed: boolean };
-type Departamento = { value: string; label: string };
+type Departamento  = { value: string; label: string };
 
+// ─── Constantes ───────────────────────────────────────────────────────────────
 const DEPARTAMENTOS: Departamento[] = [
-  { value: "financeiro", label: "Financeiro" },
-  { value: "operacional", label: "Operacional" },
-  { value: "contabil", label: "Contábil" },
-  { value: "diretoria", label: "Diretoria" },
-  { value: "rh_dp", label: "RH/DP" },
-  { value: "administrativo", label: "Administrativo" }
+  { value: "financeiro",    label: "Financeiro"    },
+  { value: "operacional",   label: "Operacional"   },
+  { value: "contabil",      label: "Contábil"      },
+  { value: "diretoria",     label: "Diretoria"     },
+  { value: "rh_dp",         label: "RH/DP"         },
+  { value: "administrativo",label: "Administrativo"},
 ];
 
 const COLUNAS = [
-  { value: "solicitado", label: "Solicitado" },
-  { value: "em_analise", label: "Em Análise" },
-  { value: "em_execucao", label: "Em Execução" },
-  { value: "aguardando_aprovacao", label: "Aguardando" },
-  { value: "concluido", label: "Concluído" }
+  { value: "solicitado",           label: "Solicitado"  },
+  { value: "em_analise",           label: "Em Análise"  },
+  { value: "em_execucao",          label: "Em Execução" },
+  { value: "aguardando_aprovacao", label: "Aguardando"  },
+  { value: "concluido",            label: "Concluído"   },
 ];
 
 const PRIORIDADES = [
-  { value: "urgente", label: "URGENTE", bg: "bg-red-600", text: "text-white", border: "border-red-500", desc: "Precisa de atenção imediata" },
-  { value: "alta", label: "ALTA", bg: "bg-[#D4A574]", text: "text-[#4A3728]", border: "border-[#C49A6C]", desc: "Prioridade alta" },
-  { value: "media", label: "MÉDIA", bg: "bg-blue-600", text: "text-white", border: "border-blue-500", desc: "Prioridade moderada" },
-  { value: "baixa", label: "BAIXA", bg: "bg-green-800", text: "text-green-300", border: "border-green-700", desc: "Pode esperar" }
+  { value: "urgente", label: "URGENTE", bg: "bg-red-600",    text: "text-white",       border: "border-red-500",   desc: "Precisa de atenção imediata" },
+  { value: "alta",    label: "ALTA",    bg: "bg-[#D4A574]",  text: "text-[#4A3728]",   border: "border-[#C49A6C]", desc: "Prioridade alta"              },
+  { value: "media",   label: "MÉDIA",   bg: "bg-blue-600",   text: "text-white",       border: "border-blue-500",  desc: "Prioridade moderada"          },
+  { value: "baixa",   label: "BAIXA",   bg: "bg-green-800",  text: "text-green-300",   border: "border-green-700", desc: "Pode esperar"                 },
 ];
 
+// ─── Props ────────────────────────────────────────────────────────────────────
 interface TaskModalProps {
   open: boolean;
   onClose: () => void;
   onSave: (data: {
-    titulo: string;
-    descricao: string;
-    prioridade: string;
-    coluna: string;
-    prazo: string | null;
+    titulo:        string;
+    descricao:     string;
+    prioridade:    string;
+    coluna:        string;
+    prazo:         string | null;
     departamentos: string[];
-    checklist: ChecklistItem[];
-    tags: string[];
+    checklist:     ChecklistItem[];
+    tags:          string[];
   }) => void;
+  /** Dados existentes — presentes quando mode === "edit" */
   initialData?: {
-    titulo: string;
-    descricao: string;
-    prioridade: string;
-    coluna: string;
-    prazo: string | null;
+    titulo:        string;
+    descricao:     string;
+    prioridade:    string;
+    coluna:        string;
+    prazo:         string | null;
     departamentos: string[];
-    checklist: ChecklistItem[];
-    tags: string[];
+    checklist:     ChecklistItem[];
+    tags:          string[];
+  };
+  /** Coluna pré-selecionada ao criar via botão "+" de uma coluna específica */
+  defaultColuna?: string;
+  /** "create" (padrão) ou "edit" */
+  mode?: "create" | "edit";
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function emptyForm(defaultColuna = "solicitado") {
+  return {
+    titulo:        "",
+    descricao:     "",
+    prioridade:    "media",
+    coluna:        defaultColuna,
+    prazo:         "",
+    departamentos: [] as string[],
+    checklist:     [] as ChecklistItem[],
+    tags:          [] as string[],
   };
 }
 
-export function TaskModal({ open, onClose, onSave, initialData }: TaskModalProps) {
-  const [titulo, setTitulo] = useState(initialData?.titulo || "");
-  const [descricao, setDescricao] = useState(initialData?.descricao || "");
-  const [prioridade, setPrioridade] = useState(initialData?.prioridade || "media");
-  const [coluna, setColuna] = useState(initialData?.coluna || "solicitado");
-  const [prazo, setPrazo] = useState(initialData?.prazo || "");
-  const [departamentos, setDepartamentos] = useState<string[]>(initialData?.departamentos || []);
-  const [checklist, setChecklist] = useState<ChecklistItem[]>(initialData?.checklist || []);
-  const [tags, setTags] = useState<string[]>(initialData?.tags || []);
-  const [novaTag, setNovaTag] = useState("");
-  const [novoChecklist, setNovoChecklist] = useState("");
-  const [showNovaTag, setShowNovaTag] = useState(false);
+// ─── Componente ───────────────────────────────────────────────────────────────
+export function TaskModal({
+  open,
+  onClose,
+  onSave,
+  initialData,
+  defaultColuna = "solicitado",
+  mode = "create",
+}: TaskModalProps) {
+
+  // Estado do formulário — inicializado de forma lazy para evitar re-render desnecessário
+  const [titulo,        setTitulo]        = useState(initialData?.titulo        ?? "");
+  const [descricao,     setDescricao]     = useState(initialData?.descricao     ?? "");
+  const [prioridade,    setPrioridade]    = useState(initialData?.prioridade    ?? "media");
+  const [coluna,        setColuna]        = useState(initialData?.coluna        ?? defaultColuna);
+  const [prazo,         setPrazo]         = useState(initialData?.prazo         ?? "");
+  const [departamentos, setDepartamentos] = useState<string[]>(initialData?.departamentos ?? []);
+  const [checklist,     setChecklist]     = useState<ChecklistItem[]>(initialData?.checklist ?? []);
+  const [tags,          setTags]          = useState<string[]>(initialData?.tags ?? []);
+
+  // Auxiliares de UI
+  const [novaTag,        setNovaTag]        = useState("");
+  const [novoChecklist,  setNovoChecklist]  = useState("");
+  const [showNovaTag,    setShowNovaTag]    = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
-  const toggleDepartamento = (value: string) => {
-    setDepartamentos(prev => 
-      prev.includes(value) 
-        ? prev.filter(d => d !== value)
-        : [...prev, value]
-    );
-  };
-  
-  const handleAddChecklist = () => {
-    if (novoChecklist.trim()) {
-      setChecklist(prev => [...prev, { 
-        id: Date.now().toString(), 
-        texto: novoChecklist.trim(), 
-        completed: false 
-      }]);
-      setNovoChecklist("");
+
+  /**
+   * Sempre que o modal abrir, sincroniza os campos:
+   * - modo "edit"   → preenche com initialData
+   * - modo "create" → reseta para formulário vazio respeitando defaultColuna
+   */
+  useEffect(() => {
+    if (!open) return;
+
+    if (mode === "edit" && initialData) {
+      setTitulo(initialData.titulo);
+      setDescricao(initialData.descricao ?? "");
+      setPrioridade(initialData.prioridade ?? "media");
+      setColuna(initialData.coluna ?? defaultColuna);
+      setPrazo(initialData.prazo ?? "");
+      setDepartamentos(initialData.departamentos ?? []);
+      setChecklist(initialData.checklist ?? []);
+      setTags(initialData.tags ?? []);
+    } else {
+      // Criação — limpa tudo e aplica coluna default
+      const blank = emptyForm(defaultColuna);
+      setTitulo(blank.titulo);
+      setDescricao(blank.descricao);
+      setPrioridade(blank.prioridade);
+      setColuna(blank.coluna);
+      setPrazo(blank.prazo);
+      setDepartamentos(blank.departamentos);
+      setChecklist(blank.checklist);
+      setTags(blank.tags);
     }
+
+    // Reseta auxiliares de UI
+    setNovaTag("");
+    setNovoChecklist("");
+    setShowNovaTag(false);
+  // defaultColuna e initialData incluídos para o coluna correto ser aplicado ao abrir
+  }, [open, mode, defaultColuna, initialData]);
+
+  // ── Checklist ──────────────────────────────────────────────────────────────
+  const handleAddChecklist = () => {
+    if (!novoChecklist.trim()) return;
+    setChecklist(prev => [
+      ...prev,
+      { id: Date.now().toString(), texto: novoChecklist.trim(), completed: false },
+    ]);
+    setNovoChecklist("");
   };
-  
-  const toggleChecklist = (id: string) => {
-    setChecklist(prev => prev.map(item => 
+
+  const toggleChecklist = (id: string) =>
+    setChecklist(prev => prev.map(item =>
       item.id === id ? { ...item, completed: !item.completed } : item
     ));
-  };
-  
-  const removeChecklist = (id: string) => {
+
+  const removeChecklist = (id: string) =>
     setChecklist(prev => prev.filter(item => item.id !== id));
-  };
-  
+
+  // ── Tags ───────────────────────────────────────────────────────────────────
   const handleAddTag = () => {
-    if (novaTag.trim() && !tags.includes(novaTag.trim())) {
-      setTags(prev => [...prev, novaTag.trim()]);
+    const trimmed = novaTag.trim();
+    if (trimmed && !tags.includes(trimmed)) {
+      setTags(prev => [...prev, trimmed]);
       setNovaTag("");
       setShowNovaTag(false);
     }
   };
-  
-  const removeTag = (tag: string) => {
+
+  const removeTag = (tag: string) =>
     setTags(prev => prev.filter(t => t !== tag));
-  };
-  
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDraggingOver(false);
-    // Aqui você implementaria o upload dos arquivos
-  };
-  
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDraggingOver(true);
-  };
-  
-  const handleDragLeave = () => {
-    setIsDraggingOver(false);
-  };
-  
+
+  // ── Departamentos ──────────────────────────────────────────────────────────
+  const toggleDepartamento = (value: string) =>
+    setDepartamentos(prev =>
+      prev.includes(value) ? prev.filter(d => d !== value) : [...prev, value]
+    );
+
+  // ── Drag & drop de arquivos ────────────────────────────────────────────────
+  const handleDrop      = (e: React.DragEvent) => { e.preventDefault(); setIsDraggingOver(false); };
+  const handleDragOver  = (e: React.DragEvent) => { e.preventDefault(); setIsDraggingOver(true);  };
+  const handleDragLeave = ()                    => setIsDraggingOver(false);
+
+  // ── Submit ─────────────────────────────────────────────────────────────────
   const handleSubmit = () => {
-    onSave({
-      titulo,
-      descricao,
-      prioridade,
-      coluna,
-      prazo: prazo || null,
-      departamentos,
-      checklist,
-      tags
-    });
-    // Reset form
-    setTitulo("");
-    setDescricao("");
-    setPrioridade("media");
-    setColuna("solicitado");
-    setPrazo("");
-    setDepartamentos([]);
-    setChecklist([]);
-    setTags([]);
-    onClose();
+    if (!titulo.trim()) return;
+    onSave({ titulo, descricao, prioridade, coluna, prazo: prazo || null, departamentos, checklist, tags });
+    // onClose é chamado pelo pai após onSave; não fechamos aqui para evitar duplo-fechamento
   };
-  
+
+  // ─── Labels dinâmicos por modo ─────────────────────────────────────────────
+  const modalTitle  = mode === "edit" ? "Editar Tarefa"    : "Nova Solicitação";
+  const submitLabel = mode === "edit" ? "Salvar Alterações": "Criar Tarefa";
+  const colunaLabel = mode === "edit" ? "Mover para"       : "Coluna Inicial";
+
   if (!open) return null;
-  
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
       <div className="bg-[#121212] border border-white/10 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
+
+        {/* Cabeçalho */}
         <div className="flex items-center justify-between p-5 border-b border-white/10 bg-[#1A1A1A]">
-          <h2 className="text-lg font-bold text-white">Nova Solicitação</h2>
+          <h2 className="text-lg font-bold text-white">{modalTitle}</h2>
           <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
             <X className="w-5 h-5 text-gray-400" />
           </button>
         </div>
-        
+
+        {/* Corpo */}
         <div className="flex flex-1 overflow-hidden">
+
+          {/* Coluna principal */}
           <div className="flex-1 p-6 overflow-y-auto space-y-6">
+
+            {/* Título */}
             <div>
               <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 block">
                 Título da Tarefa
@@ -176,14 +232,15 @@ export function TaskModal({ open, onClose, onSave, initialData }: TaskModalProps
                 className="w-full bg-[#1A1A1A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-gray-600 focus:border-blue-500 focus:outline-none"
               />
             </div>
-            
+
+            {/* Descrição */}
             <div>
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 block flex items-center justify-between">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 flex items-center justify-between">
                 Descrição
                 <div className="flex gap-1">
-                  <button className="p-1 hover:bg-white/10 rounded"><Bold className="w-4 h-4 text-gray-500" /></button>
-                  <button className="p-1 hover:bg-white/10 rounded"><Italic className="w-4 h-4 text-gray-500" /></button>
-                  <button className="p-1 hover:bg-white/10 rounded"><List className="w-4 h-4 text-gray-500" /></button>
+                  <button className="p-1 hover:bg-white/10 rounded"><Bold        className="w-4 h-4 text-gray-500" /></button>
+                  <button className="p-1 hover:bg-white/10 rounded"><Italic      className="w-4 h-4 text-gray-500" /></button>
+                  <button className="p-1 hover:bg-white/10 rounded"><List        className="w-4 h-4 text-gray-500" /></button>
                   <button className="p-1 hover:bg-white/10 rounded"><ListOrdered className="w-4 h-4 text-gray-500" /></button>
                 </div>
               </label>
@@ -195,7 +252,8 @@ export function TaskModal({ open, onClose, onSave, initialData }: TaskModalProps
                 className="w-full bg-[#1A1A1A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-gray-600 focus:border-blue-500 focus:outline-none resize-none"
               />
             </div>
-            
+
+            {/* Prioridade */}
             <div>
               <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 block">
                 Prioridade
@@ -208,7 +266,7 @@ export function TaskModal({ open, onClose, onSave, initialData }: TaskModalProps
                     onClick={() => setPrioridade(p.value)}
                     className={cn(
                       "p-3 rounded-xl border transition-all text-center",
-                      prioridade === p.value 
+                      prioridade === p.value
                         ? `${p.bg} ${p.text} ${p.border} shadow-lg`
                         : "bg-[#1A1A1A] border-white/10 text-gray-400 hover:border-white/30"
                     )}
@@ -221,7 +279,8 @@ export function TaskModal({ open, onClose, onSave, initialData }: TaskModalProps
                 ))}
               </div>
             </div>
-            
+
+            {/* Prazo + Coluna */}
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 block">
@@ -230,14 +289,14 @@ export function TaskModal({ open, onClose, onSave, initialData }: TaskModalProps
                 </label>
                 <input
                   type="date"
-                  value={prazo}
+                  value={prazo ?? ""}
                   onChange={e => setPrazo(e.target.value)}
                   className="w-full bg-[#1A1A1A] border border-white/10 rounded-xl px-4 py-3 text-white focus:border-blue-500 focus:outline-none"
                 />
               </div>
               <div>
                 <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 block">
-                  Coluna Inicial
+                  {colunaLabel}
                 </label>
                 <select
                   value={coluna}
@@ -250,7 +309,8 @@ export function TaskModal({ open, onClose, onSave, initialData }: TaskModalProps
                 </select>
               </div>
             </div>
-            
+
+            {/* Departamentos + Tags */}
             <div>
               <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 block">
                 <Tag className="w-3 h-3 inline mr-1" />
@@ -275,14 +335,14 @@ export function TaskModal({ open, onClose, onSave, initialData }: TaskModalProps
                 ))}
                 <button
                   type="button"
-                  onClick={() => setShowNovaTag(!showNovaTag)}
+                  onClick={() => setShowNovaTag(v => !v)}
                   className="px-4 py-2 rounded-lg border border-dashed border-white/20 text-gray-400 hover:border-white/40 hover:text-white text-sm font-medium transition-all"
                 >
                   <Plus className="w-4 h-4 inline mr-1" />
                   Nova Tag
                 </button>
               </div>
-              
+
               {showNovaTag && (
                 <div className="flex gap-2 mt-3">
                   <Input
@@ -297,7 +357,7 @@ export function TaskModal({ open, onClose, onSave, initialData }: TaskModalProps
                   </Button>
                 </div>
               )}
-              
+
               {tags.length > 0 && (
                 <div className="flex flex-wrap gap-2 mt-3">
                   {tags.map((tag, i) => (
@@ -309,7 +369,8 @@ export function TaskModal({ open, onClose, onSave, initialData }: TaskModalProps
                 </div>
               )}
             </div>
-            
+
+            {/* Checklist */}
             <div>
               <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 block">
                 <ListChecks className="w-3 h-3 inline mr-1" />
@@ -317,19 +378,20 @@ export function TaskModal({ open, onClose, onSave, initialData }: TaskModalProps
               </label>
               <div className="space-y-2 mb-3">
                 {checklist.map(item => (
-                  <div key={item.id} className="flex items-center gap-3 bg-[#1A1A1A] p-3 rounded-lg border border-white/5 group">
+                  <div
+                    key={item.id}
+                    className="flex items-center gap-3 bg-[#1A1A1A] p-3 rounded-lg border border-white/5 group"
+                  >
                     <GripVertical className="w-4 h-4 text-gray-600 cursor-grab" />
                     <button onClick={() => toggleChecklist(item.id)}>
-                      {item.completed ? (
-                        <CheckSquare className="w-5 h-5 text-green-500" />
-                      ) : (
-                        <Square className="w-5 h-5 text-gray-500" />
-                      )}
+                      {item.completed
+                        ? <CheckSquare className="w-5 h-5 text-green-500" />
+                        : <Square      className="w-5 h-5 text-gray-500"  />}
                     </button>
                     <span className={cn("flex-1 text-sm", item.completed && "line-through text-gray-500")}>
                       {item.texto}
                     </span>
-                    <button 
+                    <button
                       onClick={() => removeChecklist(item.id)}
                       className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500/20 rounded transition-all"
                     >
@@ -351,8 +413,10 @@ export function TaskModal({ open, onClose, onSave, initialData }: TaskModalProps
                 </Button>
               </div>
             </div>
-          </div>
-          
+
+          </div>{/* /coluna principal */}
+
+          {/* Coluna lateral */}
           <div className="w-72 p-6 border-l border-white/10 bg-[#1A1A1A]">
             <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 block">
               <Paperclip className="w-3 h-3 inline mr-1" />
@@ -365,29 +429,18 @@ export function TaskModal({ open, onClose, onSave, initialData }: TaskModalProps
               onClick={() => fileInputRef.current?.click()}
               className={cn(
                 "border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all",
-                isDraggingOver 
-                  ? "border-blue-500 bg-blue-500/10" 
+                isDraggingOver
+                  ? "border-blue-500 bg-blue-500/10"
                   : "border-white/20 hover:border-white/40"
               )}
             >
               <Upload className="w-8 h-8 text-gray-500 mx-auto mb-3" />
-              <p className="text-sm text-gray-400 mb-1">
-                Arraste arquivos aqui
-              </p>
-              <p className="text-xs text-gray-600">
-                ou clique para selecionar
-              </p>
+              <p className="text-sm text-gray-400 mb-1">Arraste arquivos aqui</p>
+              <p className="text-xs text-gray-600">ou clique para selecionar</p>
             </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                // Handle file upload
-              }}
-            />
-            
+            <input ref={fileInputRef} type="file" multiple className="hidden" />
+
+            {/* Resumo */}
             <div className="mt-6">
               <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 block">
                 Resumo
@@ -398,31 +451,46 @@ export function TaskModal({ open, onClose, onSave, initialData }: TaskModalProps
                   <span className="text-white">{departamentos.length}</span>
                 </div>
                 <div className="flex justify-between text-gray-400">
-                  <span>Itens checklists:</span>
+                  <span>Itens checklist:</span>
                   <span className="text-white">{checklist.length}</span>
                 </div>
                 <div className="flex justify-between text-gray-400">
                   <span>Tags:</span>
                   <span className="text-white">{tags.length}</span>
                 </div>
+                {/* Indicador visual de modo */}
+                <div className="flex justify-between text-gray-400 pt-2 border-t border-white/10">
+                  <span>Modo:</span>
+                  <span className={cn(
+                    "text-xs font-semibold px-2 py-0.5 rounded-full",
+                    mode === "edit"
+                      ? "bg-amber-500/20 text-amber-400"
+                      : "bg-blue-500/20 text-blue-400"
+                  )}>
+                    {mode === "edit" ? "Editando" : "Novo"}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-        
+
+        </div>{/* /corpo */}
+
+        {/* Rodapé */}
         <div className="flex items-center justify-end gap-3 p-5 border-t border-white/10 bg-[#1A1A1A]">
           <Button variant="ghost" onClick={onClose} className="text-gray-400 hover:text-white">
             Cancelar
           </Button>
-          <Button 
+          <Button
             onClick={handleSubmit}
             disabled={!titulo.trim()}
             className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
           >
             <Send className="w-4 h-4 mr-2" />
-            Criar Tarefa
+            {submitLabel}
           </Button>
         </div>
+
       </div>
     </div>
   );

@@ -14,8 +14,20 @@ import {errorResponse, successResponse} from "../utils/response";
 
 const router = Router();
 
-const COLUNAS_VALIDAS = ["solicitado", "em_andamento", "revisao", "concluido", "cancelado"] as const;
-const PRIORIDADES_VALIDAS = ["baixa", "media", "alta", "critica"] as const;
+const COLUNAS_VALIDAS = [
+  "solicitado",
+  "em_analise",
+  "em_execucao",
+  "aguardando_aprovacao",
+  "concluido",
+] as const;
+
+const PRIORIDADES_VALIDAS = [
+  "baixa",
+  "media",
+  "alta",
+  "urgente",
+] as const;
 
 // ---------------------------------------------------------------------------
 // Schemas de validação

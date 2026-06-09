@@ -63,7 +63,33 @@ const queryClient = new QueryClient({
   }),
 });
 
-// ─── Rota privada 
+// ─── Mapa de dependências de cache
+// Ao invalidar uma chave, todas as chaves listadas também são invalidadas.
+// Ex: um novo lançamento deve forçar refetch do dashboard, DRE e fluxo de caixa.
+const QUERY_DEPENDENCIES: Record<string, string[]> = {
+  "lancamentos":  ["dashboard", "fluxo-caixa", "dre", "conciliacao"],
+  "kanban-cards": ["dashboard"],
+  "conciliacao":  ["dashboard", "lancamentos"],
+  "metas":        ["dashboard"],
+};
+
+/**
+ * Função utilitária global para invalidar uma chave de cache e todas as suas dependentes.
+ *
+ * @example
+ * // Em qualquer mutation de lançamento:
+ * onSuccess: () => invalidateRelated(queryClient, "lancamentos")
+ * // → invalida: lancamentos, dashboard, fluxo-caixa, dre, conciliacao
+ */
+export function invalidateRelated(qc: QueryClient, key: string) {
+  const keys = [key, ...(QUERY_DEPENDENCIES[key] ?? [])];
+  keys.forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+}
+
+// Exportar queryClient para uso externo (ex: kanban.tsx, lancamentos.tsx)
+export { queryClient };
+
+// ─── Rota privada
 function PrivateRoute({ component: Component, path }: { component: any; path: string }) {
   const token = authStorage.getToken();
 
@@ -119,10 +145,9 @@ function Router() {
   );
 }
 
-// ─── App root 
+// ─── App root
 export function App() {
   return (
-    
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
