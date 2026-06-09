@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
 import { db } from "@workspace/db";
-import { contasBancariasTable, lancamentosTable } from "@workspace/db/schema";
+import { contasBancariasTable, extratosTable, lancamentosTable } from "@workspace/db/schema";
 import { AppError } from "../../../utils/app-error";
 import type { CreateContaBancariaBody, UpdateContaBancariaBody } from "./schemas";
 
@@ -56,17 +56,22 @@ export const contasBancariasService = {
   },
 
   async remove(id: number) {
-    const [hasVinculo] = await db
-      .select({ id: lancamentosTable.id })
-      .from(lancamentosTable)
-      .where(eq(lancamentosTable.conta_id, id))
-      .limit(1);
+    const [[{ lancamentos }], [{ extratos }]] = await Promise.all([
+      db
+        .select({ lancamentos: count() })
+        .from(lancamentosTable)
+        .where(eq(lancamentosTable.conta_id, id)),
+      db
+        .select({ extratos: count() })
+        .from(extratosTable)
+        .where(eq(extratosTable.conta_id, id)),
+    ]);
 
-    if (hasVinculo) {
+    if (Number(lancamentos) > 0 || Number(extratos) > 0) {
       throw new AppError(
-        400,
-        "INTEGRITY_ERROR",
-        "Não é possível excluir esta conta bancária, pois existem lançamentos financeiros vinculados a ela.",
+        409,
+        "CONFLICT",
+        "Não é possível excluir esta conta bancária, pois existem lançamentos ou extratos vinculados a ela.",
       );
     }
 
