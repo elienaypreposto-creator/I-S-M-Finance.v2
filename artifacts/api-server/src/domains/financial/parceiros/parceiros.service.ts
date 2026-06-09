@@ -67,17 +67,16 @@ export const parceirosService = {
   },
 
   async remove(id: number) {
-    const [hasVinculo] = await db
-      .select({ id: lancamentosTable.id })
+    const [{ total }] = await db
+      .select({ total: count() })
       .from(lancamentosTable)
-      .where(eq(lancamentosTable.parceiro_id, id))
-      .limit(1);
+      .where(eq(lancamentosTable.parceiro_id, id));
 
-    if (hasVinculo) {
+    if (Number(total) > 0) {
       throw new AppError(
-        400,
-        "INTEGRITY_ERROR",
-        "Não é possível excluir este parceiro, pois existem lançamentos financeiros vinculados a ele.",
+        409,
+        "CONFLICT",
+        "Não é possível excluir este parceiro, pois existem lançamentos vinculados a ele.",
       );
     }
 

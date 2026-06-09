@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
 import { db } from "@workspace/db";
-import { lancamentosTable, planoContasTable } from "@workspace/db/schema";
+import { lancamentosTable, metasTable, planoContasTable } from "@workspace/db/schema";
 import { AppError } from "../../../utils/app-error";
 import type { CreatePlanoContaBody, UpdatePlanoContaBody } from "./schemas";
 
@@ -39,17 +39,22 @@ export const planoContasService = {
   },
 
   async remove(id: number) {
-    const [hasVinculo] = await db
-      .select({ id: lancamentosTable.id })
-      .from(lancamentosTable)
-      .where(eq(lancamentosTable.plano_conta_id, id))
-      .limit(1);
+    const [[{ lancamentos }], [{ metas }]] = await Promise.all([
+      db
+        .select({ lancamentos: count() })
+        .from(lancamentosTable)
+        .where(eq(lancamentosTable.plano_conta_id, id)),
+      db
+        .select({ metas: count() })
+        .from(metasTable)
+        .where(eq(metasTable.plano_conta_id, id)),
+    ]);
 
-    if (hasVinculo) {
+    if (Number(lancamentos) > 0 || Number(metas) > 0) {
       throw new AppError(
-        400,
-        "INTEGRITY_ERROR",
-        "Não é possível excluir este plano de contas, pois existem lançamentos financeiros vinculados a ele.",
+        409,
+        "CONFLICT",
+        "Não é possível excluir esta conta/categoria, pois existem lançamentos ou metas orçamentárias vinculadas.",
       );
     }
 
