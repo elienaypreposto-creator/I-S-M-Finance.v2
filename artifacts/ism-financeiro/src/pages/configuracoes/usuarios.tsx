@@ -21,8 +21,9 @@ import {
   EyeOff,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useToast } from "@/hooks/use-toast";
 import { fetchApiData } from "@/lib/api-config";
+import { RequiresPermission } from "@/components/auth/requires-permission";
+import { useToast } from "@/hooks/use-toast";
 
 // ─── Tipos ─────────────────────────────────────────────────────────────────────
 type UsuarioRow = {
@@ -144,7 +145,7 @@ const inputCls = (hasError?: boolean) =>
 // ─── Permissões (estáticas) ────────────────────────────────────────────────────
 const permissoesGranulares = [
   {
-    grupo: "Dashboard & Relatórios",
+    grupo: "Dashboard & Relatórios (Home e Relatórios)",
     itens: [
       { nome: "Dashboard", codigo: "dashboard:ver" },
       { nome: "Demonstrativo de Resultado", codigo: "relatorios:dre" },
@@ -158,7 +159,7 @@ const permissoesGranulares = [
     ],
   },
   {
-    grupo: "Contas a Pagar",
+    grupo: "Contas a Pagar (Lançamentos)",
     itens: [
       { nome: "Cadastro de Contas a Pagar", codigo: "financeiro:contas-pagar:criar" },
       { nome: "Consulta de Contas a Pagar", codigo: "financeiro:contas-pagar:listar" },
@@ -168,7 +169,7 @@ const permissoesGranulares = [
     ],
   },
   {
-    grupo: "Contas a Receber",
+    grupo: "Contas a Receber (Lançamentos)",
     itens: [
       { nome: "Cadastro de Contas a Receber", codigo: "financeiro:contas-receber:criar" },
       { nome: "Consulta de Contas a Receber", codigo: "financeiro:contas-receber:listar" },
@@ -178,7 +179,7 @@ const permissoesGranulares = [
     ],
   },
   {
-    grupo: "Conciliação Bancária",
+    grupo: "Conciliação Bancária (Conciliação)",
     itens: [
       { nome: "Conciliação Bancária", codigo: "financeiro:conciliacao:acessar" },
       { nome: "Conciliação Bancária - Conciliar Transações", codigo: "financeiro:conciliacao:conciliar" },
@@ -186,7 +187,7 @@ const permissoesGranulares = [
     ],
   },
   {
-    grupo: "Cadastro de Contas",
+    grupo: "Contas Bancárias (Cadastros)",
     itens: [
       { nome: "Cadastro de Contas", codigo: "configuracoes:contas-bancarias:criar" },
       { nome: "Consulta de Contas", codigo: "configuracoes:contas-bancarias:listar" },
@@ -194,7 +195,7 @@ const permissoesGranulares = [
     ],
   },
   {
-    grupo: "Cadastro de Pessoas",
+    grupo: "Clientes/Fornecedores (Cadastros)",
     itens: [
       { nome: "Cadastro de Pessoa", codigo: "financeiro:parceiros:criar" },
       { nome: "Consulta de Pessoa", codigo: "financeiro:parceiros:listar" },
@@ -202,30 +203,48 @@ const permissoesGranulares = [
     ],
   },
   {
-    grupo: "Plano de Contas",
+    grupo: "Plano de Contas (Cadastros)",
     itens: [
       { nome: "Cadastro de Plano de Contas", codigo: "configuracoes:plano-contas:criar" },
       { nome: "Consulta de Plano de Contas", codigo: "configuracoes:plano-contas:listar" },
       { nome: "Exclusão de Plano de Contas", codigo: "configuracoes:plano-contas:deletar" },
       { nome: "Exportar Plano de Contas", codigo: "configuracoes:plano-contas:exportar" },
-      { nome: "Cadastro de Categoria do Plano de Contas", codigo: "configuracoes:categorias:criar" },
-      { nome: "Consulta de Categoria do Plano de Contas", codigo: "configuracoes:categorias:listar" },
-      { nome: "Exclusão de Categoria do Plano de Contas", codigo: "configuracoes:categorias:deletar" },
     ],
   },
   {
-    grupo: "Metas & Fechamentos",
+    grupo: "Categorias (Cadastros)",
+    itens: [
+      { nome: "Cadastro de Categoria", codigo: "configuracoes:categorias:criar" },
+      { nome: "Consulta de Categoria", codigo: "configuracoes:categorias:listar" },
+      { nome: "Exclusão de Categoria", codigo: "configuracoes:categorias:deletar" },
+    ],
+  },
+  {
+    grupo: "Departamentos (Cadastros)",
+    itens: [
+      { nome: "Cadastro de Departamento", codigo: "configuracoes:departamentos:criar" },
+      { nome: "Consulta de Departamento", codigo: "configuracoes:departamentos:listar" },
+      { nome: "Exclusão de Departamento", codigo: "configuracoes:departamentos:deletar" },
+    ],
+  },
+  {
+    grupo: "Metas Financeiras (Cadastros)",
     itens: [
       { nome: "Cadastro de Metas", codigo: "financeiro:metas:criar" },
       { nome: "Consulta de Metas", codigo: "financeiro:metas:listar" },
       { nome: "Exclusão de Metas", codigo: "financeiro:metas:deletar" },
+    ],
+  },
+  {
+    grupo: "Fechamento Mensal (Relatórios)",
+    itens: [
       { nome: "Cadastro de Fechamentos Financeiros", codigo: "financeiro:fechamentos:criar" },
       { nome: "Consulta de Fechamentos Financeiros", codigo: "financeiro:fechamentos:listar" },
       { nome: "Exclusão de Fechamentos Financeiros", codigo: "financeiro:fechamentos:deletar" },
     ],
   },
   {
-    grupo: "Movimentações",
+    grupo: "Movimentações (Lançamentos)",
     itens: [
       { nome: "Cadastro de Movimentação Financeira", codigo: "financeiro:lancamentos:criar" },
       { nome: "Consulta de Movimentação Financeira", codigo: "financeiro:lancamentos:listar" },
@@ -233,7 +252,7 @@ const permissoesGranulares = [
     ],
   },
   {
-    grupo: "Configurações do Sistema",
+    grupo: "Configurações do Sistema (Configurações)",
     itens: [
       { nome: "Cadastro de Usuários", codigo: "admin:usuarios:criar" },
       { nome: "Consulta de Usuários", codigo: "admin:usuarios:listar" },
@@ -392,7 +411,18 @@ function PermissoesModal({ usuario, onClose }: { usuario: UsuarioRow; onClose: (
                       onChange={() => toggleTodosGrupo(grupo.grupo, grupo.itens)}
                       onClick={(e) => e.stopPropagation()}
                     />
-                    <span className="font-semibold text-white text-xs sm:text-sm">{grupo.grupo}</span>
+                    <span className="font-semibold text-white text-xs sm:text-sm">
+                      {(() => {
+                        const matches = grupo.grupo.match(/^(.*?)( \([^)]+\))?$/);
+                        if (!matches) return grupo.grupo;
+                        return (
+                          <>
+                            {matches[1]}
+                            {matches[2] && <span className="text-muted-foreground">{matches[2]}</span>}
+                          </>
+                        );
+                      })()}
+                    </span>
                     <span className="text-xs text-muted-foreground">
                       {grupo.itens.filter((i) => selecionadas.includes(i.codigo)).length}/{grupo.itens.length}
                     </span>
@@ -933,14 +963,16 @@ export default function Usuarios() {
         title="Usuários & Permissões"
         description="Gerencie usuários e níveis de acesso ao sistema"
         actions={
-          <button
-            type="button"
-            onClick={openCreate}
-            className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25"
-          >
-            <Plus className="w-4 h-4" />
-            Novo Usuário
-          </button>
+          <RequiresPermission permission="admin:usuarios:criar">
+            <button
+              type="button"
+              onClick={openCreate}
+              className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25"
+            >
+              <Plus className="w-4 h-4" />
+              Novo Usuário
+            </button>
+          </RequiresPermission>
         }
       />
 
@@ -1047,32 +1079,36 @@ export default function Usuarios() {
                             </td>
                             <td className="px-5 py-4 text-right">
                               <div className="flex justify-end gap-1">
-                                <button
-                                  type="button"
-                                  title="Permissões"
-                                  className="px-2 py-1.5 hover:bg-primary/10 rounded-lg text-xs text-primary font-medium transition-colors"
-                                  onClick={() => setPermissoesUsuario(u)}
-                                >
-                                  <Shield className="w-3.5 h-3.5 inline mr-1" />
-                                  Permissões
-                                </button>
-                                <button
-                                  type="button"
-                                  title="Editar"
-                                  className="p-1.5 hover:bg-white/10 rounded-lg"
-                                  onClick={() => openEdit(u)}
-                                >
-                                  <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
-                                </button>
-                                <button
-                                  type="button"
-                                  title={u.bloqueado ? "Desbloquear" : "Bloquear"}
-                                  disabled={toggleBloqueadoMutation.isPending}
-                                  className="p-1.5 hover:bg-warning/20 rounded-lg disabled:opacity-40"
-                                  onClick={() => toggleBloqueadoMutation.mutate({ id: u.id, bloqueado: !u.bloqueado })}
-                                >
-                                  <Trash2 className={`w-3.5 h-3.5 ${u.bloqueado ? "text-success" : "text-destructive"}`} />
-                                </button>
+                                <RequiresPermission permission="admin:usuarios:criar">
+                                  <button
+                                    type="button"
+                                    title="Permissões"
+                                    className="px-2 py-1.5 hover:bg-primary/10 rounded-lg text-xs text-primary font-medium transition-colors"
+                                    onClick={() => setPermissoesUsuario(u)}
+                                  >
+                                    <Shield className="w-3.5 h-3.5 inline mr-1" />
+                                    Permissões
+                                  </button>
+                                  <button
+                                    type="button"
+                                    title="Editar"
+                                    className="p-1.5 hover:bg-white/10 rounded-lg"
+                                    onClick={() => openEdit(u)}
+                                  >
+                                    <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
+                                  </button>
+                                </RequiresPermission>
+                                <RequiresPermission permission="admin:usuarios:deletar">
+                                  <button
+                                    type="button"
+                                    title={u.bloqueado ? "Desbloquear" : "Bloquear"}
+                                    disabled={toggleBloqueadoMutation.isPending}
+                                    className="p-1.5 hover:bg-warning/20 rounded-lg disabled:opacity-40"
+                                    onClick={() => toggleBloqueadoMutation.mutate({ id: u.id, bloqueado: !u.bloqueado })}
+                                  >
+                                    <Trash2 className={`w-3.5 h-3.5 ${u.bloqueado ? "text-success" : "text-destructive"}`} />
+                                  </button>
+                                </RequiresPermission>
                               </div>
                             </td>
                           </tr>
@@ -1109,24 +1145,28 @@ export default function Usuarios() {
                           </div>
                         </div>
                         <div className="flex items-center gap-2 mt-3 pt-3 border-t border-white/5">
-                          <button
-                            type="button"
-                            className="flex-1 flex items-center justify-center gap-1.5 py-1.5 hover:bg-primary/10 rounded-lg text-xs text-primary font-medium"
-                            onClick={() => setPermissoesUsuario(u)}
-                          >
-                            <Shield className="w-3.5 h-3.5" /> Permissões
-                          </button>
-                          <button type="button" className="p-2 hover:bg-white/10 rounded-lg" onClick={() => openEdit(u)}>
-                            <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
-                          </button>
-                          <button
-                            type="button"
-                            disabled={toggleBloqueadoMutation.isPending}
-                            className="p-2 hover:bg-warning/20 rounded-lg disabled:opacity-40"
-                            onClick={() => toggleBloqueadoMutation.mutate({ id: u.id, bloqueado: !u.bloqueado })}
-                          >
-                            <Trash2 className={`w-3.5 h-3.5 ${u.bloqueado ? "text-success" : "text-destructive"}`} />
-                          </button>
+                          <RequiresPermission permission="admin:usuarios:criar">
+                            <button
+                              type="button"
+                              className="flex-1 flex items-center justify-center gap-1.5 py-1.5 hover:bg-primary/10 rounded-lg text-xs text-primary font-medium"
+                              onClick={() => setPermissoesUsuario(u)}
+                            >
+                              <Shield className="w-3.5 h-3.5" /> Permissões
+                            </button>
+                            <button type="button" className="p-2 hover:bg-white/10 rounded-lg" onClick={() => openEdit(u)}>
+                              <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
+                            </button>
+                          </RequiresPermission>
+                          <RequiresPermission permission="admin:usuarios:deletar">
+                            <button
+                              type="button"
+                              disabled={toggleBloqueadoMutation.isPending}
+                              className="p-2 hover:bg-warning/20 rounded-lg disabled:opacity-40"
+                              onClick={() => toggleBloqueadoMutation.mutate({ id: u.id, bloqueado: !u.bloqueado })}
+                            >
+                              <Trash2 className={`w-3.5 h-3.5 ${u.bloqueado ? "text-success" : "text-destructive"}`} />
+                            </button>
+                          </RequiresPermission>
                         </div>
                       </div>
                     ))}

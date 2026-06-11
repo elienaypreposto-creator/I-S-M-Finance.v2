@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
+import { useAuth } from "@/contexts/auth-context";
 import {
   Home,
   Columns,
@@ -41,31 +42,31 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { title: "Home", url: "/", icon: Home },
   { title: "Tarefas", url: "/kanban", icon: Columns },
-  { title: "Conciliação", url: "/conciliacao", icon: RefreshCw },
-  { title: "Lançamentos", url: "/lancamentos", icon: FileText },
+  { title: "Conciliação", url: "/conciliacao", icon: RefreshCw, permission: "financeiro:conciliacao:acessar" },
+  { title: "Lançamentos", url: "/lancamentos", icon: FileText, permission: "financeiro:lancamentos:listar" },
 ];
 
 const cadastrosItems = [
-  { title: "Clientes/Fornecedores", url: "/cadastros/parceiros", icon: UserCheck },
-  { title: "Contas Bancárias", url: "/cadastros/contas-bancarias", icon: Landmark },
-  { title: "Plano de Contas", url: "/cadastros/plano-contas", icon: Briefcase },
-  { title: "Metas Financeiras", url: "/cadastros/metas", icon: Target },
-  { title: "Categorias", url: "/cadastros/categorias", icon: Tags },
-  { title: "Departamentos", url: "/cadastros/departamentos", icon: Building2 },
+  { title: "Clientes/Fornecedores", url: "/cadastros/parceiros", icon: UserCheck, permission: "financeiro:parceiros:listar" },
+  { title: "Contas Bancárias", url: "/cadastros/contas-bancarias", icon: Landmark, permission: "configuracoes:contas-bancarias:listar" },
+  { title: "Plano de Contas", url: "/cadastros/plano-contas", icon: Briefcase, permission: "configuracoes:plano-contas:listar" },
+  { title: "Metas Financeiras", url: "/cadastros/metas", icon: Target, permission: "financeiro:metas:listar" },
+  { title: "Categorias", url: "/cadastros/categorias", icon: Tags, permission: "configuracoes:categorias:listar" },
+  { title: "Departamentos", url: "/cadastros/departamentos", icon: Building2, permission: "configuracoes:departamentos:listar" },
 ];
 
 const relatoriosItems = [
-  { title: "Fechamento Mensal", url: "/relatorios/fechamento-mensal", icon: Wallet },
-  { title: "Contábil/Fiscal", url: "/relatorios/contabil-fiscal", icon: FileText },
-  { title: "DRE Gerencial", url: "/relatorios/dre", icon: BarChart3 },
-  { title: "Fluxo de Caixa", url: "/relatorios/fluxo-caixa", icon: LineChart },
-  { title: "Relatório de Metas", url: "/relatorios/metas", icon: Target },
+  { title: "Fechamento Mensal", url: "/relatorios/fechamento-mensal", icon: Wallet, permission: "financeiro:fechamentos:listar" },
+  { title: "Contábil/Fiscal", url: "/relatorios/contabil-fiscal", icon: FileText, permission: "relatorios:financeiro" },
+  { title: "DRE Gerencial", url: "/relatorios/dre", icon: BarChart3, permission: "relatorios:dre" },
+  { title: "Fluxo de Caixa", url: "/relatorios/fluxo-caixa", icon: LineChart, permission: "relatorios:fluxo-caixa-mensal" },
+  { title: "Relatório de Metas", url: "/relatorios/metas", icon: Target, permission: "relatorios:metas" },
 ];
 
 const configItems = [
-  { title: "Usuários", url: "/configuracoes/usuarios", icon: Users },
-  { title: "Filiais", url: "/configuracoes/filiais", icon: Building2 },
-  { title: "Tokens de API", url: "/configuracoes/tokens-api", icon: Key },
+  { title: "Usuários", url: "/configuracoes/usuarios", icon: Users, permission: "admin:usuarios:listar" },
+  { title: "Filiais", url: "/configuracoes/filiais", icon: Building2, permission: "configuracoes:filiais:listar" },
+  { title: "Tokens de API", url: "/configuracoes/tokens-api", icon: Key, permission: "admin:tokens-api:listar" },
 ];
 
 type MenuSection = {
@@ -77,6 +78,7 @@ type MenuSection = {
 export function AppSidebar() {
   const [location] = useLocation();
   const { state } = useSidebar();
+  const { hasPermission } = useAuth();
   const isCollapsed = state === "collapsed";
   const [expandedSections, setExpandedSections] = useState<string[]>(["Cadastros", "Relatórios", "Configurações"]);
 
@@ -87,9 +89,9 @@ export function AppSidebar() {
   }, [isCollapsed]);
 
   const toggleSection = (title: string) => {
-    setExpandedSections(prev => 
-      prev.includes(title) 
-        ? prev.filter(t => t !== title) 
+    setExpandedSections(prev =>
+      prev.includes(title)
+        ? prev.filter(t => t !== title)
         : [...prev, title]
     );
   };
@@ -108,12 +110,16 @@ export function AppSidebar() {
 
   const renderCollapsibleSection = (section: MenuSection, defaultOpen: boolean = true) => {
     const isExpanded = expandedSections.includes(section.title);
-    
+
+    const visibleItems = section.items.filter(item => !item.permission || hasPermission(item.permission));
+
+    if (visibleItems.length === 0) return null;
+
     return (
       <Collapsible defaultOpen={defaultOpen && !isCollapsed} open={isCollapsed ? isExpanded : undefined} className="group/collapsible">
         <SidebarMenuItem>
           <CollapsibleTrigger asChild>
-            <SidebarMenuButton 
+            <SidebarMenuButton
               tooltip={section.title}
               className={cn(
                 "transition-all hover:bg-white/5",
@@ -133,7 +139,7 @@ export function AppSidebar() {
           </CollapsibleTrigger>
           <CollapsibleContent className={cn(isCollapsed && "absolute left-full ml-1 top-0 bg-sidebar border border-white/10 rounded-lg shadow-xl p-2 min-w-[180px] z-50")}>
             <SidebarMenuSub className="border-white/10 pr-0 mr-0">
-              {section.items.map((subItem) => (
+              {visibleItems.map((subItem) => (
                 <SidebarMenuSubItem key={subItem.title}>
                   <SidebarMenuSubButton
                     asChild
@@ -172,7 +178,7 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu className="space-y-1">
-              {navItems.map((item) => (
+              {navItems.filter(item => !item.permission || hasPermission(item.permission)).map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton
                     asChild

@@ -146,7 +146,7 @@ router.post(
 
                 await tx
                     .insert(kanbanHistoricoTable)
-                    .values({card_id: inserted.id, tipo: "criacao", descricao: `Tarefa "${titulo}" criada`});
+                    .values({card_id: inserted.id, comentario: `Tarefa "${titulo}" criada`});
 
                 return inserted;
             });
@@ -188,9 +188,9 @@ router.patch(
                 if (updates.coluna) {
                     await tx.insert(kanbanHistoricoTable).values({
                         card_id: id,
-                        tipo: "movimentacao",
-                        descricao: `Movido para ${updates.coluna}`,
-                        coluna_destino: updates.coluna,
+                        coluna_anterior: card.coluna,
+                        coluna_nova: updates.coluna,
+                        comentario: `Movido para ${updates.coluna}`,
                     });
                 }
 

@@ -111,7 +111,7 @@ router.post("/auth/login", async (req, res) => {
 
         return successResponse(
             res,
-            {accessToken, refreshToken, user: {id: usuario.id, nome: usuario.nome, email: usuario.email}},
+            {accessToken, refreshToken, user: {id: usuario.id, nome: usuario.nome, email: usuario.email, permissoes: permissions}},
             {
                 tokenType: "Bearer",
                 accessTokenExpiresIn: "15m",
@@ -257,7 +257,7 @@ router.get("/auth/me", withAuth, async (req, res) => {
             return errorResponse(res, 404, "NOT_FOUND", "Utilizador não encontrado.");
         }
 
-        return successResponse(res, {user: usuario, permissoes: req.user!.permissions});
+        return successResponse(res, {user: { ...usuario, permissoes: req.user!.permissions }});
     } catch (error: unknown) {
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao obter utilizador autenticado.", String(error));
     }

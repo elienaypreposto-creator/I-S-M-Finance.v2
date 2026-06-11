@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 
 import { fetchApi, fetchApiData } from "@/lib/api-config";
+import { RequiresPermission } from "@/components/auth/requires-permission";
 
 type PlanoConta = {
   id: number;
@@ -182,12 +183,16 @@ export default function PlanoContas() {
                        {cat.subcategoria || "—"}
                      </span>
                      <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                       <button onClick={() => handleEdit(cat)} className="text-muted-foreground hover:text-white p-1">
-                          <Edit className="w-4 h-4" />
-                       </button>
-                       <button onClick={() => handleDelete(cat.id)} className="text-muted-foreground hover:text-rose-400 p-1">
-                          <Trash2 className="w-4 h-4" />
-                       </button>
+                       <RequiresPermission permission="configuracoes:plano-contas:criar">
+                         <button onClick={() => handleEdit(cat)} className="text-muted-foreground hover:text-white p-1">
+                            <Edit className="w-4 h-4" />
+                         </button>
+                       </RequiresPermission>
+                       <RequiresPermission permission="configuracoes:plano-contas:deletar">
+                         <button onClick={() => handleDelete(cat.id)} className="text-muted-foreground hover:text-rose-400 p-1">
+                            <Trash2 className="w-4 h-4" />
+                         </button>
+                       </RequiresPermission>
                      </div>
                    </div>
                  ))}
@@ -195,9 +200,11 @@ export default function PlanoContas() {
             ))
           )}
           
-          <button onClick={() => handleCreate(tipoDef)} className="w-full py-2 border-2 border-dashed border-white/10 rounded-lg text-sm text-muted-foreground hover:text-white hover:border-white/30 transition-all flex items-center justify-center gap-2 mt-4">
-            <Plus className="w-4 h-4" /> Adicionar Categoria
-          </button>
+          <RequiresPermission permission="configuracoes:plano-contas:criar">
+            <button onClick={() => handleCreate(tipoDef)} className="w-full py-2 border-2 border-dashed border-white/10 rounded-lg text-sm text-muted-foreground hover:text-white hover:border-white/30 transition-all flex items-center justify-center gap-2 mt-4">
+              <Plus className="w-4 h-4" /> Adicionar Categoria
+            </button>
+          </RequiresPermission>
         </div>
       </div>
     );
@@ -209,10 +216,12 @@ export default function PlanoContas() {
         title="Plano de Contas" 
         description="Estrutura hierárquica de categorias financeiras para receitas, custos e despesas"
         actions={
-          <button onClick={() => handleCreate()} className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25">
-            <Plus className="w-4 h-4" />
-            Nova Categoria
-          </button>
+          <RequiresPermission permission="configuracoes:plano-contas:criar">
+            <button onClick={() => handleCreate()} className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25">
+              <Plus className="w-4 h-4" />
+              Nova Categoria
+            </button>
+          </RequiresPermission>
         }
       />
 

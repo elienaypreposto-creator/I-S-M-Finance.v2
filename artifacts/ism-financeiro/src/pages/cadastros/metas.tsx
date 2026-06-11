@@ -11,6 +11,7 @@ import {
   apiValorToValorBr,
 } from "@/validations/lancamentos.schema";
 import { invalidateRelated } from "@/App"; 
+import { RequiresPermission } from "@/components/auth/requires-permission";
 
 // ─── Tipos 
 type PlanoConta = {
@@ -184,21 +185,34 @@ function MetaCell({
 
   const hasValue = currentValue && parseFloat(currentValue) > 0;
   return (
-    <button
-      type="button"
-      onClick={() =>
-        onActivate({
-          plano_conta_id,
-          mes,
-          value: hasValue ? apiValorToValorBr(currentValue) : "",
-        })
+    <RequiresPermission
+      permission="financeiro:metas:criar"
+      fallback={
+        <div
+          className={`w-full text-right text-xs rounded px-1 py-0.5 font-mono ${
+            hasValue ? "text-white" : "text-muted-foreground/30"
+          }`}
+        >
+          {hasValue ? compactBrl(currentValue) : "—"}
+        </div>
       }
-      className={`w-full text-right text-xs rounded px-1 py-0.5 transition-colors hover:bg-white/10 font-mono ${
-        hasValue ? "text-white" : "text-muted-foreground/30"
-      }`}
     >
-      {hasValue ? compactBrl(currentValue) : "—"}
-    </button>
+      <button
+        type="button"
+        onClick={() =>
+          onActivate({
+            plano_conta_id,
+            mes,
+            value: hasValue ? apiValorToValorBr(currentValue) : "",
+          })
+        }
+        className={`w-full text-right text-xs rounded px-1 py-0.5 transition-colors hover:bg-white/10 font-mono ${
+          hasValue ? "text-white" : "text-muted-foreground/30"
+        }`}
+      >
+        {hasValue ? compactBrl(currentValue) : "—"}
+      </button>
+    </RequiresPermission>
   );
 }
 

@@ -22,6 +22,7 @@ import { useToast } from "@/hooks/use-toast";
 import { fetchApiData } from "@/lib/api-config";
 import { contaBancariaFormSchema, type ContaBancariaFormValues } from "@/validations/cadastros.schema";
 import { apiValorToValorBr, brMoneyDisplayToApiString, formatValorBrInput } from "@/validations/lancamentos.schema";
+import { RequiresPermission } from "@/components/auth/requires-permission";
 
 type ContaBancaria = {
   id: number;
@@ -486,13 +487,15 @@ export default function ContasBancarias() {
               {showSaldos ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               {showSaldos ? "Ocultar" : "Mostrar"} Saldos
             </button>
-            <button
-              type="button"
-              onClick={() => setShowModal(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25"
-            >
-              <Plus className="w-4 h-4" /> Nova Conta Bancária
-            </button>
+            <RequiresPermission permission="configuracoes:contas-bancarias:criar">
+              <button
+                type="button"
+                onClick={() => setShowModal(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25"
+              >
+                <Plus className="w-4 h-4" /> Nova Conta Bancária
+              </button>
+            </RequiresPermission>
           </div>
         }
       />
@@ -537,42 +540,46 @@ export default function ContasBancarias() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setEditingConta(conta)}
-                  className="p-2 bg-white/5 hover:bg-white/10 rounded-lg text-muted-foreground hover:text-white transition-colors"
-                >
-                  <Pencil className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    blockMutation.mutate({
-                      id: conta.id,
-                      status: conta.status === "ativo" ? "bloqueado" : "ativo",
-                    })
-                  }
-                  className={`p-2 rounded-lg transition-colors ${
-                    conta.status === "ativo"
-                      ? "bg-white/5 hover:bg-orange-500/20 text-muted-foreground hover:text-orange-400"
-                      : "bg-success/20 text-success hover:bg-success/30"
-                  }`}
-                >
-                  {conta.status === "ativo" ? (
-                    <Lock className="w-4 h-4" />
-                  ) : (
-                    <Unlock className="w-4 h-4" />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    confirm("Deseja realmente deletar?") && deleteMutation.mutate(conta.id)
-                  }
-                  className="p-2 bg-white/5 hover:bg-destructive/20 rounded-lg text-muted-foreground hover:text-destructive transition-colors"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <RequiresPermission permission="configuracoes:contas-bancarias:criar">
+                  <button
+                    type="button"
+                    onClick={() => setEditingConta(conta)}
+                    className="p-2 bg-white/5 hover:bg-white/10 rounded-lg text-muted-foreground hover:text-white transition-colors"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                </RequiresPermission>
+                <RequiresPermission permission="configuracoes:contas-bancarias:deletar">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      blockMutation.mutate({
+                        id: conta.id,
+                        status: conta.status === "ativo" ? "bloqueado" : "ativo",
+                      })
+                    }
+                    className={`p-2 rounded-lg transition-colors ${
+                      conta.status === "ativo"
+                        ? "bg-white/5 hover:bg-orange-500/20 text-muted-foreground hover:text-orange-400"
+                        : "bg-success/20 text-success hover:bg-success/30"
+                    }`}
+                  >
+                    {conta.status === "ativo" ? (
+                      <Lock className="w-4 h-4" />
+                    ) : (
+                      <Unlock className="w-4 h-4" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      confirm("Deseja realmente deletar?") && deleteMutation.mutate(conta.id)
+                    }
+                    className="p-2 bg-white/5 hover:bg-destructive/20 rounded-lg text-muted-foreground hover:text-destructive transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </RequiresPermission>
               </div>
             </div>
 
@@ -629,13 +636,15 @@ export default function ContasBancarias() {
             <p className="text-muted-foreground text-sm font-medium">
               Nenhuma conta cadastrada ainda.
             </p>
-            <button
-              type="button"
-              onClick={() => setShowModal(true)}
-              className="text-primary text-sm font-bold hover:underline mt-2"
-            >
-              Clique aqui para criar sua primeira conta
-            </button>
+            <RequiresPermission permission="configuracoes:contas-bancarias:criar">
+              <button
+                type="button"
+                onClick={() => setShowModal(true)}
+                className="text-primary text-sm font-bold hover:underline mt-2"
+              >
+                Clique aqui para criar sua primeira conta
+              </button>
+            </RequiresPermission>
           </div>
         )}
       </div>

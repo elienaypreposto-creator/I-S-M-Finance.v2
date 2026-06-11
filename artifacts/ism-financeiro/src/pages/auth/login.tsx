@@ -1,7 +1,7 @@
 import {useState} from "react";
 import {useLocation} from "wouter";
 import {fetchApi} from "@/lib/api-config";
-import {useAuth, type AuthUser} from "@/hooks/use-auth";
+import { useAuth, type User } from "@/contexts/auth-context";
 import {useToast} from "@/hooks/use-toast";
 import {Loader2, Lock, Mail} from "lucide-react";
 
@@ -9,7 +9,7 @@ type LoginResponse = {
     data: {
         accessToken: string;
         refreshToken: string;
-        user: AuthUser;
+        user: User;
     };
 };
 

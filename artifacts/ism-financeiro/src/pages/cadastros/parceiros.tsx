@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { fetchApiData } from "@/lib/api-config";
 import { parceiroFormSchema, type ParceiroFormValues } from "@/validations/cadastros.schema";
 import { exportToExcel } from "@/lib/export";
-
+import { RequiresPermission } from "@/components/auth/requires-permission";
 const tiposParceiroOptions = [
   "Cliente",
   "Fornecedor",
@@ -707,20 +707,24 @@ export default function Parceiros() {
         description="Cadastro de clientes, fornecedores, funcionários, sócios e parceiros"
         actions={
           <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={handleExportParceiros}
-              disabled={parceirosLista.length === 0 || isLoading}
-              title="Exportar XLSX"
-              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-              <Download className="w-4 h-4" /> Exportar XLSX
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowModal(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25">
-              <Plus className="w-4 h-4" /> Cadastrar Novo
-            </button>
+            <RequiresPermission permission="financeiro:parceiros:listar">
+              <button
+                type="button"
+                onClick={handleExportParceiros}
+                disabled={parceirosLista.length === 0 || isLoading}
+                title="Exportar XLSX"
+                className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                <Download className="w-4 h-4" /> Exportar XLSX
+              </button>
+            </RequiresPermission>
+            <RequiresPermission permission="financeiro:parceiros:criar">
+              <button
+                type="button"
+                onClick={() => setShowModal(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25">
+                <Plus className="w-4 h-4" /> Cadastrar Novo
+              </button>
+            </RequiresPermission>
           </div>
         }
       />
@@ -797,29 +801,33 @@ export default function Parceiros() {
                     </td>
                     <td className="px-5 py-4">
                       <div className="flex items-center justify-end gap-1">
-                        <button
-                          type="button"
-                          onClick={() => setEditingParceiro(p)}
-                          className="p-1.5 rounded-md hover:bg-white/10 text-muted-foreground hover:text-white transition-colors"
-                          title="Editar">
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => updateMutation.mutate({ id: p.id, ativo: !statusAtivo })}
-                          className={`p-1.5 rounded-md transition-colors ${
-                            statusAtivo ? "hover:bg-success/20 text-success" : "hover:bg-destructive/20 text-destructive"
-                          }`}
-                          title={statusAtivo ? "Desativar" : "Ativar"}>
-                          {statusAtivo ? <CheckCircle className="w-4 h-4" /> : <Ban className="w-4 h-4" />}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => confirm("Excluir este parceiro?") && deleteMutation.mutate(p.id)}
-                          className="p-1.5 rounded-md hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
-                          title="Excluir">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        <RequiresPermission permission="financeiro:parceiros:criar">
+                          <button
+                            type="button"
+                            onClick={() => setEditingParceiro(p)}
+                            className="p-1.5 rounded-md hover:bg-white/10 text-muted-foreground hover:text-white transition-colors"
+                            title="Editar">
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                        </RequiresPermission>
+                        <RequiresPermission permission="financeiro:parceiros:deletar">
+                          <button
+                            type="button"
+                            onClick={() => updateMutation.mutate({ id: p.id, ativo: !statusAtivo })}
+                            className={`p-1.5 rounded-md transition-colors ${
+                              statusAtivo ? "hover:bg-success/20 text-success" : "hover:bg-destructive/20 text-destructive"
+                            }`}
+                            title={statusAtivo ? "Desativar" : "Ativar"}>
+                            {statusAtivo ? <CheckCircle className="w-4 h-4" /> : <Ban className="w-4 h-4" />}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => confirm("Excluir este parceiro?") && deleteMutation.mutate(p.id)}
+                            className="p-1.5 rounded-md hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
+                            title="Excluir">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </RequiresPermission>
                       </div>
                     </td>
                   </tr>

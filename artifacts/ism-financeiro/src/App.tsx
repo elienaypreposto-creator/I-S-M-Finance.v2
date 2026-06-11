@@ -89,56 +89,39 @@ export function invalidateRelated(qc: QueryClient, key: string) {
 // Exportar queryClient para uso externo (ex: kanban.tsx, lancamentos.tsx)
 export { queryClient };
 
-// ─── Rota privada
-function PrivateRoute({ component: Component, path }: { component: any; path: string }) {
-  const token = authStorage.getToken();
-
-  if (!token) {
-    return <Redirect to="/login" />;
-  }
-
-  return (
-    <Route path={path}>
-      {(params) => (
-        <AppLayout>
-          <Component {...params} />
-        </AppLayout>
-      )}
-    </Route>
-  );
-}
+import { ProtectedRoute } from "./components/auth/protected-route";
+import { AuthProvider } from "./contexts/auth-context";
 
 function Router() {
   return (
     <Switch>
       <Route path="/login" component={Login} />
       <Route path="/primeiro-acesso" component={PrimeiroAcesso} />
-      <PrivateRoute path="/" component={Dashboard} />
-
-      <PrivateRoute path="/kanban" component={Kanban} />
-      <PrivateRoute path="/lancamentos" component={Lancamentos} />
-      <PrivateRoute path="/conciliacao" component={ConciliacaoList} />
-      <PrivateRoute path="/conciliacao/extrato/:extratoId" component={ConciliacaoExtratoDetalhe} />
+      <ProtectedRoute path="/" component={Dashboard} />
+      <ProtectedRoute path="/kanban" component={Kanban} />
+      <ProtectedRoute path="/lancamentos" component={Lancamentos} requiredPermission="financeiro:lancamentos:listar" />
+      <ProtectedRoute path="/conciliacao" component={ConciliacaoList} requiredPermission="financeiro:conciliacao:acessar" />
+      <ProtectedRoute path="/conciliacao/extrato/:extratoId" component={ConciliacaoExtratoDetalhe} requiredPermission="financeiro:conciliacao:acessar" />
 
       {/* Cadastros */}
-      <PrivateRoute path="/cadastros/parceiros" component={Parceiros} />
-      <PrivateRoute path="/cadastros/plano-contas" component={PlanoContas} />
-      <PrivateRoute path="/cadastros/contas-bancarias" component={ContasBancarias} />
-      <PrivateRoute path="/cadastros/metas" component={Metas} />
-      <PrivateRoute path="/cadastros/categorias" component={PlanoContas} />
-      <PrivateRoute path="/cadastros/departamentos" component={Departamentos} />
+      <ProtectedRoute path="/cadastros/parceiros" component={Parceiros} requiredPermission="financeiro:parceiros:listar" />
+      <ProtectedRoute path="/cadastros/plano-contas" component={PlanoContas} requiredPermission="configuracoes:plano-contas:listar" />
+      <ProtectedRoute path="/cadastros/contas-bancarias" component={ContasBancarias} requiredPermission="configuracoes:contas-bancarias:listar" />
+      <ProtectedRoute path="/cadastros/metas" component={Metas} requiredPermission="financeiro:metas:listar" />
+      <ProtectedRoute path="/cadastros/categorias" component={PlanoContas} requiredPermission="configuracoes:categorias:listar" />
+      <ProtectedRoute path="/cadastros/departamentos" component={Departamentos} requiredPermission="configuracoes:plano-contas:listar" />
 
       {/* Relatórios */}
-      <PrivateRoute path="/relatorios/fechamento-mensal" component={FechamentoMensal} />
-      <PrivateRoute path="/relatorios/contabil-fiscal" component={ContabilFiscal} />
-      <PrivateRoute path="/relatorios/dre" component={DreGerencial} />
-      <PrivateRoute path="/relatorios/fluxo-caixa" component={FluxoCaixa} />
-      <PrivateRoute path="/relatorios/metas" component={MetasRelatorio} />
+      <ProtectedRoute path="/relatorios/fechamento-mensal" component={FechamentoMensal} requiredPermission="financeiro:fechamentos:listar" />
+      <ProtectedRoute path="/relatorios/contabil-fiscal" component={ContabilFiscal} requiredPermission="relatorios:financeiro" />
+      <ProtectedRoute path="/relatorios/dre" component={DreGerencial} requiredPermission="relatorios:dre" />
+      <ProtectedRoute path="/relatorios/fluxo-caixa" component={FluxoCaixa} requiredPermission="relatorios:fluxo-caixa-mensal" />
+      <ProtectedRoute path="/relatorios/metas" component={MetasRelatorio} requiredPermission="relatorios:metas" />
 
       {/* Configurações */}
-      <PrivateRoute path="/configuracoes/usuarios" component={Usuarios} />
-      <PrivateRoute path="/configuracoes/filiais" component={Filiais} />
-      <PrivateRoute path="/configuracoes/tokens-api" component={TokensApi} />
+      <ProtectedRoute path="/configuracoes/usuarios" component={Usuarios} requiredPermission="admin:usuarios:listar" />
+      <ProtectedRoute path="/configuracoes/filiais" component={Filiais} requiredPermission="admin:usuarios:listar" />
+      <ProtectedRoute path="/configuracoes/tokens-api" component={TokensApi} requiredPermission="admin:tokens-api:listar" />
 
       <Route component={NotFound} />
     </Switch>
@@ -150,12 +133,14 @@ export function App() {
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <WouterRouter base={import.meta.env.BASE_URL?.replace(/\/$/, "") || ""}>
-            <Router />
-          </WouterRouter>
-          <Toaster />
-        </TooltipProvider>
+        <AuthProvider>
+          <TooltipProvider>
+            <WouterRouter base={import.meta.env.BASE_URL?.replace(/\/$/, "") || ""}>
+              <Router />
+            </WouterRouter>
+            <Toaster />
+          </TooltipProvider>
+        </AuthProvider>
       </QueryClientProvider>
     </ErrorBoundary>
   );
