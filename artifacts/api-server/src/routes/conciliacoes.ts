@@ -1,4 +1,6 @@
+import {createHash} from "crypto";
 import {Router} from "express";
+import {z} from "zod";
 import multer from "multer";
 import {and, count, desc, eq, gte, inArray, lte, or, sql} from "drizzle-orm";
 import {db} from "@workspace/db";
@@ -12,10 +14,39 @@ import {
     itensConciliacaoTable,
     lancamentosTable,
 } from "@workspace/db/schema";
+import {validateBody} from "../middlewares/validate";
 import {errorResponse, successResponse} from "../utils/response";
+import {parseOFX} from "../utils/ofx-parser";
+import {parseCSV} from "../utils/csv-parser";
+import type {OFXParseResult} from "../utils/ofx-parser";
 
 const router = Router();
 const upload = multer({storage: multer.memoryStorage()});
+
+// ---------------------------------------------------------------------------
+// Schemas de validação
+// ---------------------------------------------------------------------------
+
+/** Valida o campo de formulário multipart enviado junto ao arquivo OFX/CSV. */
+const importarBodySchema = z.object({
+    conta_id: z.coerce.number().int().positive("conta_id deve ser um número inteiro positivo."),
+});
+
+const vincularBodySchema = z.object({
+    lancamentos: z
+        .array(
+            z.object({
+                lancamento_id: z.coerce.number().int().positive(),
+                desconto: z.number().min(0).optional(),
+                acrescimo: z.number().min(0).optional(),
+            }),
+        )
+        .min(1, "Envie ao menos um lançamento para vincular."),
+    gerar_parcial: z.boolean().default(false),
+});
+
+type ImportarBody = z.infer<typeof importarBodySchema>;
+type VincularBody = z.infer<typeof vincularBodySchema>;
 
 const toNumber = (value: unknown) => Number(value ?? 0);
 
@@ -107,21 +138,164 @@ router.get("/conciliacoes", async (req, res) => {
     }
 });
 
-router.post("/conciliacoes/importar", upload.single("arquivo"), async (req, res) => {
-    if (!req.body?.conta_id) {
-        return errorResponse(res, 400, "VALIDATION_ERROR", "Campo obrigatório: conta_id.");
-    }
-    if (!req.file) {
-        return errorResponse(res, 400, "VALIDATION_ERROR", "Campo obrigatório: arquivo (OFX ou CSV).");
-    }
-    return errorResponse(
-        res,
-        501,
-        "NOT_IMPLEMENTED",
-        "Parser de extrato bancário (OFX/CSV) ainda não implementado. " +
-        "Forneça um serviço de parsing e substitua este bloco pela lógica real de importação.",
-    );
-});
+router.post(
+    "/conciliacoes/importar",
+    upload.single("arquivo"),
+    // multer populates req.body with form fields before validateBody runs
+    validateBody(importarBodySchema),
+    async (req, res) => {
+        if (!req.file) {
+            return errorResponse(res, 400, "VALIDATION_ERROR", "Campo obrigatório: arquivo (OFX ou CSV).");
+        }
+
+        const {conta_id} = req.body as ImportarBody;
+
+        // Validate that the bank account exists
+        const [conta] = await db
+            .select({id: contasBancariasTable.id, nome: contasBancariasTable.nome})
+            .from(contasBancariasTable)
+            .where(eq(contasBancariasTable.id, conta_id))
+            .limit(1);
+
+        if (!conta) {
+            return errorResponse(res, 404, "NOT_FOUND", "Conta bancária não encontrada.");
+        }
+
+        // Duplicate detection: SHA-256 of the raw file bytes
+        const arquivoHash = createHash("sha256").update(req.file.buffer).digest("hex");
+        const [existing] = await db
+            .select({id: extratosTable.id})
+            .from(extratosTable)
+            .where(eq(extratosTable.arquivo_hash, arquivoHash))
+            .limit(1);
+
+        if (existing) {
+            return errorResponse(
+                res,
+                409,
+                "CONFLICT",
+                `Este arquivo já foi importado (extrato #${existing.id}). Importe um arquivo diferente.`,
+            );
+        }
+
+        // Route to the correct parser based on file extension.
+        const ext = req.file.originalname.split(".").pop()?.toLowerCase();
+        if (ext !== "ofx" && ext !== "csv") {
+            return errorResponse(res, 400, "VALIDATION_ERROR", "Formato de arquivo não suportado. Envie OFX ou CSV.");
+        }
+
+        let parsed: OFXParseResult;
+        try {
+            parsed = ext === "csv"
+                ? parseCSV(req.file.buffer)
+                : parseOFX(req.file.buffer);
+        } catch (parseErr) {
+            return errorResponse(res, 422, "PARSE_ERROR", "Arquivo inválido ou malformado.", String(parseErr));
+        }
+
+        // Compute totals for extrato header
+        const totalCreditos = parsed.transacoes
+            .filter((t) => t.tipo === "credito")
+            .reduce((acc, t) => acc + parseFloat(t.valor), 0);
+        const totalDebitos = parsed.transacoes
+            .filter((t) => t.tipo === "debito")
+            .reduce((acc, t) => acc + parseFloat(t.valor), 0);
+
+        // Atomic import: extrato + conciliacao + linhas + itens_conciliacao
+        // Any DB error rolls back the entire operation automatically.
+        const resultado = await db.transaction(async (tx) => {
+            // 1. extrato header
+            const [extrato] = await tx
+                .insert(extratosTable)
+                .values({
+                    conta_id,
+                    periodo_inicio: parsed.periodo_inicio,
+                    periodo_fim: parsed.periodo_fim,
+                    arquivo_nome: req.file!.originalname,
+                    arquivo_hash: arquivoHash,
+                    total_linhas: parsed.transacoes.length,
+                    total_creditos: totalCreditos.toFixed(2),
+                    total_debitos: totalDebitos.toFixed(2),
+                    status: "pendente",
+                })
+                .returning();
+
+            // 2. conciliacao record
+            const [conciliacao] = await tx
+                .insert(conciliacoesTable)
+                .values({
+                    extrato_id: extrato.id,
+                    conta_id,
+                    periodo_inicio: parsed.periodo_inicio,
+                    periodo_fim: parsed.periodo_fim,
+                    arquivo_nome: req.file!.originalname,
+                    status: "pendente",
+                    resumo_conciliados: 0,
+                    resumo_ignorados: 0,
+                    resumo_pendentes: parsed.transacoes.length,
+                    resumo_total: parsed.transacoes.length,
+                })
+                .returning();
+
+            // 3. extrato_linhas (batch insert)
+            const linhasInseridas = await tx
+                .insert(extratoLinhasTable)
+                .values(
+                    parsed.transacoes.map((t) => ({
+                        extrato_id: extrato.id,
+                        identificador_externo: t.fitid,
+                        valor: t.valor,
+                        tipo_movimento: t.tipo,
+                        descricao: t.descricao,
+                        data_movimento: t.data,
+                    })),
+                )
+                .returning({
+                    id: extratoLinhasTable.id,
+                    valor: extratoLinhasTable.valor,
+                    tipo_movimento: extratoLinhasTable.tipo_movimento,
+                    descricao: extratoLinhasTable.descricao,
+                    data_movimento: extratoLinhasTable.data_movimento,
+                });
+
+            // 4. itens_conciliacao — one pending item per extrato line
+            await tx
+                .insert(itensConciliacaoTable)
+                .values(
+                    linhasInseridas.map((l) => ({
+                        conciliacao_id: conciliacao.id,
+                        extrato_linha_id: l.id,
+                        valor_extrato: l.valor,
+                        valor_vinculado_total: "0.00",
+                        valor_saldo: l.valor,
+                        status: "pendente" as const,
+                        tipo_extrato: l.tipo_movimento,
+                        descricao: l.descricao,
+                        data: l.data_movimento,
+                    })),
+                );
+
+            return {conciliacao, extrato};
+        });
+
+        return successResponse(
+            res,
+            {
+                conciliacao_id: resultado.conciliacao.id,
+                extrato_id: resultado.extrato.id,
+                conta_id,
+                conta_nome: conta.nome,
+                total_linhas: parsed.transacoes.length,
+                total_creditos: Number(totalCreditos.toFixed(2)),
+                total_debitos: Number(totalDebitos.toFixed(2)),
+                periodo_inicio: parsed.periodo_inicio,
+                periodo_fim: parsed.periodo_fim,
+            },
+            null,
+            201,
+        );
+    },
+);
 
 router.get("/conciliacoes/buscar-lancamentos", async (req, res) => {
     try {
@@ -353,200 +527,188 @@ router.post("/conciliacoes/linhas/:linha_id/ignorar", async (req, res) => {
     }
 });
 
-router.post("/conciliacoes/linhas/:linha_id/vincular", async (req, res) => {
-    try {
-        const linhaId = Number(req.params.linha_id);
-        const lancamentosPayload = Array.isArray(req.body?.lancamentos) ? req.body.lancamentos : [];
-        const gerarParcial = Boolean(req.body?.gerar_parcial);
+router.post(
+    "/conciliacoes/linhas/:linha_id/vincular",
+    validateBody(vincularBodySchema),
+    async (req, res) => {
+        try {
+            const linhaId = Number(req.params.linha_id);
+            const {lancamentos: lancamentosPayload, gerar_parcial: gerarParcial} =
+                req.body as VincularBody;
 
-        if (lancamentosPayload.length === 0) {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "Envie ao menos um lançamento para vincular.");
-        }
+            const [item] = await db
+                .select()
+                .from(itensConciliacaoTable)
+                .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
+                .limit(1);
 
-        const [item] = await db
-            .select()
-            .from(itensConciliacaoTable)
-            .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
-            .limit(1);
-
-        if (!item) {
-            return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada para conciliação.");
-        }
-
-        if (item.status === "vinculado") {
-            return errorResponse(res, 409, "CONFLICT", "Esta linha já está vinculada.");
-        }
-
-        const vinculosExistentes = await db
-            .select({id: itensConciliacaoLancamentosTable.id})
-            .from(itensConciliacaoLancamentosTable)
-            .where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id));
-        if (vinculosExistentes.length > 0) {
-            return errorResponse(res, 409, "CONFLICT", "Esta linha já possui vínculos registrados.");
-        }
-
-        const [linhaExtrato] = await db
-            .select()
-            .from(extratoLinhasTable)
-            .where(eq(extratoLinhasTable.id, linhaId))
-            .limit(1);
-        if (!linhaExtrato) {
-            return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada.");
-        }
-
-        const [conciliacao] = await db
-            .select()
-            .from(conciliacoesTable)
-            .where(eq(conciliacoesTable.id, item.conciliacao_id))
-            .limit(1);
-        if (!conciliacao) {
-            return errorResponse(res, 404, "NOT_FOUND", "Conciliação não encontrada.");
-        }
-
-        const idsLancamentos = lancamentosPayload.map((l: { lancamento_id: number }) => Number(l.lancamento_id));
-        const lancamentos = await db
-            .select()
-            .from(lancamentosTable)
-            .where(inArray(lancamentosTable.id, idsLancamentos));
-
-        if (lancamentos.length !== idsLancamentos.length) {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "Um ou mais lançamentos informados são inválidos.");
-        }
-
-        const valorExtrato = toNumber(item.valor_extrato);
-        let totalConciliado = 0;
-
-        const payloadMap = new Map(
-            lancamentosPayload.map((l: {
-                lancamento_id: number;
-                desconto?: number;
-                acrescimo?: number
-            }) => [Number(l.lancamento_id), l]),
-        );
-
-        const vinculosParaInserir = lancamentos.map((lancamento) => {
-            const p = payloadMap.get(lancamento.id) ?? {desconto: 0, acrescimo: 0};
-            const desconto = Number(p.desconto ?? 0);
-            const acrescimo = Number(p.acrescimo ?? 0);
-            const valorBase = toNumber(lancamento.valor);
-            const valorVinculado = valorBase - desconto + acrescimo;
-            totalConciliado += valorVinculado;
-            return {
-                lancamento,
-                desconto,
-                acrescimo,
-                valorVinculado,
-            };
-        });
-
-        const valorSaldo = Math.max(0, Number((valorExtrato - totalConciliado).toFixed(2)));
-
-        const resultado = await db.transaction(async (tx) => {
-            let novoResiduo: unknown = null;
-
-            if (gerarParcial && valorSaldo > 0) {
-                const origem = vinculosParaInserir[0]?.lancamento;
-                if (!origem) {
-                    throw new Error("Não foi possível identificar lançamento de origem para gerar resíduo.");
-                }
-
-                const [residuo] = await tx
-                    .insert(lancamentosTable)
-                    .values({
-                        tipo: origem.tipo,
-                        vencimento: origem.vencimento,
-                        competencia: origem.competencia,
-                        conta_id: origem.conta_id,
-                        parceiro_id: origem.parceiro_id,
-                        descricao: `${origem.descricao ?? "Lançamento"} (Resíduo parcial automático)`,
-                        valor: String(valorSaldo.toFixed(2)),
-                        status: "pendente",
-                        origem: "residuo_parcial",
-                        plano_conta_id: origem.plano_conta_id,
-                        departamento_id: origem.departamento_id,
-                        centro_custo_id: origem.centro_custo_id,
-                        parcela_atual: origem.parcela_atual,
-                        total_parcelas: origem.total_parcelas,
-                        riscos: origem.riscos ?? [],
-                        is_residuo_parcial: true,
-                        lancamento_origem_id: origem.id,
-                        criado_por: req.user?.id,
-                    })
-                    .returning();
-
-                novoResiduo = residuo;
+            if (!item) {
+                return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada para conciliação.");
+            }
+            if (item.status === "vinculado") {
+                return errorResponse(res, 409, "CONFLICT", "Esta linha já está vinculada.");
             }
 
-            await tx.insert(itensConciliacaoLancamentosTable).values(
-                vinculosParaInserir.map((v) => ({
-                    item_conciliacao_id: item.id,
-                    lancamento_id: v.lancamento.id,
-                    valor_vinculado: String(v.valorVinculado.toFixed(2)),
-                    desconto: String(v.desconto.toFixed(2)),
-                    acrescimo: String(v.acrescimo.toFixed(2)),
-                })),
-            );
-
-            const statusQuitacao = item.tipo_extrato === "credito" ? "recebido" : "pago";
-            for (const vinculo of vinculosParaInserir) {
-                await tx
-                    .update(lancamentosTable)
-                    .set({
-                        status: statusQuitacao,
-                        data_quitacao: linhaExtrato.data_movimento,
-                        valor_quitado: String(vinculo.valorVinculado.toFixed(2)),
-                        desconto: sql`${lancamentosTable.desconto}
-                        +
-                        ${String(vinculo.desconto.toFixed(2))}`,
-                        acrescimo: sql`${lancamentosTable.acrescimo}
-                        +
-                        ${String(vinculo.acrescimo.toFixed(2))}`,
-                        updated_at: new Date(),
-                    })
-                    .where(eq(lancamentosTable.id, vinculo.lancamento.id));
+            const vinculosExistentes = await db
+                .select({id: itensConciliacaoLancamentosTable.id})
+                .from(itensConciliacaoLancamentosTable)
+                .where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id));
+            if (vinculosExistentes.length > 0) {
+                return errorResponse(res, 409, "CONFLICT", "Esta linha já possui vínculos registrados.");
             }
 
-            await tx
-                .update(itensConciliacaoTable)
-                .set({
-                    status: "vinculado",
-                    valor_vinculado_total: String(totalConciliado.toFixed(2)),
-                    valor_saldo: String(valorSaldo.toFixed(2)),
-                    updated_at: new Date(),
-                })
-                .where(eq(itensConciliacaoTable.id, item.id));
+            const [linhaExtrato] = await db
+                .select()
+                .from(extratoLinhasTable)
+                .where(eq(extratoLinhasTable.id, linhaId))
+                .limit(1);
+            if (!linhaExtrato) {
+                return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada.");
+            }
 
-            await tx.insert(historicoConciliacaoTable).values({
-                conciliacao_id: item.conciliacao_id,
-                item_conciliacao_id: item.id,
-                usuario_id: req.user?.id,
-                acao: gerarParcial && valorSaldo > 0 ? "criar_residuo_parcial" : "vincular",
-                detalhes: JSON.stringify({
-                    linha_id: linhaId,
-                    lancamentos: lancamentosPayload,
-                    gerar_parcial: gerarParcial,
-                    valor_extrato: valorExtrato,
-                    total_conciliado: Number(totalConciliado.toFixed(2)),
-                    valor_saldo: Number(valorSaldo.toFixed(2)),
-                }),
+            const [conciliacao] = await db
+                .select()
+                .from(conciliacoesTable)
+                .where(eq(conciliacoesTable.id, item.conciliacao_id))
+                .limit(1);
+            if (!conciliacao) {
+                return errorResponse(res, 404, "NOT_FOUND", "Conciliação não encontrada.");
+            }
+
+            const idsLancamentos = lancamentosPayload.map((l) => l.lancamento_id);
+            const lancamentos = await db
+                .select()
+                .from(lancamentosTable)
+                .where(inArray(lancamentosTable.id, idsLancamentos));
+
+            if (lancamentos.length !== idsLancamentos.length) {
+                return errorResponse(res, 400, "VALIDATION_ERROR", "Um ou mais lançamentos informados são inválidos.");
+            }
+
+            const valorExtrato = toNumber(item.valor_extrato);
+            let totalConciliado = 0;
+
+            const payloadMap = new Map(lancamentosPayload.map((l) => [l.lancamento_id, l]));
+
+            const vinculosParaInserir = lancamentos.map((lancamento) => {
+                const p = payloadMap.get(lancamento.id) ?? {desconto: 0, acrescimo: 0};
+                const desconto = Number(p.desconto ?? 0);
+                const acrescimo = Number(p.acrescimo ?? 0);
+                const valorBase = toNumber(lancamento.valor);
+                const valorVinculado = valorBase - desconto + acrescimo;
+                totalConciliado += valorVinculado;
+                return {lancamento, desconto, acrescimo, valorVinculado};
             });
 
-            await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
+            const valorSaldo = Math.max(0, Number((valorExtrato - totalConciliado).toFixed(2)));
 
-            return {
-                linha_id: linhaId,
-                status: "vinculado",
-                total_conciliado: Number(totalConciliado.toFixed(2)),
-                valor_saldo: Number(valorSaldo.toFixed(2)),
-                residuo: novoResiduo,
-            };
-        });
+            const resultado = await db.transaction(async (tx) => {
+                let novoResiduo: unknown = null;
 
-        return successResponse(res, resultado);
-    } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao vincular lançamentos da linha.", String(e));
-    }
-});
+                if (gerarParcial && valorSaldo > 0) {
+                    const origem = vinculosParaInserir[0]?.lancamento;
+                    if (!origem) {
+                        throw new Error("Não foi possível identificar lançamento de origem para gerar resíduo.");
+                    }
+
+                    const [residuo] = await tx
+                        .insert(lancamentosTable)
+                        .values({
+                            tipo: origem.tipo,
+                            vencimento: origem.vencimento,
+                            competencia: origem.competencia,
+                            conta_id: origem.conta_id,
+                            parceiro_id: origem.parceiro_id,
+                            descricao: `${origem.descricao ?? "Lançamento"} (Resíduo parcial automático)`,
+                            valor: String(valorSaldo.toFixed(2)),
+                            status: "pendente",
+                            origem: "residuo_parcial",
+                            plano_conta_id: origem.plano_conta_id,
+                            departamento_id: origem.departamento_id,
+                            centro_custo_id: origem.centro_custo_id,
+                            parcela_atual: origem.parcela_atual,
+                            total_parcelas: origem.total_parcelas,
+                            riscos: origem.riscos ?? [],
+                            is_residuo_parcial: true,
+                            lancamento_origem_id: origem.id,
+                            criado_por: req.user?.id,
+                        })
+                        .returning();
+
+                    novoResiduo = residuo;
+                }
+
+                await tx.insert(itensConciliacaoLancamentosTable).values(
+                    vinculosParaInserir.map((v) => ({
+                        item_conciliacao_id: item.id,
+                        lancamento_id: v.lancamento.id,
+                        valor_vinculado: String(v.valorVinculado.toFixed(2)),
+                        desconto: String(v.desconto.toFixed(2)),
+                        acrescimo: String(v.acrescimo.toFixed(2)),
+                    })),
+                );
+
+                const statusQuitacao = item.tipo_extrato === "credito" ? "recebido" : "pago";
+                for (const vinculo of vinculosParaInserir) {
+                    await tx
+                        .update(lancamentosTable)
+                        .set({
+                            status: statusQuitacao,
+                            data_quitacao: linhaExtrato.data_movimento,
+                            valor_quitado: String(vinculo.valorVinculado.toFixed(2)),
+                            desconto: sql`${lancamentosTable.desconto}
+                            +
+                            ${String(vinculo.desconto.toFixed(2))}`,
+                            acrescimo: sql`${lancamentosTable.acrescimo}
+                            +
+                            ${String(vinculo.acrescimo.toFixed(2))}`,
+                            updated_at: new Date(),
+                        })
+                        .where(eq(lancamentosTable.id, vinculo.lancamento.id));
+                }
+
+                await tx
+                    .update(itensConciliacaoTable)
+                    .set({
+                        status: "vinculado",
+                        valor_vinculado_total: String(totalConciliado.toFixed(2)),
+                        valor_saldo: String(valorSaldo.toFixed(2)),
+                        updated_at: new Date(),
+                    })
+                    .where(eq(itensConciliacaoTable.id, item.id));
+
+                await tx.insert(historicoConciliacaoTable).values({
+                    conciliacao_id: item.conciliacao_id,
+                    item_conciliacao_id: item.id,
+                    usuario_id: req.user?.id,
+                    acao: gerarParcial && valorSaldo > 0 ? "criar_residuo_parcial" : "vincular",
+                    detalhes: JSON.stringify({
+                        linha_id: linhaId,
+                        lancamentos: lancamentosPayload,
+                        gerar_parcial: gerarParcial,
+                        valor_extrato: valorExtrato,
+                        total_conciliado: Number(totalConciliado.toFixed(2)),
+                        valor_saldo: Number(valorSaldo.toFixed(2)),
+                    }),
+                });
+
+                await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
+
+                return {
+                    linha_id: linhaId,
+                    status: "vinculado",
+                    total_conciliado: Number(totalConciliado.toFixed(2)),
+                    valor_saldo: Number(valorSaldo.toFixed(2)),
+                    residuo: novoResiduo,
+                };
+            });
+
+            return successResponse(res, resultado);
+        } catch (e) {
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao vincular lançamentos da linha.", String(e));
+        }
+    },
+);
 
 router.post("/conciliacoes/:extrato_id/finalizar", async (req, res) => {
     try {

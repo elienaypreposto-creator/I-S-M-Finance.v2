@@ -2,6 +2,7 @@ import express, {type Express} from "express";
 import cors from "cors";
 import router from "./routes";
 import {errorHandler} from "./middlewares/error-handler";
+import {auditLogger} from "./middlewares/logger";
 
 const app: Express = express();
 
@@ -14,6 +15,7 @@ app.use(
 );
 app.use(express.json());
 app.use(express.urlencoded({extended: true}));
+app.use(auditLogger);
 
 app.get("/healthz", (_req, res) => {
     res.status(200).send("OK");

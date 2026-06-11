@@ -1,9 +1,12 @@
 import { Router } from "express";
 import { withPermission } from "../../../middlewares/withPermission";
+import { validateBody } from "../../../middlewares/validate";
 import { asyncHandler } from "../../../utils/async-handler";
 import { successResponse } from "../../../utils/response";
 import { planoContasService } from "./plano-contas.service";
 import {
+  type CreatePlanoContaBody,
+  type UpdatePlanoContaBody,
   createPlanoContaBodySchema,
   planoContaIdParamSchema,
   updatePlanoContaBodySchema,
@@ -22,9 +25,9 @@ router.get(
 router.post(
   "/plano-contas",
   withPermission("configuracoes:plano-contas:criar"),
+  validateBody(createPlanoContaBodySchema),
   asyncHandler(async (req, res) => {
-    const payload = createPlanoContaBodySchema.parse(req.body);
-    const item = await planoContasService.create(payload);
+    const item = await planoContasService.create(req.body as CreatePlanoContaBody);
     return successResponse(res, item, null, 201);
   }),
 );
@@ -32,10 +35,10 @@ router.post(
 router.put(
   "/plano-contas/:id",
   withPermission("configuracoes:plano-contas:editar"),
+  validateBody(updatePlanoContaBodySchema),
   asyncHandler(async (req, res) => {
     const { id } = planoContaIdParamSchema.parse(req.params);
-    const payload = updatePlanoContaBodySchema.parse(req.body);
-    const item = await planoContasService.update(id, payload);
+    const item = await planoContasService.update(id, req.body as UpdatePlanoContaBody);
     return successResponse(res, item);
   }),
 );

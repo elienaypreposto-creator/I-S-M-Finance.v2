@@ -14,13 +14,14 @@
  *
  * Segurança:
  *   - senha_hash e campos OTP nunca retornados nas respostas.
- *   - Todos os campos extraídos explicitamente do body (anti-mass assignment).
+ *   - Payloads validados e purgados por Zod via validateBody (anti-mass assignment).
  *   - Criação atómica: se o envio de e-mail falhar, o hash OTP é revertido.
  *   - Edição: sessões revogadas imediatamente quando a conta é bloqueada
  *     ou quando o admin define uma nova senha.
  */
 
 import {Router} from "express";
+import {z} from "zod";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import {and, count, eq, ilike} from "drizzle-orm";
@@ -31,6 +32,38 @@ import {revokeAllTokensForUser} from "../services/session.service";
 import {generateOtp} from "../services/token.service";
 import {errorResponse, successResponse} from "../utils/response";
 import {withPermission} from "../middlewares/withPermission";
+import {validateBody} from "../middlewares/validate";
+
+// ---------------------
+// Schemas de validação
+// ---------------------
+
+const createUsuarioBodySchema = z.object({
+    nome: z.string().trim().min(2, "Nome deve ter pelo menos 2 caracteres."),
+    email: z.string().trim().email("E-mail inválido.").toLowerCase(),
+    cargo: z.string().trim().min(1).optional(),
+    perfil_base: z.string().trim().min(1).optional(),
+    telefone: z.string().trim().min(1).optional(),
+    celular: z.string().trim().min(1).optional(),
+});
+
+const updateUsuarioBodySchema = z.object({
+    nome: z.string().trim().min(2, "Nome deve ter pelo menos 2 caracteres.").optional(),
+    cargo: z.string().trim().min(1).optional(),
+    perfil_base: z.string().trim().min(1).optional(),
+    telefone: z.string().trim().min(1).optional(),
+    celular: z.string().trim().min(1).optional(),
+    bloqueado: z.boolean().optional(),
+    senha: z.string().min(8, "A senha deve ter pelo menos 8 caracteres.").optional(),
+});
+
+const updatePermissoesBodySchema = z.object({
+    permissoes: z.array(z.string().trim().min(1)).default([]),
+});
+
+type CreateUsuarioBody = z.infer<typeof createUsuarioBodySchema>;
+type UpdateUsuarioBody = z.infer<typeof updateUsuarioBodySchema>;
+type UpdatePermissoesBody = z.infer<typeof updatePermissoesBodySchema>;
 
 const BCRYPT_SALT_ROUNDS = 12;
 
@@ -85,53 +118,42 @@ router.get(
 router.post(
     "/usuarios",
     withPermission("admin:usuarios:criar"),
+    validateBody(createUsuarioBodySchema),
     async (req, res) => {
         try {
-            // Extracção explícita — anti-mass assignment; senha nunca é aceita no body
-            const nome = typeof req.body?.nome === "string" ? req.body.nome.trim() : null;
-            const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : null;
-            const cargo = typeof req.body?.cargo === "string" ? req.body.cargo.trim() : null;
-            const perfil_base = typeof req.body?.perfil_base === "string" ? req.body.perfil_base.trim() : null;
-            const telefone = typeof req.body?.telefone === "string" ? req.body.telefone.trim() : null;
-            const celular = typeof req.body?.celular === "string" ? req.body.celular.trim() : null;
-
-            if (!nome || !email) {
-                return errorResponse(res, 400, "VALIDATION_ERROR", "Campos obrigatórios: nome e email.");
-            }
+            const {nome, email, cargo, perfil_base, telefone, celular} = req.body as CreateUsuarioBody;
 
             const otp = generateOtp();
             const otpHash = await bcrypt.hash(otp, BCRYPT_SALT_ROUNDS);
 
-            // Placeholder bcrypt indevassável — substituído quando o utilizador chama /auth/setup-password
+            // Placeholder indevassável — substituído em /auth/setup-password
             const placeholderHash = await bcrypt.hash(
                 crypto.randomBytes(32).toString("hex"),
                 BCRYPT_SALT_ROUNDS,
             );
 
-            // Transacção: garante que user + OTP hash são criados atomicamente
             const novoUsuario = await db.transaction(async (tx) => {
                 const [user] = await tx
                     .insert(usuariosTable)
                     .values({
                         nome,
                         email,
-                        cargo: cargo ?? undefined,
-                        perfil_base: perfil_base ?? undefined,
-                        telefone: telefone ?? undefined,
-                        celular: celular ?? undefined,
+                        cargo,
+                        perfil_base,
+                        telefone,
+                        celular,
                         senha_hash: placeholderHash,
                         senha_unica_hash: otpHash,
                         senha_unica_utilizada: false,
                         bloqueado: false,
                     })
                     .returning(USUARIO_PUBLIC_COLS);
-
                 return user;
             });
 
-            // E-mail fora da transacção DB - se falhar, reverte o OTP para forçar retry
+            // E-mail fora da transacção DB - se falhar, reverte o hash OTP para forçar retry
             try {
-                const originUrl = req.headers.origin || process.env.FRONTEND_URL || "http://localhost:5173";
+                const originUrl = process.env.FRONTEND_URL ?? "http://localhost:5173";
                 await sendWelcomeEmail(email, nome, otp, originUrl);
             } catch (emailErr) {
                 await db
@@ -158,6 +180,7 @@ router.post(
 router.put(
     "/usuarios/:id",
     withPermission("admin:usuarios:editar"),
+    validateBody(updateUsuarioBodySchema),
     async (req, res) => {
         try {
             const id = parseInt(req.params.id, 10);
@@ -165,14 +188,7 @@ router.put(
                 return errorResponse(res, 400, "VALIDATION_ERROR", "ID de usuário inválido.");
             }
 
-            // email e id são imutáveis via esta rota
-            const nome = typeof req.body?.nome === "string" ? req.body.nome.trim() : undefined;
-            const cargo = typeof req.body?.cargo === "string" ? req.body.cargo.trim() : undefined;
-            const perfil_base = typeof req.body?.perfil_base === "string" ? req.body.perfil_base.trim() : undefined;
-            const telefone = typeof req.body?.telefone === "string" ? req.body.telefone.trim() : undefined;
-            const celular = typeof req.body?.celular === "string" ? req.body.celular.trim() : undefined;
-            const bloqueado = typeof req.body?.bloqueado === "boolean" ? req.body.bloqueado : undefined;
-            const senha = typeof req.body?.senha === "string" ? req.body.senha : undefined;
+            const {nome, cargo, perfil_base, telefone, celular, bloqueado, senha} = req.body as UpdateUsuarioBody;
 
             type UsuarioUpdate = {
                 updated_at: Date;
@@ -192,11 +208,7 @@ router.put(
             if (telefone !== undefined) updateData.telefone = telefone;
             if (celular !== undefined) updateData.celular = celular;
             if (bloqueado !== undefined) updateData.bloqueado = bloqueado;
-
             if (senha !== undefined) {
-                if (senha.length < 8) {
-                    return errorResponse(res, 400, "VALIDATION_ERROR", "A senha deve ter pelo menos 8 caracteres.");
-                }
                 updateData.senha_hash = await bcrypt.hash(senha, BCRYPT_SALT_ROUNDS);
             }
 
@@ -208,9 +220,7 @@ router.put(
 
             if (!item) return errorResponse(res, 404, "NOT_FOUND", "Utilizador não encontrado.");
 
-            // Revogação imediata de sessões:
-            // - Bloqueio de conta: utilizador não pode continuar com tokens existentes.
-            // - Troca de senha: tokens emitidos com a senha anterior devem ser invalidados.
+            // Revogação de sessões: bloqueio ou troca de senha invalidam tokens activos
             if (bloqueado === true || senha !== undefined) {
                 await revokeAllTokensForUser(id);
             }
@@ -247,6 +257,7 @@ router.get(
 router.put(
     "/usuarios/:id/permissoes",
     withPermission("admin:usuarios:editar"),
+    validateBody(updatePermissoesBodySchema),
     async (req, res) => {
         try {
             const id = parseInt(req.params.id, 10);
@@ -254,22 +265,17 @@ router.put(
                 return errorResponse(res, 400, "VALIDATION_ERROR", "ID de usuário inválido.");
             }
 
-            const rawPermissoes = req.body?.permissoes;
-            if (!Array.isArray(rawPermissoes)) {
-                return errorResponse(res, 400, "VALIDATION_ERROR", "permissoes deve ser um array de strings.");
-            }
+            const {permissoes} = req.body as UpdatePermissoesBody;
 
-            const permissoes = rawPermissoes.filter(
-                (p): p is string => typeof p === "string" && p.trim().length > 0,
-            );
+            await db.transaction(async (tx) => {
+                await tx.delete(permissoesTable).where(eq(permissoesTable.usuario_id, id));
 
-            await db.delete(permissoesTable).where(eq(permissoesTable.usuario_id, id));
-
-            if (permissoes.length > 0) {
-                await db.insert(permissoesTable).values(
-                    permissoes.map((p) => ({usuario_id: id, codigo_permissao: p})),
-                );
-            }
+                if (permissoes.length > 0) {
+                    await tx.insert(permissoesTable).values(
+                        permissoes.map((p) => ({usuario_id: id, codigo_permissao: p})),
+                    );
+                }
+            });
 
             return successResponse(res, permissoes);
         } catch (e: unknown) {

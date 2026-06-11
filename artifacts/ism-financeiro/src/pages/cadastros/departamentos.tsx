@@ -7,6 +7,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { fetchApiData } from "@/lib/api-config";
 import { departamentoFormSchema, type DepartamentoFormValues } from "@/validations/cadastros.schema";
+import { RequiresPermission } from "@/components/auth/requires-permission";
 
 type DepartamentoRow = {
   id: number;
@@ -235,13 +236,15 @@ export default function Departamentos() {
         title="Departamentos & Centros de Custo"
         description="Estrutura organizacional e centros de custo da empresa"
         actions={
-          <button
-            type="button"
-            onClick={openCreate}
-            className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25"
-          >
-            <Plus className="w-4 h-4" /> Novo Departamento
-          </button>
+          <RequiresPermission permission="configuracoes:departamentos:criar">
+            <button
+              type="button"
+              onClick={openCreate}
+              className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25"
+            >
+              <Plus className="w-4 h-4" /> Novo Departamento
+            </button>
+          </RequiresPermission>
         }
       />
 
@@ -265,13 +268,15 @@ export default function Departamentos() {
           <p className="text-muted-foreground text-sm font-medium">
             Nenhum departamento cadastrado ainda.
           </p>
-          <button
-            type="button"
-            onClick={openCreate}
-            className="text-primary text-sm font-bold hover:underline mt-2 block mx-auto"
-          >
-            Criar primeiro departamento
-          </button>
+          <RequiresPermission permission="configuracoes:departamentos:criar">
+            <button
+              type="button"
+              onClick={openCreate}
+              className="text-primary text-sm font-bold hover:underline mt-2 block mx-auto"
+            >
+              Criar primeiro departamento
+            </button>
+          </RequiresPermission>
         </div>
       ) : (
         <div className="space-y-3">
@@ -306,30 +311,34 @@ export default function Departamentos() {
                   </button>
 
                   <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => openEdit(dept)}
-                      className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-                      title="Editar"
-                    >
-                      <Pencil className="w-4 h-4 text-muted-foreground" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        confirm(`Excluir departamento "${dept.nome}"?`) &&
-                        deleteMutation.mutate(dept.id)
-                      }
-                      disabled={deleteMutation.isPending}
-                      className="p-2 hover:bg-destructive/20 rounded-lg transition-colors disabled:opacity-50"
-                      title="Excluir"
-                    >
-                      {deleteMutation.isPending ? (
-                        <Loader2 className="w-4 h-4 animate-spin text-destructive" />
-                      ) : (
-                        <Trash2 className="w-4 h-4 text-muted-foreground" />
-                      )}
-                    </button>
+                    <RequiresPermission permission="configuracoes:departamentos:criar">
+                      <button
+                        type="button"
+                        onClick={() => openEdit(dept)}
+                        className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                        title="Editar"
+                      >
+                        <Pencil className="w-4 h-4 text-muted-foreground" />
+                      </button>
+                    </RequiresPermission>
+                    <RequiresPermission permission="configuracoes:departamentos:deletar">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          confirm(`Excluir departamento "${dept.nome}"?`) &&
+                          deleteMutation.mutate(dept.id)
+                        }
+                        disabled={deleteMutation.isPending}
+                        className="p-2 hover:bg-destructive/20 rounded-lg transition-colors disabled:opacity-50"
+                        title="Excluir"
+                      >
+                        {deleteMutation.isPending ? (
+                          <Loader2 className="w-4 h-4 animate-spin text-destructive" />
+                        ) : (
+                          <Trash2 className="w-4 h-4 text-muted-foreground" />
+                        )}
+                      </button>
+                    </RequiresPermission>
                     <button
                       type="button"
                       onClick={() => toggle(dept.id)}

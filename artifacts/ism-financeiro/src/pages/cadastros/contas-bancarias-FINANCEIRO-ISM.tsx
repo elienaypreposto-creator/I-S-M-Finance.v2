@@ -22,6 +22,7 @@ import { useToast } from "@/hooks/use-toast";
 import { fetchApiData } from "@/lib/api-config";
 import { contaBancariaFormSchema, type ContaBancariaFormValues } from "@/validations/cadastros.schema";
 import { apiValorToValorBr, brMoneyDisplayToApiString, formatValorBrInput } from "@/validations/lancamentos.schema";
+import { RequiresPermission } from "@/components/auth/requires-permission";
 
 type ContaBancaria = {
   id: number;
@@ -43,6 +44,20 @@ function toCents(v: string | number): number {
   return Math.round(Number(str) * 100);
 }
 
+// ─── Máscaras ──────────────────────────────────────────────────────────────────
+function maskAgencia(value: string): string {
+  const digits = value.replace(/\D/g, "").slice(0, 5);
+  if (digits.length <= 4) return digits;
+  return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+}
+
+function maskConta(value: string): string {
+  const digits = value.replace(/\D/g, "").slice(0, 8);
+  if (digits.length <= 1) return digits;
+  return `${digits.slice(0, -1)}-${digits.slice(-1)}`;
+}
+
+// ─── Modal ────────────────────────────────────────────────────────────────────
 interface ModalProps {
   onClose: () => void;
   initialData?: ContaBancaria | null;
@@ -78,6 +93,7 @@ function NovaContaModal({ onClose, initialData }: ModalProps) {
     trigger,
     reset,
     watch,
+    setValue,
     formState: { errors },
   } = form;
 
@@ -124,171 +140,250 @@ function NovaContaModal({ onClose, initialData }: ModalProps) {
     },
   });
 
-  const goNext = async () => {
+  // ── CORREÇÃO: recebe o evento para bloquear submit nativo ──
+  const goNext = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
     const ok = await trigger(["nome", "tipo"]);
     if (ok) setStep(2);
   };
+
+  const onSubmitFinal = handleSubmit((values) => {
+    mutation.mutate(values);
+  });
 
   const cor = watch("cor");
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-card border border-white/10 rounded-2xl w-full max-w-md shadow-2xl">
+        {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-white/5">
           <div>
-            <h2 className="text-lg font-bold text-white">{initialData ? "Editar Conta" : "Nova Conta Bancária"}</h2>
+            <h2 className="text-lg font-bold text-white">
+              {initialData ? "Editar Contas Bancárias" : "Nova Conta Bancária"}
+            </h2>
             <p className="text-xs text-muted-foreground mt-0.5">Passo {step} de 2</p>
           </div>
-          <button type="button" onClick={onClose} className="p-1.5 hover:bg-white/5 rounded-lg transition-colors">
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 hover:bg-white/5 rounded-lg transition-colors"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
 
+        {/* Progress bar */}
         <div className="flex gap-1 px-6 pt-4">
           {[1, 2].map((s) => (
-            <div key={s} className={`flex-1 h-1 rounded-full transition-all ${s <= step ? "bg-primary" : "bg-white/10"}`} />
+            <div
+              key={s}
+              className={`flex-1 h-1 rounded-full transition-all ${s <= step ? "bg-primary" : "bg-white/10"}`}
+            />
           ))}
         </div>
 
+        {/* ──onSubmit bloqueado para evitar submit nativo ── */}
         <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (step < 2) {
-              void goNext();
-            } else {
-              void handleSubmit((v) => mutation.mutate(v))(e);
-            }
-          }}
-          className="flex flex-col">
+          noValidate
+          className="flex flex-col"
+          onSubmit={(e) => e.preventDefault()}
+        >
           <div className="p-6 space-y-4">
-          {step === 1 && (
-            <>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                  Nome Exibição (Apelido)
-                </label>
-                <input
-                  {...register("nome")}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
-                  placeholder="Ex: Itaú PJ Principal"
-                />
-                {errors.nome && <p className="text-[11px] text-destructive mt-1">{errors.nome.message}</p>}
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Banco</label>
-                  <input
-                    {...register("banco")}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
-                    placeholder="Itaú"
-                  />
-                </div>
+            {/* ── Passo 1: Nome e Tipo ── */}
+            {step === 1 && (
+              <>
                 <div>
                   <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                    Tipo de Conta
+                    Nome Exibição (Apelido)
                   </label>
-                  <select
-                    {...register("tipo")}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-black outline-none focus:border-primary/50 transition-colors">
-                    <option value="Conta Corrente">Conta Corrente</option>
-                    <option value="Conta PJ">Conta PJ</option>
-                    <option value="Poupança">Poupança</option>
-                    <option value="Investimento">Investimento</option>
-                  </select>
-                  {errors.tipo && <p className="text-[11px] text-destructive mt-1">{errors.tipo.message}</p>}
-                </div>
-              </div>
-            </>
-          )}
-          {step === 2 && (
-            <>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Agência</label>
                   <input
-                    {...register("agencia")}
+                    {...register("nome")}
                     className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
-                    placeholder="0000"
+                    placeholder="Ex: Itaú PJ Principal"
                   />
+                  {errors.nome && (
+                    <p className="text-[11px] text-destructive mt-1">{errors.nome.message}</p>
+                  )}
                 </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Conta</label>
-                  <input
-                    {...register("conta")}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
-                    placeholder="00000-0"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                  Saldo Inicial (Sistema começará com este valor)
-                </label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground text-sm font-bold">R$</span>
-                  <Controller
-                    name="saldo_inicial_br"
-                    control={control}
-                    render={({ field }) => (
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        autoComplete="off"
-                        value={field.value}
-                        onChange={(e) => field.onChange(formatValorBrInput(e.target.value))}
-                        className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors font-bold"
-                        placeholder="0,00"
-                      />
-                    )}
-                  />
-                </div>
-                {errors.saldo_inicial_br && <p className="text-[11px] text-destructive mt-1">{errors.saldo_inicial_br.message}</p>}
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                  Cor de Identificação
-                </label>
-                <div className="flex gap-2 p-2 bg-white/5 border border-white/10 rounded-xl">
-                  {["#3BA8DC", "#E67E22", "#8B5CF6", "#27AE60", "#E74C3C"].map((c) => (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() => form.setValue("cor", c, { shouldValidate: true })}
-                      className={cn(
-                        "w-8 h-8 rounded-lg border-2 transition-all",
-                        cor === c ? "border-white scale-110" : "border-transparent opacity-50 hover:opacity-100",
-                      )}
-                      style={{ backgroundColor: c }}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                      Banco
+                    </label>
+                    <input
+                      {...register("banco")}
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+                      placeholder="Itaú"
                     />
-                  ))}
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                      Tipo de Conta
+                    </label>
+                    <select
+                      {...register("tipo")}
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-black outline-none focus:border-primary/50 transition-colors"
+                    >
+                      <option value="Conta Corrente">Conta Corrente</option>
+                      <option value="Conta PJ">Conta PJ</option>
+                      <option value="Poupança">Poupança</option>
+                      <option value="Investimento">Investimento</option>
+                    </select>
+                    {errors.tipo && (
+                      <p className="text-[11px] text-destructive mt-1">{errors.tipo.message}</p>
+                    )}
+                  </div>
                 </div>
-                {errors.cor && <p className="text-[11px] text-destructive mt-1">{errors.cor.message}</p>}
-              </div>
-            </>
-          )}
+              </>
+            )}
+
+            {/* ── Passo 2: Agência, Conta, Saldo, Cor ── */}
+            {step === 2 && (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                      Agência
+                    </label>
+                    <Controller
+                      name="agencia"
+                      control={control}
+                      render={({ field }) => (
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          autoComplete="off"
+                          value={field.value ?? ""}
+                          onChange={(e) =>
+                            field.onChange(maskAgencia(e.target.value))
+                          }
+                          className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors font-mono"
+                          placeholder="0000-0"
+                          maxLength={6}
+                        />
+                      )}
+                    />
+                    {errors.agencia && (
+                      <p className="text-[11px] text-destructive mt-1">{errors.agencia.message}</p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                      Conta
+                    </label>
+                    <Controller
+                      name="conta"
+                      control={control}
+                      render={({ field }) => (
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          autoComplete="off"
+                          value={field.value ?? ""}
+                          onChange={(e) =>
+                            field.onChange(maskConta(e.target.value))
+                          }
+                          className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors font-mono"
+                          placeholder="00000-0"
+                          maxLength={9}
+                        />
+                      )}
+                    />
+                    {errors.conta && (
+                      <p className="text-[11px] text-destructive mt-1">{errors.conta.message}</p>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                    Saldo Inicial (Sistema começará com este valor)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground text-sm font-bold">
+                      R$
+                    </span>
+                    <Controller
+                      name="saldo_inicial_br"
+                      control={control}
+                      render={({ field }) => (
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          autoComplete="off"
+                          value={field.value}
+                          onChange={(e) => field.onChange(formatValorBrInput(e.target.value))}
+                          className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors font-bold"
+                          placeholder="0,00"
+                        />
+                      )}
+                    />
+                  </div>
+                  {errors.saldo_inicial_br && (
+                    <p className="text-[11px] text-destructive mt-1">
+                      {errors.saldo_inicial_br.message}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                    Cor de Identificação
+                  </label>
+                  <div className="flex gap-2 p-2 bg-white/5 border border-white/10 rounded-xl">
+                    {["#3BA8DC", "#E67E22", "#8B5CF6", "#27AE60", "#E74C3C"].map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => setValue("cor", c, { shouldValidate: true })}
+                        className={cn(
+                          "w-8 h-8 rounded-lg border-2 transition-all",
+                          cor === c
+                            ? "border-white scale-110"
+                            : "border-transparent opacity-50 hover:opacity-100",
+                        )}
+                        style={{ backgroundColor: c }}
+                      />
+                    ))}
+                  </div>
+                  {errors.cor && (
+                    <p className="text-[11px] text-destructive mt-1">{errors.cor.message}</p>
+                  )}
+                </div>
+              </>
+            )}
           </div>
 
+          {/* Footer */}
           <div className="flex gap-3 p-6 pt-0 border-t border-white/5">
             {step > 1 && (
               <button
                 type="button"
                 onClick={() => setStep((s) => s - 1)}
-                className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium transition-all">
+                className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium transition-all"
+              >
                 Voltar
               </button>
             )}
+
             {step < 2 ? (
               <button
                 type="button"
-                onClick={() => void goNext()}
-                className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium transition-all">
+                onClick={(e) => void goNext(e)}
+                className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium transition-all"
+              >
                 Próximo
               </button>
             ) : (
               <button
-                type="submit"
+                type="button"
                 disabled={mutation.isPending}
-                className="flex-1 py-2.5 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-bold transition-all disabled:opacity-50">
+                onClick={() => void onSubmitFinal()}
+                className="flex-1 py-2.5 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-bold transition-all disabled:opacity-50"
+              >
                 {mutation.isPending ? (
                   <Loader2 className="w-4 h-4 animate-spin mx-auto" />
                 ) : initialData ? (
@@ -355,7 +450,9 @@ export default function ContasBancarias() {
     },
   });
 
-  const totalSaldoCents = contas.filter((c) => c.status === "ativo").reduce((acc, c) => acc + toCents(c.saldo_atual), 0);
+  const totalSaldoCents = contas
+    .filter((c) => c.status === "ativo")
+    .reduce((acc, c) => acc + toCents(c.saldo_atual), 0);
 
   if (isLoading)
     return (
@@ -385,16 +482,20 @@ export default function ContasBancarias() {
             <button
               type="button"
               onClick={() => setShowSaldos((v) => !v)}
-              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all">
+              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all"
+            >
               {showSaldos ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               {showSaldos ? "Ocultar" : "Mostrar"} Saldos
             </button>
-            <button
-              type="button"
-              onClick={() => setShowModal(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25">
-              <Plus className="w-4 h-4" /> Nova Conta Bancária
-            </button>
+            <RequiresPermission permission="configuracoes:contas-bancarias:criar">
+              <button
+                type="button"
+                onClick={() => setShowModal(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25"
+              >
+                <Plus className="w-4 h-4" /> Nova Conta Bancária
+              </button>
+            </RequiresPermission>
           </div>
         }
       />
@@ -421,10 +522,14 @@ export default function ContasBancarias() {
               conta.status === "bloqueado"
                 ? "opacity-60 border-destructive/20 grayscale-[0.5]"
                 : "border-white/5 hover:border-white/20"
-            }`}>
+            }`}
+          >
             <div className="flex items-start justify-between mb-6">
               <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ backgroundColor: `${conta.cor}20` }}>
+                <div
+                  className="w-12 h-12 rounded-xl flex items-center justify-center"
+                  style={{ backgroundColor: `${conta.cor}20` }}
+                >
                   <Landmark className="w-6 h-6" style={{ color: conta.cor }} />
                 </div>
                 <div>
@@ -435,56 +540,89 @@ export default function ContasBancarias() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setEditingConta(conta)}
-                  className="p-2 bg-white/5 hover:bg-white/10 rounded-lg text-muted-foreground hover:text-white transition-colors">
-                  <Pencil className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => blockMutation.mutate({ id: conta.id, status: conta.status === "ativo" ? "bloqueado" : "ativo" })}
-                  className={`p-2 rounded-lg transition-colors ${
-                    conta.status === "ativo"
-                      ? "bg-white/5 hover:bg-orange-500/20 text-muted-foreground hover:text-orange-400"
-                      : "bg-success/20 text-success hover:bg-success/30"
-                  }`}>
-                  {conta.status === "ativo" ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => confirm("Deseja realmente deletar?") && deleteMutation.mutate(conta.id)}
-                  className="p-2 bg-white/5 hover:bg-destructive/20 rounded-lg text-muted-foreground hover:text-destructive transition-colors">
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <RequiresPermission permission="configuracoes:contas-bancarias:criar">
+                  <button
+                    type="button"
+                    onClick={() => setEditingConta(conta)}
+                    className="p-2 bg-white/5 hover:bg-white/10 rounded-lg text-muted-foreground hover:text-white transition-colors"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                </RequiresPermission>
+                <RequiresPermission permission="configuracoes:contas-bancarias:deletar">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      blockMutation.mutate({
+                        id: conta.id,
+                        status: conta.status === "ativo" ? "bloqueado" : "ativo",
+                      })
+                    }
+                    className={`p-2 rounded-lg transition-colors ${
+                      conta.status === "ativo"
+                        ? "bg-white/5 hover:bg-orange-500/20 text-muted-foreground hover:text-orange-400"
+                        : "bg-success/20 text-success hover:bg-success/30"
+                    }`}
+                  >
+                    {conta.status === "ativo" ? (
+                      <Lock className="w-4 h-4" />
+                    ) : (
+                      <Unlock className="w-4 h-4" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      confirm("Deseja realmente deletar?") && deleteMutation.mutate(conta.id)
+                    }
+                    className="p-2 bg-white/5 hover:bg-destructive/20 rounded-lg text-muted-foreground hover:text-destructive transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </RequiresPermission>
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4 mb-6">
               <div className="bg-white/5 rounded-xl p-3">
-                <p className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1">Agência</p>
+                <p className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1">
+                  Agência
+                </p>
                 <p className="text-sm text-white font-mono font-bold">{conta.agencia || "—"}</p>
               </div>
               <div className="bg-white/5 rounded-xl p-3">
-                <p className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1">Conta</p>
+                <p className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1">
+                  Conta
+                </p>
                 <p className="text-sm text-white font-mono font-bold">{conta.conta || "—"}</p>
               </div>
             </div>
 
             <div className="flex items-end justify-between pt-4 border-t border-white/5">
               <div>
-                <p className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1">Saldo Atual</p>
+                <p className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1">
+                  Saldo Atual
+                </p>
                 <p className="text-2xl font-bold" style={{ color: conta.cor }}>
                   {showSaldos ? formatCurrency(toCents(conta.saldo_atual) / 100) : "R$ ••••••"}
                 </p>
               </div>
               <div className="text-right">
-                <p className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1">Status</p>
+                <p className="text-[10px] text-muted-foreground uppercase font-black tracking-widest mb-1">
+                  Status
+                </p>
                 <span
                   className={`inline-flex items-center gap-1.5 text-[10px] font-black uppercase px-2 py-1 rounded-lg ${
-                    conta.status === "ativo" ? "bg-success/20 text-success" : "bg-destructive/20 text-destructive"
-                  }`}>
-                  {conta.status === "ativo" ? <CheckCircle className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                    conta.status === "ativo"
+                      ? "bg-success/20 text-success"
+                      : "bg-destructive/20 text-destructive"
+                  }`}
+                >
+                  {conta.status === "ativo" ? (
+                    <CheckCircle className="w-3 h-3" />
+                  ) : (
+                    <AlertCircle className="w-3 h-3" />
+                  )}
                   {conta.status}
                 </span>
               </div>
@@ -495,10 +633,18 @@ export default function ContasBancarias() {
         {contas.length === 0 && !isLoading && (
           <div className="col-span-full py-16 text-center glass-panel rounded-2xl border-dashed border-2 border-white/10">
             <Landmark className="w-12 h-12 text-muted-foreground/30 mx-auto mb-4" />
-            <p className="text-muted-foreground text-sm font-medium">Nenhuma conta cadastrada ainda.</p>
-            <button type="button" onClick={() => setShowModal(true)} className="text-primary text-sm font-bold hover:underline mt-2">
-              Clique aqui para criar sua primeira conta
-            </button>
+            <p className="text-muted-foreground text-sm font-medium">
+              Nenhuma conta cadastrada ainda.
+            </p>
+            <RequiresPermission permission="configuracoes:contas-bancarias:criar">
+              <button
+                type="button"
+                onClick={() => setShowModal(true)}
+                className="text-primary text-sm font-bold hover:underline mt-2"
+              >
+                Clique aqui para criar sua primeira conta
+              </button>
+            </RequiresPermission>
           </div>
         )}
       </div>

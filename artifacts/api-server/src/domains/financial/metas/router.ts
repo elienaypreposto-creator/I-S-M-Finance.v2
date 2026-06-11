@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { withPermission } from "../../../middlewares/withPermission";
+import { validateBody } from "../../../middlewares/validate";
 import { asyncHandler } from "../../../utils/async-handler";
 import { successResponse } from "../../../utils/response";
 import { metasService } from "./metas.service";
-import { listMetasQuerySchema, upsertMetaBodySchema } from "./schemas";
+import { type UpsertMetaBody, listMetasQuerySchema, upsertMetaBodySchema } from "./schemas";
 
 const router = Router();
 
@@ -19,9 +20,9 @@ router.get(
 router.post(
   "/metas",
   withPermission("financeiro:metas:editar"),
+  validateBody(upsertMetaBodySchema),
   asyncHandler(async (req, res) => {
-    const payload = upsertMetaBodySchema.parse(req.body);
-    const item = await metasService.upsert(payload);
+    const item = await metasService.upsert(req.body as UpsertMetaBody);
     return successResponse(res, item);
   }),
 );

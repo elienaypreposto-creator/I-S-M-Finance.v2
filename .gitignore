@@ -52,3 +52,15 @@ Thumbs.db
 backups/
 .env
 *.env
+
+#tests locoais
+check-perms.cjs
+insert-admin.cjs
+insert-super-admin.cjs
+verify-db.cjs
+verify-admin.cjs
+test-login.cjs
+test-perms.cjs
+test-login-flow.js
+push-error.log
+test-perms.ts

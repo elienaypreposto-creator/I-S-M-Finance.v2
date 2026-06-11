@@ -4,12 +4,6 @@
  * Duas funções genéricas, agnósticas ao domínio:
  *   - exportToExcel  → usa a lib `xlsx` (SheetJS)
  *   - exportToPDF    → usa `jspdf` + `jspdf-autotable`
- *
- * Ambas recebem:
- *   filename  : nome do arquivo sem extensão
- *   data      : array de objetos (Record<string, unknown>)
- *   columns   : mapeamento header → key, com formatador opcional
- *   options   : metadados extras para o PDF (título, subtítulo, orientação)
  */
 
 import * as XLSX from "xlsx";
@@ -19,24 +13,15 @@ import autoTable from "jspdf-autotable";
 // ─── Tipos públicos ─────────────────────────────────────────────────────────
 
 export type ExportColumn = {
-  /** Texto exibido no cabeçalho da coluna */
   header: string;
-  /** Chave do objeto de dados */
   key: string;
-  /** Largura da coluna no XLSX (caracteres) – padrão 22 */
   width?: number;
-  /**
-   * Formata o valor antes de escrevê-lo na célula.
-   * Retorne string para texto simples ou number para que o XLSX preserve
-   * os dados numéricos nativos (permite soma no Excel).
-   */
   formatter?: (value: unknown, row: Record<string, unknown>) => string | number;
 };
 
 export type PDFOptions = {
   title?: string;
   subtitle?: string;
-  /** "landscape" para tabelas largas, "portrait" (padrão) para listas */
   orientation?: "portrait" | "landscape";
 };
 
@@ -56,15 +41,22 @@ function sanitizeFilename(name: string): string {
   return name.replace(/[/\\?%*:|"<>]/g, "-");
 }
 
+
+function fmtCompact(raw: unknown): string {
+
+  if (typeof raw === "number") {
+    return raw.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  }
+  const str = String(raw ?? "");
+  
+  const cleaned = str.replace(/R\$\s*/g, "").replace(/\./g, "").replace(",", ".").trim();
+  const n = Number(cleaned);
+  if (isNaN(n)) return str;
+  return n.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
+
 // ─── Excel (XLSX) ───────────────────────────────────────────────────────────
 
-/**
- * Gera e faz download de um arquivo `.xlsx` com uma aba "Dados".
- *
- * O cabeçalho recebe negrito automático via estilo de célula.
- * Colunas que retornam `number` no formatter são preservadas como numéricas,
- * permitindo fórmulas e somas no Excel.
- */
 export function exportToExcel(
   filename: string,
   data: Record<string, unknown>[],
@@ -81,10 +73,8 @@ export function exportToExcel(
   const wsData = [headerRow, ...dataRows];
   const ws = XLSX.utils.aoa_to_sheet(wsData);
 
-  // Larguras de coluna
   ws["!cols"] = columns.map((c) => ({ wch: c.width ?? 22 }));
 
-  // Estilo negrito no cabeçalho (SheetJS CE suporta apenas estrutura básica)
   const range = XLSX.utils.decode_range(ws["!ref"] ?? "A1");
   for (let C = range.s.c; C <= range.e.c; C++) {
     const addr = XLSX.utils.encode_cell({ r: 0, c: C });
@@ -99,12 +89,6 @@ export function exportToExcel(
 
 // ─── PDF (jsPDF + autoTable) ────────────────────────────────────────────────
 
-/**
- * Gera e faz download de um arquivo `.pdf` com tabela formatada.
- *
- * Usa paleta ISM Finance: azul primário #3BA8DC nos cabeçalhos.
- * Para tabelas largas, passe `options.orientation = "landscape"`.
- */
 export function exportToPDF(
   filename: string,
   data: Record<string, unknown>[],
@@ -120,58 +104,99 @@ export function exportToPDF(
 
   const doc = new jsPDF({ orientation, unit: "pt", format: "a4" });
 
-  let cursorY = 30;
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const marginLeft = 30;
+  const marginRight = 30;
+  const tableWidth = pageWidth - marginLeft - marginRight;
+
+  // ── Larguras proporcionais: col 0 (Categoria) = 2× as demais ─────────────
+  const firstColWeight = 2;
+  const totalWeight = firstColWeight + (columns.length - 1);
+  const unitPt = tableWidth / totalWeight;
+  const firstColPt = unitPt * firstColWeight;
+  const otherColPt = unitPt;
+
+  const columnStyles = columns.reduce<
+    Record<number, { cellWidth: number; halign?: "left" | "right" | "center" }>
+  >((acc, _, idx) => {
+    acc[idx] = {
+      cellWidth: idx === 0 ? firstColPt : otherColPt,
+      halign: idx === 0 ? "left" : "right",
+    };
+    return acc;
+  }, {});
+
+  // ── Corpo do PDF com valores compactos ────────────────────────────────────
+  const bodyRows = data.map((row) =>
+    columns.map((c, idx) => {
+      const val = resolveCell(c, row);
+      if (idx === 0) return String(val ?? "");
+      return fmtCompact(val);
+    }),
+  );
+
+  let cursorY = 36;
 
   if (title) {
-    doc.setFontSize(14);
+    doc.setFontSize(13);
     doc.setFont("helvetica", "bold");
     doc.setTextColor(40, 40, 40);
-    doc.text(title, 40, cursorY);
-    cursorY += 18;
+    doc.text(title, marginLeft, cursorY);
+    cursorY += 20;
   }
 
   if (subtitle) {
-    doc.setFontSize(9);
+    doc.setFontSize(8.5);
     doc.setFont("helvetica", "normal");
     doc.setTextColor(100, 100, 100);
-    doc.text(subtitle, 40, cursorY);
-    cursorY += 14;
+    doc.text(subtitle, marginLeft, cursorY);
+    cursorY += 16;
   }
 
   autoTable(doc, {
-    startY: cursorY + 4,
+    startY: cursorY + 6,
+    margin: { left: marginLeft, right: marginRight },
+    tableWidth,
     head: [columns.map((c) => c.header)],
-    body: data.map((row) => columns.map((c) => resolveCell(c, row))),
+    body: bodyRows,
     styles: {
-      fontSize: 8,
-      cellPadding: 4,
-      overflow: "linebreak",
+      fontSize: 7,
+      cellPadding: { top: 3, bottom: 3, left: 3, right: 3 },
+      overflow: "ellipsize",
+      valign: "middle",
     },
     headStyles: {
-      fillColor: [59, 168, 220], // primary ISM Finance
+      fillColor: [59, 168, 220],
       textColor: 255,
       fontStyle: "bold",
-      fontSize: 8,
+      fontSize: 7,
+      halign: "center",
+      cellPadding: { top: 4, bottom: 4, left: 3, right: 3 },
     },
     alternateRowStyles: {
-      fillColor: [248, 248, 250],
+      fillColor: [248, 249, 252],
     },
-    columnStyles: columns.reduce<Record<number, { cellWidth: number }>>(
-      (acc, col, idx) => {
-        if (col.width) acc[idx] = { cellWidth: col.width };
-        return acc;
-      },
-      {},
-    ),
+    didParseCell: (hookData) => {
+      // Última linha (TOTAL) em negrito com fundo diferenciado
+      if (hookData.row.index === data.length - 1 && hookData.section === "body") {
+        hookData.cell.styles.fontStyle = "bold";
+        hookData.cell.styles.fillColor = [225, 235, 245];
+      }
+    },
+    columnStyles,
     didDrawPage: (hookData) => {
-      // Número de página no rodapé
-      const pageCount = (doc as jsPDF & { internal: { getNumberOfPages: () => number } })
-        .internal.getNumberOfPages();
+      const pageCount = (
+        doc as jsPDF & { internal: { getNumberOfPages: () => number } }
+      ).internal.getNumberOfPages();
       doc.setFontSize(7);
       doc.setTextColor(150, 150, 150);
-      const pageWidth = doc.internal.pageSize.getWidth();
       const now = new Date().toLocaleString("pt-BR");
-      doc.text(`${now}  |  Página ${hookData.pageNumber} de ${pageCount}`, pageWidth - 40, doc.internal.pageSize.getHeight() - 15, { align: "right" });
+      doc.text(
+        `${now}  |  Página ${hookData.pageNumber} de ${pageCount}`,
+        pageWidth - marginRight,
+        doc.internal.pageSize.getHeight() - 14,
+        { align: "right" },
+      );
     },
   });
 
@@ -180,7 +205,6 @@ export function exportToPDF(
 
 // ─── Helpers de formatação reutilizáveis ────────────────────────────────────
 
-/** Converte valor numérico (em reais, não centavos) para string BRL formatada */
 export function fmtBRL(value: unknown): string {
   const n = Number(value);
   if (isNaN(n)) return "—";
@@ -190,14 +214,12 @@ export function fmtBRL(value: unknown): string {
   }).format(n);
 }
 
-/** Converte centavos (integer) para string BRL formatada */
 export function fmtCents(cents: unknown): string {
   const n = Number(cents);
   if (isNaN(n)) return "—";
   return fmtBRL(n / 100);
 }
 
-/** Formata datas ISO como dd/mm/aaaa */
 export function fmtDate(value: unknown): string {
   if (!value) return "—";
   const d = new Date(String(value));

@@ -15,6 +15,7 @@ import {
   CheckCircle2,
   Flag,
 } from "lucide-react";
+import { invalidateRelated } from "@/App"; 
 
 type ExtratoDetalheExtrato = {
   id: number;
@@ -112,8 +113,8 @@ export default function ConciliacaoExtratoDetalhe({ extratoId }: { extratoId: st
         body: JSON.stringify({}),
       }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["conciliacao-extrato", extratoId] });
-      void queryClient.invalidateQueries({ queryKey: ["conciliacoes"] });
+      invalidateRelated(queryClient, "conciliacao"); // ← ALTERADO: invalida conciliacao + dashboard + lancamentos
+      void queryClient.invalidateQueries({ queryKey: ["conciliacao-extrato", extratoId] }); // ← mantido: chave específica com parâmetro
       toast({ title: "Linha ignorada", description: "Esta movimentação foi marcada como ignorada." });
     },
     onError: (e: unknown) => {
@@ -129,8 +130,8 @@ export default function ConciliacaoExtratoDetalhe({ extratoId }: { extratoId: st
         body: JSON.stringify({}),
       }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["conciliacao-extrato", extratoId] });
-      void queryClient.invalidateQueries({ queryKey: ["conciliacoes"] });
+      invalidateRelated(queryClient, "conciliacao"); // ← ALTERADO: invalida conciliacao + dashboard + lancamentos
+      void queryClient.invalidateQueries({ queryKey: ["conciliacao-extrato", extratoId] }); // ← mantido: chave específica com parâmetro
       toast({ title: "Extrato finalizado", description: "Conciliação concluída com sucesso." });
     },
     onError: (e: unknown) => {

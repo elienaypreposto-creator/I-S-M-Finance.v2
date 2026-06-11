@@ -6,8 +6,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Search, Filter, Download, Loader2, AlertCircle, Calendar, Pencil, Trash2 } from "lucide-react";
 import { ApiEnvelope, fetchApi, fetchApiData } from "@/lib/api-config";
-import { LancamentoModal } from "@/components/lancamentos/lancamento-modal";
 import { exportToExcel, fmtBRL, fmtDate as fmtDateExport } from "@/lib/export";
+import { RequiresPermission } from "@/components/auth/requires-permission";
+import { LancamentoModal } from "@/components/lancamentos/lancamento-modal";
 
 type Lancamento = {
   id: number;
@@ -182,21 +183,25 @@ export default function Lancamentos() {
           <p className="text-xs text-muted-foreground">Gerencie suas contas a pagar e a receber</p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={handleExportLancamentos}
-            disabled={isExporting || total === 0}
-            title="Exportar XLSX"
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-            {isExporting ? "Exportando…" : "Exportar XLSX"}
-          </button>
-          <button
-            onClick={() => setModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-xs font-medium transition-all shadow-md shadow-primary/30">
-            <Plus className="w-3.5 h-3.5" />
-            Novo Lançamento
-          </button>
+          <RequiresPermission permission="financeiro:lancamentos:listar">
+            <button
+              onClick={handleExportLancamentos}
+              disabled={isExporting || total === 0}
+              title="Exportar XLSX"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              {isExporting ? "Exportando…" : "Exportar XLSX"}
+            </button>
+          </RequiresPermission>
+          <RequiresPermission permission="financeiro:lancamentos:criar">
+            <button
+              onClick={() => setModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-xs font-medium transition-all shadow-md shadow-primary/30">
+              <Plus className="w-3.5 h-3.5" />
+              Novo Lançamento
+            </button>
+          </RequiresPermission>
         </div>
       </div>
 
@@ -350,20 +355,24 @@ export default function Lancamentos() {
                     {/* Ações - sempre visível */}
                     <td className="px-3 py-2.5">
                       <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => setEditItem(l)}
-                          className="p-1 rounded hover:bg-white/10 text-muted-foreground hover:text-primary transition-colors"
-                          title="Editar">
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => {
-                            if (confirm("Deseja excluir este lançamento?")) deleteMutation.mutate(l.id);
-                          }}
-                          className="p-1 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
-                          title="Excluir">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        <RequiresPermission permission="financeiro:lancamentos:criar">
+                          <button
+                            onClick={() => setEditItem(l)}
+                            className="p-1 rounded hover:bg-white/10 text-muted-foreground hover:text-primary transition-colors"
+                            title="Editar">
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        </RequiresPermission>
+                        <RequiresPermission permission="financeiro:lancamentos:deletar">
+                          <button
+                            onClick={() => {
+                              if (confirm("Deseja excluir este lançamento?")) deleteMutation.mutate(l.id);
+                            }}
+                            className="p-1 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
+                            title="Excluir">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </RequiresPermission>
                       </div>
                     </td>
                   </tr>

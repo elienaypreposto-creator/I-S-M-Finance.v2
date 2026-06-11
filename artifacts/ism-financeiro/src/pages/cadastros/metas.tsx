@@ -10,8 +10,10 @@ import {
   brMoneyDisplayToApiString,
   apiValorToValorBr,
 } from "@/validations/lancamentos.schema";
+import { invalidateRelated } from "@/App"; 
+import { RequiresPermission } from "@/components/auth/requires-permission";
 
-// ─── Tipos ─────────────────────────────────────────────────────────────────────
+// ─── Tipos 
 type PlanoConta = {
   id: number;
   tipo: string;
@@ -34,7 +36,7 @@ type ActiveCell = {
   value: string;
 };
 
-// ─── Constantes ────────────────────────────────────────────────────────────────
+// ─── Constantes 
 const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 const CURRENT_YEAR = new Date().getFullYear();
 const YEARS = Array.from({ length: 7 }, (_, i) => CURRENT_YEAR + 3 - i);
@@ -67,6 +69,65 @@ function compactBrl(valor: string | undefined): string {
   const n = parseFloat(valor);
   if (!n) return "—";
   return n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// ─── Exportação CSV ────────────────────────────────────────────────────────────
+function exportarCSV(
+  ano: number,
+  grouped: Map<string, Map<string, PlanoConta[]>>,
+  metasMap: Map<string, string>,
+  stats: { receitas: number; saidas: number; resultado: number },
+) {
+  const BOM = "\uFEFF"; // garante acentos no Excel
+  const sep = ";";
+  const rows: string[] = [];
+
+  // Cabeçalho
+  const header = ["Tipo", "Categoria", "Subcategoria", ...MESES, "Total Ano"];
+  rows.push(header.map((c) => `"${c}"`).join(sep));
+
+  for (const tipo of TIPO_ORDER) {
+    const catMap = grouped.get(tipo);
+    if (!catMap || catMap.size === 0) continue;
+    const cfg = TIPO_CONFIG[tipo];
+
+    for (const [categoria, items] of catMap.entries()) {
+      for (const pc of items) {
+        const valores = Array.from({ length: 12 }, (_, i) => {
+          const v = parseFloat(metasMap.get(`${pc.id}-${i + 1}`) ?? "0") || 0;
+          return v.toFixed(2).replace(".", ",");
+        });
+        const total = valores
+          .reduce((acc, v) => acc + parseFloat(v.replace(",", ".")), 0)
+          .toFixed(2)
+          .replace(".", ",");
+
+        const row = [
+          cfg.label,
+          categoria,
+          pc.subcategoria ?? pc.categoria,
+          ...valores,
+          total,
+        ];
+        rows.push(row.map((c) => `"${c}"`).join(sep));
+      }
+    }
+  }
+
+  // Linha em branco + resumo
+  rows.push("");
+  rows.push(`"Resumo ${ano}"`);
+  rows.push(`"Total Receitas"${sep}${sep}"${stats.receitas.toFixed(2).replace(".", ",")}"`);
+  rows.push(`"Total Saídas"${sep}${sep}"${stats.saidas.toFixed(2).replace(".", ",")}"`);
+  rows.push(`"Resultado Projetado"${sep}${sep}"${stats.resultado.toFixed(2).replace(".", ",")}"`);
+
+  const blob = new Blob([BOM + rows.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `metas-orcamentarias-${ano}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ─── Célula editável ───────────────────────────────────────────────────────────
@@ -124,21 +185,34 @@ function MetaCell({
 
   const hasValue = currentValue && parseFloat(currentValue) > 0;
   return (
-    <button
-      type="button"
-      onClick={() =>
-        onActivate({
-          plano_conta_id,
-          mes,
-          value: hasValue ? apiValorToValorBr(currentValue) : "",
-        })
+    <RequiresPermission
+      permission="financeiro:metas:criar"
+      fallback={
+        <div
+          className={`w-full text-right text-xs rounded px-1 py-0.5 font-mono ${
+            hasValue ? "text-white" : "text-muted-foreground/30"
+          }`}
+        >
+          {hasValue ? compactBrl(currentValue) : "—"}
+        </div>
       }
-      className={`w-full text-right text-xs rounded px-1 py-0.5 transition-colors hover:bg-white/10 font-mono ${
-        hasValue ? "text-white" : "text-muted-foreground/30"
-      }`}
     >
-      {hasValue ? compactBrl(currentValue) : "—"}
-    </button>
+      <button
+        type="button"
+        onClick={() =>
+          onActivate({
+            plano_conta_id,
+            mes,
+            value: hasValue ? apiValorToValorBr(currentValue) : "",
+          })
+        }
+        className={`w-full text-right text-xs rounded px-1 py-0.5 transition-colors hover:bg-white/10 font-mono ${
+          hasValue ? "text-white" : "text-muted-foreground/30"
+        }`}
+      >
+        {hasValue ? compactBrl(currentValue) : "—"}
+      </button>
+    </RequiresPermission>
   );
 }
 
@@ -223,7 +297,7 @@ export default function Metas() {
     },
 
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: ["metas", ano] });
+      invalidateRelated(queryClient, "metas"); // ← ALTERADO: era invalidateQueries(["metas", ano])
     },
   });
 
@@ -284,11 +358,9 @@ export default function Metas() {
     if (!activeCell) return;
     setActiveCell(null);
 
-    // Campo vazio → "0.00" para zerar a meta; valor preenchido → converte a máscara.
     const apiValue = brMoneyDisplayToApiString(activeCell.value) || "0.00";
     const current = metasMap.get(`${plano_conta_id}-${mes}`) ?? "";
 
-    // Só chama a API se o valor realmente mudou.
     if (apiValue === current) return;
 
     saveMeta.mutate({ plano_conta_id, ano, mes, valor_projetado: apiValue });
@@ -314,6 +386,7 @@ export default function Metas() {
   }
 
   const isLoading = loadingPC || loadingMetas;
+  const canExport = !isLoading && metas.length > 0;
 
   return (
     <div className="space-y-6">
@@ -335,9 +408,16 @@ export default function Metas() {
             </select>
             <button
               type="button"
-              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all opacity-50 cursor-not-allowed"
-              disabled
-              title="Disponível na Fase 5"
+              onClick={() => exportarCSV(ano, grouped, metasMap, stats)}
+              disabled={!canExport}
+              title={
+                isLoading
+                  ? "Carregando…"
+                  : metas.length === 0
+                  ? "Nenhuma meta cadastrada para exportar"
+                  : `Exportar metas de ${ano} em CSV`
+              }
+              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Download className="w-4 h-4" /> Exportar
             </button>
@@ -462,9 +542,7 @@ export default function Metas() {
                         Array.from(catMap.entries()).map(([categoria, items]) => (
                           <Fragment key={`cat-${tipo}-${categoria}`}>
                             {/* ── Cabeçalho de Categoria ── */}
-                            <tr
-                              className="bg-white/[0.03] border-b border-white/5"
-                            >
+                            <tr className="bg-white/[0.03] border-b border-white/5">
                               <td
                                 className="px-4 py-2 text-xs font-semibold text-white/70 uppercase tracking-wide sticky left-0 bg-card/90 z-10 pl-8"
                                 colSpan={14}

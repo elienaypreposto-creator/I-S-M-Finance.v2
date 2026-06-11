@@ -1,59 +1,140 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { useLocation } from "wouter";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
+import { fetchApiData } from "@/lib/api-config";
 import { PageHeader } from "@/components/shared/page-header";
-import { Plus, Search, Trash2, ArrowRight, X, Link2, Ban, ChevronsRight, CheckCircle, AlertCircle } from "lucide-react";
+import { DateRangePicker } from "@/components/shared/date-range-picker";
+import { format, startOfYear, endOfYear } from "date-fns";
+import {
+  Plus,
+  Search,
+  Trash2,
+  ArrowRight,
+  X,
+  Link2,
+  Ban,
+  ChevronsRight,
+  CheckCircle,
+  Loader2,
+  UploadCloud,
+  FileCheck2,
+} from "lucide-react";
+import { formatCurrency } from "@/lib/utils";
 
-const contasBancarias = [
-  { id: 1, banco: "Itaú", agencia: "1234", conta: "56789-0" },
-  { id: 2, banco: "Bradesco", agencia: "4321", conta: "98765-4" },
-  { id: 3, banco: "Nubank PJ", agencia: "0001", conta: "11223344-5" },
-];
+// ─── Tipos ───────────────────────────────────────────────────────────────────
 
-const conciliacoes = [
-  { id: 1, banco: "Itaú", agencia: "1234", conta: "56789-0", periodo: "01/10 a 31/10/2023", conciliados: 45, ignorados: 2, pendentes: 0, total: 47, status: "conciliado" },
-  { id: 2, banco: "Bradesco", agencia: "4321", conta: "98765-4", periodo: "01/10 a 15/10/2023", conciliados: 12, ignorados: 0, pendentes: 5, total: 17, status: "pendente" },
-  { id: 3, banco: "Nubank PJ", agencia: "0001", conta: "11223344-5", periodo: "01/11 a 05/11/2023", conciliados: 0, ignorados: 0, pendentes: 8, total: 8, status: "pendente" },
-];
-
-const lancamentosDisponiveis = [
-  { id: 1, descricao: "Mensalidade Outubro", parceiro: "Tech Solutions S.A.", valor: 15000, vencimento: "15/10/2023", tipo: "cr" },
-  { id: 2, descricao: "Projeto Setup", parceiro: "Global Industries", valor: 35000, vencimento: "05/10/2023", tipo: "cr" },
-  { id: 3, descricao: "Consultoria Alpha", parceiro: "Alpha Consultoria", valor: 22000, vencimento: "30/10/2023", tipo: "cr" },
-  { id: 4, descricao: "AWS Cloud", parceiro: "Amazon Web Services", valor: 4500, vencimento: "10/10/2023", tipo: "cp" },
-  { id: 5, descricao: "Materiais Escritório", parceiro: "Office Supplies Ltda", valor: 850, vencimento: "20/10/2023", tipo: "cp" },
-  { id: 6, descricao: "Dev Sr. João", parceiro: "João Silva", valor: 8000, vencimento: "25/10/2023", tipo: "cp" },
-];
-
-type ExtratoItem = {
-  id: number; data: string; descricao: string; valor: number;
-  status: "pendente" | "vinculado" | "ignorado";
-  vinculados?: number[];
+type ContaBancaria = {
+  id: number;
+  nome: string;
+  banco: string | null;
+  agencia: string | null;
+  conta: string | null;
 };
 
-const extratoMock: ExtratoItem[] = [
-  { id: 1, data: "03/10/2023", descricao: "TED RECEBIDA TECH SOLUTIONS", valor: 15000, status: "pendente" },
-  { id: 2, data: "05/10/2023", descricao: "PIX ENVIADO AMAZON", valor: -4500, status: "pendente" },
-  { id: 3, data: "10/10/2023", descricao: "DEPOSITO GLOBAL IND", valor: 35000, status: "pendente" },
-  { id: 4, data: "15/10/2023", descricao: "BOLETO OFFICE SUP", valor: -850, status: "pendente" },
-  { id: 5, data: "20/10/2023", descricao: "TED RECEBIDA ALPHA", valor: 22000, status: "pendente" },
-];
+type ConciliacaoListItem = {
+  conciliacao_id: number;
+  extrato_id: number;
+  conta_id: number;
+  conta_nome: string | null;
+  arquivo_nome: string | null;
+  periodo_inicio: string | null;
+  periodo_fim: string | null;
+  status: string;
+  resumo_conciliados: number | null;
+  resumo_ignorados: number | null;
+  resumo_pendentes: number | null;
+  resumo_total: number | null;
+  created_at: string;
+};
 
-function formatCurrency(v: number) {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Math.abs(v));
-}
+type LancamentoVinculavel = {
+  id: number;
+  tipo: string;
+  descricao: string | null;
+  parceiro_nome: string | null;
+  valor: string | number;
+  vencimento: string;
+  status: string;
+};
 
-function VincularModal({ item, onClose, onVincular }: { item: ExtratoItem; onClose: () => void; onVincular: (ids: number[]) => void }) {
+type ImportarExtratoResponse = {
+  extrato_id: number;
+  conta_id: number;
+  total_linhas: number;
+  status: string;
+};
+
+// ─── VincularModal ────────────────────────────────────────────────────────────
+
+function VincularModal({
+  linhaId,
+  extratoId,
+  valorExtratoAbs,
+  onClose,
+  onSuccess,
+}: {
+  linhaId: number;
+  extratoId: number;
+  valorExtratoAbs: number;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [selecionados, setSelecionados] = useState<number[]>([]);
-  const tipoFiltro = item.valor > 0 ? "cr" : "cp";
-  const disponiveis = lancamentosDisponiveis.filter(l =>
-    l.tipo === tipoFiltro &&
-    (l.descricao.toLowerCase().includes(search.toLowerCase()) || l.parceiro.toLowerCase().includes(search.toLowerCase()))
-  );
+
+  const { data: lancamentos = [], isLoading } = useQuery<LancamentoVinculavel[]>({
+    queryKey: ["lancamentos-vinculaveis", linhaId, search],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      params.set("linha_id", String(linhaId));
+      params.set("limit", "100");
+      if (search.trim()) params.set("search", search.trim());
+      return fetchApiData<LancamentoVinculavel[]>(`/conciliacoes/lancamentos-vinculaveis?${params}`);
+    },
+  });
+
+  const vincularMutation = useMutation({
+    mutationFn: () =>
+      fetchApiData(`/conciliacoes/linhas/${linhaId}/vincular`, {
+        method: "POST",
+        body: JSON.stringify({
+          lancamentos: selecionados.map((id) => {
+            const l = lancamentos.find((x) => x.id === id)!;
+            const valorLanc = Number(l.valor);
+            return {
+              lancamento_id: id,
+              valor_vinculado: valorLanc,
+              desconto:
+                valorLanc > valorExtratoAbs && selecionados.length === 1
+                  ? Number((valorLanc - valorExtratoAbs).toFixed(2))
+                  : 0,
+              acrescimo:
+                valorExtratoAbs > valorLanc && selecionados.length === 1
+                  ? Number((valorExtratoAbs - valorLanc).toFixed(2))
+                  : 0,
+            };
+          }),
+        }),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["conciliacoes-list"] });
+      toast({ title: "Vínculo criado", description: "Lançamento(s) vinculado(s) com sucesso." });
+      onSuccess();
+    },
+    onError: (e: unknown) => {
+      const msg = e instanceof Error ? e.message : "Não foi possível vincular.";
+      toast({ variant: "destructive", title: "Erro ao vincular", description: msg });
+    },
+  });
+
   const totalSelecionado = selecionados.reduce((acc, id) => {
-    const l = lancamentosDisponiveis.find(x => x.id === id);
-    return acc + (l?.valor ?? 0);
+    const l = lancamentos.find((x) => x.id === id);
+    return acc + Number(l?.valor ?? 0);
   }, 0);
-  const diferenca = Math.abs(item.valor) - totalSelecionado;
+  const diferenca = valorExtratoAbs - totalSelecionado;
 
   return (
     <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
@@ -62,37 +143,76 @@ function VincularModal({ item, onClose, onVincular }: { item: ExtratoItem; onClo
           <div>
             <h3 className="font-bold text-white">Vincular Lançamento</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Extrato: <span className={item.valor > 0 ? "text-teal-400 font-semibold" : "text-destructive font-semibold"}>{item.valor > 0 ? "+" : "-"}{formatCurrency(item.valor)}</span> · {item.descricao}
+              Valor do extrato:{" "}
+              <span className="text-primary font-semibold">{formatCurrency(valorExtratoAbs)}</span>
             </p>
           </div>
-          <button onClick={onClose} className="p-1.5 hover:bg-white/5 rounded-lg"><X className="w-5 h-5" /></button>
+          <button type="button" onClick={onClose} className="p-1.5 hover:bg-white/5 rounded-lg">
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         <div className="p-4 border-b border-white/5">
           <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 focus-within:border-primary/50 transition-colors">
             <Search className="w-4 h-4 text-muted-foreground shrink-0" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Pesquisar lançamento ou parceiro..."
-              className="bg-transparent outline-none text-sm text-white placeholder:text-muted-foreground w-full" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Pesquisar lançamento ou parceiro..."
+              className="bg-transparent outline-none text-sm text-white placeholder:text-muted-foreground w-full"
+            />
           </div>
-          <p className="text-xs text-muted-foreground mt-2">Selecione um ou mais lançamentos para combinar com o valor do extrato.</p>
+          <p className="text-xs text-muted-foreground mt-2">
+            Selecione um ou mais lançamentos para combinar com o valor do extrato.
+          </p>
         </div>
 
         <div className="flex-1 overflow-y-auto divide-y divide-white/5">
-          {disponiveis.map(l => {
-            const sel = selecionados.includes(l.id);
-            return (
-              <label key={l.id} className={`flex items-center gap-3 px-5 py-3 cursor-pointer transition-colors ${sel ? "bg-primary/10" : "hover:bg-white/5"}`}>
-                <input type="checkbox" checked={sel} onChange={() => setSelecionados(s => s.includes(l.id) ? s.filter(x => x !== l.id) : [...s, l.id])} className="accent-primary w-4 h-4" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-white truncate">{l.descricao}</p>
-                  <p className="text-xs text-muted-foreground">{l.parceiro} · Venc: {l.vencimento}</p>
-                </div>
-                <span className={`text-sm font-bold shrink-0 ${l.tipo === "cr" ? "text-teal-400" : "text-destructive"}`}>{formatCurrency(l.valor)}</span>
-              </label>
-            );
-          })}
-          {disponiveis.length === 0 && (
-            <div className="p-8 text-center text-muted-foreground text-sm">Nenhum lançamento encontrado.</div>
+          {isLoading ? (
+            <div className="flex items-center justify-center gap-3 py-12 text-muted-foreground">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span className="text-sm">Buscando lançamentos…</span>
+            </div>
+          ) : lancamentos.length === 0 ? (
+            <div className="p-8 text-center text-muted-foreground text-sm">
+              Nenhum lançamento encontrado.
+            </div>
+          ) : (
+            lancamentos.map((l) => {
+              const sel = selecionados.includes(l.id);
+              const isCR = l.tipo === "CR";
+              return (
+                <label
+                  key={l.id}
+                  className={`flex items-center gap-3 px-5 py-3 cursor-pointer transition-colors ${sel ? "bg-primary/10" : "hover:bg-white/5"}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={sel}
+                    onChange={() =>
+                      setSelecionados((s) =>
+                        s.includes(l.id) ? s.filter((x) => x !== l.id) : [...s, l.id],
+                      )
+                    }
+                    className="accent-primary w-4 h-4"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-white truncate">{l.descricao ?? "—"}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {l.parceiro_nome ?? "Sem parceiro"} · Venc:{" "}
+                      {l.vencimento
+                        ? new Date(l.vencimento + "T00:00:00").toLocaleDateString("pt-BR")
+                        : "—"}
+                    </p>
+                  </div>
+                  <span
+                    className={`text-sm font-bold shrink-0 ${isCR ? "text-teal-400" : "text-destructive"}`}
+                  >
+                    {formatCurrency(Number(l.valor))}
+                  </span>
+                </label>
+              );
+            })
           )}
         </div>
 
@@ -104,19 +224,39 @@ function VincularModal({ item, onClose, onVincular }: { item: ExtratoItem; onClo
             </div>
             <div className="flex items-center justify-between text-sm">
               <span className="text-muted-foreground">Diferença:</span>
-              <span className={`font-bold ${diferenca === 0 ? "text-success" : diferenca > 0 ? "text-warning" : "text-destructive"}`}>
-                {diferenca === 0 ? "✓ Valores iguais" : diferenca > 0 ? `+${formatCurrency(diferenca)} (sobra)` : `-${formatCurrency(Math.abs(diferenca))} (desconto/juros)`}
+              <span
+                className={`font-bold ${diferenca === 0 ? "text-success" : diferenca > 0 ? "text-warning" : "text-destructive"}`}
+              >
+                {diferenca === 0
+                  ? "✓ Valores iguais"
+                  : diferenca > 0
+                    ? `+${formatCurrency(diferenca)} (sobra)`
+                    : `-${formatCurrency(Math.abs(diferenca))} (desconto/juros)`}
               </span>
             </div>
           </div>
         )}
 
         <div className="flex gap-3 p-5 border-t border-white/5">
-          <button onClick={onClose} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">Cancelar</button>
-          <button onClick={() => { onVincular(selecionados); onClose(); }}
-            disabled={selecionados.length === 0}
-            className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-            <Link2 className="w-4 h-4" /> Confirmar Vínculo
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={() => vincularMutation.mutate()}
+            disabled={selecionados.length === 0 || vincularMutation.isPending}
+            className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            {vincularMutation.isPending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Link2 className="w-4 h-4" />
+            )}
+            {vincularMutation.isPending ? "Vinculando…" : "Confirmar Vínculo"}
           </button>
         </div>
       </div>
@@ -124,182 +264,285 @@ function VincularModal({ item, onClose, onVincular }: { item: ExtratoItem; onClo
   );
 }
 
-function ImportarModal({ onClose }: { onClose: () => void }) {
-  const [step, setStep] = useState<"conta" | "extrato">("conta");
+// ─── ImportarModal ────────────────────────────────────────────────────────────
+
+function ImportarModal({
+  onClose,
+  onImported,
+}: {
+  onClose: () => void;
+  onImported: (extratoId: number) => void;
+}) {
+  const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [contaSelecionada, setContaSelecionada] = useState<number | null>(null);
-  const [extrato, setExtrato] = useState<ExtratoItem[]>(extratoMock.map(e => ({ ...e, status: "pendente" as const })));
-  const [vinculandoId, setVinculandoId] = useState<number | null>(null);
+  const [arquivo, setArquivo] = useState<File | null>(null);
 
-  const handleIgnorar = (id: number) => setExtrato(e => e.map(item => item.id === id ? { ...item, status: "ignorado" as const } : item));
-  const handleVincular = (id: number) => setVinculandoId(id);
-  const handleConfirmVincular = (itemId: number, _lancIds: number[]) => setExtrato(e => e.map(item => item.id === itemId ? { ...item, status: "vinculado" as const, vinculados: _lancIds } : item));
-  const handleDesvincular = (id: number) => setExtrato(e => e.map(item => item.id === id ? { ...item, status: "pendente" as const, vinculados: undefined } : item));
+  const { data: contas = [], isLoading: loadingContas } = useQuery<ContaBancaria[]>({
+    queryKey: ["contas-bancarias"],
+    queryFn: () => fetchApiData<ContaBancaria[]>("/contas?limit=100"),
+  });
 
-  const pendentes = extrato.filter(e => e.status === "pendente").length;
-  const vinculados = extrato.filter(e => e.status === "vinculado").length;
-  const ignorados = extrato.filter(e => e.status === "ignorado").length;
+  const importarMutation = useMutation({
+    mutationFn: async () => {
+      if (!contaSelecionada || !arquivo) throw new Error("Selecione a conta e o arquivo.");
+      const formData = new FormData();
+      formData.append("conta_id", String(contaSelecionada));
+      formData.append("arquivo", arquivo);
+      const baseUrl = (import.meta as any).env?.VITE_API_URL ?? "";
+      const res = await fetch(`${baseUrl}/api/conciliacoes/importar`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as any)?.message ?? "Erro ao importar extrato.");
+      }
+      return res.json() as Promise<ImportarExtratoResponse>;
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Extrato importado",
+        description: `${data.total_linhas} linha(s) carregada(s) com sucesso.`,
+      });
+      onImported(data.extrato_id);
+    },
+    onError: (e: unknown) => {
+      const msg = e instanceof Error ? e.message : "Não foi possível importar o extrato.";
+      toast({ variant: "destructive", title: "Erro na importação", description: msg });
+    },
+  });
 
-  const handleSalvar = () => onClose();
+  function handleFileDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file) setArquivo(file);
+  }
 
-  if (step === "conta") {
-    return (
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div className="bg-card border border-white/10 rounded-2xl w-full max-w-md shadow-2xl">
-          <div className="flex items-center justify-between p-6 border-b border-white/5">
-            <h2 className="text-lg font-bold text-white">Importar Extrato</h2>
-            <button onClick={onClose} className="p-1.5 hover:bg-white/5 rounded-lg"><X className="w-5 h-5" /></button>
-          </div>
-          <div className="p-6 space-y-4">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">Selecione a Conta Bancária *</label>
-              <div className="space-y-2">
-                {contasBancarias.map(c => (
-                  <label key={c.id} className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer transition-all ${contaSelecionada === c.id ? "border-primary bg-primary/10" : "border-white/10 hover:border-white/20 bg-white/5"}`}>
-                    <input type="radio" name="conta" value={c.id} checked={contaSelecionada === c.id} onChange={() => setContaSelecionada(c.id)} className="accent-primary" />
+  const podeProsseguir = !!contaSelecionada && !!arquivo && !importarMutation.isPending;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-card border border-white/10 rounded-2xl w-full max-w-md shadow-2xl">
+        <div className="flex items-center justify-between p-6 border-b border-white/5">
+          <h2 className="text-lg font-bold text-white">Importar Extrato</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 hover:bg-white/5 rounded-lg"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">
+              Selecione a Conta Bancária *
+            </label>
+            {loadingContas ? (
+              <div className="flex items-center gap-2 text-muted-foreground text-sm py-2">
+                <Loader2 className="w-4 h-4 animate-spin" /> Carregando contas…
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                {contas.map((c) => (
+                  <label
+                    key={c.id}
+                    className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer transition-all ${
+                      contaSelecionada === c.id
+                        ? "border-primary bg-primary/10"
+                        : "border-white/10 hover:border-white/20 bg-white/5"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="conta"
+                      value={c.id}
+                      checked={contaSelecionada === c.id}
+                      onChange={() => setContaSelecionada(c.id)}
+                      className="accent-primary"
+                    />
                     <div>
-                      <p className="font-semibold text-white text-sm">{c.banco}</p>
-                      <p className="text-xs text-muted-foreground">Ag: {c.agencia} · CC: {c.conta}</p>
+                      <p className="font-semibold text-white text-sm">{c.nome}</p>
+                      {(c.agencia || c.conta) && (
+                        <p className="text-xs text-muted-foreground">
+                          {c.agencia ? `Ag: ${c.agencia}` : ""}
+                          {c.agencia && c.conta ? " · " : ""}
+                          {c.conta ? `CC: ${c.conta}` : ""}
+                        </p>
+                      )}
                     </div>
                   </label>
                 ))}
               </div>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Arquivo OFX / CSV</label>
-              <div className="border-2 border-dashed border-white/10 hover:border-primary/40 rounded-xl p-6 text-center cursor-pointer transition-colors">
-                <p className="text-sm text-muted-foreground">Arraste o arquivo aqui ou clique para selecionar</p>
-                <p className="text-xs text-muted-foreground/60 mt-1">Formatos aceitos: .OFX, .CSV</p>
-              </div>
-            </div>
+            )}
           </div>
-          <div className="flex gap-3 p-6 pt-0">
-            <button onClick={onClose} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">Cancelar</button>
-            <button onClick={() => contaSelecionada && setStep("extrato")}
-              disabled={!contaSelecionada}
-              className="flex-1 py-2.5 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2">
-              <ChevronsRight className="w-4 h-4" /> Carregar Extrato
-            </button>
+
+          <div>
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+              Arquivo OFX / CSV *
+            </label>
+            <div
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={handleFileDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors ${
+                arquivo
+                  ? "border-success/50 bg-success/5"
+                  : "border-white/10 hover:border-primary/40 hover:bg-primary/5"
+              }`}
+            >
+              {arquivo ? (
+                <div className="flex flex-col items-center gap-2">
+                  <FileCheck2 className="w-8 h-8 text-success" />
+                  <p className="text-sm font-medium text-white">{arquivo.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {(arquivo.size / 1024).toFixed(1)} KB
+                  </p>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setArquivo(null);
+                      if (fileInputRef.current) fileInputRef.current.value = "";
+                    }}
+                    className="text-xs text-destructive hover:underline"
+                  >
+                    Remover arquivo
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-2">
+                  <UploadCloud className="w-8 h-8 text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">
+                    Arraste o arquivo aqui ou clique para selecionar
+                  </p>
+                  <p className="text-xs text-muted-foreground/60">Formatos aceitos: .OFX, .CSV</p>
+                </div>
+              )}
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".ofx,.csv,.OFX,.CSV"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) setArquivo(file);
+              }}
+            />
           </div>
         </div>
-      </div>
-    );
-  }
 
-  const conta = contasBancarias.find(c => c.id === contaSelecionada)!;
-
-  return (
-    <>
-      {vinculandoId !== null && (
-        <VincularModal
-          item={extrato.find(e => e.id === vinculandoId)!}
-          onClose={() => setVinculandoId(null)}
-          onVincular={(ids) => handleConfirmVincular(vinculandoId, ids)}
-        />
-      )}
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div className="bg-card border border-white/10 rounded-2xl w-full max-w-3xl shadow-2xl max-h-[90vh] flex flex-col">
-          <div className="flex items-center justify-between p-5 border-b border-white/5">
-            <div>
-              <h2 className="text-lg font-bold text-white">Conciliação — {conta.banco}</h2>
-              <p className="text-xs text-muted-foreground">Ag: {conta.agencia} · CC: {conta.conta}</p>
-            </div>
-            <div className="flex items-center gap-4 text-xs mr-4">
-              <span className="text-success font-semibold">{vinculados} vinc.</span>
-              <span className="text-muted-foreground">{ignorados} ign.</span>
-              <span className="text-warning font-semibold">{pendentes} pend.</span>
-              <span className="text-white">{extrato.length} total</span>
-            </div>
-            <button onClick={onClose} className="p-1.5 hover:bg-white/5 rounded-lg"><X className="w-5 h-5" /></button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-white/5 sticky top-0">
-                <tr>
-                  <th className="px-5 py-3 text-left font-medium text-muted-foreground">Data</th>
-                  <th className="px-5 py-3 text-left font-medium text-muted-foreground">Descrição</th>
-                  <th className="px-5 py-3 text-right font-medium text-muted-foreground">Valor</th>
-                  <th className="px-5 py-3 text-center font-medium text-muted-foreground">Status</th>
-                  <th className="px-5 py-3 text-right font-medium text-muted-foreground">Ações</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {extrato.map(item => (
-                  <tr key={item.id} className={`transition-colors ${item.status === "vinculado" ? "bg-success/5" : item.status === "ignorado" ? "opacity-40" : "hover:bg-white/5"}`}>
-                    <td className="px-5 py-3 text-muted-foreground whitespace-nowrap text-xs">{item.data}</td>
-                    <td className="px-5 py-3 text-white text-sm">{item.descricao}</td>
-                    <td className={`px-5 py-3 text-right font-bold text-sm ${item.valor > 0 ? "text-teal-400" : "text-destructive"}`}>
-                      {item.valor > 0 ? "+" : "-"}{formatCurrency(item.valor)}
-                    </td>
-                    <td className="px-5 py-3 text-center">
-                      {item.status === "vinculado" && <span className="text-xs bg-success/20 text-success px-2 py-0.5 rounded-full font-medium flex items-center gap-1 justify-center"><CheckCircle className="w-3 h-3" /> Vinculado</span>}
-                      {item.status === "ignorado" && <span className="text-xs bg-white/10 text-muted-foreground px-2 py-0.5 rounded-full font-medium">Ignorado</span>}
-                      {item.status === "pendente" && <span className="text-xs bg-warning/20 text-warning px-2 py-0.5 rounded-full font-medium flex items-center gap-1 justify-center"><AlertCircle className="w-3 h-3" /> Pendente</span>}
-                    </td>
-                    <td className="px-5 py-3 text-right">
-                      {item.status === "pendente" && (
-                        <div className="flex items-center justify-end gap-2">
-                          <button onClick={() => handleIgnorar(item.id)} className="flex items-center gap-1 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-muted-foreground hover:text-white rounded-lg text-xs font-medium transition-colors">
-                            <Ban className="w-3 h-3" /> Ignorar
-                          </button>
-                          <button onClick={() => handleVincular(item.id)} className="flex items-center gap-1 px-3 py-1.5 bg-primary/10 text-primary hover:bg-primary/20 rounded-lg text-xs font-medium transition-colors">
-                            <Link2 className="w-3 h-3" /> Vincular
-                          </button>
-                        </div>
-                      )}
-                      {item.status === "vinculado" && (
-                        <button onClick={() => handleDesvincular(item.id)} className="flex items-center gap-1 px-3 py-1.5 bg-destructive/10 text-destructive hover:bg-destructive/20 rounded-lg text-xs font-medium transition-colors">
-                          <X className="w-3 h-3" /> Remover vínculo
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="flex gap-3 p-5 border-t border-white/5">
-            <button onClick={onClose} className="px-6 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">Fechar</button>
-            <button onClick={handleSalvar} className="flex-1 py-2.5 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2">
-              <CheckCircle className="w-4 h-4" />
-              Salvar Conciliação ({vinculados} vinculados, {ignorados} ignorados)
-            </button>
-          </div>
+        <div className="flex gap-3 p-6 pt-0">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            disabled={!podeProsseguir}
+            onClick={() => importarMutation.mutate()}
+            className="flex-1 py-2.5 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            {importarMutation.isPending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <ChevronsRight className="w-4 h-4" />
+            )}
+            {importarMutation.isPending ? "Importando…" : "Carregar Extrato"}
+          </button>
         </div>
       </div>
-    </>
+    </div>
   );
 }
 
-import { DateRangePicker } from "@/components/shared/date-range-picker";
-import { format, startOfYear, endOfYear } from "date-fns";
+// ─── Página Principal ─────────────────────────────────────────────────────────
 
 export default function ConciliacaoList() {
+  const [, setLocation] = useLocation();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [showImportar, setShowImportar] = useState(false);
+  const [vincularLinha, setVincularLinha] = useState<{
+    linhaId: number;
+    extratoId: number;
+    valorAbs: number;
+  } | null>(null);
   const [dateStart, setDateStart] = useState(format(startOfYear(new Date()), "yyyy-MM-dd"));
   const [dateEnd, setDateEnd] = useState(format(endOfYear(new Date()), "yyyy-MM-dd"));
 
+  const { data: conciliacoes = [], isLoading, refetch } = useQuery<ConciliacaoListItem[]>({
+    queryKey: ["conciliacoes-list", dateStart, dateEnd],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      params.set("limit", "200");
+      if (dateStart) params.set("data_inicio", dateStart);
+      if (dateEnd) params.set("data_fim", dateEnd);
+      return fetchApiData<ConciliacaoListItem[]>(`/conciliacoes?${params}`);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (conciliacaoId: number) =>
+      fetchApiData(`/conciliacoes/${conciliacaoId}`, { method: "DELETE" }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["conciliacoes-list"] });
+      toast({ title: "Conciliação removida com sucesso." });
+    },
+    onError: (e: unknown) => {
+      const msg = e instanceof Error ? e.message : "Não foi possível remover.";
+      toast({ variant: "destructive", title: "Erro", description: msg });
+    },
+  });
+
   return (
     <div className="space-y-6">
-      {showImportar && <ImportarModal onClose={() => setShowImportar(false)} />}
+      {showImportar && (
+        <ImportarModal
+          onClose={() => setShowImportar(false)}
+          onImported={(extratoId) => {
+            setShowImportar(false);
+            setLocation(`/conciliacao/extrato/${extratoId}`);
+          }}
+        />
+      )}
+
+      {vincularLinha && (
+        <VincularModal
+          linhaId={vincularLinha.linhaId}
+          extratoId={vincularLinha.extratoId}
+          valorExtratoAbs={vincularLinha.valorAbs}
+          onClose={() => setVincularLinha(null)}
+          onSuccess={() => setVincularLinha(null)}
+        />
+      )}
 
       <PageHeader
         title="Conciliação Bancária"
         description="Importe extratos e concilie com seus lançamentos financeiros"
         actions={
           <div className="flex items-center gap-3">
-             <DateRangePicker 
-               startDate={dateStart} 
-               endDate={dateEnd} 
-               onChange={(start, end) => {
-                 setDateStart(start);
-                 setDateEnd(end);
-               }}
-             />
-             <button onClick={() => setShowImportar(true)} className="flex items-center gap-2 px-4 py-2 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-medium transition-all shadow-lg shadow-success/25">
-               <Plus className="w-4 h-4" /> Importar Extrato
-             </button>
+            <DateRangePicker
+              startDate={dateStart}
+              endDate={dateEnd}
+              onChange={(start, end) => {
+                setDateStart(start);
+                setDateEnd(end);
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowImportar(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-medium transition-all shadow-lg shadow-success/25"
+            >
+              <Plus className="w-4 h-4" /> Importar Extrato
+            </button>
           </div>
         }
       />
@@ -320,34 +563,81 @@ export default function ConciliacaoList() {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {conciliacoes.map(c => (
-                <tr key={c.id} className="hover:bg-white/5 transition-colors group">
-                  <td className="px-6 py-4 text-center">
-                    <span className={`text-xs px-3 py-1.5 rounded-full font-medium ${c.status === "conciliado" ? "bg-success/20 text-success" : "bg-white/10 text-muted-foreground"}`}>
-                      {c.status === "conciliado" ? "Conciliado" : "Pendente"}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="font-semibold text-white">{c.banco}</div>
-                    <div className="text-xs text-muted-foreground">Ag: {c.agencia} | CC: {c.conta}</div>
-                  </td>
-                  <td className="px-6 py-4 text-muted-foreground">{c.periodo}</td>
-                  <td className="px-6 py-4 text-center font-semibold text-success">{c.conciliados}</td>
-                  <td className="px-6 py-4 text-center text-muted-foreground">{c.ignorados}</td>
-                  <td className="px-6 py-4 text-center font-semibold text-warning">{c.pendentes}</td>
-                  <td className="px-6 py-4 text-center font-bold text-white">{c.total}</td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <button onClick={() => setShowImportar(true)} className="flex items-center gap-1 px-3 py-1.5 bg-primary/10 text-primary hover:bg-primary/20 rounded-lg text-xs font-medium transition-colors">
-                        Continuar <ArrowRight className="w-3 h-3" />
-                      </button>
-                      <button className="p-1.5 rounded-md hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
+              {isLoading ? (
+                <tr>
+                  <td colSpan={8} className="py-16 text-center text-muted-foreground">
+                    <Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" />
+                    <p className="mt-2 text-xs">Carregando conciliações…</p>
                   </td>
                 </tr>
-              ))}
+              ) : conciliacoes.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-16 text-center text-muted-foreground text-xs">
+                    Nenhuma conciliação encontrada. Use "Importar Extrato" para começar.
+                  </td>
+                </tr>
+              ) : (
+                conciliacoes.map((c) => {
+                  const periodo =
+                    c.periodo_inicio && c.periodo_fim
+                      ? `${new Date(c.periodo_inicio + "T00:00:00").toLocaleDateString("pt-BR")} a ${new Date(c.periodo_fim + "T00:00:00").toLocaleDateString("pt-BR")}`
+                      : "—";
+
+                  return (
+                    <tr key={c.conciliacao_id} className="hover:bg-white/5 transition-colors group">
+                      <td className="px-6 py-4 text-center">
+                        <span
+                          className={`text-xs px-3 py-1.5 rounded-full font-medium ${
+                            c.status === "conciliado"
+                              ? "bg-success/20 text-success"
+                              : "bg-white/10 text-muted-foreground"
+                          }`}
+                        >
+                          {c.status === "conciliado" ? "Conciliado" : "Pendente"}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="font-semibold text-white">{c.conta_nome ?? "—"}</div>
+                        <div className="text-xs text-muted-foreground">{c.arquivo_nome ?? "—"}</div>
+                      </td>
+                      <td className="px-6 py-4 text-muted-foreground">{periodo}</td>
+                      <td className="px-6 py-4 text-center font-semibold text-success">
+                        {c.resumo_conciliados ?? 0}
+                      </td>
+                      <td className="px-6 py-4 text-center text-muted-foreground">
+                        {c.resumo_ignorados ?? 0}
+                      </td>
+                      <td className="px-6 py-4 text-center font-semibold text-warning">
+                        {c.resumo_pendentes ?? 0}
+                      </td>
+                      <td className="px-6 py-4 text-center font-bold text-white">
+                        {c.resumo_total ?? 0}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setLocation(`/conciliacao/extrato/${c.extrato_id}`)}
+                            className="flex items-center gap-1 px-3 py-1.5 bg-primary/10 text-primary hover:bg-primary/20 rounded-lg text-xs font-medium transition-colors"
+                          >
+                            Continuar <ArrowRight className="w-3 h-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (confirm("Excluir esta conciliação?"))
+                                deleteMutation.mutate(c.conciliacao_id);
+                            }}
+                            className="p-1.5 rounded-md hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
