@@ -13,14 +13,15 @@
  *    └─ reconciliation (conciliacoes, kanban)
  */
 
-import { Router, type IRouter } from "express";
+import {Router, type IRouter} from "express";
 import healthRouter from "./health";
 import v1Router from "./v1";
-import { withAuth } from "../middlewares/auth";
+import {withAuth} from "../middlewares/auth";
 import authDomainRouter from "../domains/auth/router";
 import financialDomainRouter from "../domains/financial/router";
 import reconciliationDomainRouter from "../domains/reconciliation/router";
 import reportsDomainRouter from "../domains/reports/router";
+import auditoriaRouter from "./auditoria";
 
 const router: IRouter = Router();
 
@@ -30,6 +31,7 @@ router.use("/v1", v1Router);
 
 // Barreira de autenticação — todas as rotas abaixo requerem Access Token JWE válido
 router.use(withAuth);
+router.use(auditoriaRouter);
 router.use(reportsDomainRouter);
 router.use(financialDomainRouter);
 router.use(reconciliationDomainRouter);
