@@ -1,8 +1,8 @@
-import { Router } from "express";
-import { and, desc, eq, gte, ilike, inArray, lte, lt, or, sql } from "drizzle-orm";
-import { db } from "@workspace/db";
-import { lancamentosTable, parceirosTable, planoContasTable } from "@workspace/db/schema";
-import { errorResponse, successResponse } from "../utils/response";
+import {Router} from "express";
+import {and, desc, eq, gte, inArray, lt, lte, or, sql} from "drizzle-orm";
+import {db} from "@workspace/db";
+import {contasBancariasTable, lancamentosTable, parceirosTable, planoContasTable} from "@workspace/db/schema";
+import {errorResponse, successResponse} from "../utils/response";
 
 const router = Router();
 const STATUS_ABERTO = ["pendente", "atrasado"] as const;
@@ -79,50 +79,81 @@ router.get("/dashboard/projecao-mes", async (_req, res) => {
 
 router.get("/dashboard/projecao-dias", async (req, res) => {
   try {
-    const dias = parseInt(req.query.dias as string) || 30;
-    const hoje = new Date();
-    const fim = new Date();
-    fim.setDate(fim.getDate() + dias);
+    const dias    = Math.min(365, Math.max(1, parseInt(req.query.dias as string) || 30));
+    const hoje    = new Date();
+    const hojeStr = toDate(hoje);
+    const fimStr  = toDate(new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() + dias));
 
-    const [saldoAtual] = await db
-      .select({
-        total: sql<number>`coalesce(sum(case when ${lancamentosTable.tipo} = 'CR' then ${lancamentosTable.valor}::numeric else -${lancamentosTable.valor}::numeric end), 0)`,
-      })
-      .from(lancamentosTable)
-      .where(inArray(lancamentosTable.status, STATUS_QUITADO as unknown as string[]));
+    // Três consultas independentes
+    // Query A: Soma do saldo inicial das contas bancárias ativas.
+    // Query B: líquido de todas as transações liquidadas antes de hoje.
+    // saldo_atual_real = A + B
+    // Query C: transações futuras abertas em [hoje, hoje+dias], agrupadas por data de vencimento.
+    const [
+      [{ saldosIniciais }],
+      [{ historicoLiquidado }],
+      movimentos,
+    ] = await Promise.all([
 
-    const movimentos = await db
-      .select({
-        data: lancamentosTable.vencimento,
-        receber: sql<number>`coalesce(sum(case when ${lancamentosTable.tipo} = 'CR' then ${lancamentosTable.valor}::numeric else 0 end), 0)`,
-        pagar: sql<number>`coalesce(sum(case when ${lancamentosTable.tipo} = 'CP' then ${lancamentosTable.valor}::numeric else 0 end), 0)`,
-      })
-      .from(lancamentosTable)
-      .where(
-        and(
-          gte(lancamentosTable.vencimento, toDate(hoje)),
-          lte(lancamentosTable.vencimento, toDate(fim)),
+      // A - saldos iniciais de contas bancárias
+      db
+        .select({
+          saldosIniciais: sql<number>`coalesce(sum(${contasBancariasTable.saldo_inicial}::numeric), 0)`,
+        })
+        .from(contasBancariasTable)
+        .where(eq(contasBancariasTable.status, "ativo")),
+
+      // B - Saldo líquido histórico liquidado
+      db
+        .select({
+          historicoLiquidado: sql<number>`coalesce(sum(
+            case when ${lancamentosTable.tipo} = 'CR'
+              then  ${lancamentosTable.valor}::numeric
+              else -${lancamentosTable.valor}::numeric
+            end
+          ), 0)`,
+        })
+        .from(lancamentosTable)
+        .where(and(
+          inArray(lancamentosTable.status, STATUS_QUITADO as unknown as string[]),
+          lt(lancamentosTable.data_quitacao, hojeStr),
+        )),
+
+      // C - Movimentos futuros agrupados por data de vencimento (agregação em linha CASE WHEN)
+      db
+        .select({
+          data:    lancamentosTable.vencimento,
+          receber: sql<number>`coalesce(sum(case when ${lancamentosTable.tipo} = 'CR' then ${lancamentosTable.valor}::numeric else 0 end), 0)`,
+          pagar:   sql<number>`coalesce(sum(case when ${lancamentosTable.tipo} = 'CP' then ${lancamentosTable.valor}::numeric else 0 end), 0)`,
+        })
+        .from(lancamentosTable)
+        .where(and(
+          gte(lancamentosTable.vencimento, hojeStr),
+          lte(lancamentosTable.vencimento, fimStr),
           sql`${lancamentosTable.status} != 'cancelado'`,
-        ),
-      )
-      .groupBy(lancamentosTable.vencimento)
-      .orderBy(lancamentosTable.vencimento);
+        ))
+        .groupBy(lancamentosTable.vencimento)
+        .orderBy(lancamentosTable.vencimento),
+    ]);
 
-    const movimentosMap = new Map(movimentos.map((m) => [m.data, m]));
+    const saldoAtualReal = toNumber(saldosIniciais) + toNumber(historicoLiquidado);
+    const movimentosMap  = new Map(movimentos.map((m) => [m.data, m]));
+
     const resultado = [];
-    let saldoAcumulado = toNumber(saldoAtual?.total);
+    let saldoAcumulado = saldoAtualReal;
     for (let i = 0; i < dias; i++) {
-      const d = new Date(hoje);
-      d.setDate(d.getDate() + i);
-      const data = toDate(d);
-      const mov = movimentosMap.get(data);
+      const data    = toDate(new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() + i));
+      const mov     = movimentosMap.get(data);
       const receber = toNumber(mov?.receber);
-      const pagar = toNumber(mov?.pagar);
+      const pagar   = toNumber(mov?.pagar);
       saldoAcumulado += receber - pagar;
       resultado.push({ data, saldo: Number(saldoAcumulado.toFixed(2)), receber, pagar });
     }
 
-    return successResponse(res, resultado, { dias });
+    return successResponse(res, resultado, {
+      dias,
+      saldo_atual: Number(saldoAtualReal.toFixed(2)),
+    });
   } catch (e) {
     return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular projeção diária.", String(e));
   }
