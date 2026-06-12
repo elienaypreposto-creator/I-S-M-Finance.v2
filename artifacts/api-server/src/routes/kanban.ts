@@ -1,6 +1,6 @@
-import {Router} from "express";
-import {z} from "zod";
-import {db} from "@workspace/db";
+import { Router } from "express";
+import { z } from "zod";
+import { db } from "@workspace/db";
 import {
     kanbanAnexosTable,
     kanbanCardsTable,
@@ -8,25 +8,25 @@ import {
     kanbanHistoricoTable,
     usuariosTable,
 } from "@workspace/db/schema";
-import {and, desc, eq, gte, lt, lte, sql} from "drizzle-orm";
-import {validateBody} from "../middlewares/validate";
-import {errorResponse, successResponse} from "../utils/response";
+import { and, desc, eq, gte, lt, lte, sql } from "drizzle-orm";
+import { validateBody } from "../middlewares/validate";
+import { errorResponse, successResponse } from "../utils/response";
 
 const router = Router();
 
 const COLUNAS_VALIDAS = [
-  "solicitado",
-  "em_analise",
-  "em_execucao",
-  "aguardando_aprovacao",
-  "concluido",
+    "solicitado",
+    "em_analise",
+    "em_execucao",
+    "aguardando_aprovacao",
+    "concluido",
 ] as const;
 
 const PRIORIDADES_VALIDAS = [
-  "baixa",
-  "media",
-  "alta",
-  "urgente",
+    "baixa",
+    "media",
+    "alta",
+    "urgente",
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -60,7 +60,7 @@ type PatchCardBody = z.infer<typeof patchCardBodySchema>;
 
 router.get("/cards", async (req, res) => {
     try {
-        const {prioridade, responsavel_id, prazo} = req.query;
+        const { prioridade, responsavel_id, prazo } = req.query;
         const conditions = [];
 
         if (prioridade && PRIORIDADES_VALIDAS.includes(prioridade as (typeof PRIORIDADES_VALIDAS)[number])) {
@@ -97,7 +97,7 @@ router.get("/cards", async (req, res) => {
                 responsavel_id: kanbanCardsTable.responsavel_id,
                 created_at: kanbanCardsTable.created_at,
                 updated_at: kanbanCardsTable.updated_at,
-                responsavel: {id: usuariosTable.id, nome: usuariosTable.nome},
+                responsavel: { id: usuariosTable.id, nome: usuariosTable.nome },
                 comentarios_count: sql<number>`count(distinct
                 ${kanbanComentariosTable.id}
                 )
@@ -135,18 +135,18 @@ router.post(
     validateBody(createCardBodySchema),
     async (req, res) => {
         try {
-            const {titulo, descricao, prioridade, coluna, prazo, departamentos, checklist, tags} =
+            const { titulo, descricao, prioridade, coluna, prazo, departamentos, checklist, tags } =
                 req.body as CreateCardBody;
 
             const card = await db.transaction(async (tx) => {
                 const [inserted] = await tx
                     .insert(kanbanCardsTable)
-                    .values({titulo, descricao, prioridade, coluna, prazo, departamentos, checklist, tags})
+                    .values({ titulo, descricao, prioridade, coluna, prazo, departamentos, checklist, tags })
                     .returning();
 
                 await tx
                     .insert(kanbanHistoricoTable)
-                    .values({card_id: inserted.id, comentario: `Tarefa "${titulo}" criada`});
+                    .values({ card_id: inserted.id, comentario: `Tarefa "${titulo}" criada` });
 
                 return inserted;
             });
@@ -211,7 +211,7 @@ router.patch(
 router.get("/usuarios", async (_req, res) => {
     try {
         const data = await db
-            .select({id: usuariosTable.id, nome: usuariosTable.nome, email: usuariosTable.email})
+            .select({ id: usuariosTable.id, nome: usuariosTable.nome, email: usuariosTable.email })
             .from(usuariosTable)
             .orderBy(usuariosTable.nome);
         return successResponse(res, data);
