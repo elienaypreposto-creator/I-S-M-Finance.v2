@@ -10,7 +10,9 @@ import {
   brMoneyDisplayToApiString,
   apiValorToValorBr,
 } from "@/validations/lancamentos.schema";
-import { invalidateRelated } from "@/App"; 
+import { invalidateRelated } from "@/App";
+import { TableSkeleton } from "@/components/shared/table-skeleton";
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
 
 // ─── Tipos 
 type PlanoConta = {
@@ -466,14 +468,19 @@ export default function Metas() {
         </div>
 
         {isLoading ? (
-          <div className="flex items-center justify-center py-16 gap-3 text-muted-foreground">
-            <Loader2 className="w-6 h-6 animate-spin" />
-            <span className="text-sm">Carregando plano de contas e metas…</span>
-          </div>
+          <TableSkeleton rows={8} columns={6} />
         ) : planoContas.filter((p) => p.ativo).length === 0 ? (
-          <div className="py-16 text-center text-muted-foreground text-sm">
-            Nenhuma categoria ativa no plano de contas.
-          </div>
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <Target className="text-muted-foreground/40" />
+              </EmptyMedia>
+              <EmptyTitle className="text-white">Nenhuma categoria ativa</EmptyTitle>
+              <EmptyDescription>
+                Cadastre categorias no Plano de Contas para definir metas orçamentárias.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm border-collapse">

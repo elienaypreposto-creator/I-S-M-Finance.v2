@@ -112,7 +112,7 @@ export function TaskCard({
   responsaveis,
   onClick,
   isDragging,
-  menuSlot,   // ← recebe o menu injetado pelo SortableCard
+  menuSlot,
 }: TaskCardProps) {
   const config           = getPrioridadeConfig(prioridade);
   const checklistTotal   = checklist?.length ?? 0;
@@ -129,7 +129,7 @@ export function TaskCard({
         isDragging ? "shadow-2xl scale-105 rotate-2" : "border-white/10",
       )}
     >
-      {/* Linha topo: badge de prioridade + menu (injetado pelo pai) */}
+      {/* Linha topo: badge de prioridade + menu */}
       <div className="flex justify-between items-start mb-2">
         <span className={cn(
           "text-[10px] font-bold px-2 py-1 rounded-md uppercase tracking-wider",
@@ -138,8 +138,13 @@ export function TaskCard({
           {config.label}
         </span>
 
-        {/* menuSlot vem do SortableCard — nenhum botão duplicado aqui */}
-        <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+        {/*
+          Sem opacity aqui — o SortableCard já envolve o slot em
+          `data-card-menu` e controla pointer events via onPointerDown.
+          Esconder com opacity-0 fazia o div interceptar cliques mesmo
+          "invisível", impedindo que o Excluir chegasse ao handler correto.
+        */}
+        <div className="opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto">
           {menuSlot}
         </div>
       </div>
@@ -183,7 +188,7 @@ export function TaskCard({
         </div>
       )}
 
-      {/* Rodapé: data, comentários, anexos, avatares */}
+      {/* Rodapé */}
       <div className="flex items-center justify-between pt-3 border-t border-white/5">
         <div className="flex items-center gap-3 text-gray-400">
           <DateIndicator prazo={prazo} />

@@ -15,7 +15,6 @@ import {
   ChevronRight,
   Search,
   Loader2,
-  AlertCircle,
   UserCircle,
   Eye,
   EyeOff,
@@ -23,6 +22,17 @@ import {
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { fetchApiData } from "@/lib/api-config";
+import { TableSkeleton } from "@/components/shared/table-skeleton";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { useConfirm } from "@/hooks/use-confirm";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+  EmptyContent,
+} from "@/components/ui/empty";
 
 // ─── Tipos ─────────────────────────────────────────────────────────────────────
 type UsuarioRow = {
@@ -49,65 +59,29 @@ function mascararTelefone(valor: string): string {
 }
 
 // ─── Schemas ───────────────────────────────────────────────────────────────────
-
-/**
- * Regras compartilhadas entre criação e edição.
- * Telefone/celular: opcionais, mas quando preenchidos exigem 10-11 dígitos (DDD + número).
- */
 const baseUsuarioSchema = z.object({
-  nome: z
-    .string()
-    .trim()
-    .min(2, "Nome deve ter ao menos 2 caracteres.")
-    .max(120, "Nome muito longo (máx. 120 caracteres)."),
-
-  email: z
-    .string()
-    .min(1, "E-mail obrigatório.")
-    .refine(
-      (v) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim()),
-      "E-mail inválido — use o formato nome@dominio.com"
-    ),
-
-  cargo: z
-    .string()
-    .max(100, "Cargo muito longo (máx. 100 caracteres).")
-    .optional(),
-
+  nome: z.string().trim().min(2, "Nome deve ter ao menos 2 caracteres.").max(120, "Nome muito longo (máx. 120 caracteres)."),
+  email: z.string().min(1, "E-mail obrigatório.").refine(
+    (v) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim()),
+    "E-mail inválido — use o formato nome@dominio.com"
+  ),
+  cargo: z.string().max(100, "Cargo muito longo (máx. 100 caracteres).").optional(),
   perfil_base: z.string().optional(),
-
-  telefone: z
-    .string()
-    .optional()
-    .refine((v) => {
-      if (!v || v.trim() === "") return true;
-      const d = digitsOnly(v);
-      return d.length >= 10 && d.length <= 11;
-    }, "Telefone inválido — informe DDD + número (10 ou 11 dígitos)"),
-
-  celular: z
-    .string()
-    .optional()
-    .refine((v) => {
-      if (!v || v.trim() === "") return true;
-      const d = digitsOnly(v);
-      return d.length >= 10 && d.length <= 11;
-    }, "Celular inválido — informe DDD + número (10 ou 11 dígitos)"),
+  telefone: z.string().optional().refine((v) => {
+    if (!v || v.trim() === "") return true;
+    const d = digitsOnly(v);
+    return d.length >= 10 && d.length <= 11;
+  }, "Telefone inválido — informe DDD + número (10 ou 11 dígitos)"),
+  celular: z.string().optional().refine((v) => {
+    if (!v || v.trim() === "") return true;
+    const d = digitsOnly(v);
+    return d.length >= 10 && d.length <= 11;
+  }, "Celular inválido — informe DDD + número (10 ou 11 dígitos)"),
 });
 
-/**
- * Schema de CRIAÇÃO — adiciona campos de senha e confirmação.
- * Regras:
- *   - mínimo 8 caracteres
- *   - ao menos 1 letra maiúscula
- *   - ao menos 1 número
- *   - confirmarSenha deve ser idêntica
- */
 const criarUsuarioSchema = baseUsuarioSchema
   .extend({
-    senha: z
-      .string()
-      .min(8, "Senha deve ter ao menos 8 caracteres.")
+    senha: z.string().min(8, "Senha deve ter ao menos 8 caracteres.")
       .refine((v) => /[A-Z]/.test(v), "Senha deve conter ao menos 1 letra maiúscula.")
       .refine((v) => /[0-9]/.test(v), "Senha deve conter ao menos 1 número."),
     confirmarSenha: z.string().min(1, "Confirmação de senha obrigatória."),
@@ -117,7 +91,6 @@ const criarUsuarioSchema = baseUsuarioSchema
     path: ["confirmarSenha"],
   });
 
-/** Schema de EDIÇÃO — sem campos de senha. */
 const editarUsuarioSchema = baseUsuarioSchema;
 
 type CriarUsuarioFormValues  = z.infer<typeof criarUsuarioSchema>;
@@ -135,7 +108,6 @@ function FieldError({ message }: { message?: string }) {
   );
 }
 
-// ─── inputCls helper ───────────────────────────────────────────────────────────
 const inputCls = (hasError?: boolean) =>
   `w-full bg-white/5 border rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors ${
     hasError ? "border-destructive/60 focus:border-destructive" : "border-white/10"
@@ -500,11 +472,7 @@ function ParceiroAutocomplete({
         type="text"
         disabled={disabled}
         value={search}
-        onChange={(e) => {
-          setSearch(e.target.value);
-          onChange(e.target.value);
-          setIsOpen(true);
-        }}
+        onChange={(e) => { setSearch(e.target.value); onChange(e.target.value); setIsOpen(true); }}
         onFocus={() => setIsOpen(true)}
         className={inputCls(hasError) + " disabled:opacity-50"}
         placeholder="Digite pelo menos 3 letras para buscar..."
@@ -521,12 +489,7 @@ function ParceiroAutocomplete({
               {parceiros.map((p) => (
                 <li
                   key={p.id}
-                  onClick={() => {
-                    setSearch(p.nome);
-                    onChange(p.nome);
-                    onSelectFull(p);
-                    setIsOpen(false);
-                  }}
+                  onClick={() => { setSearch(p.nome); onChange(p.nome); onSelectFull(p); setIsOpen(false); }}
                   className="px-4 py-2.5 text-sm text-white hover:bg-white/10 cursor-pointer transition-colors"
                 >
                   {p.nome}
@@ -554,31 +517,22 @@ function UserModal({ initialData, onClose, isPending, onSave }: UserModalProps) 
   const isEdit = !!initialData;
   const [showSenha, setShowSenha] = useState(false);
   const [showConfirmar, setShowConfirmar] = useState(false);
-
-  // Seleciona o schema correto conforme modo (criar vs editar)
   const schema = isEdit ? editarUsuarioSchema : criarUsuarioSchema;
 
-  const {
-    register,
-    handleSubmit,
-    setValue,
-    control,
-    formState: { errors },
-  } = useForm<UsuarioFormValues>({
+  const { register, handleSubmit, setValue, control, formState: { errors } } = useForm<UsuarioFormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
-      nome:          initialData?.nome          ?? "",
-      email:         initialData?.email         ?? "",
-      cargo:         initialData?.cargo         ?? "",
-      perfil_base:   initialData?.perfil_base   ?? "",
-      telefone:      initialData?.telefone      ?? "",
-      celular:       initialData?.celular       ?? "",
-      // Campos de senha só existem na criação — não há defaultValue no modo edição
+      nome:        initialData?.nome        ?? "",
+      email:       initialData?.email       ?? "",
+      cargo:       initialData?.cargo       ?? "",
+      perfil_base: initialData?.perfil_base ?? "",
+      telefone:    initialData?.telefone    ?? "",
+      celular:     initialData?.celular     ?? "",
       ...(!isEdit && { senha: "", confirmarSenha: "" }),
     } as UsuarioFormValues,
   });
 
-  const e = errors as any; // cast para acessar campos condicionais sem type error
+  const e = errors as any;
 
   const handleParceiroSelect = (parceiro: any) => {
     if (parceiro.email)    setValue("email",    parceiro.email,    { shouldValidate: true });
@@ -600,8 +554,6 @@ function UserModal({ initialData, onClose, isPending, onSave }: UserModalProps) 
 
         <form onSubmit={handleSubmit(onSave)} noValidate>
           <div className="p-4 sm:p-6 space-y-4">
-
-            {/* Nome */}
             <div>
               <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
                 Nome Completo <span className="text-destructive">*</span>
@@ -622,174 +574,86 @@ function UserModal({ initialData, onClose, isPending, onSave }: UserModalProps) 
               <FieldError message={e.nome?.message} />
             </div>
 
-            {/* E-mail */}
             <div>
               <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
                 E-mail (Login) <span className="text-destructive">*</span>
               </label>
-              <input
-                {...register("email")}
-                type="email"
-                disabled={isEdit}
-                className={inputCls(!!e.email) + " disabled:opacity-50"}
-                placeholder="joao@empresa.com.br"
-              />
+              <input {...register("email")} type="email" disabled={isEdit} className={inputCls(!!e.email) + " disabled:opacity-50"} placeholder="joao@empresa.com.br" />
               <FieldError message={e.email?.message} />
             </div>
 
-            {/* Cargo + Perfil Base */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                  Cargo
-                </label>
-                <input
-                  {...register("cargo")}
-                  className={inputCls(!!e.cargo)}
-                  placeholder="Ex: Analista"
-                />
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Cargo</label>
+                <input {...register("cargo")} className={inputCls(!!e.cargo)} placeholder="Ex: Analista" />
                 <FieldError message={e.cargo?.message} />
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                  Perfil Base
-                </label>
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Perfil Base</label>
                 <select
                   {...register("perfil_base")}
-                  className={`w-full bg-white/5 border rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors [&>option]:bg-[#1A1A24] [&>option]:text-white ${
-                    e.perfil_base ? "border-destructive/60" : "border-white/10"
-                  }`}
+                  className={`w-full bg-white/5 border rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors [&>option]:bg-[#1A1A24] [&>option]:text-white ${e.perfil_base ? "border-destructive/60" : "border-white/10"}`}
                 >
                   <option value="">Nenhum</option>
-                  {Object.keys(perfisBase).map((p) => (
-                    <option key={p} value={p}>{p}</option>
-                  ))}
+                  {Object.keys(perfisBase).map((p) => <option key={p} value={p}>{p}</option>)}
                 </select>
               </div>
             </div>
 
-            {/* Telefone + Celular — com máscara em tempo real */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                  Telefone
-                </label>
-                <Controller
-                  name="telefone"
-                  control={control}
-                  render={({ field }) => (
-                    <input
-                      value={field.value ?? ""}
-                      onChange={(ev) => field.onChange(mascararTelefone(ev.target.value))}
-                      className={inputCls(!!e.telefone)}
-                      placeholder="(11) 3456-7890"
-                      inputMode="tel"
-                    />
-                  )}
-                />
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Telefone</label>
+                <Controller name="telefone" control={control} render={({ field }) => (
+                  <input value={field.value ?? ""} onChange={(ev) => field.onChange(mascararTelefone(ev.target.value))} className={inputCls(!!e.telefone)} placeholder="(11) 3456-7890" inputMode="tel" />
+                )} />
                 <FieldError message={e.telefone?.message} />
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                  Celular
-                </label>
-                <Controller
-                  name="celular"
-                  control={control}
-                  render={({ field }) => (
-                    <input
-                      value={field.value ?? ""}
-                      onChange={(ev) => field.onChange(mascararTelefone(ev.target.value))}
-                      className={inputCls(!!e.celular)}
-                      placeholder="(11) 9 9999-9999"
-                      inputMode="tel"
-                    />
-                  )}
-                />
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Celular</label>
+                <Controller name="celular" control={control} render={({ field }) => (
+                  <input value={field.value ?? ""} onChange={(ev) => field.onChange(mascararTelefone(ev.target.value))} className={inputCls(!!e.celular)} placeholder="(11) 9 9999-9999" inputMode="tel" />
+                )} />
                 <FieldError message={e.celular?.message} />
               </div>
             </div>
 
-            {/* Senha — apenas no modo criação */}
             {!isEdit && (
-              <>
-                <div className="border-t border-white/5 pt-4">
-                  <p className="text-xs text-muted-foreground mb-3 font-medium uppercase tracking-wide">
-                    Credenciais de Acesso
-                  </p>
-
-                  {/* Aviso */}
-                  <div className="bg-primary/10 border border-primary/20 rounded-xl p-3 text-xs text-primary mb-4">
-                    <strong>Atenção:</strong> A senha definida será enviada ao e-mail cadastrado junto com as instruções de primeiro acesso.
-                  </div>
-
-                  {/* Senha */}
-                  <div className="mb-4">
-                    <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                      Senha <span className="text-destructive">*</span>
-                    </label>
-                    <div className="relative">
-                      <input
-                        {...register("senha" as any)}
-                        type={showSenha ? "text" : "password"}
-                        className={inputCls(!!e.senha) + " pr-10"}
-                        placeholder="Mín. 8 caracteres, 1 maiúscula, 1 número"
-                        autoComplete="new-password"
-                      />
-                      <button
-                        type="button"
-                        tabIndex={-1}
-                        onClick={() => setShowSenha((v) => !v)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-white transition-colors"
-                      >
-                        {showSenha ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
-                    </div>
-                    <FieldError message={e.senha?.message} />
-                  </div>
-
-                  {/* Confirmar Senha */}
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                      Confirmar Senha <span className="text-destructive">*</span>
-                    </label>
-                    <div className="relative">
-                      <input
-                        {...register("confirmarSenha" as any)}
-                        type={showConfirmar ? "text" : "password"}
-                        className={inputCls(!!e.confirmarSenha) + " pr-10"}
-                        placeholder="Repita a senha"
-                        autoComplete="new-password"
-                      />
-                      <button
-                        type="button"
-                        tabIndex={-1}
-                        onClick={() => setShowConfirmar((v) => !v)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-white transition-colors"
-                      >
-                        {showConfirmar ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
-                    </div>
-                    <FieldError message={e.confirmarSenha?.message} />
-                  </div>
+              <div className="border-t border-white/5 pt-4">
+                <p className="text-xs text-muted-foreground mb-3 font-medium uppercase tracking-wide">Credenciais de Acesso</p>
+                <div className="bg-primary/10 border border-primary/20 rounded-xl p-3 text-xs text-primary mb-4">
+                  <strong>Atenção:</strong> A senha definida será enviada ao e-mail cadastrado junto com as instruções de primeiro acesso.
                 </div>
-              </>
+                <div className="mb-4">
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                    Senha <span className="text-destructive">*</span>
+                  </label>
+                  <div className="relative">
+                    <input {...register("senha" as any)} type={showSenha ? "text" : "password"} className={inputCls(!!e.senha) + " pr-10"} placeholder="Mín. 8 caracteres, 1 maiúscula, 1 número" autoComplete="new-password" />
+                    <button type="button" tabIndex={-1} onClick={() => setShowSenha((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-white transition-colors">
+                      {showSenha ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  <FieldError message={e.senha?.message} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                    Confirmar Senha <span className="text-destructive">*</span>
+                  </label>
+                  <div className="relative">
+                    <input {...register("confirmarSenha" as any)} type={showConfirmar ? "text" : "password"} className={inputCls(!!e.confirmarSenha) + " pr-10"} placeholder="Repita a senha" autoComplete="new-password" />
+                    <button type="button" tabIndex={-1} onClick={() => setShowConfirmar((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-white transition-colors">
+                      {showConfirmar ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  <FieldError message={e.confirmarSenha?.message} />
+                </div>
+              </div>
             )}
           </div>
 
           <div className="flex gap-3 p-4 sm:p-6 pt-0">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={isPending}
-              className="flex-1 py-2.5 bg-primary hover:bg-primary/90 disabled:opacity-60 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-2"
-            >
+            <button type="button" onClick={onClose} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">Cancelar</button>
+            <button type="submit" disabled={isPending} className="flex-1 py-2.5 bg-primary hover:bg-primary/90 disabled:opacity-60 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-2">
               {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
               {isEdit ? "Salvar Alterações" : "Criar Usuário"}
             </button>
@@ -809,23 +673,11 @@ export default function Usuarios() {
   const [permissoesUsuario, setPermissoesUsuario] = useState<UsuarioRow | null>(null);
   const [modalKey, setModalKey] = useState(0);
   const [tab, setTab] = useState<"usuarios" | "perfis">("usuarios");
+  const { confirm, ConfirmDialogProps } = useConfirm();
 
-  const openCreate = () => {
-    setEditingUsuario(null);
-    setModalKey((k) => k + 1);
-    setShowUserModal(true);
-  };
-
-  const openEdit = (u: UsuarioRow) => {
-    setEditingUsuario(u);
-    setModalKey((k) => k + 1);
-    setShowUserModal(true);
-  };
-
-  const closeUserModal = () => {
-    setShowUserModal(false);
-    setEditingUsuario(null);
-  };
+  const openCreate = () => { setEditingUsuario(null); setModalKey((k) => k + 1); setShowUserModal(true); };
+  const openEdit = (u: UsuarioRow) => { setEditingUsuario(u); setModalKey((k) => k + 1); setShowUserModal(true); };
+  const closeUserModal = () => { setShowUserModal(false); setEditingUsuario(null); };
 
   const { data: usuarios = [], isLoading, isError, error } = useQuery<UsuarioRow[]>({
     queryKey: ["usuarios"],
@@ -837,13 +689,9 @@ export default function Usuarios() {
       fetchApiData<UsuarioRow>("/usuarios", {
         method: "POST",
         body: JSON.stringify({
-          nome:        data.nome,
-          email:       data.email,
-          senha:       data.senha,
-          cargo:       data.cargo       || undefined,
-          perfil_base: data.perfil_base || undefined,
-          telefone:    data.telefone    || undefined,
-          celular:     data.celular     || undefined,
+          nome: data.nome, email: data.email, senha: data.senha,
+          cargo: data.cargo || undefined, perfil_base: data.perfil_base || undefined,
+          telefone: data.telefone || undefined, celular: data.celular || undefined,
         }),
       }),
     onSuccess: async (createdUser, variables) => {
@@ -866,12 +714,9 @@ export default function Usuarios() {
       fetchApiData<UsuarioRow>(`/usuarios/${id}`, {
         method: "PUT",
         body: JSON.stringify({
-          nome:        data.nome,
-          email:       data.email,
-          cargo:       data.cargo       || undefined,
-          perfil_base: data.perfil_base || undefined,
-          telefone:    data.telefone    || undefined,
-          celular:     data.celular     || undefined,
+          nome: data.nome, email: data.email,
+          cargo: data.cargo || undefined, perfil_base: data.perfil_base || undefined,
+          telefone: data.telefone || undefined, celular: data.celular || undefined,
         }),
       }).then((res) => ({ user: res, variables: data })),
     onSuccess: async ({ user, variables }) => {
@@ -903,6 +748,20 @@ export default function Usuarios() {
       toast({ title: "Erro", description: err.message, variant: "destructive" }),
   });
 
+  const handleToggleBloqueado = async (u: UsuarioRow) => {
+    const bloqueando = !u.bloqueado;
+    const ok = await confirm({
+      title: bloqueando ? `Bloquear "${u.nome}"?` : `Desbloquear "${u.nome}"?`,
+      description: bloqueando
+        ? "O usuário perderá acesso ao sistema imediatamente."
+        : "O usuário voltará a ter acesso ao sistema.",
+      confirmLabel: bloqueando ? "Bloquear" : "Desbloquear",
+      cancelLabel: "Cancelar",
+      variant: bloqueando ? "destructive" : "default",
+    });
+    if (ok) toggleBloqueadoMutation.mutate({ id: u.id, bloqueado: bloqueando });
+  };
+
   const handleSave = (values: UsuarioFormValues) => {
     if (editingUsuario) {
       updateMutation.mutate({ id: editingUsuario.id, data: values as EditarUsuarioFormValues });
@@ -916,6 +775,9 @@ export default function Usuarios() {
 
   return (
     <div className="space-y-4 sm:space-y-6">
+      {/* Dialog de confirmação */}
+      <ConfirmDialog {...ConfirmDialogProps} />
+
       {showUserModal && (
         <UserModal
           key={`user-modal-${modalKey}`}
@@ -961,12 +823,8 @@ export default function Usuarios() {
 
       {tab === "usuarios" && (
         <>
-          {isLoading && (
-            <div className="flex items-center justify-center h-40 gap-3 text-muted-foreground">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              <span className="text-sm">Carregando usuários…</span>
-            </div>
-          )}
+          {/* Loading — skeleton de tabela */}
+          {isLoading && <TableSkeleton rows={5} columns={5} />}
 
           {isError && !isLoading && (
             <div className="glass-panel rounded-2xl p-6 border border-destructive/20 flex flex-col items-center justify-center text-center gap-3 bg-destructive/5">
@@ -989,9 +847,28 @@ export default function Usuarios() {
               </div>
 
               {usuarios.length === 0 ? (
-                <div className="glass-panel rounded-2xl py-12 text-center border border-white/5">
-                  <UserCircle className="w-10 h-10 mx-auto mb-3 text-muted-foreground/30" />
-                  <p className="text-sm text-muted-foreground">Nenhum usuário cadastrado.</p>
+                <div className="glass-panel rounded-2xl border border-white/5">
+                  <Empty>
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon">
+                        <UserCircle className="text-muted-foreground/40" />
+                      </EmptyMedia>
+                      <EmptyTitle className="text-white">Nenhum usuário cadastrado</EmptyTitle>
+                      <EmptyDescription>
+                        Crie o primeiro usuário para liberar acesso ao sistema.
+                      </EmptyDescription>
+                    </EmptyHeader>
+                    <EmptyContent>
+                      <button
+                        type="button"
+                        onClick={openCreate}
+                        className="flex items-center gap-2 px-4 py-2.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25"
+                      >
+                        <Plus className="w-4 h-4" />
+                        Novo Usuário
+                      </button>
+                    </EmptyContent>
+                  </Empty>
                 </div>
               ) : (
                 <>
@@ -1069,7 +946,7 @@ export default function Usuarios() {
                                   title={u.bloqueado ? "Desbloquear" : "Bloquear"}
                                   disabled={toggleBloqueadoMutation.isPending}
                                   className="p-1.5 hover:bg-warning/20 rounded-lg disabled:opacity-40"
-                                  onClick={() => toggleBloqueadoMutation.mutate({ id: u.id, bloqueado: !u.bloqueado })}
+                                  onClick={() => handleToggleBloqueado(u)}
                                 >
                                   <Trash2 className={`w-3.5 h-3.5 ${u.bloqueado ? "text-success" : "text-destructive"}`} />
                                 </button>
@@ -1123,7 +1000,7 @@ export default function Usuarios() {
                             type="button"
                             disabled={toggleBloqueadoMutation.isPending}
                             className="p-2 hover:bg-warning/20 rounded-lg disabled:opacity-40"
-                            onClick={() => toggleBloqueadoMutation.mutate({ id: u.id, bloqueado: !u.bloqueado })}
+                            onClick={() => handleToggleBloqueado(u)}
                           >
                             <Trash2 className={`w-3.5 h-3.5 ${u.bloqueado ? "text-success" : "text-destructive"}`} />
                           </button>

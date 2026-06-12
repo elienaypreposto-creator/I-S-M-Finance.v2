@@ -8,6 +8,17 @@ import { useToast } from "@/hooks/use-toast";
 import { fetchApiData } from "@/lib/api-config";
 import { parceiroFormSchema, type ParceiroFormValues } from "@/validations/cadastros.schema";
 import { exportToExcel } from "@/lib/export";
+import { TableSkeleton } from "@/components/shared/table-skeleton";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { useConfirm } from "@/hooks/use-confirm";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+  EmptyContent,
+} from "@/components/ui/empty";
 
 const tiposParceiroOptions = [
   "Cliente",
@@ -17,6 +28,21 @@ const tiposParceiroOptions = [
   "Funcionário(a)",
   "Prestador(a) de Serviços PJ",
 ];
+
+// ── Paleta de cores por tipo de parceiro ─────────────────────────────────────
+const TIPO_PARCEIRO_STYLE: Record<string, { bg: string; text: string; border: string }> = {
+  "Cliente":                      { bg: "bg-teal-500/15",   text: "text-teal-300",   border: "border-teal-500/30"   },
+  "Fornecedor":                   { bg: "bg-orange-500/15", text: "text-orange-300", border: "border-orange-500/30" },
+  "Sócio(a)":                     { bg: "bg-violet-500/15", text: "text-violet-300", border: "border-violet-500/30" },
+  "Participante Societário(a)":   { bg: "bg-purple-500/15", text: "text-purple-300", border: "border-purple-500/30" },
+  "Funcionário(a)":               { bg: "bg-sky-500/15",    text: "text-sky-300",    border: "border-sky-500/30"    },
+  "Prestador(a) de Serviços PJ":  { bg: "bg-amber-500/15",  text: "text-amber-300",  border: "border-amber-500/30"  },
+};
+
+function getTipoStyle(tipo: string) {
+  return TIPO_PARCEIRO_STYLE[tipo] ?? { bg: "bg-white/10", text: "text-white/70", border: "border-white/10" };
+}
+
 const formaPagamentoOpcoes = ["PIX", "Boleto", "TED", "DOC", "Cheque"] as const;
 
 type FormaPagamentoOption = typeof formaPagamentoOpcoes[number];
@@ -30,26 +56,14 @@ function parseFormaPagamento(value: string | null | undefined): FormaPagamentoOp
 function mascararDocumento(valor: string, tipo: "PJ" | "PF") {
   const numeros = valor.replace(/\D/g, "");
   if (tipo === "PF") {
-    return numeros
-      .slice(0, 11)
-      .replace(/(\d{3})(\d)/, "$1.$2")
-      .replace(/(\d{3})(\d)/, "$1.$2")
-      .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
+    return numeros.slice(0, 11).replace(/(\d{3})(\d)/, "$1.$2").replace(/(\d{3})(\d)/, "$1.$2").replace(/(\d{3})(\d{1,2})$/, "$1-$2");
   }
-  return numeros
-    .slice(0, 14)
-    .replace(/(\d{2})(\d)/, "$1.$2")
-    .replace(/(\d{3})(\d)/, "$1.$2")
-    .replace(/(\d{3})(\d)/, "$1/$2")
-    .replace(/(\d{4})(\d{1,2})$/, "$1-$2");
+  return numeros.slice(0, 14).replace(/(\d{2})(\d)/, "$1.$2").replace(/(\d{3})(\d)/, "$1.$2").replace(/(\d{3})(\d)/, "$1/$2").replace(/(\d{4})(\d{1,2})$/, "$1-$2");
 }
 
 function mascararTelefone(valor: string) {
   const numeros = valor.replace(/\D/g, "");
-  return numeros
-    .slice(0, 11)
-    .replace(/(\d{2})(\d)/, "($1) $2")
-    .replace(/(\d{5})(\d{1,4})$/, "$1-$2");
+  return numeros.slice(0, 11).replace(/(\d{2})(\d)/, "($1) $2").replace(/(\d{5})(\d{1,4})$/, "$1-$2");
 }
 
 function docNumeros(s: string) {
@@ -124,23 +138,13 @@ function parceiroFormToApiBody(values: ParceiroFormValues) {
   const departamento_id = deptRaw ? Number(deptRaw) : undefined;
 
   const chaves_pix: Array<{ tipo: string; chave: string }> = [];
-  const dados_bancarios: Array<{
-    banco: string;
-    agencia: string;
-    conta: string;
-    digito_agencia?: string;
-    digito_conta?: string;
-  }> = [];
+  const dados_bancarios: Array<{ banco: string; agencia: string; conta: string }> = [];
 
   if (values.formaPagamento === "PIX" && values.pixChave?.trim()) {
     chaves_pix.push({ tipo: values.pixTipoRecebedor, chave: values.pixChave.trim() });
   }
   if (values.formaPagamento === "Boleto" || values.formaPagamento === "TED" || values.formaPagamento === "DOC") {
-    dados_bancarios.push({
-      banco: values.formaPagamento,
-      agencia: values.agencia?.trim() ?? "",
-      conta: values.contaNumero?.trim() ?? "",
-    });
+    dados_bancarios.push({ banco: values.formaPagamento, agencia: values.agencia?.trim() ?? "", conta: values.contaNumero?.trim() ?? "" });
   }
 
   return {
@@ -211,29 +215,15 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
 
   const form = useForm<ParceiroFormValues>({
     resolver: zodResolver(parceiroFormSchema),
-    // FIX: "onTouched" dispara validação local assim que o usuário sai do campo,
-    //      bloqueando o submit sem precisar chegar na API.
     mode: "onTouched",
     defaultValues: isEdit ? parceiroRowToFormValues(initialData) : defaultParceiroForm,
   });
 
-  const {
-    register,
-    control,
-    handleSubmit,
-    watch,
-    setValue,
-    reset,
-    trigger,
-    formState: { errors, isDirty },
-  } = form;
+  const { register, control, handleSubmit, watch, setValue, reset, trigger, formState: { errors, isDirty } } = form;
 
   useEffect(() => {
-    if (isEdit) {
-      reset(parceiroRowToFormValues(initialData));
-    } else {
-      reset(defaultParceiroForm);
-    }
+    if (isEdit) reset(parceiroRowToFormValues(initialData));
+    else reset(defaultParceiroForm);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -242,57 +232,24 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
   const tiposParceiro   = watch("tiposParceiro");
   const pixTipoRecebedor = watch("pixTipoRecebedor");
 
-  // FIX: revalida `documento` ao trocar PF ↔ PJ para atualizar a mensagem CPF/CNPJ.
-  //      Usa trigger incondicional — em "onTouched" o campo só mostra erro se já foi
-  //      tocado, então revalidar sem `touchedFields` é seguro.
-  useEffect(() => {
-    void trigger("documento");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tipoPessoa]);
-
-  // FIX: ao trocar forma de pagamento, revalida todos os campos condicionais para
-  //      limpar erros de campos que deixaram de ser obrigatórios e marcar os novos.
-  useEffect(() => {
-    void trigger(["pixChave", "agencia", "contaNumero", "cpfCnpjBancario"]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formaPagamento]);
-
-  // FIX: ao trocar pixTipoRecebedor (PF/PJ dentro de Boleto/TED/DOC),
-  //      revalida o campo cpfCnpjBancario para exigir o dígito correto (11 vs 14).
-  useEffect(() => {
-    void trigger("cpfCnpjBancario");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pixTipoRecebedor]);
+  useEffect(() => { void trigger("documento"); }, [tipoPessoa]);
+  useEffect(() => { void trigger(["pixChave", "agencia", "contaNumero", "cpfCnpjBancario"]); }, [formaPagamento]);
+  useEffect(() => { void trigger("cpfCnpjBancario"); }, [pixTipoRecebedor]);
 
   const saveMutation = useMutation({
     mutationFn: (values: ParceiroFormValues) => {
       const body = parceiroFormToApiBody(values);
-      if (isEdit) {
-        return fetchApiData<ParceiroRow>(`/parceiros/${initialData.id}`, {
-          method: "PUT",
-          body: JSON.stringify(body),
-        });
-      }
-      return fetchApiData<ParceiroRow>("/parceiros", {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
+      if (isEdit) return fetchApiData<ParceiroRow>(`/parceiros/${initialData.id}`, { method: "PUT", body: JSON.stringify(body) });
+      return fetchApiData<ParceiroRow>("/parceiros", { method: "POST", body: JSON.stringify(body) });
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["parceiros"] });
-      toast({
-        title: isEdit ? "Parceiro atualizado" : "Parceiro cadastrado",
-        description: "O registro foi salvo com sucesso.",
-      });
+      toast({ title: isEdit ? "Parceiro atualizado" : "Parceiro cadastrado", description: "O registro foi salvo com sucesso." });
       reset(defaultParceiroForm);
       onClose();
     },
     onError: (e: unknown) => {
-      toast({
-        variant: "destructive",
-        title: "Erro ao salvar",
-        description: e instanceof Error ? e.message : String(e),
-      });
+      toast({ variant: "destructive", title: "Erro ao salvar", description: e instanceof Error ? e.message : String(e) });
     },
   });
 
@@ -301,7 +258,6 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
     else onClose();
   };
 
-  // Classe utilitária para campos com/sem erro
   const fieldCls = (hasError?: boolean) =>
     `w-full bg-white/5 border rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors ${
       hasError ? "border-destructive/60 focus:border-destructive" : "border-white/10"
@@ -311,10 +267,7 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
     <>
       {showConfirmCancel && (
         <ConfirmacaoCancelModal
-          onConfirm={() => {
-            reset(defaultParceiroForm);
-            onClose();
-          }}
+          onConfirm={() => { reset(defaultParceiroForm); onClose(); }}
           onDismiss={() => setShowConfirmCancel(false)}
         />
       )}
@@ -340,18 +293,10 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                   render={({ field }) => (
                     <div className="flex gap-2">
                       {(["PF", "PJ"] as const).map((t) => (
-                        <button
-                          key={t}
-                          type="button"
-                          onClick={() => {
-                            field.onChange(t);
-                            // Limpa documento ao trocar tipo para evitar CPF salvo num campo de CNPJ
-                            setValue("documento", "", { shouldDirty: true });
-                          }}
+                        <button key={t} type="button"
+                          onClick={() => { field.onChange(t); setValue("documento", "", { shouldDirty: true }); }}
                           className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all border ${
-                            field.value === t
-                              ? "bg-primary text-white border-primary"
-                              : "bg-white/5 text-muted-foreground border-white/10 hover:border-white/20"
+                            field.value === t ? "bg-primary text-white border-primary" : "bg-white/5 text-muted-foreground border-white/10 hover:border-white/20"
                           }`}>
                           {t === "PF" ? "Pessoa Física (PF)" : "Pessoa Jurídica (PJ)"}
                         </button>
@@ -367,30 +312,16 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                   <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
                     {tipoPessoa === "PF" ? "Nome Completo *" : "Razão Social / Nome Fantasia *"}
                   </label>
-                  <input
-                    {...register("nomeRazao")}
-                    className={fieldCls(!!errors.nomeRazao)}
-                    placeholder={tipoPessoa === "PF" ? "Ex: João da Silva" : "Ex: Tech Solutions S.A."}
-                  />
+                  <input {...register("nomeRazao")} className={fieldCls(!!errors.nomeRazao)} placeholder={tipoPessoa === "PF" ? "Ex: João da Silva" : "Ex: Tech Solutions S.A."} />
                   {errors.nomeRazao && <p className="text-[11px] text-destructive mt-1">{errors.nomeRazao.message}</p>}
                 </div>
                 <div>
                   <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
                     {tipoPessoa === "PF" ? "CPF *" : "CNPJ *"}
                   </label>
-                  <Controller
-                    name="documento"
-                    control={control}
-                    render={({ field }) => (
-                      <input
-                        value={field.value}
-                        onChange={(e) => field.onChange(mascararDocumento(e.target.value, tipoPessoa as "PF" | "PJ"))}
-                        onBlur={field.onBlur}
-                        className={fieldCls(!!errors.documento)}
-                        placeholder={tipoPessoa === "PF" ? "000.000.000-00" : "00.000.000/0000-00"}
-                      />
-                    )}
-                  />
+                  <Controller name="documento" control={control} render={({ field }) => (
+                    <input value={field.value} onChange={(e) => field.onChange(mascararDocumento(e.target.value, tipoPessoa as "PF" | "PJ"))} onBlur={field.onBlur} className={fieldCls(!!errors.documento)} placeholder={tipoPessoa === "PF" ? "000.000.000-00" : "00.000.000/0000-00"} />
+                  )} />
                   {errors.documento && <p className="text-[11px] text-destructive mt-1">{errors.documento.message}</p>}
                 </div>
               </div>
@@ -399,47 +330,24 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">E-mail</label>
-                  <input
-                    {...register("email")}
-                    type="email"
-                    className={fieldCls(!!errors.email)}
-                    placeholder="email@exemplo.com.br"
-                  />
+                  <input {...register("email")} type="email" className={fieldCls(!!errors.email)} placeholder="email@exemplo.com.br" />
                   {errors.email && <p className="text-[11px] text-destructive mt-1">{errors.email.message}</p>}
                 </div>
                 <div>
                   <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Telefone</label>
-                  <Controller
-                    name="telefone"
-                    control={control}
-                    render={({ field }) => (
-                      <input
-                        value={field.value}
-                        onChange={(e) => field.onChange(mascararTelefone(e.target.value))}
-                        onBlur={field.onBlur}
-                        className={fieldCls(!!errors.telefone)}
-                        placeholder="(11) 99999-0000"
-                      />
-                    )}
-                  />
+                  <Controller name="telefone" control={control} render={({ field }) => (
+                    <input value={field.value} onChange={(e) => field.onChange(mascararTelefone(e.target.value))} onBlur={field.onBlur} className={fieldCls(!!errors.telefone)} placeholder="(11) 99999-0000" />
+                  )} />
                   {errors.telefone && <p className="text-[11px] text-destructive mt-1">{errors.telefone.message}</p>}
                 </div>
               </div>
 
               {/* Departamento */}
               <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                  Lotação / Departamento
-                </label>
-                <select
-                  {...register("departamento_id")}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors [&>option]:bg-[#1A1A24] [&>option]:text-white">
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Lotação / Departamento</label>
+                <select {...register("departamento_id")} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors [&>option]:bg-[#1A1A24] [&>option]:text-white">
                   <option value="">Selecione...</option>
-                  {departamentos.map((d) => (
-                    <option key={d.id} value={String(d.id)}>
-                      {d.nome}
-                    </option>
-                  ))}
+                  {departamentos.map((d) => <option key={d.id} value={String(d.id)}>{d.nome}</option>)}
                 </select>
               </div>
 
@@ -447,22 +355,25 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
               <div>
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">Tipo de Parceiro *</label>
                 <div className="grid grid-cols-2 gap-2">
-                  {tiposParceiroOptions.map((t) => (
-                    <label
-                      key={t}
-                      className="flex items-center gap-2 cursor-pointer p-3 rounded-xl border border-white/10 hover:border-primary/40 hover:bg-primary/5 transition-all">
-                      <input
-                        type="checkbox"
-                        checked={tiposParceiro.includes(t)}
-                        onChange={() => {
-                          const next = tiposParceiro.includes(t) ? tiposParceiro.filter((x) => x !== t) : [...tiposParceiro, t];
-                          setValue("tiposParceiro", next, { shouldValidate: true, shouldDirty: true, shouldTouch: true });
-                        }}
-                        className="accent-primary w-4 h-4"
-                      />
-                      <span className="text-sm text-white">{t}</span>
-                    </label>
-                  ))}
+                  {tiposParceiroOptions.map((t) => {
+                    const style = getTipoStyle(t);
+                    const checked = tiposParceiro.includes(t);
+                    return (
+                      <label key={t} className={`flex items-center gap-2 cursor-pointer p-3 rounded-xl border transition-all ${
+                        checked
+                          ? `${style.bg} ${style.border} border`
+                          : "border-white/10 hover:border-primary/40 hover:bg-primary/5"
+                      }`}>
+                        <input type="checkbox" checked={checked}
+                          onChange={() => {
+                            const next = checked ? tiposParceiro.filter((x) => x !== t) : [...tiposParceiro, t];
+                            setValue("tiposParceiro", next, { shouldValidate: true, shouldDirty: true, shouldTouch: true });
+                          }}
+                          className="accent-primary w-4 h-4" />
+                        <span className={`text-sm font-medium ${checked ? style.text : "text-white"}`}>{t}</span>
+                      </label>
+                    );
+                  })}
                 </div>
                 {errors.tiposParceiro && <p className="text-[11px] text-destructive mt-1">{errors.tiposParceiro.message}</p>}
               </div>
@@ -470,96 +381,57 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
               {/* Forma de Pagamento */}
               <div>
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">Forma de Pagamento Preferencial</label>
-                <Controller
-                  name="formaPagamento"
-                  control={control}
-                  render={({ field }) => (
-                    <div className="flex gap-2 flex-wrap mb-3">
-                      {formaPagamentoOpcoes.map((f) => (
-                        <button
-                          key={f}
-                          type="button"
-                          onClick={() => field.onChange(f)}
-                          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all border ${
-                            field.value === f
-                              ? "bg-primary text-white border-primary"
-                              : "bg-white/5 text-muted-foreground border-white/10 hover:border-white/20"
-                          }`}>
-                          {f}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                />
+                <Controller name="formaPagamento" control={control} render={({ field }) => (
+                  <div className="flex gap-2 flex-wrap mb-3">
+                    {formaPagamentoOpcoes.map((f) => (
+                      <button key={f} type="button" onClick={() => field.onChange(f)}
+                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-all border ${
+                          field.value === f ? "bg-primary text-white border-primary" : "bg-white/5 text-muted-foreground border-white/10 hover:border-white/20"
+                        }`}>
+                        {f}
+                      </button>
+                    ))}
+                  </div>
+                )} />
 
-                {/* ── Campos PIX ── */}
                 {formaPagamento === "PIX" && (
                   <div className="grid grid-cols-2 gap-3 bg-white/5 rounded-xl p-4">
                     <div>
                       <label className="text-xs text-muted-foreground mb-1 block">Tipo do Recebedor</label>
-                      <select
-                        {...register("pixTipoRecebedor")}
-                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 [&>option]:bg-[#1A1A24] [&>option]:text-white">
+                      <select {...register("pixTipoRecebedor")} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 [&>option]:bg-[#1A1A24] [&>option]:text-white">
                         <option value="PF">Pessoa Física</option>
                         <option value="PJ">Pessoa Jurídica</option>
                       </select>
                     </div>
                     <div>
                       <label className="text-xs text-muted-foreground mb-1 block">Chave PIX *</label>
-                      <input
-                        {...register("pixChave")}
-                        className={`w-full bg-white/5 border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 ${
-                          errors.pixChave ? "border-destructive/60" : "border-white/10"
-                        }`}
-                        placeholder="CPF, CNPJ, e-mail ou telefone"
-                      />
+                      <input {...register("pixChave")} className={`w-full bg-white/5 border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 ${errors.pixChave ? "border-destructive/60" : "border-white/10"}`} placeholder="CPF, CNPJ, e-mail ou telefone" />
                       {errors.pixChave && <p className="text-[11px] text-destructive mt-1">{errors.pixChave.message}</p>}
                     </div>
                   </div>
                 )}
 
-                {/* ── Campos Boleto / TED / DOC ── */}
                 {(formaPagamento === "Boleto" || formaPagamento === "TED" || formaPagamento === "DOC") && (
                   <div className="grid grid-cols-2 gap-3 bg-white/5 rounded-xl p-4">
                     <div>
                       <label className="text-xs text-muted-foreground mb-1 block">Tipo Recebedor</label>
-                      <select
-                        {...register("pixTipoRecebedor")}
-                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 [&>option]:bg-[#1A1A24] [&>option]:text-white">
+                      <select {...register("pixTipoRecebedor")} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 [&>option]:bg-[#1A1A24] [&>option]:text-white">
                         <option value="PF">Pessoa Física</option>
                         <option value="PJ">Pessoa Jurídica</option>
                       </select>
                     </div>
                     <div>
                       <label className="text-xs text-muted-foreground mb-1 block">{pixTipoRecebedor === "PF" ? "CPF *" : "CNPJ *"}</label>
-                      <Controller
-                        name="cpfCnpjBancario"
-                        control={control}
-                        render={({ field }) => (
-                          <input
-                            value={field.value}
-                            onChange={(e) =>
-                              field.onChange(mascararDocumento(e.target.value, pixTipoRecebedor as "PF" | "PJ"))
-                            }
-                            onBlur={field.onBlur}
-                            className={`w-full bg-white/5 border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 ${
-                              errors.cpfCnpjBancario ? "border-destructive/60" : "border-white/10"
-                            }`}
-                            placeholder={pixTipoRecebedor === "PF" ? "000.000.000-00" : "00.000.000/0000-00"}
-                          />
-                        )}
-                      />
+                      <Controller name="cpfCnpjBancario" control={control} render={({ field }) => (
+                        <input value={field.value} onChange={(e) => field.onChange(mascararDocumento(e.target.value, pixTipoRecebedor as "PF" | "PJ"))} onBlur={field.onBlur}
+                          className={`w-full bg-white/5 border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 ${errors.cpfCnpjBancario ? "border-destructive/60" : "border-white/10"}`}
+                          placeholder={pixTipoRecebedor === "PF" ? "000.000.000-00" : "00.000.000/0000-00"} />
+                      )} />
                       {errors.cpfCnpjBancario && <p className="text-[11px] text-destructive mt-1">{errors.cpfCnpjBancario.message}</p>}
                     </div>
                     <div>
                       <label className="text-xs text-muted-foreground mb-1 block">Agência *</label>
-                      <input
-                        {...register("agencia")}
-                        className={`w-full bg-white/5 border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 ${
-                          errors.agencia ? "border-destructive/60" : "border-white/10"
-                        }`}
-                        placeholder="0000"
-                      />
+                      <input {...register("agencia")} className={`w-full bg-white/5 border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 ${errors.agencia ? "border-destructive/60" : "border-white/10"}`} placeholder="0000" />
                       {errors.agencia && <p className="text-[11px] text-destructive mt-1">{errors.agencia.message}</p>}
                     </div>
                     <div>
@@ -571,13 +443,7 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
                     </div>
                     <div className="col-span-2">
                       <label className="text-xs text-muted-foreground mb-1 block">Número da Conta *</label>
-                      <input
-                        {...register("contaNumero")}
-                        className={`w-full bg-white/5 border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 ${
-                          errors.contaNumero ? "border-destructive/60" : "border-white/10"
-                        }`}
-                        placeholder="00000-0"
-                      />
+                      <input {...register("contaNumero")} className={`w-full bg-white/5 border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 ${errors.contaNumero ? "border-destructive/60" : "border-white/10"}`} placeholder="00000-0" />
                       {errors.contaNumero && <p className="text-[11px] text-destructive mt-1">{errors.contaNumero.message}</p>}
                     </div>
                   </div>
@@ -586,13 +452,8 @@ function NovoParceiroModal({ onClose, initialData }: { onClose: () => void; init
             </div>
 
             <div className="flex gap-3 p-6 pt-0 sticky bottom-0 bg-card border-t border-white/5">
-              <button type="button" onClick={handleCancel} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">
-                Cancelar
-              </button>
-              <button
-                type="submit"
-                disabled={saveMutation.isPending}
-                className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium shadow-lg shadow-primary/25 disabled:opacity-50">
+              <button type="button" onClick={handleCancel} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">Cancelar</button>
+              <button type="submit" disabled={saveMutation.isPending} className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium shadow-lg shadow-primary/25 disabled:opacity-50">
                 {saveMutation.isPending ? "Salvando…" : isEdit ? "Salvar Alterações" : "Salvar Cadastro"}
               </button>
             </div>
@@ -609,6 +470,7 @@ export default function Parceiros() {
   const [search, setSearch] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [editingParceiro, setEditingParceiro] = useState<ParceiroRow | null>(null);
+  const { confirm, ConfirmDialogProps } = useConfirm();
 
   const { data: departamentos = [] } = useQuery({
     queryKey: ["departamentos"],
@@ -629,20 +491,13 @@ export default function Parceiros() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, ativo }: { id: number; ativo: boolean }) =>
-      fetchApiData<ParceiroRow>(`/parceiros/${id}`, {
-        method: "PUT",
-        body: JSON.stringify({ ativo }),
-      }),
+      fetchApiData<ParceiroRow>(`/parceiros/${id}`, { method: "PUT", body: JSON.stringify({ ativo }) }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["parceiros"] });
       toast({ title: "Status atualizado", description: "O parceiro foi atualizado." });
     },
     onError: (e: unknown) => {
-      toast({
-        variant: "destructive",
-        title: "Erro",
-        description: e instanceof Error ? e.message : String(e),
-      });
+      toast({ variant: "destructive", title: "Erro", description: e instanceof Error ? e.message : String(e) });
     },
   });
 
@@ -653,13 +508,45 @@ export default function Parceiros() {
       toast({ title: "Parceiro removido", description: "O cadastro foi excluído." });
     },
     onError: (e: unknown) => {
-      toast({
-        variant: "destructive",
-        title: "Erro",
-        description: e instanceof Error ? e.message : String(e),
-      });
+      toast({ variant: "destructive", title: "Erro", description: e instanceof Error ? e.message : String(e) });
     },
   });
+
+  const handleDelete = async (p: ParceiroRow) => {
+    const ok = await confirm({
+      title: `Excluir "${p.nome.toUpperCase()}"?`,
+      description: "Esta ação não pode ser desfeita. O cadastro será removido permanentemente.",
+      confirmLabel: "Excluir",
+      cancelLabel: "Cancelar",
+      variant: "destructive",
+    });
+    if (ok) deleteMutation.mutate(p.id);
+  };
+
+  const handleEdit = async (p: ParceiroRow) => {
+    const ok = await confirm({
+      title: `Editar "${p.nome.toUpperCase()}"?`,
+      description: "Você será direcionado ao formulário de edição deste cadastro.",
+      confirmLabel: "Editar",
+      cancelLabel: "Cancelar",
+      variant: "default",
+    });
+    if (ok) setEditingParceiro(p);
+  };
+
+  const handleToggleAtivo = async (p: ParceiroRow) => {
+    const statusAtivo = p.ativo && !p.bloqueado;
+    const ok = await confirm({
+      title: statusAtivo ? `Desativar "${p.nome}"?` : `Ativar "${p.nome}"?`,
+      description: statusAtivo
+        ? "O parceiro não aparecerá nas listagens de lançamentos."
+        : "O parceiro voltará a ficar disponível para lançamentos.",
+      confirmLabel: statusAtivo ? "Desativar" : "Ativar",
+      cancelLabel: "Cancelar",
+      variant: statusAtivo ? "destructive" : "default",
+    });
+    if (ok) updateMutation.mutate({ id: p.id, ativo: !statusAtivo });
+  };
 
   const getDocDisplay = (p: ParceiroRow) => {
     if (!p.cpf_cnpj) return "—";
@@ -691,14 +578,14 @@ export default function Parceiros() {
 
   return (
     <div className="space-y-6">
+      {/* Dialog de confirmação */}
+      <ConfirmDialog {...ConfirmDialogProps} />
+
       {(showModal || editingParceiro) && (
         <NovoParceiroModal
           key={editingParceiro?.id ?? "new"}
           initialData={editingParceiro ?? undefined}
-          onClose={() => {
-            setShowModal(false);
-            setEditingParceiro(null);
-          }}
+          onClose={() => { setShowModal(false); setEditingParceiro(null); }}
         />
       )}
 
@@ -742,92 +629,128 @@ export default function Parceiros() {
           </span>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm whitespace-nowrap">
-            <thead className="bg-black/20 text-muted-foreground">
-              <tr>
-                <th className="px-5 py-3 font-medium w-16 text-center">Tipo</th>
-                <th className="px-5 py-3 font-medium">Nome / Razão Social</th>
-                <th className="px-5 py-3 font-medium">CPF / CNPJ</th>
-                <th className="px-5 py-3 font-medium">Tipo de Parceiro</th>
-                <th className="px-5 py-3 font-medium">Lotação</th>
-                <th className="px-5 py-3 font-medium text-center">Status</th>
-                <th className="px-5 py-3 font-medium text-right">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {parceirosLista.map((p) => {
-                const tipoUi = p.tipo_pessoa === "PJ" ? "PJ" : "PF";
-                const statusAtivo = p.ativo && !p.bloqueado;
-                const lotacao = p.departamento_id ? deptNomeById.get(p.departamento_id) ?? "—" : "—";
-                const tipos = tiposArray(p.tipos);
-                return (
-                  <tr key={p.id} className="hover:bg-white/5 transition-colors group">
-                    <td className="px-5 py-4 text-center">
-                      <span
-                        className={`text-xs font-bold px-2 py-1 rounded ${
-                          tipoUi === "PJ" ? "bg-primary/20 text-primary" : "bg-teal-500/20 text-teal-400"
-                        }`}>
-                        {tipoUi}
-                      </span>
-                    </td>
-                    <td className="px-5 py-4 font-semibold text-white">{p.nome}</td>
-                    <td className="px-5 py-4 text-muted-foreground font-mono text-xs">{getDocDisplay(p)}</td>
-                    <td className="px-5 py-4">
-                      <div className="flex gap-1 flex-wrap">
-                        {tipos.length === 0 ? (
-                          <span className="text-muted-foreground text-xs">—</span>
-                        ) : (
-                          tipos.map((t) => (
-                            <span key={t} className="bg-white/10 text-white text-[10px] px-2 py-0.5 rounded-full border border-white/10">
-                              {t}
-                            </span>
-                          ))
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-5 py-4 text-muted-foreground text-sm">{lotacao}</td>
-                    <td className="px-5 py-4 text-center">
-                      <span
-                        className={`text-xs px-2.5 py-1 rounded-full font-medium ${
-                          statusAtivo ? "bg-success/20 text-success" : "bg-destructive/20 text-destructive"
-                        }`}>
-                        {statusAtivo ? "Ativo" : "Inativo"}
-                      </span>
-                    </td>
-                    <td className="px-5 py-4">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          type="button"
-                          onClick={() => setEditingParceiro(p)}
-                          className="p-1.5 rounded-md hover:bg-white/10 text-muted-foreground hover:text-white transition-colors"
-                          title="Editar">
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => updateMutation.mutate({ id: p.id, ativo: !statusAtivo })}
-                          className={`p-1.5 rounded-md transition-colors ${
-                            statusAtivo ? "hover:bg-success/20 text-success" : "hover:bg-destructive/20 text-destructive"
-                          }`}
-                          title={statusAtivo ? "Desativar" : "Ativar"}>
-                          {statusAtivo ? <CheckCircle className="w-4 h-4" /> : <Ban className="w-4 h-4" />}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => confirm("Excluir este parceiro?") && deleteMutation.mutate(p.id)}
-                          className="p-1.5 rounded-md hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
-                          title="Excluir">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        {/* Loading */}
+        {isLoading && <TableSkeleton rows={6} columns={7} />}
+
+        {/* Empty state */}
+        {!isLoading && parceirosLista.length === 0 && (
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <Search className="text-muted-foreground/40" />
+              </EmptyMedia>
+              <EmptyTitle className="text-white">
+                {search ? "Nenhum resultado encontrado" : "Nenhum parceiro cadastrado"}
+              </EmptyTitle>
+              <EmptyDescription>
+                {search
+                  ? `Não encontramos cadastros para "${search}". Tente outro termo.`
+                  : "Cadastre clientes, fornecedores e parceiros para usar nos lançamentos."}
+              </EmptyDescription>
+            </EmptyHeader>
+            {!search && (
+              <EmptyContent>
+                <button
+                  type="button"
+                  onClick={() => setShowModal(true)}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25"
+                >
+                  <Plus className="w-4 h-4" />
+                  Cadastrar Novo
+                </button>
+              </EmptyContent>
+            )}
+          </Empty>
+        )}
+
+        {/* Tabela */}
+        {!isLoading && parceirosLista.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm whitespace-nowrap">
+              <thead className="bg-black/20 text-muted-foreground">
+                <tr>
+                  <th className="px-5 py-3 font-medium w-16 text-center">Tipo</th>
+                  <th className="px-5 py-3 font-medium">Nome / Razão Social</th>
+                  <th className="px-5 py-3 font-medium">CPF / CNPJ</th>
+                  <th className="px-5 py-3 font-medium">Tipo de Parceiro</th>
+                  <th className="px-5 py-3 font-medium">Lotação</th>
+                  <th className="px-5 py-3 font-medium text-center">Status</th>
+                  <th className="px-5 py-3 font-medium text-right">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {parceirosLista.map((p) => {
+                  const tipoUi = p.tipo_pessoa === "PJ" ? "PJ" : "PF";
+                  const statusAtivo = p.ativo && !p.bloqueado;
+                  const lotacao = p.departamento_id ? deptNomeById.get(p.departamento_id) ?? "—" : "—";
+                  const tipos = tiposArray(p.tipos);
+                  return (
+                    <tr key={p.id} className="hover:bg-white/5 transition-colors group">
+                      <td className="px-5 py-4 text-center">
+                        <span className={`text-xs font-bold px-2 py-1 rounded ${tipoUi === "PJ" ? "bg-primary/20 text-primary" : "bg-teal-500/20 text-teal-400"}`}>
+                          {tipoUi}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4 font-semibold text-white">{p.nome}</td>
+                      <td className="px-5 py-4 text-muted-foreground font-mono text-xs">{getDocDisplay(p)}</td>
+                      {/* ── Tipos de Parceiro com badges coloridos ── */}
+                      <td className="px-5 py-4">
+                        <div className="flex gap-1 flex-wrap">
+                          {tipos.length === 0 ? (
+                            <span className="text-muted-foreground text-xs">—</span>
+                          ) : (
+                            tipos.map((t) => {
+                              const s = getTipoStyle(t);
+                              return (
+                                <span
+                                  key={t}
+                                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${s.bg} ${s.text} ${s.border}`}
+                                >
+                                  {t}
+                                </span>
+                              );
+                            })
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-5 py-4 text-muted-foreground text-sm">{lotacao}</td>
+                      <td className="px-5 py-4 text-center">
+                        <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${statusAtivo ? "bg-success/20 text-success" : "bg-destructive/20 text-destructive"}`}>
+                          {statusAtivo ? "Ativo" : "Inativo"}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleEdit(p)}
+                            className="p-1.5 rounded-md hover:bg-white/10 text-muted-foreground hover:text-white transition-colors"
+                            title="Editar">
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleAtivo(p)}
+                            className={`p-1.5 rounded-md transition-colors ${statusAtivo ? "hover:bg-success/20 text-success" : "hover:bg-destructive/20 text-destructive"}`}
+                            title={statusAtivo ? "Desativar" : "Ativar"}>
+                            {statusAtivo ? <CheckCircle className="w-4 h-4" /> : <Ban className="w-4 h-4" />}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(p)}
+                            className="p-1.5 rounded-md hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
+                            title="Excluir">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

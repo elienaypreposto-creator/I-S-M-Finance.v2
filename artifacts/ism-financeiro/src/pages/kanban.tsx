@@ -160,14 +160,18 @@ function SortableCard({
       style={style}
       {...attributes}
       {...listeners}
-      onClick={() => onView(card)}
+      onClick={(e) => {
+        // Se o clique originou de dentro do menu, não abre o modal de visualização
+        if ((e.target as HTMLElement).closest("[data-card-menu]")) return;
+        onView(card);
+      }}
     >
       <TaskCard
         {...card}
         onClick={undefined}
         isDragging={isDragging}
         menuSlot={
-          <div onPointerDown={e => e.stopPropagation()}>
+          <div data-card-menu onPointerDown={e => e.stopPropagation()}>
             <CardMenu
               onEdit={e => { e.stopPropagation(); onEdit(card); }}
               onDelete={e => { e.stopPropagation(); onDelete(card); }}
@@ -281,7 +285,6 @@ export default function Kanban() {
     onMutate: async (newCard) => {
       await queryClient.cancelQueries({ queryKey: ["kanban-cards"] });
       const snapshot = queryClient.getQueryData<Card[]>(["kanban-cards"]);
-      // Insere card temporário no cache para aparecer imediatamente na coluna correta
       const tempCard: Card = {
         id: -(Date.now()),
         titulo: newCard.titulo ?? "Nova tarefa",
@@ -315,12 +318,11 @@ export default function Kanban() {
     mutationFn: ({ id, payload }: { id: number; payload: Record<string, any> }) =>
       fetchApiData<Card>(`/kanban/cards/${id}`, {
         method: "PATCH",
-        body: JSON.stringify(payload), // payload já sanitizado pelo handleSaveCard
+        body: JSON.stringify(payload),
       }),
     onMutate: async ({ id, payload }) => {
       await queryClient.cancelQueries({ queryKey: ["kanban-cards"] });
       const snapshot = queryClient.getQueryData<Card[]>(["kanban-cards"]);
-      // Aplica alterações no cache imediatamente — sem precisar de F5
       queryClient.setQueryData<Card[]>(["kanban-cards"], (old = []) =>
         old.map(c => c.id === id ? { ...c, ...payload } : c)
       );
@@ -408,10 +410,13 @@ export default function Kanban() {
     const draggedCard = allCards.find(c => c.id === active.id);
     if (!draggedCard) return;
 
+    if (draggedCard.id < 0) {
+      toast.info("Aguarde a tarefa ser salva antes de movê-la.");
+      return;
+    }
+
     const overId = String(over.id);
 
-    // Se soltou sobre a área registrada da coluna (prefixo col::) → usa direto
-    // Se soltou sobre um card → pega a coluna desse card
     let targetColuna: string;
     if (overId.startsWith(COL_PREFIX)) {
       targetColuna = overId.slice(COL_PREFIX.length);
@@ -447,24 +452,16 @@ export default function Kanban() {
     setModalMode("edit");
     setModalOpen(true);
   };
-
-  const handleDeleteCard = (card: Card) => {
-    toast(`Excluir "${card.titulo}"?`, {
-      action:   { label: "Confirmar", onClick: () => deleteMutation.mutate(card.id) },
-      cancel:   { label: "Cancelar",  onClick: () => {} },
-      duration: 6000,
-    });
-  };
+const handleDeleteCard = (card: Card) => {
+  console.log("🗑️ handleDeleteCard chamado", card.id);
+  deleteMutation.mutate(card.id);
+};
 
   const handleSaveCard = (data: any) => {
     if (modalMode === "edit" && selectedCard) {
-      // Sanitiza: remove campos fora do schema + converte prazo vazio → null
       const payload = sanitizePatch(data);
       updateMutation.mutate({ id: selectedCard.id, payload });
     } else {
-      // Criação: garante que a coluna selecionada no modal (ou a do botão +) seja respeitada
-      // data.coluna vem do campo "Coluna Inicial" dentro do TaskModal
-      // modalColuna é o fallback quando o campo não foi alterado pelo usuário
       const coluna = data.coluna && data.coluna !== "" ? data.coluna : modalColuna;
       createMutation.mutate({ ...data, coluna });
     }

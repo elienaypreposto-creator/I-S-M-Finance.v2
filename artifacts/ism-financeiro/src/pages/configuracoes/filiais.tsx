@@ -17,6 +17,17 @@ import {
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { fetchApiData } from "@/lib/api-config";
+import { CardsSkeleton } from "@/components/shared/table-skeleton";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { useConfirm } from "@/hooks/use-confirm";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+  EmptyContent,
+} from "@/components/ui/empty";
 
 // ─── Tipos ─────────────────────────────────────────────────────────────────────
 type FilialRow = {
@@ -93,7 +104,6 @@ function FilialModal({ onClose, initialData, isPending, onSave }: FilialModalPro
               )}
             </div>
 
-            {/* Nota sobre campos futuros */}
             <div className="flex items-start gap-2 bg-primary/5 border border-primary/20 rounded-xl p-3">
               <Info className="w-4 h-4 text-primary shrink-0 mt-0.5" />
               <p className="text-xs text-muted-foreground leading-relaxed">
@@ -132,6 +142,7 @@ export default function Filiais() {
   const queryClient = useQueryClient();
   const [editingFilial, setEditingFilial] = useState<FilialRow | null | undefined>(undefined);
   const [modalKey, setModalKey] = useState(0);
+  const { confirm, ConfirmDialogProps } = useConfirm();
 
   // undefined → modal fechado; null → criar; FilialRow → editar
   const modalAberto = editingFilial !== undefined;
@@ -187,7 +198,6 @@ export default function Filiais() {
       toast({ title: "Filial removida com sucesso." });
     },
     onError: (err: Error) => {
-      // FK violations (ex: lancamentos referenciando esta filial na Fase 7)
       const isIntegrity =
         err.message.toLowerCase().includes("integrity") ||
         err.message.toLowerCase().includes("foreign") ||
@@ -212,9 +222,23 @@ export default function Filiais() {
     }
   };
 
+  const handleDelete = async (filial: FilialRow) => {
+    const ok = await confirm({
+      title: `Excluir "${filial.nome}"?`,
+      description: "Esta ação não pode ser desfeita. Filiais com dados vinculados não podem ser removidas.",
+      confirmLabel: "Excluir",
+      cancelLabel: "Cancelar",
+      variant: "destructive",
+    });
+    if (ok) deleteMutation.mutate(filial.id);
+  };
+
   return (
     <div className="space-y-4 sm:space-y-6">
-      {/* Modal */}
+      {/* Dialog de confirmação de exclusão */}
+      <ConfirmDialog {...ConfirmDialogProps} />
+
+      {/* Modal criar/editar */}
       {modalAberto && (
         <FilialModal
           key={`filial-modal-${modalKey}`}
@@ -258,7 +282,6 @@ export default function Filiais() {
           </div>
         ))}
 
-        {/* Info sobre Fase 7 */}
         <div className="col-span-2 sm:col-span-1 glass-panel rounded-2xl p-3 sm:p-4 flex items-center gap-2 border border-primary/20 bg-primary/5">
           <Info className="w-4 h-4 text-primary shrink-0" />
           <p className="text-[10px] sm:text-xs text-muted-foreground leading-tight">
@@ -267,13 +290,8 @@ export default function Filiais() {
         </div>
       </div>
 
-      {/* Loading */}
-      {isLoading && (
-        <div className="flex items-center justify-center h-40 gap-3 text-muted-foreground">
-          <Loader2 className="w-5 h-5 animate-spin" />
-          <span className="text-sm">Carregando filiais…</span>
-        </div>
-      )}
+      {/* Loading — skeleton de cards */}
+      {isLoading && <CardsSkeleton cards={4} />}
 
       {/* Erro */}
       {isError && !isLoading && (
@@ -287,12 +305,28 @@ export default function Filiais() {
       {!isLoading && !isError && (
         <>
           {filiais.length === 0 ? (
-            <div className="glass-panel rounded-2xl py-14 text-center border border-white/5">
-              <Building className="w-10 h-10 text-muted-foreground/30 mx-auto mb-4" />
-              <p className="text-muted-foreground text-sm">Nenhuma filial cadastrada.</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Clique em "Nova Filial" para adicionar a primeira unidade.
-              </p>
+            <div className="glass-panel rounded-2xl border border-white/5">
+              <Empty>
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    <Building className="text-muted-foreground/40" />
+                  </EmptyMedia>
+                  <EmptyTitle className="text-white">Nenhuma filial cadastrada</EmptyTitle>
+                  <EmptyDescription>
+                    Adicione a primeira filial para começar a organizar as unidades da empresa.
+                  </EmptyDescription>
+                </EmptyHeader>
+                <EmptyContent>
+                  <button
+                    type="button"
+                    onClick={openCreate}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Nova Filial
+                  </button>
+                </EmptyContent>
+              </Empty>
             </div>
           ) : (
             <div className="space-y-3 sm:space-y-4">
@@ -303,7 +337,6 @@ export default function Filiais() {
                 >
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
-                      {/* Ícone com cor determinística */}
                       <div
                         className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center shrink-0"
                         style={{ backgroundColor: `${getColor(filial.id)}20` }}
@@ -319,7 +352,6 @@ export default function Filiais() {
                           <h3 className="font-bold text-white text-sm sm:text-base truncate">
                             {filial.nome}
                           </h3>
-                          {/* Código derivado do ID */}
                           <span className="text-xs text-muted-foreground font-mono bg-white/5 px-2 py-0.5 rounded shrink-0">
                             #{String(filial.id).padStart(3, "0")}
                           </span>
@@ -352,7 +384,7 @@ export default function Filiais() {
                         type="button"
                         title="Excluir filial"
                         disabled={deleteMutation.isPending}
-                        onClick={() => deleteMutation.mutate(filial.id)}
+                        onClick={() => handleDelete(filial)}
                         className="p-2 hover:bg-destructive/20 rounded-lg transition-colors disabled:opacity-40"
                       >
                         <Trash2 className="w-4 h-4 text-destructive" />
