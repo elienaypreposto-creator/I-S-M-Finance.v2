@@ -9,6 +9,9 @@ export const lancamentoStatusEnum = z.enum([
   "cancelado",
 ]);
 
+export const formaPagamentoEnum = z.enum(["PIX", "Boleto", "TED", "DOC", "Cheque", ""]);
+export type FormaPagamento = z.infer<typeof formaPagamentoEnum>;
+
 /** Espelha `createLancamentoBodySchema` do backend (campos enviados no POST/PUT). */
 export const lancamentoApiBodySchema = z.object({
   tipo: z.enum(["CP", "CR"]),
@@ -17,7 +20,6 @@ export const lancamentoApiBodySchema = z.object({
   conta_id: z.number().int().positive().nullable().optional(),
   parceiro_id: z.number().int().positive().nullable().optional(),
   descricao: z.string().trim().min(1).nullable().optional(),
-  // FIX: rejeita NaN/Infinity antes de converter para string.
   valor: z
     .union([z.string(), z.number()])
     .transform((v) => String(v))
@@ -32,6 +34,11 @@ export const lancamentoApiBodySchema = z.object({
   parcela_atual: z.number().int().positive().optional(),
   total_parcelas: z.number().int().positive().optional(),
   riscos: z.array(z.string()).optional(),
+  forma_pagamento: z.string().nullable().optional(),
+  chave_pix: z.string().nullable().optional(),
+  banco_nome: z.string().nullable().optional(),
+  banco_agencia: z.string().nullable().optional(),
+  banco_conta: z.string().nullable().optional(),
 });
 
 export type LancamentoApiBody = z.infer<typeof lancamentoApiBodySchema>;
@@ -89,11 +96,6 @@ const optionalIdSelect = z
   .string()
   .refine((v) => v === "" || /^\d+$/.test(v), { message: "Seleção inválida." });
 
-/**
- * Valida competência no formato MM/AAAA com mês entre 01 e 12 e ano entre 2000 e 2100.
- * Reutilizado tanto no schema do modal quanto no schema inline de lancamentos.tsx,
- * eliminando a duplicação que existia entre os dois.
- */
 export const competenciaSchema = z
   .string()
   .optional()
@@ -104,52 +106,85 @@ export const competenciaSchema = z
     return mm >= 1 && mm <= 12 && yyyy >= 2000 && yyyy <= 2100;
   }, "Competência inválida — use MM/AAAA com mês entre 01 e 12 (ex: 07/2025)");
 
-/**
- * Formulário do modal: `valorBr` é a máscara BR; demais campos alinhados ao backend.
- */
-export const lancamentoModalFormSchema = z.object({
-  tipo: z.enum(["CP", "CR"]),
 
-  // FIX: valida que é uma data real no formato YYYY-MM-DD dentro de um range razoável.
-  //      Antes só checava min(1), aceitando "abc" ou "9999-99-99" silenciosamente.
-  vencimento: z
-    .string()
-    .min(1, "Informe a data de vencimento.")
-    .refine((v) => {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
-      const d = new Date(v + "T00:00:00");
-      return !isNaN(d.getTime());
-    }, "Data de vencimento inválida.")
-    .refine((v) => {
-      const d = new Date(v + "T00:00:00");
-      return d >= new Date("2000-01-01") && d <= new Date("2100-12-31");
-    }, "Data fora do intervalo permitido (01/01/2000 a 31/12/2100)."),
+export const lancamentoModalFormSchema = z
+  .object({
+    tipo: z.enum(["CP", "CR"]),
 
-  // FIX: validação de formato MM/AAAA centralizada — antes só existia no schema inline
-  //      de lancamentos.tsx, deixando o schema do modal sem essa proteção.
-  competencia: competenciaSchema,
+    vencimento: z
+      .string()
+      .min(1, "Informe a data de vencimento.")
+      .refine((v) => {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+        const d = new Date(v + "T00:00:00");
+        return !isNaN(d.getTime());
+      }, "Data de vencimento inválida.")
+      .refine((v) => {
+        const d = new Date(v + "T00:00:00");
+        return d >= new Date("2000-01-01") && d <= new Date("2100-12-31");
+      }, "Data fora do intervalo permitido (01/01/2000 a 31/12/2100)."),
 
-  parceiro_id: optionalIdSelect,
-  descricao: z.string().optional(),
+    competencia: competenciaSchema,
 
-  // FIX: colapsa os dois .refine redundantes em um único que já valida formato,
-  //      presença de dígitos e valor > 0. "0,00" agora é rejeitado corretamente.
-  valorBr: z
-    .string()
-    .min(1, "Informe o valor.")
-    .refine((s) => {
-      const api = brMoneyDisplayToApiString(s);
-      return api !== "" && /^[0-9]+\.[0-9]{2}$/.test(api);
-    }, "Valor inválido — use o formato 1.234,56.")
-    .refine((s) => {
-      const api = brMoneyDisplayToApiString(s);
-      return parseFloat(api) > 0;
-    }, "O valor deve ser maior que R$ 0,00."),
+    parceiro_id: optionalIdSelect,
+    descricao: z.string().optional(),
 
-  status: lancamentoStatusEnum,
-  plano_conta_id: optionalIdSelect,
-  riscos: z.array(z.string()),
-});
+    valorBr: z
+      .string()
+      .min(1, "Informe o valor.")
+      .refine((s) => {
+        const api = brMoneyDisplayToApiString(s);
+        return api !== "" && /^[0-9]+\.[0-9]{2}$/.test(api);
+      }, "Valor inválido — use o formato 1.234,56.")
+      .refine((s) => {
+        const api = brMoneyDisplayToApiString(s);
+        return parseFloat(api) > 0;
+      }, "O valor deve ser maior que R$ 0,00."),
+
+    status: lancamentoStatusEnum,
+    plano_conta_id: optionalIdSelect,
+    riscos: z.array(z.string()),
+
+    // ── Pagamento ────────────────────────────────────────────────────────────
+    forma_pagamento: z.string().optional(),
+    chave_pix:    z.string().optional(),
+    banco_nome:   z.string().optional(),
+    banco_agencia: z.string().optional(),
+    banco_conta:  z.string().optional(),
+
+    // ── Classificação interna ────────────────────────────────────────────────
+    departamento_id: optionalIdSelect,
+  })
+  .superRefine((data, ctx) => {
+    const fp = data.forma_pagamento;
+
+    if (fp === "PIX") {
+      if (!data.chave_pix?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Informe a chave PIX.",
+          path: ["chave_pix"],
+        });
+      }
+    }
+
+    if (fp === "DOC" || fp === "TED") {
+      if (!data.banco_agencia?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Informe a agência.",
+          path: ["banco_agencia"],
+        });
+      }
+      if (!data.banco_conta?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Informe o número da conta.",
+          path: ["banco_conta"],
+        });
+      }
+    }
+  });
 
 export type LancamentoModalFormValues = z.infer<typeof lancamentoModalFormSchema>;
 
@@ -165,6 +200,12 @@ export function getLancamentoModalDefaultValues(editItem?: LancamentoEditItem | 
       status: "pendente",
       plano_conta_id: "",
       riscos: [],
+      forma_pagamento: "",
+      chave_pix: "",
+      banco_nome: "",
+      banco_agencia: "",
+      banco_conta: "",
+      departamento_id: "",
     };
   }
 
@@ -178,6 +219,12 @@ export function getLancamentoModalDefaultValues(editItem?: LancamentoEditItem | 
     status: normalizeStatusForForm(editItem.tipo, editItem.status),
     plano_conta_id: editItem.plano_conta_id != null ? String(editItem.plano_conta_id) : "",
     riscos: Array.isArray(editItem.riscos) ? [...editItem.riscos] : [],
+    forma_pagamento: editItem.forma_pagamento ?? "",
+    chave_pix: editItem.chave_pix ?? "",
+    banco_nome: editItem.banco_nome ?? "",
+    banco_agencia: editItem.banco_agencia ?? "",
+    banco_conta: editItem.banco_conta ?? "",
+    departamento_id: editItem.departamento_id != null ? String(editItem.departamento_id) : "",
   };
 }
 
@@ -191,17 +238,19 @@ export type LancamentoEditItem = {
   valor: string | number;
   status: string;
   plano_conta_id: number | null;
+  departamento_id?: number | null;
   riscos?: string[];
+  forma_pagamento?: string | null;
+  chave_pix?: string | null;
+  banco_nome?: string | null;
+  banco_agencia?: string | null;
+  banco_conta?: string | null;
 };
 
 function normalizeStatusForForm(tipo: string, status: string): z.infer<typeof lancamentoStatusEnum> {
   const s = status as z.infer<typeof lancamentoStatusEnum>;
   const allowed: z.infer<typeof lancamentoStatusEnum>[] = [
-    "pendente",
-    "pago",
-    "recebido",
-    "atrasado",
-    "cancelado",
+    "pendente", "pago", "recebido", "atrasado", "cancelado",
   ];
   if (allowed.includes(s)) {
     if (tipo === "CR" && s === "pago") return "recebido";
@@ -213,6 +262,8 @@ function normalizeStatusForForm(tipo: string, status: string): z.infer<typeof la
 
 export function mapModalFormToApiBody(values: LancamentoModalFormValues): LancamentoApiBody {
   const competenciaTrim = values.competencia?.trim();
+  const fp = values.forma_pagamento;
+
   return {
     tipo: values.tipo,
     vencimento: values.vencimento.trim(),
@@ -223,5 +274,11 @@ export function mapModalFormToApiBody(values: LancamentoModalFormValues): Lancam
     status: values.status,
     plano_conta_id: values.plano_conta_id === "" ? null : Number(values.plano_conta_id),
     riscos: values.riscos,
+    forma_pagamento: fp || null,
+    chave_pix:     fp === "PIX"             ? (values.chave_pix?.trim()    || null) : null,
+    banco_nome:    (fp === "DOC" || fp === "TED") ? (values.banco_nome?.trim()  || null) : null,
+    banco_agencia: (fp === "DOC" || fp === "TED") ? (values.banco_agencia?.trim() || null) : null,
+    banco_conta:   (fp === "DOC" || fp === "TED") ? (values.banco_conta?.trim()  || null) : null,
+    departamento_id: values.departamento_id === "" ? null : Number(values.departamento_id),
   };
 }

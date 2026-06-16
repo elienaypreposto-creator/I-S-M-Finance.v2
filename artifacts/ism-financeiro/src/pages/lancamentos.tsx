@@ -10,19 +10,25 @@ import { format as formatBtn, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
 import {
   Plus, Search, Filter, Download,
   Loader2, AlertCircle, X, Calendar, Pencil, Trash2,
   ChevronLeft, ChevronRight, CalendarDays,
-  Target
+  Target, Sparkles,
 } from "lucide-react";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { useConfirm } from "@/hooks/use-confirm";
+import {
+  lancamentoModalFormSchema,
+  getLancamentoModalDefaultValues,
+  mapModalFormToApiBody,
+  type LancamentoModalFormValues,
+  type LancamentoEditItem,
+} from "@/validations/lancamentos.schema";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
-// Types
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 type Lancamento = {
   id: number;
@@ -43,66 +49,21 @@ type Lancamento = {
 
 type ApiResponse = { data: Lancamento[]; total: number; page: number; limit: number };
 type PlanoConta = { id: number; tipo: string; categoria: string; subcategoria: string | null };
-type Parceiro = { id: number; nome: string; tipo_pessoa: string };
 
-// ─── Zod Schemas ────────────────────────────────────────────────────────────
+type Parceiro = {
+  id: number;
+  nome: string;
+  tipo_pessoa: string;
+  departamento_id: number | null;
+  centro_custo_id: number | null;
+  forma_pagamento_preferencial: string | null;
+  chaves_pix?: Array<{ tipo: string; chave: string }> | null;
+  dados_bancarios?: Array<{ banco: string; agencia: string; conta: string }> | null;
+};
 
-const valorSchema = z
-  .string()
-  .min(1, "Informe o valor")
-  .refine(
-    (v) => /^[\d.]*\d,\d{2}$/.test(v.trim()),
-    "Use o formato correto: 1.234,56 (centavos obrigatórios)"
-  )
-  .refine((v) => {
-    const n = parseFloat(v.replace(/\./g, "").replace(",", "."));
-    return !isNaN(n) && n > 0;
-  }, "O valor deve ser maior que R$ 0,00")
-  .refine((v) => {
-    const n = parseFloat(v.replace(/\./g, "").replace(",", "."));
-    return n <= 999_999_999.99;
-  }, "Valor excede o limite permitido (R$ 999.999.999,99)");
+type Departamento = { id: number; nome: string };
 
-const competenciaSchema = z
-  .string()
-  .optional()
-  .refine((v) => {
-    if (!v || v === "") return true;
-    if (!/^\d{2}\/\d{4}$/.test(v)) return false;
-    const [mm, yyyy] = v.split("/").map(Number);
-    return mm >= 1 && mm <= 12 && yyyy >= 2000 && yyyy <= 2100;
-  }, "Competência inválida — use MM/AAAA com mês entre 01 e 12 (ex: 07/2025)");
-
-const lancamentoSchema = z.object({
-  tipo: z.enum(["CP", "CR"], { required_error: "Selecione o tipo" }),
-  vencimento: z
-    .string()
-    .min(1, "Selecione a data de vencimento")
-    .refine((v) => {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
-      const d = new Date(v + "T00:00:00");
-      return !isNaN(d.getTime());
-    }, "Data de vencimento inválida")
-    .refine((v) => {
-      const d = new Date(v + "T00:00:00");
-      return d >= new Date("2000-01-01") && d <= new Date("2100-12-31");
-    }, "Data fora do intervalo permitido (01/01/2000 a 31/12/2100)"),
-  competencia: competenciaSchema,
-  parceiro_id: z.string().optional(),
-  descricao: z.string().optional(),
-  valor: valorSchema,
-  status: z.string().min(1, "Selecione o status"),
-  plano_conta_id: z.string().optional(),
-  riscos: z.array(z.string()).optional(),
-});
-
-const lancamentoUiSchema = lancamentoSchema.extend({
-  nivelRisco: z.number().optional(),
-});
-
-type LancamentoFormData = z.infer<typeof lancamentoUiSchema>;
-
-// ─── Máscara de valor monetário pt-BR ───────────────────────────────────────
+// ─── Máscara de valor monetário pt-BR ────────────────────────────────────────
 
 function formatarValor(raw: string): string {
   const digits = raw.replace(/\D/g, "");
@@ -111,7 +72,7 @@ function formatarValor(raw: string): string {
   return num.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-// ─── Bank badge helpers ──────────────────────────────────────────────────────
+// ─── Bank badge helpers ───────────────────────────────────────────────────────
 
 const BANK_MAP: Record<string, { abbr: string; color: string; bg: string }> = {
   "itaú":            { abbr: "ITÁ",  color: "#FF6B00", bg: "rgba(255,107,0,0.18)" },
@@ -147,7 +108,8 @@ function getBankBadge(contaNome: string | null) {
   return { abbr: firstWord, color: "#94A3B8", bg: "rgba(148,163,184,0.15)" };
 }
 
-// ─── Tags de risco: paleta semântica por nível de severidade ─────────────────
+// ─── Tags de risco ────────────────────────────────────────────────────────────
+
 const RISCO_STYLE: Record<string, { label: string; color: string; bg: string; border: string }> = {
   "Multas e Juros":              { label: "Multas e Juros",              color: "#FBBF24", bg: "rgba(251,191,36,0.15)",  border: "rgba(251,191,36,0.35)"  },
   "Perda de Desconto":           { label: "Perda de Desconto",           color: "#FBBF24", bg: "rgba(251,191,36,0.15)",  border: "rgba(251,191,36,0.35)"  },
@@ -170,7 +132,7 @@ function getRiscoStyle(tag: string) {
   return RISCO_STYLE[tag] ?? { label: tag, color: "#94A3B8", bg: "rgba(148,163,184,0.15)", border: "rgba(148,163,184,0.3)" };
 }
 
-// ─── CompetenciaPicker ───────────────────────────────────────────────────────
+// ─── CompetenciaPicker ────────────────────────────────────────────────────────
 
 function CompetenciaPicker({
   value,
@@ -257,7 +219,7 @@ function CompetenciaPicker({
   );
 }
 
-// ─── Risk levels ─────────────────────────────────────────────────────────────
+// ─── Risk levels ──────────────────────────────────────────────────────────────
 
 const BASE_RISK_LEVELS: Record<number, { label: string; color: string; tags: string[] }> = {
   1: { label: "Nível 1 - Alerta",            color: "text-yellow-400", tags: ["Multas e Juros","Perda de Desconto","Restrição de Crédito"] },
@@ -296,6 +258,10 @@ function FieldError({ message }: { message?: string }) {
   );
 }
 
+// ─── Métodos de pagamento disponíveis ────────────────────────────────────────
+
+const FORMAS_PAGAMENTO = ["PIX", "Boleto", "TED", "DOC", "Cheque"] as const;
+
 // ─── LancamentoModal ──────────────────────────────────────────────────────────
 
 function LancamentoModal({
@@ -305,37 +271,30 @@ function LancamentoModal({
 }: {
   onClose: () => void;
   onSaved: () => void;
-  editItem?: Lancamento | null;
+  editItem?: LancamentoEditItem | null;
 }) {
   const { toast } = useToast();
   const [riskLevels, setRiskLevels] = useState(BASE_RISK_LEVELS);
   const [showAddTag, setShowAddTag] = useState(false);
   const [newTag, setNewTag] = useState({ name: "", level: 1 });
   const riskSuggestedRef = useRef(false);
+  const [autoFilled, setAutoFilled] = useState(false);
 
   const { register, handleSubmit, control, watch, setValue, formState: { errors, isSubmitting } } =
-    useForm<LancamentoFormData>({
-      resolver: zodResolver(lancamentoUiSchema),
-      defaultValues: {
-        tipo:           editItem?.tipo === "CR" ? "CR" : "CP",
-        vencimento:     editItem?.vencimento || "",
-        competencia:    editItem?.competencia || "",
-        parceiro_id:    editItem?.parceiro_id?.toString()     || "",
-        descricao:      editItem?.descricao  || "",
-        valor:          editItem?.valor ? formatarValor(String(Math.round(editItem.valor * 100))) : "",
-        status:         editItem?.status     || "pendente",
-        plano_conta_id: editItem?.plano_conta_id?.toString()  || "",
-        riscos:         (editItem as any)?.riscos             || [],
-        nivelRisco:     0,
-      },
+    useForm<LancamentoModalFormValues>({
+      resolver: zodResolver(lancamentoModalFormSchema),
+      defaultValues: getLancamentoModalDefaultValues(editItem),
     });
 
-  const tipo       = watch("tipo");
-  const vencimento = watch("vencimento");
-  const nivelRisco = watch("nivelRisco") ?? 0;
-  const riscos     = watch("riscos") ?? [];
-  const isCP       = tipo === "CP";
+  const tipo         = watch("tipo");
+  const vencimento   = watch("vencimento");
+  const nivelRisco   = (watch as any)("nivelRisco") ?? 0;
+  const riscos       = watch("riscos") ?? [];
+  const parceiro_id  = watch("parceiro_id");
+  const formaPagamento = watch("forma_pagamento") ?? "";
+  const isCP         = tipo === "CP";
 
+  // ── Auto-suggest nível de risco por vencimento ──────────────────────────
   useEffect(() => {
     if (vencimento && !riskSuggestedRef.current) {
       const vcto = new Date(vencimento + "T00:00:00");
@@ -347,11 +306,13 @@ function LancamentoModal({
       else if (diffDays >= 31 && diffDays <= 60) level = 3;
       else if (diffDays > 60)                    level = 4;
       if (level > 0) {
-        setValue("nivelRisco", level);
+        setValue("nivelRisco" as any, level);
         riskSuggestedRef.current = true;
       }
     }
   }, [vencimento, setValue]);
+
+  // ── Queries ──────────────────────────────────────────────────────────────
 
   const { data: parceiros = [] } = useQuery<Parceiro[]>({
     queryKey: ["parceiros-modal"],
@@ -377,6 +338,81 @@ function LancamentoModal({
     },
   });
 
+  const { data: departamentos = [] } = useQuery<Departamento[]>({
+    queryKey: ["departamentos-modal"],
+    queryFn: async () => {
+      try {
+        const res = await fetch(`${API_URL}/departamentos`);
+        if (!res.ok) return [];
+        const json = await res.json();
+        return Array.isArray(json) ? json : (json.data ?? []);
+      } catch { return []; }
+    },
+  });
+
+  // ── Auto-fill ao selecionar parceiro ─────────────────────────────────────
+  useEffect(() => {
+    if (!parceiro_id) {
+      setAutoFilled(false);
+      return;
+    }
+
+    const parceiro = parceiros.find((p) => String(p.id) === parceiro_id);
+    if (!parceiro) return;
+
+    let didFill = false;
+
+    // Forma de pagamento preferencial
+    const fp = parceiro.forma_pagamento_preferencial;
+    if (fp && FORMAS_PAGAMENTO.includes(fp as any)) {
+      setValue("forma_pagamento", fp);
+      didFill = true;
+
+      // Chave PIX
+      if (fp === "PIX") {
+        const pix = parceiro.chaves_pix;
+        if (Array.isArray(pix) && pix.length > 0) {
+          setValue("chave_pix", pix[0].chave);
+          didFill = true;
+        }
+      }
+
+      // Dados bancários (DOC/TED)
+      if (fp === "DOC" || fp === "TED") {
+        const banco = parceiro.dados_bancarios;
+        if (Array.isArray(banco) && banco.length > 0) {
+          setValue("banco_nome",    banco[0].banco    || "");
+          setValue("banco_agencia", banco[0].agencia  || "");
+          setValue("banco_conta",   banco[0].conta    || "");
+          didFill = true;
+        }
+      }
+    }
+
+    // Departamento padrão do parceiro
+    if (parceiro.departamento_id != null) {
+      setValue("departamento_id", String(parceiro.departamento_id));
+      didFill = true;
+    }
+
+    setAutoFilled(didFill);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parceiro_id, parceiros]);
+
+  // ── Limpar campos de pagamento ao trocar forma ────────────────────────────
+  useEffect(() => {
+    if (formaPagamento !== "PIX") {
+      setValue("chave_pix", "");
+    }
+    if (formaPagamento !== "DOC" && formaPagamento !== "TED") {
+      setValue("banco_agencia", "");
+      setValue("banco_conta", "");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formaPagamento]);
+
+  // ── Mutation ──────────────────────────────────────────────────────────────
+
   const mutation = useMutation({
     mutationFn: async (payload: any) => {
       const method = editItem ? "PUT" : "POST";
@@ -397,29 +433,18 @@ function LancamentoModal({
       toast({ variant: "destructive", title: "Erro", description: e.message }),
   });
 
-  const onSubmit = (data: LancamentoFormData) => {
-    const normalized = data.valor.replace(/\./g, "").replace(",", ".");
-    const valorNum = parseFloat(normalized);
+  const onSubmit = (data: LancamentoModalFormValues) => {
+    const payload = mapModalFormToApiBody(data);
+    const valorNum = parseFloat(String(payload.valor));
     if (isNaN(valorNum) || valorNum <= 0) {
       toast({ variant: "destructive", title: "Valor inválido", description: "Verifique o campo de valor antes de continuar." });
       return;
     }
-    mutation.mutate({
-      tipo:           data.tipo,
-      vencimento:     data.vencimento,
-      competencia:    data.competencia || null,
-      parceiro_id:    data.parceiro_id ? parseInt(data.parceiro_id) : null,
-      descricao:      data.descricao   || null,
-      valor:          valorNum,
-      status:         data.status,
-      plano_conta_id: data.plano_conta_id ? parseInt(data.plano_conta_id) : null,
-      riscos:         data.riscos ?? [],
-    });
+    mutation.mutate(payload);
   };
 
   const handleToggleTag = (tag: string) => {
-    const current = riscos;
-    setValue("riscos", current.includes(tag) ? current.filter((t) => t !== tag) : [...current, tag]);
+    setValue("riscos", riscos.includes(tag) ? riscos.filter((t) => t !== tag) : [...riscos, tag]);
   };
 
   const handleCreateTag = () => {
@@ -436,9 +461,19 @@ function LancamentoModal({
   const selectedRisk = riskLevels[nivelRisco];
   const [vctoOpen, setVctoOpen] = useState(false);
 
+  // ── UI helper: badge da forma de pagamento ────────────────────────────────
+  const FP_STYLE: Record<string, { color: string; bg: string }> = {
+    PIX:    { color: "#4ADE80", bg: "rgba(74,222,128,0.12)"  },
+    TED:    { color: "#60A5FA", bg: "rgba(96,165,250,0.12)"  },
+    DOC:    { color: "#A78BFA", bg: "rgba(167,139,250,0.12)" },
+    Boleto: { color: "#FBBF24", bg: "rgba(251,191,36,0.12)"  },
+    Cheque: { color: "#94A3B8", bg: "rgba(148,163,184,0.12)" },
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-md p-0 sm:p-4 overflow-hidden">
       <div className="bg-[#121417] border-t sm:border border-white/10 rounded-t-3xl sm:rounded-2xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[95vh] sm:max-h-[90vh] animate-in">
+
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-white/5 bg-[#121417] rounded-t-2xl">
           <div>
@@ -458,6 +493,7 @@ function LancamentoModal({
 
             {/* ── Left: Dados Básicos ── */}
             <div className="space-y-5">
+
               {/* Tipo */}
               <div>
                 <label className={labelCls}>Tipo de Registro *</label>
@@ -513,13 +549,30 @@ function LancamentoModal({
               {/* Parceiro */}
               <div>
                 <label className={labelCls}>Parceiro Comercial</label>
-                <select {...register("parceiro_id")} className={selectCls(!!errors.parceiro_id)}>
-                  <option value="">Selecione quem paga/recebe...</option>
-                  {parceiros.map((p: Parceiro) => (
-                    <option key={p.id} value={p.id}>{p.nome}</option>
-                  ))}
-                </select>
+                <Controller name="parceiro_id" control={control} render={({ field }) => (
+                  <select
+                    value={field.value}
+                    onChange={(e) => {
+                      field.onChange(e.target.value);
+                      setAutoFilled(false);
+                    }}
+                    className={selectCls(!!errors.parceiro_id)}
+                  >
+                    <option value="">Selecione quem paga/recebe...</option>
+                    {parceiros.map((p: Parceiro) => (
+                      <option key={p.id} value={p.id}>{p.nome}</option>
+                    ))}
+                  </select>
+                )} />
                 <FieldError message={errors.parceiro_id?.message} />
+
+                {/* Banner de auto-fill */}
+                {autoFilled && (
+                  <div className="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/10 border border-primary/20 text-primary text-[10px] font-bold animate-in fade-in">
+                    <Sparkles className="w-3 h-3 shrink-0" />
+                    Dados do parceiro preenchidos automaticamente
+                  </div>
+                )}
               </div>
 
               {/* Descrição */}
@@ -529,10 +582,116 @@ function LancamentoModal({
                   placeholder="Ex: Manutenção servidor AWS, Aluguel Setembro..." />
                 <FieldError message={errors.descricao?.message} />
               </div>
+
+              {/* ── Forma de Pagamento ── */}
+              <div>
+                <label className={labelCls}>Forma de Pagamento</label>
+                <Controller name="forma_pagamento" control={control} render={({ field }) => (
+                  <div className="flex gap-2 flex-wrap">
+                    {/* Opção "nenhuma" */}
+                    <button
+                      type="button"
+                      onClick={() => field.onChange("")}
+                      className={cn(
+                        "px-3 py-2 rounded-lg text-[11px] font-bold border transition-all",
+                        !field.value
+                          ? "border-white/30 bg-white/10 text-white"
+                          : "border-white/5 bg-white/5 text-muted-foreground hover:border-white/10"
+                      )}
+                    >
+                      —
+                    </button>
+                    {FORMAS_PAGAMENTO.map((fp) => {
+                      const s = FP_STYLE[fp] ?? { color: "#94A3B8", bg: "rgba(148,163,184,0.12)" };
+                      const active = field.value === fp;
+                      return (
+                        <button
+                          key={fp}
+                          type="button"
+                          onClick={() => field.onChange(fp)}
+                          className={cn(
+                            "px-4 py-2 rounded-lg text-[11px] font-black border transition-all",
+                            active ? "shadow-md" : "border-white/5 bg-white/5 text-muted-foreground hover:border-white/10 hover:text-white"
+                          )}
+                          style={active ? { color: s.color, background: s.bg, borderColor: `${s.color}50` } : {}}
+                        >
+                          {fp}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )} />
+
+                {/* ── Campo condicional: PIX ── */}
+                {formaPagamento === "PIX" && (
+                  <div className="mt-3 p-4 bg-black/30 border border-white/8 rounded-xl space-y-3 animate-in fade-in slide-in-from-top-1">
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <span className="text-[9px] font-black text-green-400/80 uppercase tracking-widest">Chave PIX</span>
+                    </div>
+                    <div>
+                      <input
+                        {...register("chave_pix")}
+                        className={inputCls(!!errors.chave_pix)}
+                        placeholder="CPF, CNPJ, e-mail, telefone ou chave aleatória"
+                      />
+                      <FieldError message={errors.chave_pix?.message} />
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Campo condicional: DOC / TED ── */}
+                {(formaPagamento === "DOC" || formaPagamento === "TED") && (
+                  <div className="mt-3 p-4 bg-black/30 border border-white/8 rounded-xl space-y-3 animate-in fade-in slide-in-from-top-1">
+                    <span className="text-[9px] font-black text-blue-400/80 uppercase tracking-widest block">Dados Bancários</span>
+
+                    <div>
+                      <label className={labelCls}>Nome do Banco</label>
+                      <input
+                        {...register("banco_nome")}
+                        className={inputCls(false)}
+                        placeholder="Ex: Itaú, Bradesco, Banco do Brasil..."
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className={labelCls}>Agência *</label>
+                        <input
+                          {...register("banco_agencia")}
+                          className={inputCls(!!errors.banco_agencia)}
+                          placeholder="0000"
+                        />
+                        <FieldError message={errors.banco_agencia?.message} />
+                      </div>
+                      <div>
+                        <label className={labelCls}>Conta *</label>
+                        <input
+                          {...register("banco_conta")}
+                          className={inputCls(!!errors.banco_conta)}
+                          placeholder="00000-0"
+                        />
+                        <FieldError message={errors.banco_conta?.message} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Informativo: Boleto / Cheque ── */}
+                {(formaPagamento === "Boleto" || formaPagamento === "Cheque") && (
+                  <div className="mt-3 px-4 py-3 bg-black/20 border border-white/5 rounded-xl animate-in fade-in">
+                    <p className="text-[10px] text-muted-foreground">
+                      {formaPagamento === "Boleto"
+                        ? "Pagamento via boleto bancário — nenhum dado adicional necessário."
+                        : "Pagamento via cheque — nenhum dado adicional necessário."}
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* ── Right: Categoria e Valores ── */}
             <div className="space-y-5">
+
               {/* Plano de Contas */}
               <div>
                 <label className={labelCls}>Classificação (Plano de Contas)</label>
@@ -547,26 +706,38 @@ function LancamentoModal({
                 <FieldError message={errors.plano_conta_id?.message} />
               </div>
 
+              {/* Departamento */}
+              <div>
+                <label className={labelCls}>Centro de Custo / Departamento</label>
+                <select {...register("departamento_id")} className={selectCls(!!errors.departamento_id)}>
+                  <option value="">Selecione o departamento...</option>
+                  {departamentos.map((d: Departamento) => (
+                    <option key={d.id} value={d.id}>{d.nome}</option>
+                  ))}
+                </select>
+                <FieldError message={(errors as any).departamento_id?.message} />
+              </div>
+
               {/* Valor + Status */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className={labelCls}>Valor Previsto (R$) *</label>
-                  <Controller name="valor" control={control} render={({ field }) => (
+                  <Controller name="valorBr" control={control} render={({ field }) => (
                     <input type="text" inputMode="decimal" value={field.value}
                       onChange={(e) => field.onChange(formatarValor(e.target.value))}
-                      className={cn(inputCls(!!errors.valor), "font-bold text-lg text-primary")}
+                      className={cn(inputCls(!!errors.valorBr), "font-bold text-lg text-primary")}
                       placeholder="0,00" />
                   )} />
-                  <FieldError message={errors.valor?.message} />
+                  <FieldError message={errors.valorBr?.message} />
                 </div>
                 <div>
                   <label className={labelCls}>Status Atual *</label>
                   <select {...register("status")} className={selectCls(!!errors.status)}>
                     <option value="pendente">Pendente</option>
                     {tipo === "CR" ? (
-                      <option value="pago">Pago (Liquidado)</option>
-                    ) : (
                       <option value="recebido">Recebido (Pago)</option>
+                    ) : (
+                      <option value="pago">Pago (Liquidado)</option>
                     )}
                     <option value="atrasado">Atrasado</option>
                     <option value="cancelado">Cancelado</option>
@@ -585,7 +756,7 @@ function LancamentoModal({
                     </div>
                   </div>
 
-                  <Controller name="nivelRisco" control={control} render={({ field }) => (
+                  <Controller name={"nivelRisco" as any} control={control} render={({ field }) => (
                     <div className="relative group">
                       <select
                         value={String(field.value ?? 0)}
@@ -694,7 +865,7 @@ export default function Lancamentos() {
   const [dateEnd, setDateEnd]                 = useState("");
   const [filtroStatus, setFiltroStatus]       = useState("");
   const [modalOpen, setModalOpen]             = useState(false);
-  const [editItem, setEditItem]               = useState<Lancamento | null>(null);
+  const [editItem, setEditItem]               = useState<LancamentoEditItem | null>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { confirm, ConfirmDialogProps } = useConfirm();
@@ -739,9 +910,7 @@ export default function Lancamentos() {
   });
 
   const handleDelete = async (l: Lancamento) => {
-    const label = l.descricao
-      ? `"${l.descricao.toUpperCase()}"`
-      : `lançamento #${l.id}`;
+    const label = l.descricao ? `"${l.descricao.toUpperCase()}"` : `lançamento #${l.id}`;
     const ok = await confirm({
       title: `Excluir ${label}?`,
       description: "Esta ação não pode ser desfeita. O lançamento será removido permanentemente.",
@@ -753,9 +922,7 @@ export default function Lancamentos() {
   };
 
   const handleEdit = async (l: Lancamento) => {
-    const label = l.descricao
-      ? `"${l.descricao.toUpperCase()}"`
-      : `lançamento #${l.id}`;
+    const label = l.descricao ? `"${l.descricao.toUpperCase()}"` : `lançamento #${l.id}`;
     const ok = await confirm({
       title: `Editar ${label}?`,
       description: "Você será direcionado ao formulário de edição deste lançamento.",
@@ -763,7 +930,7 @@ export default function Lancamentos() {
       cancelLabel: "Cancelar",
       variant: "default",
     });
-    if (ok) setEditItem(l);
+    if (ok) setEditItem(l as unknown as LancamentoEditItem);
   };
 
   const lancamentos = data?.data  ?? [];
@@ -903,7 +1070,6 @@ export default function Lancamentos() {
                 const riscos = l.riscos ?? [];
                 return (
                   <tr key={l.id} className="hover:bg-white/[0.04] transition-colors group">
-                    {/* Tipo */}
                     <td className="px-3 py-2.5 text-center" data-label="Tipo">
                       <span className={cn(
                         "inline-block text-[10px] font-black px-2 py-0.5 rounded",
@@ -914,16 +1080,12 @@ export default function Lancamentos() {
                         {l.tipo}
                       </span>
                     </td>
-
-                    {/* Vencimento */}
                     <td className="px-3 py-2.5" data-label="Vencimento">
                       <div className="flex items-center gap-1.5 text-white/80 font-medium">
                         <Calendar className="w-3 h-3 text-muted-foreground shrink-0" />
                         {formatDate(l.vencimento)}
                       </div>
                     </td>
-
-                    {/* Banco */}
                     <td className="px-3 py-2.5" data-label="Banco">
                       <span title={l.conta_nome || "A identificar"}
                         className="inline-flex items-center justify-center w-9 h-6 rounded text-[10px] font-black leading-none cursor-default"
@@ -931,25 +1093,17 @@ export default function Lancamentos() {
                         {bank.abbr}
                       </span>
                     </td>
-
-                    {/* Parceiro */}
                     <td className="px-3 py-2.5 font-medium text-white max-w-[160px] truncate" title={l.parceiro_nome || ""} data-label="Parceiro">
                       {l.parceiro_nome || <span className="text-white/30 italic">—</span>}
                     </td>
-
-                    {/* Descrição */}
                     <td className="px-3 py-2.5 text-white/60 max-w-[200px] truncate" title={l.descricao || ""} data-label="Descrição">
                       {l.descricao || "—"}
                     </td>
-
-                    {/* Categoria */}
                     <td className="px-3 py-2.5 max-w-[140px] truncate" data-label="Categoria">
                       {l.plano_conta_nome
                         ? <span className="text-[10px] bg-white/5 border border-white/10 rounded-full px-2 py-0.5 text-white/70">{l.plano_conta_nome}</span>
                         : <span className="text-white/25 italic text-[10px]">Sem cat.</span>}
                     </td>
-
-                    {/* ── Riscos ── */}
                     <td className="px-3 py-2.5" data-label="Riscos">
                       {riscos.length === 0 ? (
                         <span className="text-white/20 italic text-[10px]">—</span>
@@ -968,18 +1122,12 @@ export default function Lancamentos() {
                         </div>
                       )}
                     </td>
-
-                    {/* Valor */}
                     <td className={cn("px-3 py-2.5 text-right font-bold", isCR ? "text-teal-300" : "text-white/90")} data-label="Valor">
                       {isCR ? "" : "- "}{formatCurrency(l.valor).replace("R$", "").trim()}
                     </td>
-
-                    {/* Status */}
                     <td className="px-3 py-2.5 text-center" data-label="Status">
                       <StatusBadge status={l.status} />
                     </td>
-
-                    {/* Ações */}
                     <td className="px-3 py-2.5">
                       <div className="flex items-center justify-end gap-2">
                         <button onClick={() => handleEdit(l)}

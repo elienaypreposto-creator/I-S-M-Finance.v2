@@ -1,6 +1,8 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, useRef, useEffect, type ReactNode } from "react";
 import { PageHeader } from "@/components/shared/page-header";
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
+import type { WorkSheet } from "xlsx";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -13,6 +15,9 @@ import {
   ShieldAlert,
   Ban,
   Loader2,
+  FileSpreadsheet,
+  FileText,
+  ChevronDown,
 } from "lucide-react";
 import {
   BarChart,
@@ -54,7 +59,6 @@ const RISK_CONFIG: Record<string, { label: string; icon: ReactNode; cls: string 
 
 const RISK_FILTER_KEYS = Object.keys(RISK_CONFIG);
 
-/** Conversão segura para cêntimos (agregações na UI). */
 function toCents(v: string | number | undefined | null): number {
   if (v === undefined || v === null) return 0;
   if (typeof v === "number") return Math.round(v * 100);
@@ -150,6 +154,416 @@ type PlanoItem = { categoria: string; valor: number; percentual: number };
 
 export type InadimplenciaTab = "vencidos" | "proximos_vencer";
 
+// ─── Export helpers ───────────────────────────────────────────────────────────
+
+function fmtBRL(v: number): string {
+  return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+// Formatos de célula nativos do Excel — mantém o valor como número real
+// (permite soma/ordenação/fórmulas na planilha) em vez de texto formatado.
+const XLSX_CURRENCY_FMT = '"R$" #,##0.00';
+const XLSX_PERCENT_FMT = '0.0"%"';
+
+function applyCellFormat(ws: WorkSheet, col: string, fromRow: number, toRow: number, fmt: string) {
+  for (let r = fromRow; r <= toRow; r++) {
+    const ref = `${col}${r}`;
+    const cell = (ws as any)[ref];
+    if (cell) cell.z = fmt;
+  }
+}
+
+async function exportarXLSX(dashboardData: DashboardExportData) {
+  const XLSX = await import("xlsx");
+
+  const wb = XLSX.utils.book_new();
+
+  // Sheet 1 – KPIs
+  if (dashboardData.kpis) {
+    const kpiRows: (string | number)[][] = [
+      ["Indicador", "Valor"],
+      ["A Receber (Mês Atual)", dashboardData.kpis.contasReceberAberto],
+      ["A Pagar (Mês Atual)", dashboardData.kpis.contasPagarAberto],
+      ["CR Vencidos", dashboardData.kpis.contasReceberAtraso],
+      ["CP Vencidos", dashboardData.kpis.contasPagarAtraso],
+    ];
+    if (dashboardData.projecao) {
+      kpiRows.push(
+        ["Projeção Recebimentos", dashboardData.projecao.projecaoRecebimentos],
+        ["Projeção Pagamentos", dashboardData.projecao.projecaoPagamentos],
+        ["Lucro Líquido Projetado", lucroLiquidoFromProjecao(dashboardData.projecao)],
+      );
+    }
+    const wsKpi = XLSX.utils.aoa_to_sheet(kpiRows);
+    applyCellFormat(wsKpi, "B", 2, kpiRows.length, XLSX_CURRENCY_FMT);
+    wsKpi["!cols"] = [{ wch: 26 }, { wch: 18 }];
+    XLSX.utils.book_append_sheet(wb, wsKpi, "KPIs");
+  }
+
+  // Sheet 2 – Fluxo de Caixa
+  if (dashboardData.fluxoCaixa?.length) {
+    const rows: (string | number)[][] = [
+      ["Mês", "Entradas", "Saídas"],
+      ...dashboardData.fluxoCaixa.map((r) => [r.mes, r.entradas, r.saidas]),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    applyCellFormat(ws, "B", 2, rows.length, XLSX_CURRENCY_FMT);
+    applyCellFormat(ws, "C", 2, rows.length, XLSX_CURRENCY_FMT);
+    ws["!cols"] = [{ wch: 14 }, { wch: 16 }, { wch: 16 }];
+    XLSX.utils.book_append_sheet(wb, ws, "Fluxo de Caixa");
+  }
+
+  // Sheet 3 – Projeção 30 dias
+  if (dashboardData.projecaoDias?.length) {
+    const rows: (string | number)[][] = [
+      ["Data", "Saldo Acumulado", "A Receber", "A Pagar"],
+      ...dashboardData.projecaoDias.map((r) => [r.data, r.saldo, r.receber, r.pagar]),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    applyCellFormat(ws, "B", 2, rows.length, XLSX_CURRENCY_FMT);
+    applyCellFormat(ws, "C", 2, rows.length, XLSX_CURRENCY_FMT);
+    applyCellFormat(ws, "D", 2, rows.length, XLSX_CURRENCY_FMT);
+    ws["!cols"] = [{ wch: 12 }, { wch: 16 }, { wch: 14 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(wb, ws, "Projeção 30 dias");
+  }
+
+  // Sheet 4 – Alertas de risco
+  if (dashboardData.alertasRisco?.length) {
+    const rows: (string | number)[][] = [
+      ["Nome / Fornecedor", "Dias em Atraso", "Valor", "Riscos"],
+      ...dashboardData.alertasRisco.map((a) => [
+        a.nome,
+        a.dias_atraso,
+        a.valor,
+        (a.riscos ?? []).join(", "),
+      ]),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    applyCellFormat(ws, "C", 2, rows.length, XLSX_CURRENCY_FMT);
+    ws["!cols"] = [{ wch: 28 }, { wch: 14 }, { wch: 16 }, { wch: 42 }];
+    XLSX.utils.book_append_sheet(wb, ws, "Alertas de Risco");
+  }
+
+  // Sheet 5 – Receitas por categoria
+  if (dashboardData.entradasPlano?.length) {
+    const rows: (string | number)[][] = [
+      ["Categoria", "Valor", "%"],
+      ...dashboardData.entradasPlano.map((r) => [r.categoria, r.valor, r.percentual]),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    applyCellFormat(ws, "B", 2, rows.length, XLSX_CURRENCY_FMT);
+    applyCellFormat(ws, "C", 2, rows.length, XLSX_PERCENT_FMT);
+    ws["!cols"] = [{ wch: 28 }, { wch: 16 }, { wch: 10 }];
+    XLSX.utils.book_append_sheet(wb, ws, "Receitas por Categoria");
+  }
+
+  // Sheet 6 – Despesas por categoria
+  if (dashboardData.saidasPlano?.length) {
+    const rows: (string | number)[][] = [
+      ["Categoria", "Valor", "%"],
+      ...dashboardData.saidasPlano.map((r) => [r.categoria, r.valor, r.percentual]),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    applyCellFormat(ws, "B", 2, rows.length, XLSX_CURRENCY_FMT);
+    applyCellFormat(ws, "C", 2, rows.length, XLSX_PERCENT_FMT);
+    ws["!cols"] = [{ wch: 28 }, { wch: 16 }, { wch: 10 }];
+    XLSX.utils.book_append_sheet(wb, ws, "Despesas por Categoria");
+  }
+
+  // Guarda de segurança: nunca tentar salvar um workbook sem nenhuma aba
+  // (acontece se a exportação for disparada antes dos dados chegarem).
+  if (wb.SheetNames.length === 0) {
+    throw new Error("Nenhum dado disponível para exportação ainda. Aguarde o carregamento do dashboard.");
+  }
+
+  const date = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(wb, `dashboard-ISM-${date}.xlsx`);
+}
+
+async function exportarPDF(dashboardData: DashboardExportData) {
+  const hasAnyData =
+    dashboardData.kpis ||
+    dashboardData.projecao ||
+    dashboardData.fluxoCaixa?.length ||
+    dashboardData.alertasRisco?.length ||
+    dashboardData.entradasPlano?.length ||
+    dashboardData.saidasPlano?.length;
+
+  if (!hasAnyData) {
+    throw new Error("Nenhum dado disponível para exportação ainda. Aguarde o carregamento do dashboard.");
+  }
+
+  const { jsPDF } = await import("jspdf");
+
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const W = 210;
+  const margin = 14;
+  let y = margin;
+
+  const dataHoje = new Date().toLocaleDateString("pt-BR");
+
+  // ── Cabeçalho ──
+  doc.setFillColor(18, 20, 23);
+  doc.rect(0, 0, W, 28, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(16);
+  doc.setFont("helvetica", "bold");
+  doc.text("ISM Finance · Painel de Controle", margin, 13);
+  doc.setFontSize(8);
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(160, 160, 160);
+  doc.text(`Relatório gerado em ${dataHoje}`, margin, 21);
+  y = 36;
+
+  function secTitle(title: string) {
+    if (y > 260) { doc.addPage(); y = margin; }
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(99, 102, 241); // indigo-500
+    doc.text(title.toUpperCase(), margin, y);
+    y += 1.5;
+    doc.setDrawColor(99, 102, 241);
+    doc.setLineWidth(0.3);
+    doc.line(margin, y, W - margin, y);
+    y += 5;
+    doc.setTextColor(30, 30, 30);
+  }
+
+  function row2(label: string, value: string, highlight = false) {
+    if (y > 272) { doc.addPage(); y = margin; }
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(80, 80, 80);
+    doc.text(label, margin, y);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(highlight ? 79 : 30, highlight ? 70 : 30, highlight ? 229 : 30);
+    doc.text(value, W - margin, y, { align: "right" });
+    y += 6;
+  }
+
+  // ── KPIs ──
+  secTitle("Indicadores Financeiros");
+  if (dashboardData.kpis) {
+    row2("A Receber (Mês Atual)", fmtBRL(dashboardData.kpis.contasReceberAberto));
+    row2("A Pagar (Mês Atual)", fmtBRL(dashboardData.kpis.contasPagarAberto));
+    row2("CR Vencidos (A Receber)", fmtBRL(dashboardData.kpis.contasReceberAtraso));
+    row2("CP Vencidos (A Pagar)", fmtBRL(dashboardData.kpis.contasPagarAtraso));
+  }
+  if (dashboardData.projecao) {
+    y += 2;
+    row2("Projeção Recebimentos", fmtBRL(dashboardData.projecao.projecaoRecebimentos));
+    row2("Projeção Pagamentos", fmtBRL(dashboardData.projecao.projecaoPagamentos));
+    row2("Lucro Líquido Projetado", fmtBRL(lucroLiquidoFromProjecao(dashboardData.projecao)), true);
+  }
+  y += 4;
+
+  // ── Fluxo de Caixa ──
+  if (dashboardData.fluxoCaixa?.length) {
+    secTitle(`Fluxo de Caixa — ${new Date().getFullYear()}`);
+    const colW = (W - margin * 2) / 3;
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(80, 80, 80);
+    doc.text("Mês", margin, y);
+    doc.text("Entradas", margin + colW, y);
+    doc.text("Saídas", margin + colW * 2, y);
+    y += 4;
+    doc.setFont("helvetica", "normal");
+    for (const r of dashboardData.fluxoCaixa) {
+      if (y > 272) { doc.addPage(); y = margin; }
+      doc.setTextColor(40, 40, 40);
+      doc.text(r.mes, margin, y);
+      doc.setTextColor(39, 174, 96);
+      doc.text(fmtBRL(r.entradas), margin + colW, y);
+      doc.setTextColor(231, 76, 60);
+      doc.text(fmtBRL(r.saidas), margin + colW * 2, y);
+      y += 5.5;
+    }
+    y += 3;
+  }
+
+  // ── Alertas de Risco ──
+  if (dashboardData.alertasRisco?.length) {
+    secTitle("Alertas de Inadimplência (CP)");
+    for (const a of dashboardData.alertasRisco.slice(0, 20)) {
+      if (y > 272) { doc.addPage(); y = margin; }
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(30, 30, 30);
+      doc.text(a.nome || "—", margin, y);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(231, 76, 60);
+      doc.text(fmtBRL(a.valor), W - margin, y, { align: "right" });
+      y += 4.5;
+      doc.setFontSize(7.5);
+      doc.setTextColor(120, 120, 120);
+      const riscosTxt = (a.riscos ?? []).join(" · ");
+      if (riscosTxt) {
+        doc.text(`${a.dias_atraso}d de atraso  ·  ${riscosTxt}`, margin, y);
+        y += 5;
+      }
+    }
+    y += 2;
+  }
+
+  // ── Receitas & Despesas por categoria ──
+  const planoPairs: Array<[string, PlanoItem[], string]> = [
+    ["Receitas por Categoria", dashboardData.entradasPlano ?? [], "#27AE60"],
+    ["Despesas por Categoria", dashboardData.saidasPlano ?? [], "#E74C3C"],
+  ];
+  for (const [title, items, hexColor] of planoPairs) {
+    if (!items.length) continue;
+    secTitle(title);
+    for (const item of items) {
+      if (y > 272) { doc.addPage(); y = margin; }
+      doc.setFontSize(8.5);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(60, 60, 60);
+      doc.text(`${item.categoria}`, margin, y);
+      const [r, g, b] = hexToRgb(hexColor);
+      doc.setTextColor(r, g, b);
+      doc.text(`${fmtBRL(item.valor)} (${item.percentual}%)`, W - margin, y, { align: "right" });
+      y += 5.5;
+    }
+    y += 3;
+  }
+
+  // ── Rodapé última página ──
+  const pageCount = doc.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7);
+    doc.setTextColor(160, 160, 160);
+    doc.text(`ISM Finance · ${dataHoje} · Pág. ${i}/${pageCount}`, W / 2, 292, { align: "center" });
+  }
+
+  doc.save(`dashboard-ISM-${new Date().toISOString().slice(0, 10)}.pdf`);
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return [r, g, b];
+}
+
+type DashboardExportData = {
+  kpis?: KPIs;
+  projecao?: ProjecaoMes;
+  projecaoDias?: ProjecaoDia[];
+  fluxoCaixa?: FluxoMes[];
+  alertasRisco?: AlertaRisco[];
+  entradasPlano?: PlanoItem[];
+  saidasPlano?: PlanoItem[];
+};
+
+// ─── Export Dropdown ──────────────────────────────────────────────────────────
+
+function ExportDropdown({
+  getData,
+  isLoading,
+}: {
+  getData: () => DashboardExportData;
+  isLoading: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [exporting, setExporting] = useState<"xlsx" | "pdf" | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  async function handleExport(type: "xlsx" | "pdf") {
+    setOpen(false);
+
+    if (isLoading) {
+      toast.error("Aguarde o carregamento completo do dashboard antes de exportar.");
+      return;
+    }
+
+    setExporting(type);
+    try {
+      const data = getData();
+      if (type === "xlsx") await exportarXLSX(data);
+      else await exportarPDF(data);
+      toast.success(type === "xlsx" ? "Planilha XLSX gerada com sucesso." : "Relatório PDF gerado com sucesso.");
+    } catch (err) {
+      console.error("Erro ao exportar dashboard:", err);
+      toast.error(err instanceof Error ? err.message : "Não foi possível gerar o relatório. Tente novamente.");
+    } finally {
+      setExporting(null);
+    }
+  }
+
+  const disabled = exporting !== null || isLoading;
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        disabled={disabled}
+        title={isLoading ? "Aguardando o carregamento dos dados do dashboard" : undefined}
+        className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all disabled:opacity-60">
+        {exporting ? (
+          <Loader2 className="w-4 h-4 animate-spin" />
+        ) : isLoading ? (
+          <Loader2 className="w-4 h-4 animate-spin" />
+        ) : (
+          <Download className="w-4 h-4" />
+        )}
+        {exporting === "xlsx"
+          ? "Gerando XLSX…"
+          : exporting === "pdf"
+            ? "Gerando PDF…"
+            : isLoading
+              ? "Carregando dados…"
+              : "Exportar Relatório"}
+        {!exporting && !isLoading && <ChevronDown className={cn("w-3.5 h-3.5 transition-transform", open && "rotate-180")} />}
+      </button>
+
+      {open && !disabled && (
+        <div className="absolute right-0 top-full mt-2 w-52 bg-[#121417] border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden">
+          <div className="px-3 py-2 border-b border-white/5">
+            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Formato</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => handleExport("xlsx")}
+            className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-left">
+            <div className="w-8 h-8 rounded-lg bg-emerald-500/15 flex items-center justify-center shrink-0">
+              <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-white">Planilha XLSX</p>
+              <p className="text-[10px] text-muted-foreground">Excel · múltiplas abas</p>
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleExport("pdf")}
+            className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-left border-t border-white/5">
+            <div className="w-8 h-8 rounded-lg bg-red-500/15 flex items-center justify-center shrink-0">
+              <FileText className="w-4 h-4 text-red-400" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-white">Documento PDF</p>
+              <p className="text-[10px] text-muted-foreground">Relatório formatado A4</p>
+            </div>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── ContasPanel ──────────────────────────────────────────────────────────────
+
 function ContasPanel({
   tipo,
   title,
@@ -225,6 +639,8 @@ function ContasPanel({
   );
 }
 
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default function Dashboard() {
   const [anoFluxo] = useState(new Date().getFullYear());
   const [tabInadimplencia, setTabInadimplencia] = useState<InadimplenciaTab>("vencidos");
@@ -274,18 +690,27 @@ export default function Dashboard() {
 
   const lucroLiquidoFmt = useMemo(() => formatCurrency(lucroLiquidoFromProjecao(projecao)), [projecao]);
 
+  // Considerado "carregando" para fins de exportação enquanto os blocos
+  // principais do relatório (KPIs, fluxo de caixa, alertas) ainda não chegaram.
+  const exportIsLoading = kpisLoading || fluxoLoading || alertasLoading;
+
+  // Snapshot de todos os dados em memória para exportação
+  const getExportData = (): DashboardExportData => ({
+    kpis,
+    projecao,
+    projecaoDias,
+    fluxoCaixa,
+    alertasRisco,
+    entradasPlano,
+    saidasPlano,
+  });
+
   return (
     <div className="space-y-5 pb-12">
       <PageHeader
         title="Painel de Controle"
         description="Visão geral financeira e indicadores da ISM Tecnologia"
-        actions={
-          <button
-            type="button"
-            className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all">
-            <Download className="w-4 h-4" /> Exportar Relatório
-          </button>
-        }
+        actions={<ExportDropdown getData={getExportData} isLoading={exportIsLoading} />}
       />
 
       {kpisError && (
