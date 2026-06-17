@@ -57,6 +57,8 @@ const PERMISSOES_ADMIN: string[] = [
     "admin:tokens-api:deletar",
 
     "admin:auditoria:listar",
+
+    "financeiro:transferencias:criar",
 ];
 
 /**
