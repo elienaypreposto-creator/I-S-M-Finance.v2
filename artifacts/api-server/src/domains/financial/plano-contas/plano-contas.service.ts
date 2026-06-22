@@ -25,6 +25,25 @@ export const planoContasService = {
     },
 
     async update(id: number, payload: UpdatePlanoContaBody) {
+        const [[{lancamentos}], [{metas}]] = await Promise.all([
+            db
+                .select({lancamentos: count()})
+                .from(lancamentosTable)
+                .where(eq(lancamentosTable.plano_conta_id, id)),
+            db
+                .select({metas: count()})
+                .from(metasTable)
+                .where(eq(metasTable.plano_conta_id, id)),
+        ]);
+
+        if (Number(lancamentos) > 0 || Number(metas) > 0) {
+            throw new AppError(
+                409,
+                "CONFLICT",
+                "Não é possível editar este cadastro, pois já existem lançamentos ou conciliações registrados utilizando-o.",
+            );
+        }
+
         const [item] = await db
             .update(planoContasTable)
             .set({...payload, updated_at: new Date()})

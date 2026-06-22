@@ -59,6 +59,8 @@ const PERMISSOES_ADMIN: string[] = [
     "admin:auditoria:listar",
 
     "financeiro:transferencias:criar",
+    "admin:transferencias:editar",
+    "admin:transferencias:deletar",
 ];
 
 /**
