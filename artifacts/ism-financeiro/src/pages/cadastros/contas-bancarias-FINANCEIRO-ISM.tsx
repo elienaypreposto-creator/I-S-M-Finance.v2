@@ -22,6 +22,8 @@ import { useToast } from "@/hooks/use-toast";
 import { fetchApiData } from "@/lib/api-config";
 import { contaBancariaFormSchema, type ContaBancariaFormValues } from "@/validations/cadastros.schema";
 import { apiValorToValorBr, brMoneyDisplayToApiString, formatValorBrInput } from "@/validations/lancamentos.schema";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { useConfirm } from "@/hooks/use-confirm";
 
 type ContaBancaria = {
   id: number;
@@ -402,6 +404,7 @@ function NovaContaModal({ onClose, initialData }: ModalProps) {
 export default function ContasBancarias() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { confirm, ConfirmDialogProps } = useConfirm();
   const [showSaldos, setShowSaldos] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingConta, setEditingConta] = useState<ContaBancaria | null>(null);
@@ -440,14 +443,36 @@ export default function ContasBancarias() {
       void queryClient.invalidateQueries({ queryKey: ["contas-bancarias"] });
       toast({ title: "Conta removida", description: "A conta foi deletada com sucesso." });
     },
-    onError: (e: unknown) => {
+    onError: async (e: unknown) => {
+      const message = e instanceof Error ? e.message : String(e);
+      const vinculada = /vincul|em uso|associad|relacionad|lançament/i.test(message);
+      if (vinculada) {
+        await confirm({
+          title: "Não é possível excluir",
+          description: "Contas com lançamentos ou movimentações vinculadas não podem ser removidas.",
+          confirmLabel: "Entendi",
+          variant: "default",
+        });
+        return;
+      }
       toast({
         variant: "destructive",
         title: "Erro",
-        description: e instanceof Error ? e.message : String(e),
+        description: message,
       });
     },
   });
+
+  const handleDelete = async (conta: ContaBancaria) => {
+    const ok = await confirm({
+      title: `Excluir "${conta.nome.toUpperCase()}"?`,
+      description: "Esta ação não pode ser desfeita. A conta bancária será removida permanentemente.",
+      confirmLabel: "Excluir",
+      cancelLabel: "Cancelar",
+      variant: "destructive",
+    });
+    if (ok) deleteMutation.mutate(conta.id);
+  };
 
   const totalSaldoCents = contas
     .filter((c) => c.status === "ativo")
@@ -462,6 +487,8 @@ export default function ContasBancarias() {
 
   return (
     <div className="space-y-6">
+      <ConfirmDialog {...ConfirmDialogProps} />
+
       {(showModal || editingConta) && (
         <NovaContaModal
           key={editingConta?.id ?? "new"}
@@ -566,9 +593,7 @@ export default function ContasBancarias() {
                 </button>
                 <button
                   type="button"
-                  onClick={() =>
-                    confirm("Deseja realmente deletar?") && deleteMutation.mutate(conta.id)
-                  }
+                  onClick={() => handleDelete(conta)}
                   className="p-2 bg-white/5 hover:bg-destructive/20 rounded-lg text-muted-foreground hover:text-destructive transition-colors"
                 >
                   <Trash2 className="w-4 h-4" />

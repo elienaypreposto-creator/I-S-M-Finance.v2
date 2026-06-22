@@ -125,7 +125,6 @@ function Router() {
       <PrivateRoute path="/cadastros/plano-contas" component={PlanoContas} />
       <PrivateRoute path="/cadastros/contas-bancarias" component={ContasBancarias} />
       <PrivateRoute path="/cadastros/metas" component={Metas} />
-      <PrivateRoute path="/cadastros/categorias" component={PlanoContas} />
       <PrivateRoute path="/cadastros/departamentos" component={Departamentos} />
 
       {/* Relatórios */}

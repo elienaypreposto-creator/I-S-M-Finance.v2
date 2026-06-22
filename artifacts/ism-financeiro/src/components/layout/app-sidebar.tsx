@@ -50,7 +50,6 @@ const cadastrosItems = [
   { title: "Contas Bancárias", url: "/cadastros/contas-bancarias", icon: Landmark },
   { title: "Plano de Contas", url: "/cadastros/plano-contas", icon: Briefcase },
   { title: "Metas Financeiras", url: "/cadastros/metas", icon: Target },
-  { title: "Categorias", url: "/cadastros/categorias", icon: Tags },
   { title: "Departamentos", url: "/cadastros/departamentos", icon: Building2 },
 ];
 

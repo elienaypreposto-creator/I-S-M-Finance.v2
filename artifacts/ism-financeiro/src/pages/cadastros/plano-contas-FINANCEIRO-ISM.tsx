@@ -3,6 +3,8 @@ import { PageHeader } from "@/components/shared/page-header";
 import { Plus, Edit, Trash2 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { useConfirm } from "@/hooks/use-confirm";
 
 import { fetchApi, fetchApiData } from "@/lib/api-config";
 
@@ -76,6 +78,7 @@ function FormModal({ isOpen, onClose, onSubmit, initialData }: any) {
 export default function PlanoContas() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { confirm, ConfirmDialogProps } = useConfirm();
 
   //  Estado atômico: open, data e key sempre atualizados juntos no mesmo render
   const [modal, setModal] = useState<{ open: boolean; data: PlanoConta | null; key: number }>({
@@ -113,6 +116,20 @@ export default function PlanoContas() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['plano-contas'] });
       toast({ title: 'Sucesso', description: 'Categoria removida.' });
+    },
+    onError: async (error: Error) => {
+      // Vínculo com lançamentos/subcategorias impede a exclusão no backend.
+      // Em vez do toast de erro genérico, mostramos um alerta no mesmo
+      // padrão visual do ConfirmDialog (sem opção de cancelar).
+      const vinculada = /vincul|em uso|associad|relacionad/i.test(error.message);
+      await confirm({
+        title: vinculada ? 'Não é possível excluir' : 'Erro ao excluir',
+        description: vinculada
+          ? 'Categorias com lançamentos vinculados não podem ser removidas.'
+          : error.message,
+        confirmLabel: 'Entendi',
+        variant: vinculada ? 'default' : 'destructive',
+      });
     }
   });
 
@@ -132,10 +149,18 @@ export default function PlanoContas() {
     }));
   };
 
-  const handleDelete = (id: number) => {
-    if (confirm('Deseja realmente excluir esta categoria? Ela não estará mais disponível para novos lançamentos.')) {
-      deleteMutation.mutate(id);
-    }
+  const handleDelete = async (cat: PlanoConta) => {
+    const label = cat.subcategoria
+      ? `"${cat.subcategoria.toUpperCase()}"`
+      : `"${cat.categoria.toUpperCase()}"`;
+    const ok = await confirm({
+      title: `Excluir ${label}?`,
+      description: 'Esta ação não pode ser desfeita. A categoria será removida permanentemente.',
+      confirmLabel: 'Excluir',
+      cancelLabel: 'Cancelar',
+      variant: 'destructive',
+    });
+    if (ok) deleteMutation.mutate(cat.id);
   };
 
   const handleSubmit = (data: any) => {
@@ -185,7 +210,7 @@ export default function PlanoContas() {
                        <button onClick={() => handleEdit(cat)} className="text-muted-foreground hover:text-white p-1">
                           <Edit className="w-4 h-4" />
                        </button>
-                       <button onClick={() => handleDelete(cat.id)} className="text-muted-foreground hover:text-rose-400 p-1">
+                       <button onClick={() => handleDelete(cat)} className="text-muted-foreground hover:text-rose-400 p-1">
                           <Trash2 className="w-4 h-4" />
                        </button>
                      </div>
@@ -205,6 +230,8 @@ export default function PlanoContas() {
 
   return (
     <div className="space-y-6">
+      <ConfirmDialog {...ConfirmDialogProps} />
+
       <PageHeader 
         title="Plano de Contas" 
         description="Estrutura hierárquica de categorias financeiras para receitas, custos e despesas"
