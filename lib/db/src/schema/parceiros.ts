@@ -1,4 +1,4 @@
-import {pgTable, serial, text, boolean, integer, jsonb, timestamp, uniqueIndex} from "drizzle-orm/pg-core";
+import {pgTable, serial, text, varchar, boolean, integer, jsonb, timestamp, uniqueIndex} from "drizzle-orm/pg-core";
 import {createInsertSchema} from "drizzle-zod";
 import {z} from "zod/v4";
 import {departamentosTable, centrosCustosTable} from "./departamentos";
@@ -17,14 +17,16 @@ export const parceirosTable = pgTable("parceiros", {
     centro_custo_id: integer("centro_custo_id").references(() => centrosCustosTable.id),
     ativo: boolean("ativo").default(true).notNull(),
     bloqueado: boolean("bloqueado").default(false).notNull(),
+    // Lifecycle status: "ativo" | "inativo"
+    status: varchar("status", {length: 20}).default("ativo").notNull(),
     chaves_pix: jsonb("chaves_pix").$type<Array<{ tipo: string; chave: string }>>().default([]).notNull(),
-    dados_bancarios: jsonb("dados_bancarios").$type<Array<{
-        banco: string;
-        agencia: string;
-        digito_agencia?: string;
-        conta: string;
-        digito_conta?: string
-    }>>().default([]).notNull(),
+    dados_bancarios: jsonb("dados_bancarios")
+        .$type<Array<
+            | { tipo: "PIX"; tipo_chave: "cpf" | "cnpj" | "email" | "telefone" | "aleatoria"; chave: string }
+            | { tipo: "TED"; banco_codigo: string; banco_nome: string; agencia: string; conta: string }
+        >>()
+        .default([])
+        .notNull(),
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [

@@ -15,6 +15,13 @@
       "when": 1779886428894,
       "tag": "0001_overconfident_green_goblin",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782224516052,
+      "tag": "0002_opposite_hedge_knight",
+      "breakpoints": true
     }
   ]
 }

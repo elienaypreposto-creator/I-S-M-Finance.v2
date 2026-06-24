@@ -53,17 +53,24 @@ export const parceirosService = {
     },
 
     async update(id: number, payload: UpdateParceiroBody) {
-        const [{total}] = await db
-            .select({total: count()})
-            .from(lancamentosTable)
-            .where(eq(lancamentosTable.parceiro_id, id));
+        // Os campos de lifecycle (status, ativo, bloqueado) são sempre permitidos - inativação
+        // Bloqueadas somente edições que afetam dados comerciais (nome, CPF, dados bancários, etc.)
+        const LIFECYCLE_KEYS = new Set(["status", "ativo", "bloqueado"]);
+        const isLifecycleOnly = Object.keys(payload).every((k) => LIFECYCLE_KEYS.has(k));
 
-        if (Number(total) > 0) {
-            throw new AppError(
-                409,
-                "CONFLICT",
-                "Não é possível editar este cadastro, pois já existem lançamentos ou conciliações registrados utilizando-o.",
-            );
+        if (!isLifecycleOnly) {
+            const [{total}] = await db
+                .select({total: count()})
+                .from(lancamentosTable)
+                .where(eq(lancamentosTable.parceiro_id, id));
+
+            if (Number(total) > 0) {
+                throw new AppError(
+                    409,
+                    "CONFLICT",
+                    "Não é possível editar este cadastro, pois já existem lançamentos ou conciliações registrados utilizando-o.",
+                );
+            }
         }
 
         const [item] = await db
