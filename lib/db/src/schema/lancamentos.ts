@@ -2,6 +2,7 @@ import {
     pgTable,
     serial,
     text,
+    varchar,
     numeric,
     date,
     integer,
@@ -44,6 +45,12 @@ export const lancamentosTable = pgTable("lancamentos", {
     multa: numeric("multa", {precision: 15, scale: 2}).default("0"),
     desconto: numeric("desconto", {precision: 15, scale: 2}).default("0"),
     acrescimo: numeric("acrescimo", {precision: 15, scale: 2}).default("0"),
+    // Forma de pagamento
+    forma_pagamento: varchar("forma_pagamento", {length: 20}),
+    dados_pagamento: jsonb("dados_pagamento").$type<{
+        tipo: "PIX" | "TED" | "Boleto";
+        [key: string]: unknown;
+    } | null>(),
     // Resíduo parcial
     is_residuo_parcial: boolean("is_residuo_parcial").default(false).notNull(),
     lancamento_origem_id: integer("lancamento_origem_id"),
