@@ -27,30 +27,39 @@ import {
   ChevronRight,
   CalendarDays,
   Target,
+  Search,
+  Building2,
+  CreditCard,
 } from "lucide-react";
 
-type PlanoConta = { id: number; tipo: string; categoria: string; subcategoria: string | null };
-type Parceiro = { id: number; nome: string; tipo_pessoa: string };
+// ── Tipos auxiliares ──────────────────────────────────────────────────────────
+
+type PlanoConta   = { id: number; tipo: string; categoria: string; subcategoria: string | null };
+type Parceiro     = { id: number; nome: string; tipo_pessoa: string };
+type Departamento = { id: number; nome: string };
+type CentroCusto  = { id: number; nome: string; departamento_id: number | null };
+
+// ── Riscos ────────────────────────────────────────────────────────────────────
 
 const BASE_RISK_LEVELS: Record<number, { label: string; color: string; tags: string[] }> = {
-  1: { label: "Nível 1 - Alerta", color: "text-yellow-400", tags: ["Multas e Juros", "Perda de Desconto", "Restrição de Crédito"] },
+  1: { label: "Nível 1 - Alerta",           color: "text-yellow-400", tags: ["Multas e Juros", "Perda de Desconto", "Restrição de Crédito"] },
   2: { label: "Nível 2 - Risco Operacional", color: "text-orange-500", tags: ["Corte de Serviço", "Suspensão de Fornecimento", "Negativação", "Perda de Benefício Fiscal"] },
-  3: { label: "Nível 3 - Risco Jurídico", color: "text-red-500", tags: ["Protesto", "Ação Judicial", "Dívida Ativa", "Quebra de Contrato"] },
-  4: { label: "Nível 4 - Risco Crítico", color: "text-purple-400", tags: ["Bloqueio de Contas (Sisbajud)", "Penhora de Bens", "Pedido de Falência", "Impedimento de Certidão"] },
+  3: { label: "Nível 3 - Risco Jurídico",    color: "text-red-500",    tags: ["Protesto", "Ação Judicial", "Dívida Ativa", "Quebra de Contrato"] },
+  4: { label: "Nível 4 - Risco Crítico",     color: "text-purple-400", tags: ["Bloqueio de Contas (Sisbajud)", "Penhora de Bens", "Pedido de Falência", "Impedimento de Certidão"] },
 };
+
+// ── Competência picker ────────────────────────────────────────────────────────
 
 function CompetenciaPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const [open, setOpen] = useState(false);
   const months = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
-  const [currentYear, setCurrentYear] = useState(value && value.includes("/") ? parseInt(value.split("/")[1]) : new Date().getFullYear());
-  const selectedMonthIdx = value && value.includes("/") ? parseInt(value.split("/")[0]) - 1 : -1;
+  const [currentYear, setCurrentYear] = useState(value?.includes("/") ? parseInt(value.split("/")[1]) : new Date().getFullYear());
+  const selectedMonthIdx = value?.includes("/") ? parseInt(value.split("/")[0]) - 1 : -1;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button
-          type="button"
-          className="w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white flex items-center justify-between hover:border-white/20 transition-all">
+        <button type="button" className="w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white flex items-center justify-between hover:border-white/20 transition-all">
           {value || "Selecione..."}
           <CalendarDays className="w-4 h-4 text-muted-foreground" />
         </button>
@@ -67,16 +76,10 @@ function CompetenciaPicker({ value, onChange }: { value: string; onChange: (v: s
         </div>
         <div className="grid grid-cols-3 gap-2">
           {months.map((m, i) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => {
-                const monthStr = (i + 1).toString().padStart(2, "0");
-                onChange(`${monthStr}/${currentYear}`);
-                setOpen(false);
-              }}
+            <button key={m} type="button"
+              onClick={() => { onChange(`${String(i + 1).padStart(2, "0")}/${currentYear}`); setOpen(false); }}
               className={`px-3 py-2.5 rounded-lg text-xs font-medium transition-all ${
-                selectedMonthIdx === i && value.includes(currentYear.toString())
+                selectedMonthIdx === i && value.includes(String(currentYear))
                   ? "bg-primary text-white shadow-lg shadow-primary/30"
                   : "text-white/60 hover:bg-white/5 hover:text-white"
               }`}>
@@ -85,10 +88,7 @@ function CompetenciaPicker({ value, onChange }: { value: string; onChange: (v: s
           ))}
         </div>
         <div className="flex justify-end mt-4 pt-3 border-t border-white/5">
-          <button
-            type="button"
-            onClick={() => setOpen(false)}
-            className="px-4 py-1.5 bg-success hover:bg-success/90 text-white rounded-lg text-xs font-bold transition-all shadow-md shadow-success/20">
+          <button type="button" onClick={() => setOpen(false)} className="px-4 py-1.5 bg-success hover:bg-success/90 text-white rounded-lg text-xs font-bold transition-all shadow-md shadow-success/20">
             Confirmar
           </button>
         </div>
@@ -97,11 +97,118 @@ function CompetenciaPicker({ value, onChange }: { value: string; onChange: (v: s
   );
 }
 
+// ── Combobox de parceiro com busca ────────────────────────────────────────────
+
+function ParceiroCombobox({
+  value,
+  onChange,
+  parceiros,
+  search,
+  onSearchChange,
+  isLoading = false,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  parceiros: Parceiro[];
+  search: string;
+  onSearchChange: (s: string) => void;
+  isLoading?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+
+  // Quando o popover fecha, limpa a busca para não manter filtro residual
+  const handleOpenChange = (o: boolean) => {
+    setOpen(o);
+    if (!o) onSearchChange("");
+  };
+
+  // Mostra o parceiro selecionado se ele estiver nos resultados atuais
+  const selected = parceiros.find((p) => String(p.id) === value);
+
+  return (
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-left flex items-center justify-between hover:border-white/20 transition-all"
+        >
+          {selected ? (
+            <span className="text-white flex items-center gap-2">
+              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${selected.tipo_pessoa === "PJ" ? "bg-primary/20 text-primary" : "bg-teal-500/20 text-teal-400"}`}>
+                {selected.tipo_pessoa}
+              </span>
+              {selected.nome}
+            </span>
+          ) : (
+            <span className="text-muted-foreground/40">Selecione o cliente/fornecedor...</span>
+          )}
+          <Search className="w-4 h-4 text-muted-foreground shrink-0 ml-2" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        sideOffset={4}
+        className="p-0 bg-[#1a1c23] border border-white/10 rounded-xl shadow-2xl"
+        style={{ width: "var(--radix-popover-trigger-width)" }}
+      >
+        <div className="p-3 border-b border-white/5">
+          <div className="flex items-center gap-2 bg-black/30 rounded-lg px-3 py-2">
+            <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+            <input
+              autoFocus
+              value={search}
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder="Buscar por nome..."
+              className="bg-transparent text-sm text-white outline-none w-full placeholder:text-muted-foreground/40"
+            />
+          </div>
+        </div>
+        <div className="max-h-56 overflow-y-auto">
+          <button
+            type="button"
+            onClick={() => { onChange(""); setOpen(false); }}
+            className="w-full text-left px-4 py-2.5 text-xs text-muted-foreground hover:bg-white/5 transition-colors italic"
+          >
+            Nenhum (sem parceiro)
+          </button>
+          {isLoading ? (
+            <p className="px-4 py-3 text-xs text-muted-foreground text-center animate-pulse">Buscando...</p>
+          ) : parceiros.length === 0 ? (
+            <p className="px-4 py-3 text-xs text-muted-foreground text-center">
+              {search ? `Nenhum resultado para "${search}"` : "Nenhum parceiro encontrado"}
+            </p>
+          ) : (
+            parceiros.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => { onChange(String(p.id)); setOpen(false); }}
+                className={`w-full text-left px-4 py-2.5 text-sm transition-colors hover:bg-white/5 flex items-center gap-2 ${
+                  String(p.id) === value ? "text-primary bg-primary/10" : "text-white"
+                }`}
+              >
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${p.tipo_pessoa === "PJ" ? "bg-primary/20 text-primary" : "bg-teal-500/20 text-teal-400"}`}>
+                  {p.tipo_pessoa}
+                </span>
+                <span className="truncate">{p.nome}</span>
+              </button>
+            ))
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// ── Props ─────────────────────────────────────────────────────────────────────
+
 type LancamentoModalProps = {
   onClose: () => void;
   onSaved: () => void;
   editItem?: LancamentoEditItem | null;
 };
+
+// ── Modal principal ───────────────────────────────────────────────────────────
 
 export function LancamentoModal({ onClose, onSaved, editItem }: LancamentoModalProps) {
   const { toast } = useToast();
@@ -110,6 +217,8 @@ export function LancamentoModal({ onClose, onSaved, editItem }: LancamentoModalP
   const [showAddTag, setShowAddTag] = useState(false);
   const [newTag, setNewTag] = useState({ name: "", level: 1 });
   const [nivelRisco, setNivelRisco] = useState(0);
+  // Controla o termo de busca enviado ao servidor para o combobox de parceiro
+  const [searchParceiro, setSearchParceiro] = useState("");
 
   const form = useForm<LancamentoModalFormValues>({
     resolver: zodResolver(lancamentoModalFormSchema),
@@ -126,10 +235,15 @@ export function LancamentoModal({ onClose, onSaved, editItem }: LancamentoModalP
     formState: { errors },
   } = form;
 
-  const vencimento = watch("vencimento");
-  const tipo = watch("tipo");
-  const status = watch("status");
-  const riscos = watch("riscos");
+  const vencimento      = watch("vencimento");
+  const tipo            = watch("tipo");
+  const status          = watch("status");
+  const riscos          = watch("riscos");
+  const forma_pagamento = watch("forma_pagamento");
+  const departamento_id = watch("departamento_id");
+  const isCP            = tipo === "CP";
+
+  // ── Reset ao abrir/mudar item ─────────────────────────────────────────────
 
   useEffect(() => {
     reset(getLancamentoModalDefaultValues(editItem));
@@ -138,34 +252,37 @@ export function LancamentoModal({ onClose, onSaved, editItem }: LancamentoModalP
     setShowAddTag(false);
   }, [editItem, reset]);
 
+  // ── Sincroniza status ao mudar tipo ──────────────────────────────────────
+
   useEffect(() => {
-    if (tipo === "CR" && status === "pago") {
-      setValue("status", "recebido", { shouldValidate: true });
-    }
-    if (tipo === "CP" && status === "recebido") {
-      setValue("status", "pago", { shouldValidate: true });
-    }
+    if (tipo === "CR" && status === "pago")    setValue("status", "recebido", { shouldValidate: true });
+    if (tipo === "CP" && status === "recebido") setValue("status", "pago",     { shouldValidate: true });
   }, [tipo, status, setValue]);
+
+  // ── Sugestão automática de nível de risco ─────────────────────────────────
 
   useEffect(() => {
     if (vencimento && nivelRisco === 0) {
       const vcto = new Date(vencimento + "T00:00:00");
-      const hoje = new Date();
-      const diffDays = Math.floor((hoje.getTime() - vcto.getTime()) / (1000 * 60 * 60 * 24));
-
+      const diffDays = Math.floor((Date.now() - vcto.getTime()) / 86_400_000);
       let level = 0;
-      if (diffDays >= 1 && diffDays <= 15) level = 1;
+      if (diffDays >= 1  && diffDays <= 15) level = 1;
       else if (diffDays >= 16 && diffDays <= 30) level = 2;
       else if (diffDays >= 31 && diffDays <= 60) level = 3;
       else if (diffDays > 60) level = 4;
-
       setNivelRisco(level);
     }
   }, [vencimento, nivelRisco]);
 
-  const { data: parceiros = [] } = useQuery<Parceiro[]>({
-    queryKey: ["parceiros-modal"],
-    queryFn: () => fetchApiData<Parceiro[]>("/parceiros?page=1&limit=500"),
+  // ── Queries ───────────────────────────────────────────────────────────────
+
+  const { data: parceiros = [], isFetching: isFetchingParceiros } = useQuery<Parceiro[]>({
+    queryKey: ["parceiros-modal", searchParceiro],
+    queryFn: () => {
+      const qs = new URLSearchParams({ page: "1", limit: "20" });
+      if (searchParceiro.trim()) qs.set("search", searchParceiro.trim());
+      return fetchApiData<Parceiro[]>(`/parceiros?${qs.toString()}`);
+    },
   });
 
   const { data: planoContas = [] } = useQuery<PlanoConta[]>({
@@ -173,18 +290,28 @@ export function LancamentoModal({ onClose, onSaved, editItem }: LancamentoModalP
     queryFn: () => fetchApiData<PlanoConta[]>("/plano-contas"),
   });
 
+  const { data: departamentos = [] } = useQuery<Departamento[]>({
+    queryKey: ["departamentos-modal"],
+    queryFn: () => fetchApiData<Departamento[]>("/departamentos"),
+  });
+
+  const { data: centrosCusto = [] } = useQuery<CentroCusto[]>({
+    queryKey: ["centros-custo-modal"],
+    queryFn: () => fetchApiData<CentroCusto[]>("/centros-custos"),
+    retry: false,
+  });
+
+  // Filtra centros de custo pelo departamento selecionado
+  const centrosCustoFiltrado = departamento_id
+    ? centrosCusto.filter((cc) => cc.departamento_id === Number(departamento_id))
+    : centrosCusto;
+
+  // ── Mutation ──────────────────────────────────────────────────────────────
+
   const mutation = useMutation({
     mutationFn: (body: LancamentoApiBody) => {
-      if (editItem) {
-        return fetchApiData(`/lancamentos/${editItem.id}`, {
-          method: "PUT",
-          body: JSON.stringify(body),
-        });
-      }
-      return fetchApiData(`/lancamentos`, {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
+      if (editItem) return fetchApiData(`/lancamentos/${editItem.id}`, { method: "PUT", body: JSON.stringify(body) });
+      return fetchApiData(`/lancamentos`, { method: "POST", body: JSON.stringify(body) });
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["lancamentos"] });
@@ -192,14 +319,13 @@ export function LancamentoModal({ onClose, onSaved, editItem }: LancamentoModalP
       onSaved();
     },
     onError: (e: unknown) => {
-      const msg = e instanceof Error ? e.message : "Não foi possível salvar o lançamento.";
-      toast({ variant: "destructive", title: "Erro", description: msg });
+      toast({ variant: "destructive", title: "Erro", description: e instanceof Error ? e.message : "Não foi possível salvar o lançamento." });
     },
   });
 
-  const onSubmit = (values: LancamentoModalFormValues) => {
-    mutation.mutate(mapModalFormToApiBody(values));
-  };
+  const onSubmit = (values: LancamentoModalFormValues) => mutation.mutate(mapModalFormToApiBody(values));
+
+  // ── Handlers de risco ─────────────────────────────────────────────────────
 
   const handleToggleTag = (tag: string) => {
     const exists = riscos.includes(tag);
@@ -217,19 +343,40 @@ export function LancamentoModal({ onClose, onSaved, editItem }: LancamentoModalP
     toast({ title: "Tag criada", description: `Tag adicionada ao Nível ${newTag.level}.` });
   };
 
+  /** Limpa todos os campos de pagamento e seta a nova forma. */
+  function handleFormaPagamento(fp: string) {
+    setValue("forma_pagamento",      fp as LancamentoModalFormValues["forma_pagamento"], { shouldDirty: true });
+    setValue("tipo_chave_pix",       "",  { shouldDirty: true });
+    setValue("chave_pix",            "",  { shouldDirty: true });
+    setValue("banco_codigo",         "",  { shouldDirty: true });
+    setValue("banco_nome",           "",  { shouldDirty: true });
+    setValue("banco_agencia",        "",  { shouldDirty: true });
+    setValue("banco_conta",          "",  { shouldDirty: true });
+    setValue("boleto_linha_digitavel", "", { shouldDirty: true });
+    setValue("boleto_codigo_barras",  "", { shouldDirty: true });
+  }
+
+  // ── Classes de estilo reutilizadas ────────────────────────────────────────
+
   const inputCls =
     "w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-primary/50 transition-all placeholder:text-muted-foreground/30";
-  const labelCls = "text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5 block";
+  const innerInputCls =
+    "w-full bg-[#141720] border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 transition-all placeholder:text-muted-foreground/30";
+  const labelCls  = "text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5 block";
+  const innerLabelCls = "text-[10px] text-muted-foreground uppercase tracking-widest mb-1 block";
   const selectCls =
-    "w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-primary/50 transition-all appearance-none cursor-pointer";
+    "w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-primary/50 transition-all appearance-none cursor-pointer [&>option]:bg-[#1a1c23]";
+  const innerSelectCls =
+    "w-full bg-[#141720] border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 transition-all appearance-none cursor-pointer [&>option]:bg-[#141720]";
   const errorCls = "text-[10px] text-destructive mt-1 font-medium";
 
   const selectedRisk = riskLevels[nivelRisco];
-  const isCP = tipo === "CP";
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 backdrop-blur-md p-4 pt-16 overflow-hidden">
       <div className="bg-[#121417] border border-white/10 rounded-2xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[90vh]">
+
+        {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-white/5 bg-[#121417] rounded-t-2xl">
           <div>
             <h2 className="text-lg font-black text-white uppercase tracking-tighter">
@@ -237,28 +384,46 @@ export function LancamentoModal({ onClose, onSaved, editItem }: LancamentoModalP
             </h2>
             <p className="text-xs text-muted-foreground">Preencha os dados financeiros detalhados</p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 hover:bg-white/5 rounded-xl text-muted-foreground hover:text-white transition-all group">
+          <button type="button" onClick={onClose} className="p-2 hover:bg-white/5 rounded-xl text-muted-foreground hover:text-white transition-all group">
             <X className="w-5 h-5 group-hover:rotate-90 transition-transform" />
           </button>
         </div>
 
         <form onSubmit={handleSubmit(onSubmit)} className="p-6 space-y-6 overflow-y-auto">
+
+          {/* ── Grid 2 colunas ─────────────────────────────────────────────── */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+
+            {/* ── Coluna esquerda ─────────────────────────────────────────── */}
             <div className="space-y-5">
+
+              {/* Tipo */}
               <div>
                 <label className={labelCls}>Tipo de Registro *</label>
                 <div className="flex gap-3">
                   {[
-                    { v: "CP" as const, label: "Contas a Pagar", color: "border-orange-500 bg-orange-500/10 text-orange-400" },
-                    { v: "CR" as const, label: "Contas a Receber", color: "border-teal-500 bg-teal-500/10 text-teal-400" },
+                    { v: "CP" as const, label: "Contas a Pagar",   color: "border-orange-500 bg-orange-500/10 text-orange-400" },
+                    { v: "CR" as const, label: "Contas a Receber",  color: "border-teal-500 bg-teal-500/10 text-teal-400" },
                   ].map(({ v, label, color }) => (
                     <button
-                      type="button"
                       key={v}
-                      onClick={() => setValue("tipo", v, { shouldValidate: true, shouldDirty: true })}
+                      type="button"
+                      onClick={() => {
+                        setValue("tipo", v, { shouldValidate: true, shouldDirty: true });
+                        // Limpeza síncrona: ao selecionar CR, zera todos os
+                        // campos de pagamento para não enviar lixo à API.
+                        if (v === "CR") {
+                          setValue("forma_pagamento",       "");
+                          setValue("tipo_chave_pix",        "");
+                          setValue("chave_pix",             "");
+                          setValue("banco_codigo",          "");
+                          setValue("banco_nome",            "");
+                          setValue("banco_agencia",         "");
+                          setValue("banco_conta",           "");
+                          setValue("boleto_linha_digitavel", "");
+                          setValue("boleto_codigo_barras",  "");
+                        }
+                      }}
                       className={`flex-1 py-3 rounded-xl text-sm font-bold border transition-all ${
                         tipo === v ? `${color} shadow-lg` : "border-white/5 bg-white/5 text-muted-foreground hover:border-white/10"
                       }`}>
@@ -269,70 +434,84 @@ export function LancamentoModal({ onClose, onSaved, editItem }: LancamentoModalP
                 {errors.tipo && <p className={errorCls}>{errors.tipo.message}</p>}
               </div>
 
+              {/* Vencimento + Competência */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className={labelCls}>Data de Vencimento *</label>
-                  <Controller
-                    name="vencimento"
-                    control={control}
-                    render={({ field }) => (
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <button
-                            type="button"
-                            className={cn(
-                              inputCls,
-                              "flex items-center justify-between text-left font-normal",
-                              !field.value && "text-muted-foreground/30",
-                            )}>
-                            {field.value ? formatBtn(parseISO(field.value), "dd/MM/yyyy") : "Selecione uma data..."}
-                            <Calendar className="w-4 h-4 text-muted-foreground" />
-                          </button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0 border border-white/10" align="start">
-                          <CalendarPicker
-                            mode="single"
-                            selected={field.value ? parseISO(field.value) : undefined}
-                            onSelect={(date) => field.onChange(date ? formatBtn(date, "yyyy-MM-dd") : "")}
-                            locale={ptBR}
-                            initialFocus
-                          />
-                        </PopoverContent>
-                      </Popover>
-                    )}
-                  />
+                  <Controller name="vencimento" control={control} render={({ field }) => (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button type="button" className={cn(inputCls, "flex items-center justify-between text-left", !field.value && "text-muted-foreground/30")}>
+                          {field.value ? formatBtn(parseISO(field.value), "dd/MM/yyyy") : "Selecione uma data..."}
+                          <Calendar className="w-4 h-4 text-muted-foreground" />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0 border border-white/10" align="start">
+                        <CalendarPicker
+                          mode="single"
+                          selected={field.value ? parseISO(field.value) : undefined}
+                          onSelect={(date) => field.onChange(date ? formatBtn(date, "yyyy-MM-dd") : "")}
+                          locale={ptBR}
+                          initialFocus
+                        />
+                      </PopoverContent>
+                    </Popover>
+                  )} />
                   {errors.vencimento && <p className={errorCls}>{errors.vencimento.message}</p>}
                 </div>
-                <div className="relative">
+                <div>
                   <label className={labelCls}>Mês de Competência</label>
-                  <Controller
-                    name="competencia"
-                    control={control}
-                    render={({ field }) => <CompetenciaPicker value={field.value || ""} onChange={field.onChange} />}
-                  />
+                  <Controller name="competencia" control={control} render={({ field }) => (
+                    <CompetenciaPicker value={field.value || ""} onChange={field.onChange} />
+                  )} />
                 </div>
               </div>
 
+              {/* Cliente/Fornecedor — Combobox com busca */}
               <div>
-                <label className={labelCls}>Parceiro Comercial</label>
-                <select {...register("parceiro_id")} className={selectCls}>
-                  <option value="">Selecione quem paga/recebe...</option>
-                  {parceiros.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.nome}
-                    </option>
-                  ))}
-                </select>
+                <label className={labelCls}>Cliente / Fornecedor</label>
+                <Controller name="parceiro_id" control={control} render={({ field }) => (
+                  <ParceiroCombobox
+                    value={field.value}
+                    onChange={field.onChange}
+                    parceiros={parceiros}
+                    search={searchParceiro}
+                    onSearchChange={setSearchParceiro}
+                    isLoading={isFetchingParceiros}
+                  />
+                )} />
                 {errors.parceiro_id && <p className={errorCls}>{errors.parceiro_id.message}</p>}
               </div>
 
+              {/* Descrição */}
               <div>
                 <label className={labelCls}>Título / Descrição</label>
                 <input type="text" {...register("descricao")} className={inputCls} placeholder="Ex: Manutenção servidor AWS, Aluguel Setembro..." />
               </div>
+
+              {/* Departamento */}
+              <div>
+                <label className={labelCls}>
+                  <Building2 className="w-3 h-3 inline mr-1" /> Departamento
+                </label>
+                <select {...register("departamento_id")} className={selectCls}
+                  onChange={(e) => {
+                    setValue("departamento_id", e.target.value, { shouldDirty: true });
+                    setValue("centro_custo_id", "", { shouldDirty: true });
+                  }}>
+                  <option value="">Selecione o departamento...</option>
+                  {departamentos.map((d) => (
+                    <option key={d.id} value={d.id}>{d.nome}</option>
+                  ))}
+                </select>
+                {errors.departamento_id && <p className={errorCls}>{errors.departamento_id.message}</p>}
+              </div>
             </div>
 
+            {/* ── Coluna direita ──────────────────────────────────────────── */}
             <div className="space-y-5">
+
+              {/* Classificação (Plano de Contas) */}
               <div>
                 <label className={labelCls}>Classificação (Plano de Contas)</label>
                 <select {...register("plano_conta_id")} className={selectCls}>
@@ -346,38 +525,34 @@ export function LancamentoModal({ onClose, onSaved, editItem }: LancamentoModalP
                 {errors.plano_conta_id && <p className={errorCls}>{errors.plano_conta_id.message}</p>}
               </div>
 
+              {/* Valor + Status */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className={labelCls}>Valor Previsto (R$)</label>
-                  <Controller
-                    name="valorBr"
-                    control={control}
-                    render={({ field }) => (
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        autoComplete="off"
-                        value={field.value}
-                        onChange={(e) => field.onChange(formatValorBrInput(e.target.value))}
-                        onBlur={field.onBlur}
-                        name={field.name}
-                        ref={field.ref}
-                        className={`${inputCls} font-bold text-lg text-primary`}
-                        placeholder="0,00"
-                      />
-                    )}
-                  />
+                  <Controller name="valorBr" control={control} render={({ field }) => (
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      value={field.value}
+                      onChange={(e) => field.onChange(formatValorBrInput(e.target.value))}
+                      onBlur={field.onBlur}
+                      name={field.name}
+                      ref={field.ref}
+                      className={`${inputCls} font-bold text-lg text-primary`}
+                      placeholder="0,00"
+                    />
+                  )} />
                   {errors.valorBr && <p className={errorCls}>{errors.valorBr.message}</p>}
                 </div>
                 <div>
                   <label className={labelCls}>Status Atual</label>
                   <select {...register("status")} className={selectCls}>
                     <option value="pendente">Pendente</option>
-                    {tipo === "CR" ? (
-                      <option value="recebido">Recebido (Liquidado)</option>
-                    ) : (
-                      <option value="pago">Pago (Liquidado)</option>
-                    )}
+                    {tipo === "CR"
+                      ? <option value="recebido">Recebido (Liquidado)</option>
+                      : <option value="pago">Pago (Liquidado)</option>
+                    }
                     <option value="atrasado">Atrasado</option>
                     <option value="cancelado">Cancelado</option>
                   </select>
@@ -385,6 +560,23 @@ export function LancamentoModal({ onClose, onSaved, editItem }: LancamentoModalP
                 </div>
               </div>
 
+              {/* Centro de Custo (filtrado por departamento) */}
+              <div>
+                <label className={labelCls}>Centro de Custo</label>
+                <select {...register("centro_custo_id")} className={selectCls} disabled={centrosCustoFiltrado.length === 0}>
+                  <option value="">
+                    {centrosCustoFiltrado.length === 0
+                      ? departamento_id ? "Nenhum centro de custo neste departamento" : "Selecione um departamento primeiro..."
+                      : "Selecione o centro de custo..."}
+                  </option>
+                  {centrosCustoFiltrado.map((cc) => (
+                    <option key={cc.id} value={cc.id}>{cc.nome}</option>
+                  ))}
+                </select>
+                {errors.centro_custo_id && <p className={errorCls}>{errors.centro_custo_id.message}</p>}
+              </div>
+
+              {/* Riscos (apenas CP) */}
               {isCP && (
                 <div className="bg-white/5 border border-white/10 p-5 rounded-2xl space-y-4 shadow-inner">
                   <div className="flex items-center justify-between">
@@ -393,20 +585,14 @@ export function LancamentoModal({ onClose, onSaved, editItem }: LancamentoModalP
                       <Target className="w-3 h-3" /> Sugestão Ativa
                     </div>
                   </div>
-
                   <div className="relative group">
                     <select
                       value={nivelRisco}
-                      onChange={(e) => {
-                        setNivelRisco(parseInt(e.target.value, 10));
-                        setValue("riscos", [], { shouldDirty: true });
-                      }}
+                      onChange={(e) => { setNivelRisco(parseInt(e.target.value, 10)); setValue("riscos", [], { shouldDirty: true }); }}
                       className={`${selectCls} border-white/5 bg-black/40 font-black tracking-tight ${selectedRisk?.color || "text-white/40"} hover:border-white/20`}>
                       <option value={0}>Sem Risco Definido</option>
                       {Object.entries(riskLevels).map(([lv, data]) => (
-                        <option key={lv} value={lv} className="bg-[#1a1c23] py-2">
-                          {data.label}
-                        </option>
+                        <option key={lv} value={lv} className="bg-[#1a1c23] py-2">{data.label}</option>
                       ))}
                     </select>
                     <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-muted-foreground group-hover:text-white transition-colors">
@@ -422,15 +608,12 @@ export function LancamentoModal({ onClose, onSaved, editItem }: LancamentoModalP
                           type="button"
                           onClick={() => setShowAddTag(!showAddTag)}
                           className={`text-[9px] font-bold flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all border ${
-                            showAddTag
-                              ? "bg-primary/20 border-primary text-primary"
-                              : "bg-white/5 border-white/5 text-white/50 hover:bg-white/10 hover:text-white"
+                            showAddTag ? "bg-primary/20 border-primary text-primary" : "bg-white/5 border-white/5 text-white/50 hover:bg-white/10 hover:text-white"
                           }`}>
                           <Plus className={`w-2.5 h-2.5 transition-transform ${showAddTag ? "rotate-45" : ""}`} />
                           {showAddTag ? "Cancelar" : "Nova Tag"}
                         </button>
                       </div>
-
                       {showAddTag && (
                         <div className="flex gap-2 p-1.5 bg-black/60 rounded-xl border border-primary/20 animate-in ring-1 ring-primary/10">
                           <input
@@ -440,23 +623,14 @@ export function LancamentoModal({ onClose, onSaved, editItem }: LancamentoModalP
                             onChange={(e) => setNewTag((f) => ({ ...f, name: e.target.value.toUpperCase() }))}
                             placeholder="NOME DA NOVA TAG..."
                             className="bg-transparent border-none outline-none text-[10px] font-bold text-white flex-1 px-2"
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                handleCreateTag();
-                              }
-                            }}
+                            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleCreateTag(); } }}
                           />
-                          <button
-                            type="button"
-                            onClick={handleCreateTag}
-                            className="text-[10px] font-black bg-primary/20 hover:bg-primary text-primary hover:text-white px-4 py-1.5 rounded-lg transition-all">
+                          <button type="button" onClick={handleCreateTag} className="text-[10px] font-black bg-primary/20 hover:bg-primary text-primary hover:text-white px-4 py-1.5 rounded-lg transition-all">
                             CRIAR
                           </button>
                         </div>
                       )}
-
-                      <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto pr-2 custom-scrollbar">
+                      <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto pr-2">
                         {selectedRisk.tags.map((tag) => {
                           const selected = riscos.includes(tag);
                           return (
@@ -482,7 +656,113 @@ export function LancamentoModal({ onClose, onSaved, editItem }: LancamentoModalP
             </div>
           </div>
 
-          <div className="flex gap-4 pt-6 border-t border-white/5">
+          {/* ── Forma de Pagamento (fullwidth, apenas CP) ────────────────────── */}
+          {isCP && (
+            <div className="border border-white/10 rounded-2xl p-5 space-y-4 bg-white/[0.02]">
+              <div className="flex items-center gap-2 mb-1">
+                <CreditCard className="w-4 h-4 text-primary" />
+                <label className={`${labelCls} mb-0`}>Forma de Pagamento</label>
+              </div>
+
+              {/* Botões PIX / TED / Boleto */}
+              <div className="flex gap-2 flex-wrap">
+                {[
+                  { v: "",       label: "Não informar" },
+                  { v: "PIX",    label: "PIX"          },
+                  { v: "TED",    label: "TED"          },
+                  { v: "Boleto", label: "Boleto"       },
+                ].map(({ v, label }) => (
+                  <button
+                    key={v || "none"}
+                    type="button"
+                    onClick={() => handleFormaPagamento(v)}
+                    className={`px-5 py-2 rounded-lg text-xs font-bold border transition-all ${
+                      forma_pagamento === v
+                        ? "bg-primary text-white border-primary shadow-md shadow-primary/20"
+                        : "bg-white/5 text-muted-foreground border-white/10 hover:border-white/20 hover:text-white"
+                    }`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Campos PIX */}
+              {forma_pagamento === "PIX" && (
+                <div className="grid grid-cols-2 gap-3 bg-black/20 rounded-xl p-4">
+                  <div>
+                    <label className={innerLabelCls}>Tipo de Chave *</label>
+                    <select {...register("tipo_chave_pix")} className={innerSelectCls}>
+                      <option value="">Selecione...</option>
+                      <option value="cpf">CPF</option>
+                      <option value="cnpj">CNPJ</option>
+                      <option value="email">E-mail</option>
+                      <option value="telefone">Telefone</option>
+                      <option value="aleatoria">Chave Aleatória</option>
+                    </select>
+                    {errors.tipo_chave_pix && <p className={errorCls}>{errors.tipo_chave_pix.message}</p>}
+                  </div>
+                  <div>
+                    <label className={innerLabelCls}>Chave PIX *</label>
+                    <input {...register("chave_pix")} className={innerInputCls} placeholder="Informe a chave PIX" />
+                    {errors.chave_pix && <p className={errorCls}>{errors.chave_pix.message}</p>}
+                  </div>
+                </div>
+              )}
+
+              {/* Campos TED */}
+              {forma_pagamento === "TED" && (
+                <div className="grid grid-cols-2 gap-3 bg-black/20 rounded-xl p-4">
+                  <div>
+                    <label className={innerLabelCls}>Código do Banco *</label>
+                    <input {...register("banco_codigo")} className={innerInputCls} placeholder="033" />
+                    {errors.banco_codigo && <p className={errorCls}>{errors.banco_codigo.message}</p>}
+                  </div>
+                  <div>
+                    <label className={innerLabelCls}>Nome do Banco *</label>
+                    <input {...register("banco_nome")} className={innerInputCls} placeholder="Ex: Santander" />
+                    {errors.banco_nome && <p className={errorCls}>{errors.banco_nome.message}</p>}
+                  </div>
+                  <div>
+                    <label className={innerLabelCls}>Agência *</label>
+                    <input {...register("banco_agencia")} className={innerInputCls} placeholder="0000" />
+                    {errors.banco_agencia && <p className={errorCls}>{errors.banco_agencia.message}</p>}
+                  </div>
+                  <div>
+                    <label className={innerLabelCls}>Conta *</label>
+                    <input {...register("banco_conta")} className={innerInputCls} placeholder="00000-0" />
+                    {errors.banco_conta && <p className={errorCls}>{errors.banco_conta.message}</p>}
+                  </div>
+                </div>
+              )}
+
+              {/* Campos Boleto */}
+              {forma_pagamento === "Boleto" && (
+                <div className="space-y-3 bg-black/20 rounded-xl p-4">
+                  <div>
+                    <label className={innerLabelCls}>Linha Digitável *</label>
+                    <input
+                      {...register("boleto_linha_digitavel")}
+                      className={innerInputCls}
+                      placeholder="00000.00000 00000.000000 00000.000000 0 00000000000000"
+                    />
+                    {errors.boleto_linha_digitavel && <p className={errorCls}>{errors.boleto_linha_digitavel.message}</p>}
+                  </div>
+                  <div>
+                    <label className={innerLabelCls}>Código de Barras (opcional)</label>
+                    <input
+                      {...register("boleto_codigo_barras")}
+                      className={innerInputCls}
+                      placeholder="00000000000000000000000000000000000000000000"
+                    />
+                    {errors.boleto_codigo_barras && <p className={errorCls}>{errors.boleto_codigo_barras.message}</p>}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Botões ────────────────────────────────────────────────────────── */}
+          <div className="flex gap-4 pt-4 border-t border-white/5">
             <button type="button" onClick={onClose} className="px-8 py-3 rounded-xl border border-white/10 text-white hover:bg-white/5 text-sm font-bold transition-all">
               Cancelar
             </button>
