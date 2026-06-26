@@ -45,8 +45,8 @@ export const lancamentosTable = pgTable("lancamentos", {
     multa: numeric("multa", {precision: 15, scale: 2}).default("0"),
     desconto: numeric("desconto", {precision: 15, scale: 2}).default("0"),
     acrescimo: numeric("acrescimo", {precision: 15, scale: 2}).default("0"),
-    // Forma de pagamento (Card 27)
-    forma_pagamento: varchar("forma_pagamento", { length: 20 }),
+    // Forma de pagamento
+    forma_pagamento: varchar("forma_pagamento", {length: 20}),
     dados_pagamento: jsonb("dados_pagamento").$type<{
         tipo: "PIX" | "TED" | "Boleto";
         [key: string]: unknown;
