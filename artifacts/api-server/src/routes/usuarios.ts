@@ -7,17 +7,10 @@
  * GET    /usuarios/:id/permissoes — Leitura de permissões
  * PUT    /usuarios/:id/permissoes — Substituição de permissões
  *
- * Fluxo de onboarding:
- *   1. Admin cria utilizador (sem senha) → OTP enviado por e-mail.
- *   2. Utilizador chama POST /auth/verify-otp → recebe setupToken.
- *   3. Utilizador chama POST /auth/setup-password → define senha permanente.
- *
- * Segurança:
- *   - senha_hash e campos OTP nunca retornados nas respostas.
- *   - Payloads validados e purgados por Zod via validateBody (anti-mass assignment).
- *   - Criação atómica: se o envio de e-mail falhar, o hash OTP é revertido.
- *   - Edição: sessões revogadas imediatamente quando a conta é bloqueada
- *     ou quando o admin define uma nova senha.
+ * Validações no POST /usuarios:
+ *   - Parceiro com flag "Cliente" ou "Fornecedor" ativa → 422 com mensagem clara
+ *   - Parceiro já vinculado a um usuário → 422 com mensagem clara
+ *   - Perfil base obrigatório → validado no schema Zod
  */
 
 import {Router} from "express";
@@ -26,7 +19,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import {and, count, eq, ilike} from "drizzle-orm";
 import {db} from "@workspace/db";
-import {permissoesTable, usuariosTable} from "@workspace/db/schema";
+import {parceirosTable, permissoesTable, usuariosTable} from "@workspace/db/schema";
 import {sendWelcomeEmail} from "../services/email.service";
 import {revokeAllTokensForUser} from "../services/session.service";
 import {generateOtp} from "../services/token.service";
@@ -41,8 +34,9 @@ import {validateBody} from "../middlewares/validate";
 const createUsuarioBodySchema = z.object({
     nome: z.string().trim().min(2, "Nome deve ter pelo menos 2 caracteres."),
     email: z.string().trim().email("E-mail inválido.").toLowerCase(),
+    // [ALTERADO] perfil_base agora é obrigatório
+    perfil_base: z.string().trim().min(1, "Perfil base é obrigatório."),
     cargo: z.string().trim().min(1).optional(),
-    perfil_base: z.string().trim().min(1).optional(),
     telefone: z.string().trim().min(1).optional(),
     celular: z.string().trim().min(1).optional(),
 });
@@ -66,6 +60,9 @@ type UpdateUsuarioBody = z.infer<typeof updateUsuarioBodySchema>;
 type UpdatePermissoesBody = z.infer<typeof updatePermissoesBodySchema>;
 
 const BCRYPT_SALT_ROUNDS = 12;
+
+// Flags que impedem o cadastro de um parceiro como usuário
+const FLAGS_BLOQUEADAS = ["Cliente", "Fornecedor"];
 
 /** Projeção pública reutilizada. */
 const USUARIO_PUBLIC_COLS = {
@@ -123,10 +120,46 @@ router.post(
         try {
             const {nome, email, cargo, perfil_base, telefone, celular} = req.body as CreateUsuarioBody;
 
+            // ── Validação: parceiro já tem usuário cadastrado ─────────────────────────
+            const [usuarioExistente] = await db
+                .select({ id: usuariosTable.id })
+                .from(usuariosTable)
+                .where(ilike(usuariosTable.nome, nome.trim()))
+                .limit(1);
+
+            if (usuarioExistente) {
+                return errorResponse(
+                    res,
+                    422,
+                    "PARCEIRO_JA_CADASTRADO",
+                    "Este parceiro já possui um usuário cadastrado no sistema.",
+                );
+            }
+
+            // ── Validação: parceiro com flag Cliente ou Fornecedor ativa ──────────────
+            const [parceiro] = await db
+                .select({ id: parceirosTable.id, tipos: parceirosTable.tipos })
+                .from(parceirosTable)
+                .where(ilike(parceirosTable.nome, nome.trim()))
+                .limit(1);
+
+            if (parceiro) {
+                const tipos = (parceiro.tipos ?? []) as string[];
+                const flagsAtivas = tipos.filter((t) => FLAGS_BLOQUEADAS.includes(t));
+                if (flagsAtivas.length > 0) {
+                    return errorResponse(
+                        res,
+                        422,
+                        "PARCEIRO_FLAG_BLOQUEADA",
+                        `Usuário não pode ser cadastrado, pois a flag ${flagsAtivas.map((f) => `"${f}"`).join(" e ")} está habilitada. Desabilite essa flag para prosseguir.`,
+                    );
+                }
+            }
+            // ─────────────────────────────────────────────────────────────────────────
+
             const otp = generateOtp();
             const otpHash = await bcrypt.hash(otp, BCRYPT_SALT_ROUNDS);
 
-            // Placeholder indevassável — substituído em /auth/setup-password
             const placeholderHash = await bcrypt.hash(
                 crypto.randomBytes(32).toString("hex"),
                 BCRYPT_SALT_ROUNDS,
@@ -151,7 +184,6 @@ router.post(
                 return user;
             });
 
-            // E-mail fora da transacção DB - se falhar, reverte o hash OTP para forçar retry
             try {
                 const originUrl = process.env.FRONTEND_URL ?? "http://localhost:5173";
                 await sendWelcomeEmail(email, nome, otp, originUrl);
@@ -220,7 +252,6 @@ router.put(
 
             if (!item) return errorResponse(res, 404, "NOT_FOUND", "Utilizador não encontrado.");
 
-            // Revogação de sessões: bloqueio ou troca de senha invalidam tokens activos
             if (bloqueado === true || senha !== undefined) {
                 await revokeAllTokensForUser(id);
             }

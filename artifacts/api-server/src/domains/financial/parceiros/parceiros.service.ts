@@ -1,16 +1,26 @@
-import {and, count, eq, ilike} from "drizzle-orm";
+import {and, count, eq, ilike, not, sql} from "drizzle-orm";
 import {db} from "@workspace/db";
-import {lancamentosTable, parceirosTable} from "@workspace/db/schema";
+import {lancamentosTable, parceirosTable, usuariosTable} from "@workspace/db/schema";
 import {AppError} from "../../../utils/app-error";
 import type {CreateParceiroBody, ListParceirosQuery, UpdateParceiroBody} from "./schemas";
 
 export const parceirosService = {
     async list(query: ListParceirosQuery) {
-        const {page, limit, search} = query;
+        const {page, limit, search, excluir_com_usuario} = query;
         const offset = (page - 1) * limit;
 
         const conditions = [];
         if (search) conditions.push(ilike(parceirosTable.nome, `%${search}%`));
+
+        // Exclui parceiros que já estão vinculados a um usuário
+        // WHERE nome NOT IN (SELECT nome FROM usuarios)
+        if (excluir_com_usuario) {
+            conditions.push(
+                not(
+                    sql`${parceirosTable.nome} IN (SELECT nome FROM ${usuariosTable})`,
+                ),
+            );
+        }
 
         const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -53,8 +63,6 @@ export const parceirosService = {
     },
 
     async update(id: number, payload: UpdateParceiroBody) {
-        // Os campos de lifecycle (status, ativo, bloqueado) são sempre permitidos - inativação
-        // Bloqueadas somente edições que afetam dados comerciais (nome, CPF, dados bancários, etc.)
         const LIFECYCLE_KEYS = new Set(["status", "ativo", "bloqueado"]);
         const isLifecycleOnly = Object.keys(payload).every((k) => LIFECYCLE_KEYS.has(k));
 
@@ -104,4 +112,3 @@ export const parceirosService = {
         return {deleted: true};
     },
 };
-

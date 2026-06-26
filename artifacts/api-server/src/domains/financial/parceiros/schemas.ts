@@ -32,6 +32,12 @@ export const listParceirosQuerySchema = z.object({
     limit: z.coerce.number().int().positive().max(200).default(20),
     search: z.string().trim().min(1).optional(),
     status: z.enum(["ativo", "inativo"]).optional(),
+
+    // Quando "true", exclui parceiros que já estão vinculados a um usuário.
+    excluir_com_usuario: z
+        .string()
+        .optional()
+        .transform((v) => v === "true"),
 });
 
 export const parceiroIdParamSchema = z.object({
@@ -51,13 +57,11 @@ export const createParceiroBodySchema = z.object({
     centro_custo_id: nullableId,
     ativo: z.boolean().optional(),
     bloqueado: z.boolean().optional(),
-    // Lifecycle status - "ativo" (default) ou "inativo" (deleção lógica)
     status: z.enum(["ativo", "inativo"]).default("ativo").optional(),
     chaves_pix: z.array(chavePixSchema).optional(),
     dados_bancarios: z.array(dadoBancarioSchema).optional(),
 });
 
-// Todos os campos são opcionais para atualizações PATCH
 export const updateParceiroBodySchema = createParceiroBodySchema.partial();
 
 export type ListParceirosQuery = z.infer<typeof listParceirosQuerySchema>;

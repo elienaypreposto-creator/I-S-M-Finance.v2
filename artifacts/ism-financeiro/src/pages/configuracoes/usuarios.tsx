@@ -66,7 +66,7 @@ const baseUsuarioSchema = z.object({
     "E-mail inválido — use o formato nome@dominio.com"
   ),
   cargo: z.string().max(100, "Cargo muito longo (máx. 100 caracteres).").optional(),
-  perfil_base: z.string().optional(),
+  perfil_base: z.string().min(1, "Perfil base é obrigatório."),
   telefone: z.string().optional().refine((v) => {
     if (!v || v.trim() === "") return true;
     const d = digitsOnly(v);
@@ -434,12 +434,15 @@ function ParceiroAutocomplete({
   value,
   onChange,
   onSelectFull,
+  onSelectionChange,
   disabled,
   hasError,
 }: {
   value: string;
   onChange: (val: string) => void;
   onSelectFull: (parceiro: any) => void;
+  // [NOVO] Notifica o pai se há um parceiro selecionado via lista (id) ou não (null)
+  onSelectionChange: (id: number | null) => void;
   disabled?: boolean;
   hasError?: boolean;
 }) {
@@ -458,13 +461,35 @@ function ParceiroAutocomplete({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  // [NOVO] &excluir_com_usuario=true — backend irá filtrar parceiros que já têm usuário
+  // e que possuem tag Cliente ou Fornecedor
   const { data: parceiros = [], isLoading } = useQuery<
     { id: number; nome: string; email: string | null; telefone: string | null; celular: string | null }[]
   >({
     queryKey: ["parceiros-search", debouncedSearch],
-    queryFn: () => fetchApiData(`/parceiros?limit=20&search=${encodeURIComponent(debouncedSearch)}`),
+    queryFn: () =>
+      fetchApiData(
+        `/parceiros?limit=20&search=${encodeURIComponent(debouncedSearch)}&excluir_com_usuario=true`
+      ),
     enabled: debouncedSearch.length >= 3,
   });
+
+  const handleSelect = (p: { id: number; nome: string; email: string | null; telefone: string | null; celular: string | null }) => {
+    setSearch(p.nome);
+    onChange(p.nome);
+    onSelectFull(p);
+    // [NOVO] Informa o pai que há um parceiro selecionado válido
+    onSelectionChange(p.id);
+    setIsOpen(false);
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearch(e.target.value);
+    onChange(e.target.value);
+    // [NOVO] Ao digitar manualmente, limpa a seleção — obriga nova escolha via lista
+    onSelectionChange(null);
+    setIsOpen(true);
+  };
 
   return (
     <div className="relative" ref={wrapperRef}>
@@ -472,7 +497,7 @@ function ParceiroAutocomplete({
         type="text"
         disabled={disabled}
         value={search}
-        onChange={(e) => { setSearch(e.target.value); onChange(e.target.value); setIsOpen(true); }}
+        onChange={handleInputChange}
         onFocus={() => setIsOpen(true)}
         className={inputCls(hasError) + " disabled:opacity-50"}
         placeholder="Digite pelo menos 3 letras para buscar..."
@@ -489,7 +514,7 @@ function ParceiroAutocomplete({
               {parceiros.map((p) => (
                 <li
                   key={p.id}
-                  onClick={() => { setSearch(p.nome); onChange(p.nome); onSelectFull(p); setIsOpen(false); }}
+                  onClick={() => handleSelect(p)}
                   className="px-4 py-2.5 text-sm text-white hover:bg-white/10 cursor-pointer transition-colors"
                 >
                   {p.nome}
@@ -519,6 +544,10 @@ function UserModal({ initialData, onClose, isPending, onSave }: UserModalProps) 
   const [showConfirmar, setShowConfirmar] = useState(false);
   const schema = isEdit ? editarUsuarioSchema : criarUsuarioSchema;
 
+  // [NOVO] Controla se há um parceiro selecionado via lista no autocomplete.
+  // No modo edição não é necessário — campo fica desabilitado.
+  const [parceiroSelecionadoId, setParceiroSelecionadoId] = useState<number | null>(null);
+
   const { register, handleSubmit, setValue, control, formState: { errors } } = useForm<UsuarioFormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -539,6 +568,10 @@ function UserModal({ initialData, onClose, isPending, onSave }: UserModalProps) 
     if (parceiro.telefone) setValue("telefone", mascararTelefone(parceiro.telefone));
     if (parceiro.celular)  setValue("celular",  mascararTelefone(parceiro.celular));
   };
+
+  // [NOVO] Botão de salvar desabilitado no modo criação enquanto nenhum parceiro
+  // for selecionado via lista do autocomplete
+  const submitDisabled = isPending || (!isEdit && parceiroSelecionadoId === null);
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -566,12 +599,19 @@ function UserModal({ initialData, onClose, isPending, onSave }: UserModalProps) 
                     value={field.value}
                     onChange={field.onChange}
                     onSelectFull={handleParceiroSelect}
+                    onSelectionChange={setParceiroSelecionadoId}
                     disabled={isEdit}
                     hasError={!!e.nome}
                   />
                 )}
               />
               <FieldError message={e.nome?.message} />
+              {/* [NOVO] Aviso visual quando o usuário digita sem selecionar da lista */}
+              {!isEdit && parceiroSelecionadoId === null && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Selecione um nome da lista de parceiros para continuar.
+                </p>
+              )}
             </div>
 
             <div>
@@ -589,12 +629,12 @@ function UserModal({ initialData, onClose, isPending, onSave }: UserModalProps) 
                 <FieldError message={e.cargo?.message} />
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Perfil Base</label>
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Perfil Base <span className="text-destructive">*</span></label>
                 <select
                   {...register("perfil_base")}
                   className={`w-full bg-white/5 border rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors [&>option]:bg-[#1A1A24] [&>option]:text-white ${e.perfil_base ? "border-destructive/60" : "border-white/10"}`}
                 >
-                  <option value="">Nenhum</option>
+                  
                   {Object.keys(perfisBase).map((p) => <option key={p} value={p}>{p}</option>)}
                 </select>
               </div>
@@ -653,7 +693,11 @@ function UserModal({ initialData, onClose, isPending, onSave }: UserModalProps) 
 
           <div className="flex gap-3 p-4 sm:p-6 pt-0">
             <button type="button" onClick={onClose} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">Cancelar</button>
-            <button type="submit" disabled={isPending} className="flex-1 py-2.5 bg-primary hover:bg-primary/90 disabled:opacity-60 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-2">
+            <button
+              type="submit"
+              disabled={submitDisabled}
+              className="flex-1 py-2.5 bg-primary hover:bg-primary/90 disabled:opacity-60 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-2"
+            >
               {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
               {isEdit ? "Salvar Alterações" : "Criar Usuário"}
             </button>
@@ -735,10 +779,10 @@ export default function Usuarios() {
   });
 
   const toggleBloqueadoMutation = useMutation({
-    mutationFn: ({ id, bloqueado }: { id: number; bloqueado: boolean }) =>
+    mutationFn: ({ id, bloqueado, perfil_base }: { id: number; bloqueado: boolean; perfil_base?: string }) =>
       fetchApiData<UsuarioRow>(`/usuarios/${id}`, {
         method: "PUT",
-        body: JSON.stringify({ bloqueado }),
+        body: JSON.stringify({ bloqueado, perfil_base }),
       }),
     onSuccess: (_, vars) => {
       void queryClient.invalidateQueries({ queryKey: ["usuarios"] });
@@ -759,7 +803,7 @@ export default function Usuarios() {
       cancelLabel: "Cancelar",
       variant: bloqueando ? "destructive" : "default",
     });
-    if (ok) toggleBloqueadoMutation.mutate({ id: u.id, bloqueado: bloqueando });
+    if (ok) toggleBloqueadoMutation.mutate({ id: u.id, bloqueado: bloqueando, perfil_base: u.perfil_base });
   };
 
   const handleSave = (values: UsuarioFormValues) => {
@@ -823,7 +867,6 @@ export default function Usuarios() {
 
       {tab === "usuarios" && (
         <>
-          {/* Loading — skeleton de tabela */}
           {isLoading && <TableSkeleton rows={5} columns={5} />}
 
           {isError && !isLoading && (
