@@ -6,27 +6,52 @@ export const departamentoFormSchema = z.object({
 
 export type DepartamentoFormValues = z.infer<typeof departamentoFormSchema>;
 
-/** Formulário de conta bancária (UI); `saldo_inicial_br` em máscara BR. */
-export const contaBancariaFormSchema = z.object({
-    nome: z.string().trim().min(1, "Informe o nome da conta."),
-    banco: z.string().optional().default(""),
-    agencia: z.string().optional().default(""),
-    conta: z.string().optional().default(""),
-    tipo: z.string().trim().min(1, "Selecione o tipo de conta."),
-    // FIX: aceita vazio (sem saldo inicial) ou o formato BR "1.234,56"
-    saldo_inicial_br: z
-        .string()
-        .optional()
-        .default("")
-        .refine(
-            (v) => !v || /^[\d.]*\d,\d{2}$/.test(v.trim()),
-            "Saldo inválido — use o formato 1.234,56"
-        ),
-    cor: z
-        .string()
-        .regex(/^#[0-9A-Fa-f]{6}$/, "Selecione uma cor válida.")
-        .default("#3BA8DC"),
-});
+export const TIPOS_CONTA = ["Conta Corrente", "Conta Movimento", "Conta Poupança"] as const;
+export type TipoConta = (typeof TIPOS_CONTA)[number];
+
+/**
+ * Formulário de conta bancária - Wizard 3 passos.
+ *  - `tipo` : seleção no Passo 1, obrigatória.
+ *  - `banco/agencia/conta`: obrigatórios para Corrente e Poupança (Passo 2).
+ *  - `data_inicio`: obrigatório no Passo 3.
+ *  - `saldo_inicial_br`: opcional, máscara BR "1.234,56".
+ */
+export const contaBancariaFormSchema = z
+    .object({
+        tipo: z.string().trim().min(1, "Selecione o tipo de conta."),
+        nome: z.string().trim().min(1, "Informe o nome da conta."),
+        banco: z.string().optional().default(""),
+        agencia: z.string().optional().default(""),
+        conta: z.string().optional().default(""),
+        saldo_inicial_br: z
+            .string()
+            .optional()
+            .default("")
+            .refine(
+                (v) => !v || /^[\d.]*\d,\d{2}$/.test(v.trim()),
+                "Saldo inválido - use o formato 1.234,56",
+            ),
+        data_inicio: z
+            .string()
+            .min(1, "Informe a data de início dos lançamentos.")
+            .refine((v) => !v || /^\d{4}-\d{2}-\d{2}$/.test(v), "Data inválida."),
+        cor: z
+            .string()
+            .regex(/^#[0-9A-Fa-f]{6}$/, "Selecione uma cor válida.")
+            .default("#3BA8DC"),
+    })
+    .superRefine((data, ctx) => {
+        const precisaBanco =
+            data.tipo === "Conta Corrente" || data.tipo === "Conta Poupança";
+        if (precisaBanco) {
+            if (!data.banco?.trim())
+                ctx.addIssue({code: "custom", message: "Informe o banco.", path: ["banco"]});
+            if (!data.agencia?.trim())
+                ctx.addIssue({code: "custom", message: "Informe a agência.", path: ["agencia"]});
+            if (!data.conta?.trim())
+                ctx.addIssue({code: "custom", message: "Informe a conta.", path: ["conta"]});
+        }
+    });
 
 export type ContaBancariaFormValues = z.infer<typeof contaBancariaFormSchema>;
 
@@ -77,7 +102,7 @@ export const parceiroFormSchema = z
             .min(1, "CPF/CNPJ é obrigatório.")
             .refine(
                 (v) => docNumeros(v).length >= 11,
-                "Documento incompleto — verifique os dígitos."
+                "Documento incompleto - verifique os dígitos."
             ),
 
         departamento_id: z.string().default(""),
