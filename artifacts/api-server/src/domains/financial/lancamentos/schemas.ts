@@ -2,14 +2,21 @@ import {z} from "zod";
 
 const nullableId = z.coerce.number().int().positive().nullable().optional();
 
+// Schemas individuais de cada meio de pagamento
+const pagamentoValorField = z.coerce
+    .number({invalid_type_error: "Informe um valor numérico."})
+    .positive("O valor deve ser maior que zero.");
+
 const dadosPagamentoPixSchema = z.object({
     tipo: z.literal("PIX"),
+    valor: pagamentoValorField,
     tipo_chave: z.enum(["cpf", "cnpj", "email", "telefone", "aleatoria"]),
     chave: z.string().trim().min(1, "Informe a chave PIX."),
 });
 
 const dadosPagamentoTedSchema = z.object({
     tipo: z.literal("TED"),
+    valor: pagamentoValorField,
     banco_codigo: z.string().trim().min(1, "Código do banco é obrigatório."),
     banco_nome: z.string().trim().min(1, "Nome do banco é obrigatório."),
     agencia: z.string().trim().min(1, "Agência é obrigatória."),
@@ -18,16 +25,19 @@ const dadosPagamentoTedSchema = z.object({
 
 const dadosPagamentoBoletoSchema = z.object({
     tipo: z.literal("Boleto"),
-    linha_digitavel: z.string().trim().min(1, "Informe a linha digitável."),
-    codigo_barras: z.string().trim().nullable().optional(),
+    valor: pagamentoValorField,
+    codigo_barras: z.string().trim().min(1, "Informe o código de barras."),
 });
 
-export const dadosPagamentoSchema = z.discriminatedUnion("tipo", [
+export const dadosPagamentoItemSchema = z.discriminatedUnion("tipo", [
     dadosPagamentoPixSchema,
     dadosPagamentoTedSchema,
     dadosPagamentoBoletoSchema,
 ]);
 
+export const dadosPagamentoSchema = z.array(dadosPagamentoItemSchema);
+
+export type DadosPagamentoItem = z.infer<typeof dadosPagamentoItemSchema>;
 export type DadosPagamento = z.infer<typeof dadosPagamentoSchema>;
 
 export const listLancamentosQuerySchema = z.object({
@@ -45,6 +55,8 @@ export const listLancamentosQuerySchema = z.object({
 export const lancamentoIdParamSchema = z.object({
     id: z.coerce.number().int().positive(),
 });
+
+// Base schema (compartilhado entre create e update)
 
 const lancamentoBaseSchema = z.object({
     tipo: z.enum(["CP", "CR"]),
@@ -65,41 +77,9 @@ const lancamentoBaseSchema = z.object({
     dados_pagamento: dadosPagamentoSchema.nullable().optional(),
 });
 
-// Validação cruzada para criação (campos obrigatórios presentes).
-export const createLancamentoBodySchema = lancamentoBaseSchema.superRefine((data, ctx) => {
-    if (data.tipo === "CP" && data.forma_pagamento && !data.dados_pagamento) {
-        ctx.addIssue({
-            code: "custom",
-            message: "Informe os dados de pagamento para a forma selecionada.",
-            path: ["dados_pagamento"],
-        });
-    }
-    if (data.dados_pagamento && data.forma_pagamento && data.dados_pagamento.tipo !== data.forma_pagamento) {
-        ctx.addIssue({
-            code: "custom",
-            message: "O tipo dos dados de pagamento não corresponde à forma declarada.",
-            path: ["dados_pagamento"],
-        });
-    }
-});
+export const createLancamentoBodySchema = lancamentoBaseSchema;
 
-// Validação cruzada para atualização parcial (todos os campos podem ser undefined).
-export const updateLancamentoBodySchema = lancamentoBaseSchema.partial().superRefine((data, ctx) => {
-    if (data.tipo === "CP" && data.forma_pagamento && !data.dados_pagamento) {
-        ctx.addIssue({
-            code: "custom",
-            message: "Informe os dados de pagamento para a forma selecionada.",
-            path: ["dados_pagamento"],
-        });
-    }
-    if (data.dados_pagamento && data.forma_pagamento && data.dados_pagamento.tipo !== data.forma_pagamento) {
-        ctx.addIssue({
-            code: "custom",
-            message: "O tipo dos dados de pagamento não corresponde à forma declarada.",
-            path: ["dados_pagamento"],
-        });
-    }
-});
+export const updateLancamentoBodySchema = lancamentoBaseSchema.partial();
 
 export type ListLancamentosQuery = z.infer<typeof listLancamentosQuerySchema>;
 export type CreateLancamentoBody = z.infer<typeof createLancamentoBodySchema>;

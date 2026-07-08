@@ -1,5 +1,13 @@
 import {useEffect, useState} from "react";
-import {useForm, Controller} from "react-hook-form";
+import {
+    useForm,
+    Controller,
+    useFieldArray,
+    useWatch,
+    type Control,
+    type UseFormSetValue,
+    type FieldErrors,
+} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
@@ -9,14 +17,17 @@ import {format as formatBtn, parseISO} from "date-fns";
 import {ptBR} from "date-fns/locale";
 import {cn} from "@/lib/utils";
 import {fetchApiData} from "@/lib/api-config";
+import {maskChavePix, pixKeyMaxLength, pixKeyPlaceholder} from "@/lib/pix-masks";
 import {
     formatValorBrInput,
     getLancamentoModalDefaultValues,
     lancamentoModalFormSchema,
     mapModalFormToApiBody,
+    pagamentoItemDefault,
     type LancamentoApiBody,
     type LancamentoEditItem,
     type LancamentoModalFormValues,
+    type PagamentoItemFormValues,
 } from "@/validations/lancamentos.schema";
 import {
     Plus,
@@ -30,6 +41,7 @@ import {
     Search,
     Building2,
     CreditCard,
+    Trash2,
 } from "lucide-react";
 
 type PlanoConta = { id: number; tipo: string; categoria: string; subcategoria: string | null };
@@ -224,6 +236,75 @@ function ParceiroCombobox({
     );
 }
 
+// Sub-componente isolado para campos PIX
+
+type PagamentoPixSectionProps = {
+    index: number;
+    control: Control<LancamentoModalFormValues>;
+    setValue: UseFormSetValue<LancamentoModalFormValues>;
+    errors: FieldErrors<LancamentoModalFormValues>;
+};
+
+function PagamentoPixSection({index, control, setValue, errors}: PagamentoPixSectionProps) {
+    const tipoChave = useWatch({control, name: `pagamentos.${index}.tipo_chave_pix`}) ?? "";
+    const itemErr = errors.pagamentos?.[index];
+
+    const innerLbl = "text-[10px] text-muted-foreground uppercase tracking-widest mb-1 block";
+    const innerInp = "w-full bg-[#141720] border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 transition-all placeholder:text-muted-foreground/30";
+    const innerSel = "w-full bg-[#141720] border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 transition-all appearance-none cursor-pointer [&>option]:bg-[#141720]";
+    const errCls = "text-[10px] text-destructive mt-1 font-medium";
+
+    return (
+        <div className="grid grid-cols-2 gap-3">
+            <div>
+                <label className={innerLbl}>Tipo de Chave *</label>
+                <Controller
+                    name={`pagamentos.${index}.tipo_chave_pix`}
+                    control={control}
+                    render={({field}) => (
+                        <select
+                            value={field.value ?? ""}
+                            onChange={(e) => {
+                                field.onChange(e.target.value);
+                                setValue(`pagamentos.${index}.chave_pix`, "", {shouldDirty: true});
+                            }}
+                            onBlur={field.onBlur}
+                            className={innerSel}
+                        >
+                            <option value="">Selecione...</option>
+                            <option value="cpf">CPF</option>
+                            <option value="cnpj">CNPJ</option>
+                            <option value="email">E-mail</option>
+                            <option value="telefone">Telefone</option>
+                            <option value="aleatoria">Chave Aleatória</option>
+                        </select>
+                    )}
+                />
+                {itemErr?.tipo_chave_pix && <p className={errCls}>{itemErr.tipo_chave_pix.message}</p>}
+            </div>
+            <div>
+                <label className={innerLbl}>Chave PIX *</label>
+                <Controller
+                    name={`pagamentos.${index}.chave_pix`}
+                    control={control}
+                    render={({field}) => (
+                        <input
+                            value={field.value ?? ""}
+                            onChange={(e) => field.onChange(maskChavePix(e.target.value, tipoChave))}
+                            onBlur={field.onBlur}
+                            ref={field.ref}
+                            maxLength={pixKeyMaxLength(tipoChave)}
+                            placeholder={pixKeyPlaceholder(tipoChave)}
+                            className={innerInp}
+                        />
+                    )}
+                />
+                {itemErr?.chave_pix && <p className={errCls}>{itemErr.chave_pix.message}</p>}
+            </div>
+        </div>
+    );
+}
+
 type LancamentoModalProps = {
     onClose: () => void;
     onSaved: () => void;
@@ -258,11 +339,27 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
     const tipo = watch("tipo");
     const status = watch("status");
     const riscos = watch("riscos");
-    const forma_pagamento = watch("forma_pagamento");
     const departamento_id = watch("departamento_id");
     const isCP = tipo === "CP";
 
-    // Reset ao abrir/mudar item
+    const {fields: pagamentosFields, append: appendPagamento, remove: removePagamento} = useFieldArray({
+        control,
+        name: "pagamentos",
+    });
+
+    // Limpa campos irrelevantes ao trocar o tipo de um item
+    function handlePagamentoTipoChange(index: number, newTipo: PagamentoItemFormValues["tipo"]) {
+        setValue(`pagamentos.${index}.tipo`, newTipo, {shouldDirty: true});
+        setValue(`pagamentos.${index}.tipo_chave_pix`, "");
+        setValue(`pagamentos.${index}.chave_pix`, "");
+        setValue(`pagamentos.${index}.banco_codigo`, "");
+        setValue(`pagamentos.${index}.banco_nome`, "");
+        setValue(`pagamentos.${index}.banco_agencia`, "");
+        setValue(`pagamentos.${index}.banco_conta`, "");
+        setValue(`pagamentos.${index}.boleto_codigo_barras`, "");
+    }
+
+    // Reset ao abrir / mudar item
 
     useEffect(() => {
         reset(getLancamentoModalDefaultValues(editItem));
@@ -368,19 +465,6 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
         toast({title: "Tag criada", description: `Tag adicionada ao Nível ${newTag.level}.`});
     };
 
-    // Limpa todos os campos de pagamento e seta a nova forma.
-    function handleFormaPagamento(fp: string) {
-        setValue("forma_pagamento", fp as LancamentoModalFormValues["forma_pagamento"], {shouldDirty: true});
-        setValue("tipo_chave_pix", "", {shouldDirty: true});
-        setValue("chave_pix", "", {shouldDirty: true});
-        setValue("banco_codigo", "", {shouldDirty: true});
-        setValue("banco_nome", "", {shouldDirty: true});
-        setValue("banco_agencia", "", {shouldDirty: true});
-        setValue("banco_conta", "", {shouldDirty: true});
-        setValue("boleto_linha_digitavel", "", {shouldDirty: true});
-        setValue("boleto_codigo_barras", "", {shouldDirty: true});
-    }
-
     const inputCls =
         "w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-primary/50 transition-all placeholder:text-muted-foreground/30";
     const innerInputCls =
@@ -443,18 +527,8 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
                                             type="button"
                                             onClick={() => {
                                                 setValue("tipo", v, {shouldValidate: true, shouldDirty: true});
-                                                // Limpeza síncrona: ao selecionar CR, zera todos os campos de pagamento para não enviar lixo para a API
-                                                if (v === "CR") {
-                                                    setValue("forma_pagamento", "");
-                                                    setValue("tipo_chave_pix", "");
-                                                    setValue("chave_pix", "");
-                                                    setValue("banco_codigo", "");
-                                                    setValue("banco_nome", "");
-                                                    setValue("banco_agencia", "");
-                                                    setValue("banco_conta", "");
-                                                    setValue("boleto_linha_digitavel", "");
-                                                    setValue("boleto_codigo_barras", "");
-                                                }
+                                                // Limpeza síncrona: CR não tem formas de pagamento
+                                                if (v === "CR") setValue("pagamentos", []);
                                             }}
                                             className={`flex-1 py-3 rounded-xl text-sm font-bold border transition-all ${
                                                 tipo === v ? `${color} shadow-lg` : "border-white/5 bg-white/5 text-muted-foreground hover:border-white/10"
@@ -500,7 +574,7 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
                                 </div>
                             </div>
 
-                            {/* Cliente/Fornecedor — Combobox com busca */}
+                            {/* Cliente/Fornecedor - Combobox com busca */}
                             <div>
                                 <label className={labelCls}>Cliente / Fornecedor</label>
                                 <Controller name="parceiro_id" control={control} render={({field}) => (
@@ -712,118 +786,153 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
                         </div>
                     </div>
 
-                    {/* Forma de Pagamento (apenas CP) */}
+                    {/* Formas de Pagamento - split (apenas CP) */}
                     {isCP && (
                         <div className="border border-white/10 rounded-2xl p-5 space-y-4 bg-white/[0.02]">
-                            <div className="flex items-center gap-2 mb-1">
-                                <CreditCard className="w-4 h-4 text-primary"/>
-                                <label className={`${labelCls} mb-0`}>Forma de Pagamento</label>
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <CreditCard className="w-4 h-4 text-primary"/>
+                                    <label className={`${labelCls} mb-0`}>Formas de Pagamento</label>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => appendPagamento({...pagamentoItemDefault})}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded-lg text-xs font-bold transition-all"
+                                >
+                                    <Plus className="w-3.5 h-3.5"/> Adicionar
+                                </button>
                             </div>
 
-                            {/* Botões PIX / TED / Boleto */}
-                            <div className="flex gap-2 flex-wrap">
-                                {[
-                                    {v: "", label: "Não informar"},
-                                    {v: "PIX", label: "PIX"},
-                                    {v: "TED", label: "TED"},
-                                    {v: "Boleto", label: "Boleto"},
-                                ].map(({v, label}) => (
-                                    <button
-                                        key={v || "none"}
-                                        type="button"
-                                        onClick={() => handleFormaPagamento(v)}
-                                        className={`px-5 py-2 rounded-lg text-xs font-bold border transition-all ${
-                                            forma_pagamento === v
-                                                ? "bg-primary text-white border-primary shadow-md shadow-primary/20"
-                                                : "bg-white/5 text-muted-foreground border-white/10 hover:border-white/20 hover:text-white"
-                                        }`}>
-                                        {label}
-                                    </button>
-                                ))}
-                            </div>
-
-                            {/* Campos PIX */}
-                            {forma_pagamento === "PIX" && (
-                                <div className="grid grid-cols-2 gap-3 bg-black/20 rounded-xl p-4">
-                                    <div>
-                                        <label className={innerLabelCls}>Tipo de Chave *</label>
-                                        <select {...register("tipo_chave_pix")} className={innerSelectCls}>
-                                            <option value="">Selecione...</option>
-                                            <option value="cpf">CPF</option>
-                                            <option value="cnpj">CNPJ</option>
-                                            <option value="email">E-mail</option>
-                                            <option value="telefone">Telefone</option>
-                                            <option value="aleatoria">Chave Aleatória</option>
-                                        </select>
-                                        {errors.tipo_chave_pix &&
-                                            <p className={errorCls}>{errors.tipo_chave_pix.message}</p>}
-                                    </div>
-                                    <div>
-                                        <label className={innerLabelCls}>Chave PIX *</label>
-                                        <input {...register("chave_pix")} className={innerInputCls}
-                                               placeholder="Informe a chave PIX"/>
-                                        {errors.chave_pix && <p className={errorCls}>{errors.chave_pix.message}</p>}
-                                    </div>
-                                </div>
+                            {pagamentosFields.length === 0 && (
+                                <p className="text-xs text-muted-foreground/50 text-center py-3">
+                                    Nenhuma forma de pagamento. Clique em "Adicionar" para informar como este lançamento
+                                    será pago.
+                                </p>
                             )}
 
-                            {/* Campos TED */}
-                            {forma_pagamento === "TED" && (
-                                <div className="grid grid-cols-2 gap-3 bg-black/20 rounded-xl p-4">
-                                    <div>
-                                        <label className={innerLabelCls}>Código do Banco *</label>
-                                        <input {...register("banco_codigo")} className={innerInputCls}
-                                               placeholder="033"/>
-                                        {errors.banco_codigo &&
-                                            <p className={errorCls}>{errors.banco_codigo.message}</p>}
-                                    </div>
-                                    <div>
-                                        <label className={innerLabelCls}>Nome do Banco *</label>
-                                        <input {...register("banco_nome")} className={innerInputCls}
-                                               placeholder="Ex: Santander"/>
-                                        {errors.banco_nome && <p className={errorCls}>{errors.banco_nome.message}</p>}
-                                    </div>
-                                    <div>
-                                        <label className={innerLabelCls}>Agência *</label>
-                                        <input {...register("banco_agencia")} className={innerInputCls}
-                                               placeholder="0000"/>
-                                        {errors.banco_agencia &&
-                                            <p className={errorCls}>{errors.banco_agencia.message}</p>}
-                                    </div>
-                                    <div>
-                                        <label className={innerLabelCls}>Conta *</label>
-                                        <input {...register("banco_conta")} className={innerInputCls}
-                                               placeholder="00000-0"/>
-                                        {errors.banco_conta && <p className={errorCls}>{errors.banco_conta.message}</p>}
-                                    </div>
-                                </div>
-                            )}
+                            {pagamentosFields.map((field, index) => {
+                                const itemTipo = watch(`pagamentos.${index}.tipo`);
+                                const itemErr = errors.pagamentos?.[index];
+                                return (
+                                    <div key={field.id}
+                                         className="bg-black/20 rounded-xl p-4 space-y-3 border border-white/5">
+                                        {/* Cabeçalho do item */}
+                                        <div className="flex items-center justify-between">
+                                            <p className="text-[10px] font-bold text-white/50 uppercase tracking-widest">
+                                                Pagamento {index + 1}
+                                            </p>
+                                            <button
+                                                type="button"
+                                                onClick={() => removePagamento(index)}
+                                                className="p-1 hover:bg-destructive/20 rounded text-muted-foreground hover:text-destructive transition-colors"
+                                            >
+                                                <Trash2 className="w-3.5 h-3.5"/>
+                                            </button>
+                                        </div>
 
-                            {/* Campos Boleto */}
-                            {forma_pagamento === "Boleto" && (
-                                <div className="space-y-3 bg-black/20 rounded-xl p-4">
-                                    <div>
-                                        <label className={innerLabelCls}>Linha Digitável *</label>
-                                        <input
-                                            {...register("boleto_linha_digitavel")}
-                                            className={innerInputCls}
-                                            placeholder="00000.00000 00000.000000 00000.000000 0 00000000000000"
-                                        />
-                                        {errors.boleto_linha_digitavel &&
-                                            <p className={errorCls}>{errors.boleto_linha_digitavel.message}</p>}
+                                        {/* Tipo + Valor */}
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label className={innerLabelCls}>Tipo *</label>
+                                                <select
+                                                    value={itemTipo}
+                                                    onChange={(e) =>
+                                                        handlePagamentoTipoChange(
+                                                            index,
+                                                            e.target.value as PagamentoItemFormValues["tipo"],
+                                                        )
+                                                    }
+                                                    className={innerSelectCls}
+                                                >
+                                                    <option value="PIX">PIX</option>
+                                                    <option value="TED">TED</option>
+                                                    <option value="Boleto">Boleto</option>
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className={innerLabelCls}>Valor (R$) *</label>
+                                                <Controller
+                                                    name={`pagamentos.${index}.valorBr`}
+                                                    control={control}
+                                                    render={({field: f}) => (
+                                                        <input
+                                                            type="text"
+                                                            inputMode="numeric"
+                                                            autoComplete="off"
+                                                            value={f.value}
+                                                            onChange={(e) => f.onChange(formatValorBrInput(e.target.value))}
+                                                            onBlur={f.onBlur}
+                                                            ref={f.ref}
+                                                            className={`${innerInputCls} font-bold text-primary`}
+                                                            placeholder="0,00"
+                                                        />
+                                                    )}
+                                                />
+                                                {itemErr?.valorBr &&
+                                                    <p className={errorCls}>{itemErr.valorBr.message}</p>}
+                                            </div>
+                                        </div>
+
+                                        {/* Campos PIX - subcomponente isolado com useWatch por item */}
+                                        {itemTipo === "PIX" && (
+                                            <PagamentoPixSection
+                                                index={index}
+                                                control={control}
+                                                setValue={setValue}
+                                                errors={errors}
+                                            />
+                                        )}
+
+                                        {/* Campos TED */}
+                                        {itemTipo === "TED" && (
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <label className={innerLabelCls}>Código do Banco *</label>
+                                                    <input {...register(`pagamentos.${index}.banco_codigo`)}
+                                                           className={innerInputCls} placeholder="033"/>
+                                                    {itemErr?.banco_codigo &&
+                                                        <p className={errorCls}>{itemErr.banco_codigo.message}</p>}
+                                                </div>
+                                                <div>
+                                                    <label className={innerLabelCls}>Nome do Banco *</label>
+                                                    <input {...register(`pagamentos.${index}.banco_nome`)}
+                                                           className={innerInputCls} placeholder="Ex: Santander"/>
+                                                    {itemErr?.banco_nome &&
+                                                        <p className={errorCls}>{itemErr.banco_nome.message}</p>}
+                                                </div>
+                                                <div>
+                                                    <label className={innerLabelCls}>Agência *</label>
+                                                    <input {...register(`pagamentos.${index}.banco_agencia`)}
+                                                           className={innerInputCls} placeholder="0000"/>
+                                                    {itemErr?.banco_agencia &&
+                                                        <p className={errorCls}>{itemErr.banco_agencia.message}</p>}
+                                                </div>
+                                                <div>
+                                                    <label className={innerLabelCls}>Conta *</label>
+                                                    <input {...register(`pagamentos.${index}.banco_conta`)}
+                                                           className={innerInputCls} placeholder="00000-0"/>
+                                                    {itemErr?.banco_conta &&
+                                                        <p className={errorCls}>{itemErr.banco_conta.message}</p>}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Campos Boleto */}
+                                        {itemTipo === "Boleto" && (
+                                            <div>
+                                                <label className={innerLabelCls}>Código de Barras *</label>
+                                                <input
+                                                    {...register(`pagamentos.${index}.boleto_codigo_barras`)}
+                                                    className={innerInputCls}
+                                                    placeholder="00000000000000000000000000000000000000000000"
+                                                />
+                                                {itemErr?.boleto_codigo_barras &&
+                                                    <p className={errorCls}>{itemErr.boleto_codigo_barras.message}</p>}
+                                            </div>
+                                        )}
                                     </div>
-                                    <div>
-                                        <label className={innerLabelCls}>Código de Barras (opcional)</label>
-                                        <input
-                                            {...register("boleto_codigo_barras")}
-                                            className={innerInputCls}
-                                            placeholder="00000000000000000000000000000000000000000000"
-                                        />
-                                        {errors.boleto_codigo_barras &&
-                                            <p className={errorCls}>{errors.boleto_codigo_barras.message}</p>}
-                                    </div>
-                                </div>
-                            )}
+                                );
+                            })}
                         </div>
                     )}
 
