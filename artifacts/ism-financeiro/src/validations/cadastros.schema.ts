@@ -74,8 +74,24 @@ export const dadoBancarioFormItemSchema = z
         if (item.tipo === "PIX") {
             if (!item.tipo_chave)
                 ctx.addIssue({code: "custom", message: "Selecione o tipo de chave.", path: ["tipo_chave"]});
-            if (!item.chave.trim())
+            if (!item.chave.trim()) {
                 ctx.addIssue({code: "custom", message: "Chave PIX é obrigatória.", path: ["chave"]});
+            } else {
+                const chave = item.chave.trim();
+                const nums = chave.replace(/\D/g, "");
+                if (item.tipo_chave === "cpf" && nums.length !== 11)
+                    ctx.addIssue({code: "custom", message: "CPF inválido - verifique os 11 dígitos.", path: ["chave"]});
+                else if (item.tipo_chave === "cnpj" && nums.length !== 14)
+                    ctx.addIssue({
+                        code: "custom",
+                        message: "CNPJ inválido - verifique os 14 dígitos.",
+                        path: ["chave"]
+                    });
+                else if (item.tipo_chave === "email" && !z.string().email().safeParse(chave).success)
+                    ctx.addIssue({code: "custom", message: "E-mail inválido.", path: ["chave"]});
+                else if (item.tipo_chave === "telefone" && (nums.length < 10 || nums.length > 11))
+                    ctx.addIssue({code: "custom", message: "Telefone deve ter 10 ou 11 dígitos.", path: ["chave"]});
+            }
         }
         if (item.tipo === "TED") {
             if (!item.banco_codigo.trim())

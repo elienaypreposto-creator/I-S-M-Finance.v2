@@ -32,6 +32,7 @@ import {
     type DadoBancarioFormItem,
 } from "@/validations/cadastros.schema";
 import {exportToExcel} from "@/lib/export";
+import {maskChavePix, pixKeyMaxLength, pixKeyPlaceholder} from "@/lib/pix-masks";
 import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
@@ -286,6 +287,7 @@ type ContaBancariaItemProps = {
 
 function ContaBancariaItem({index, control, register, setValue, remove, errors}: ContaBancariaItemProps) {
     const tipo = useWatch({control, name: `dadosBancarios.${index}.tipo`});
+    const tipoChave = useWatch({control, name: `dadosBancarios.${index}.tipo_chave`}) ?? "";
 
     const errs = (
         errors.dadosBancarios as unknown as
@@ -358,21 +360,46 @@ function ContaBancariaItem({index, control, register, setValue, remove, errors}:
                 <div className="grid grid-cols-2 gap-3">
                     <div>
                         <label className="text-xs text-muted-foreground mb-1 block">Tipo de Chave *</label>
-                        <select {...register(`dadosBancarios.${index}.tipo_chave`)} className={selectCls}>
-                            {PIX_TIPO_CHAVE_OPTIONS.map((o) => (
-                                <option key={o.value} value={o.value}>{o.label}</option>
-                            ))}
-                        </select>
+                        <Controller
+                            name={`dadosBancarios.${index}.tipo_chave`}
+                            control={control}
+                            render={({field}) => (
+                                <select
+                                    value={field.value ?? ""}
+                                    onChange={(e) => {
+                                        field.onChange(e.target.value);
+                                        // Limpeza síncrona: troca de tipo invalida a chave anterior
+                                        setValue(`dadosBancarios.${index}.chave`, "", {shouldDirty: true});
+                                    }}
+                                    onBlur={field.onBlur}
+                                    className={selectCls}
+                                >
+                                    {PIX_TIPO_CHAVE_OPTIONS.map((o) => (
+                                        <option key={o.value} value={o.value}>{o.label}</option>
+                                    ))}
+                                </select>
+                            )}
+                        />
                         {errs?.tipo_chave?.message && (
                             <p className="text-[11px] text-destructive mt-1">{errs.tipo_chave.message}</p>
                         )}
                     </div>
                     <div>
                         <label className="text-xs text-muted-foreground mb-1 block">Chave *</label>
-                        <input
-                            {...register(`dadosBancarios.${index}.chave`)}
-                            className={innerFieldCls(!!errs?.chave)}
-                            placeholder="Informe a chave PIX"
+                        <Controller
+                            name={`dadosBancarios.${index}.chave`}
+                            control={control}
+                            render={({field}) => (
+                                <input
+                                    value={field.value}
+                                    onChange={(e) => field.onChange(maskChavePix(e.target.value, tipoChave))}
+                                    onBlur={field.onBlur}
+                                    ref={field.ref}
+                                    maxLength={pixKeyMaxLength(tipoChave)}
+                                    placeholder={pixKeyPlaceholder(tipoChave)}
+                                    className={innerFieldCls(!!errs?.chave)}
+                                />
+                            )}
                         />
                         {errs?.chave?.message && (
                             <p className="text-[11px] text-destructive mt-1">{errs.chave.message}</p>
