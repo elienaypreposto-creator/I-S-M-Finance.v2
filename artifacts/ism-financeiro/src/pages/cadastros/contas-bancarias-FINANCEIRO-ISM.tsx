@@ -258,8 +258,7 @@ function familiaDeCor(hex: string): string {
     return String(Math.floor(hue / 20) * 20);
 }
 
-// Cores extras (não vinculadas a nenhum banco) para preencher fatias de matiz
-// que nenhum banco cadastrado cobre hoje — assim a paleta fica mais variada.
+// Cores extras 
 const CORES_EXTRAS: { nome: string; cor: string }[] = [
     {nome: "Amarelo", cor: "#EAB308"},
     {nome: "Amarelo-oliva", cor: "#ACC91D"},
@@ -294,9 +293,7 @@ const COLOR_PALETTE: string[] = (() => {
     return paleta;
 })();
 
-// ─── Logo do Banco (logo real via arquivo local em /public/logos-bancos,
-// com fallback para badge colorido com a sigla caso o arquivo não exista
-// ou falhe ao carregar) ──
+// ─── Logo do Banco (logo real via arquivo local em /public/logos-bancos
 function BancoLogo({
                        banco,
                        size = 32,

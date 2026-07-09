@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/shared/page-header";
-import { Plus, Edit, Trash2 } from "lucide-react";
+import { Plus, Edit, Trash2, Lock } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
@@ -16,8 +16,20 @@ type PlanoConta = {
   ativo: boolean;
 };
 
+// Comparador alfabético 
+const collator = new Intl.Collator("pt-BR", { sensitivity: "base" });
+
+const normalizeText = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
+
 // Modal simples para formulário de Conta
-function FormModal({ isOpen, onClose, onSubmit, initialData }: any) {
+function FormModal({
+  isOpen,
+  onClose,
+  onSubmit,
+  initialData,
+  lockedTipo = false,
+  lockedCategoria = false,
+}: any) {
   const [tipo, setTipo] = useState(initialData?.tipo || 'despesa');
   const [categoria, setCategoria] = useState(initialData?.categoria || '');
   const [subcategoria, setSubcategoria] = useState(initialData?.subcategoria || '');
@@ -27,41 +39,73 @@ function FormModal({ isOpen, onClose, onSubmit, initialData }: any) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="bg-[#1a1c23] border border-white/10 rounded-2xl w-full max-w-md p-6 shadow-2xl">
-        <h2 className="text-lg font-bold text-white mb-4">{initialData?.id ? 'Editar Categoria' : 'Nova Categoria'}</h2>
-        
+        <h2 className="text-lg font-bold text-white mb-4">
+          {initialData?.id
+            ? 'Editar Categoria'
+            : lockedCategoria
+            ? 'Nova Subcategoria'
+            : 'Nova Categoria'}
+        </h2>
+
         <form onSubmit={(e) => {
           e.preventDefault();
           onSubmit({ id: initialData?.id, tipo, categoria, subcategoria });
         }} className="space-y-4">
-          
-          <div>
-            <label className="text-sm font-medium text-muted-foreground">Tipo</label>
-            <select 
-              value={tipo} onChange={e => setTipo(e.target.value)}
-              className="mt-1 w-full bg-white/20 border border-white/10 rounded-lg p-2.5 text-black outline-none focus:border-primary/50"
-            >
-              <option value="receita">Receita</option>
-              <option value="custo">Custo</option>
-              <option value="despesa">Despesa</option>
-            </select>
-          </div>
+
+         <div>
+  <label className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+    Tipo
+    {lockedTipo && <Lock className="w-3 h-3 text-red-400" />}
+  </label>
+  <select
+    value={tipo}
+    onChange={e => setTipo(e.target.value)}
+    disabled={lockedTipo}
+    className={`mt-1 w-full border rounded-lg p-2.5 outline-none focus:border-primary/50 transition-colors ${
+      lockedTipo
+        ? 'bg-white/5 border-red-400/30 text-white/70 cursor-not-allowed'
+        : 'bg-black/20 border-white/10 text-white'
+    }`}
+  >
+    <option value="receita" className="bg-[#1a1c23] text-white">Receita</option>
+    <option value="custo" className="bg-[#1a1c23] text-white">Custo</option>
+    <option value="despesa" className="bg-[#1a1c23] text-white">Despesa</option>
+  </select>
+  {lockedTipo && (
+    <p className="text-xs text-red-400/80 mt-1">Tipo travado pelo grupo selecionado</p>
+  )}
+</div>
 
           <div>
-            <label className="text-sm font-medium text-muted-foreground">Grupo Principal (Categoria)</label>
-            <input 
+            <label className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+              Grupo Principal (Categoria)
+              {lockedCategoria && <Lock className="w-3 h-3 text-red-400" />}
+            </label>
+            <input
               required
-              type="text" value={categoria} onChange={e => setCategoria(e.target.value)}
-              className="mt-1 w-full bg-black/20 border border-white/10 rounded-lg p-2.5 text-white outline-none focus:border-primary/50"
+              type="text"
+              value={categoria}
+              onChange={e => setCategoria(e.target.value)}
+              readOnly={lockedCategoria}
+              className={`mt-1 w-full border rounded-lg p-2.5 outline-none focus:border-primary/50 transition-colors ${
+                lockedCategoria
+                  ? 'bg-white/5 border-red-400/30 text-white/70 cursor-not-allowed'
+                  : 'bg-black/20 border-white/10 text-white'
+              }`}
               placeholder="Ex: Despesas Administrativas"
             />
+            {lockedCategoria && (
+              <p className="text-xs text-red-400/80 mt-1">Categoria travada — você está adicionando uma subcategoria</p>
+            )}
           </div>
 
           <div>
             <label className="text-sm font-medium text-muted-foreground">Subcategoria (Opcional)</label>
-            <input 
+            <input
               type="text" value={subcategoria} onChange={e => setSubcategoria(e.target.value)}
               className="mt-1 w-full bg-black/20 border border-white/10 rounded-lg p-2.5 text-white outline-none focus:border-primary/50"
               placeholder="Ex: Aluguel"
+              autoFocus={lockedCategoria}
             />
           </div>
 
@@ -80,11 +124,18 @@ export default function PlanoContas() {
   const { toast } = useToast();
   const { confirm, ConfirmDialogProps } = useConfirm();
 
-  //  Estado atômico: open, data e key sempre atualizados juntos no mesmo render
-  const [modal, setModal] = useState<{ open: boolean; data: PlanoConta | null; key: number }>({
+  const [modal, setModal] = useState<{
+    open: boolean;
+    data: PlanoConta | null;
+    key: number;
+    lockedTipo: boolean;
+    lockedCategoria: boolean;
+  }>({
     open: false,
     data: null,
     key: 0,
+    lockedTipo: false,
+    lockedCategoria: false,
   });
 
   const { data: contas = [], isLoading } = useQuery<PlanoConta[]>({
@@ -118,9 +169,6 @@ export default function PlanoContas() {
       toast({ title: 'Sucesso', description: 'Categoria removida.' });
     },
     onError: async (error: Error) => {
-      // Vínculo com lançamentos/subcategorias impede a exclusão no backend.
-      // Em vez do toast de erro genérico, mostramos um alerta no mesmo
-      // padrão visual do ConfirmDialog (sem opção de cancelar).
       const vinculada = /vincul|em uso|associad|relacionad/i.test(error.message);
       await confirm({
         title: vinculada ? 'Não é possível excluir' : 'Erro ao excluir',
@@ -138,6 +186,18 @@ export default function PlanoContas() {
       open: true,
       data: tipoDef ? { tipo: tipoDef } as any : null,
       key: prev.key + 1,
+      lockedTipo: !!tipoDef,
+      lockedCategoria: false,
+    }));
+  };
+
+  const handleAddSubcategoria = (categoria: string, tipo: string) => {
+    setModal(prev => ({
+      open: true,
+      data: { tipo, categoria } as any,
+      key: prev.key + 1,
+      lockedTipo: true,
+      lockedCategoria: true,
     }));
   };
 
@@ -146,6 +206,8 @@ export default function PlanoContas() {
       open: true,
       data: item,
       key: prev.key + 1,
+      lockedTipo: false,
+      lockedCategoria: false,
     }));
   };
 
@@ -163,48 +225,95 @@ export default function PlanoContas() {
     if (ok) deleteMutation.mutate(cat.id);
   };
 
+  // ── Validação de categoria duplicada dentro do mesmo tipo ──────────────
   const handleSubmit = (data: any) => {
-    saveMutation.mutate(data);
+    const categoriaTrim = (data.categoria as string).trim().replace(/\s+/g, ' ');
+    const categoriaNorm = normalizeText(categoriaTrim);
+
+    const isReaproveitandoCategoriaTravada =
+      !data.id &&
+      contas.some(c => c.tipo === data.tipo && normalizeText(c.categoria) === categoriaNorm);
+
+    if (!isReaproveitandoCategoriaTravada) {
+      const existeDuplicada = contas.some(
+        c => c.tipo === data.tipo &&
+             normalizeText(c.categoria) === categoriaNorm &&
+             c.id !== data.id
+      );
+
+      if (existeDuplicada) {
+        toast({
+          variant: 'destructive',
+          title: 'Categoria duplicada',
+          description: `Já existe uma categoria "${categoriaTrim}" neste tipo de plano de contas.`,
+        });
+        return;
+      }
+    }
+
+    saveMutation.mutate({ ...data, categoria: categoriaTrim });
   };
 
   const receitas = contas.filter(c => c.tipo === 'receita');
   const custos = contas.filter(c => c.tipo === 'custo');
   const despesas = contas.filter(c => c.tipo === 'despesa');
 
-  const groupByCategoria = (items: PlanoConta[]) => {
-    const grouped: Record<string, PlanoConta[]> = {};
+  // Agrupa por categoria normalizada 
+  const groupByCategoriaOrdenado = (items: PlanoConta[]) => {
+    const grouped: Record<string, { label: string; items: PlanoConta[] }> = {};
+
     items.forEach(item => {
-      if (!grouped[item.categoria]) {
-        grouped[item.categoria] = [];
+      const key = normalizeText(item.categoria);
+      const labelLimpo = item.categoria.trim().replace(/\s+/g, ' ');
+      if (!grouped[key]) {
+        grouped[key] = { label: labelLimpo, items: [] };
       }
-      grouped[item.categoria].push(item);
+      grouped[key].items.push(item);
     });
-    return grouped;
+
+    Object.values(grouped).forEach(group => {
+      group.items.sort((a, b) =>
+        collator.compare((a.subcategoria || "").trim(), (b.subcategoria || "").trim())
+      );
+    });
+
+    return Object.values(grouped)
+      .sort((a, b) => collator.compare(a.label, b.label))
+      .map(group => [group.label, group.items] as [string, PlanoConta[]]);
   };
 
   const renderSection = (title: string, tipoCode: string, colorConfig: any, items: PlanoConta[], tipoDef: string) => {
-    const grouped = groupByCategoria(items);
-    
+    const groupedEntries = groupByCategoriaOrdenado(items);
+
     return (
       <div className={`glass-panel rounded-2xl overflow-hidden ${colorConfig.border}`}>
         <div className={`${colorConfig.bg} p-4 border-b ${colorConfig.borderHeader} flex justify-between items-center`}>
           <h3 className={`font-bold ${colorConfig.text}`}>{title}</h3>
           <span className={`text-xs ${colorConfig.bgBadge} ${colorConfig.textBadge} px-2 py-1 rounded`}>Grupo {tipoCode}</span>
         </div>
-        
+
         <div className="p-4 space-y-4">
           {isLoading ? (
             <div className="text-sm text-muted-foreground animate-pulse p-2">Carregando...</div>
-          ) : Object.keys(grouped).length === 0 ? (
+          ) : groupedEntries.length === 0 ? (
             <div className="text-sm text-muted-foreground p-4 text-center">Nenhuma categoria cadastrada</div>
           ) : (
-            Object.entries(grouped).map(([categoria, subcontas]) => (
+            groupedEntries.map(([categoria, subcontas]) => (
               <div key={categoria} className="space-y-1">
-                 <div className="text-sm font-bold text-white/80 mb-2 pl-2 border-l-2 border-white/20 capitalize">{categoria}</div>
+                 <div className="flex items-center justify-between pl-2 mb-2 border-l-2 border-white/20 group/cat">
+                   <div className="text-sm font-bold text-white/80 capitalize">{categoria}</div>
+                   <button
+                     onClick={() => handleAddSubcategoria(categoria, tipoDef)}
+                     title="Adicionar subcategoria"
+                     className="p-1 rounded text-muted-foreground/70 hover:text-white hover:bg-white/10 transition-all"
+                   >
+                     <Plus className="w-3.5 h-3.5" />
+                   </button>
+                 </div>
                  {subcontas.map(cat => (
                    <div key={cat.id} className="p-3 bg-white/5 rounded-lg border border-white/5 flex justify-between items-center hover:bg-white/10 transition-colors group">
                      <span className="text-sm font-medium text-white pl-4 capitalize truncate max-w-[200px]">
-                       {cat.subcategoria || "—"}
+                       {cat.subcategoria?.trim() || "—"}
                      </span>
                      <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                        <button onClick={() => handleEdit(cat)} className="text-muted-foreground hover:text-white p-1">
@@ -219,7 +328,7 @@ export default function PlanoContas() {
               </div>
             ))
           )}
-          
+
           <button onClick={() => handleCreate(tipoDef)} className="w-full py-2 border-2 border-dashed border-white/10 rounded-lg text-sm text-muted-foreground hover:text-white hover:border-white/30 transition-all flex items-center justify-center gap-2 mt-4">
             <Plus className="w-4 h-4" /> Adicionar Categoria
           </button>
@@ -232,8 +341,8 @@ export default function PlanoContas() {
     <div className="space-y-6">
       <ConfirmDialog {...ConfirmDialogProps} />
 
-      <PageHeader 
-        title="Plano de Contas" 
+      <PageHeader
+        title="Plano de Contas"
         description="Estrutura hierárquica de categorias financeiras para receitas, custos e despesas"
         actions={
           <button onClick={() => handleCreate()} className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25">
@@ -247,11 +356,11 @@ export default function PlanoContas() {
         {renderSection('Receitas (+)', '1.0', {
           border: 'border-teal-500/20', bg: 'bg-teal-500/20', borderHeader: 'border-teal-500/30', text: 'text-teal-400', bgBadge: 'bg-teal-500/20', textBadge: 'text-teal-300'
         }, receitas, 'receita')}
-        
+
         {renderSection('Custos (-)', '2.0', {
           border: 'border-blue-500/20', bg: 'bg-blue-500/20', borderHeader: 'border-blue-500/30', text: 'text-blue-400', bgBadge: 'bg-blue-500/20', textBadge: 'text-blue-300'
         }, custos, 'custo')}
-        
+
         {renderSection('Despesas (-)', '3.0', {
           border: 'border-orange-500/20', bg: 'bg-orange-500/20', borderHeader: 'border-orange-500/30', text: 'text-orange-400', bgBadge: 'bg-orange-500/20', textBadge: 'text-orange-300'
         }, despesas, 'despesa')}
@@ -263,6 +372,8 @@ export default function PlanoContas() {
         onClose={() => setModal(prev => ({ ...prev, open: false, data: null }))}
         onSubmit={handleSubmit}
         initialData={modal.data}
+        lockedTipo={modal.lockedTipo}
+        lockedCategoria={modal.lockedCategoria}
       />
     </div>
   );
