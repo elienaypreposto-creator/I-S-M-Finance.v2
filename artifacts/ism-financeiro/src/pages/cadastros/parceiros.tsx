@@ -1,4 +1,4 @@
-import {useEffect, useMemo, useState} from "react";
+import {useEffect, useMemo, useRef, useState} from "react";
 import {
     useForm,
     useWatch,
@@ -29,7 +29,9 @@ import {fetchApiData, ApiError} from "@/lib/api-config";
 import {
     parceiroFormSchema,
     type ParceiroFormValues,
-    type DadoBancarioFormItem,
+    type ContaBancariaFormItem,
+    type PixKeyFormItem,
+    type TedContaFormItem,
 } from "@/validations/cadastros.schema";
 import {exportToExcel} from "@/lib/export";
 import {maskChavePix, pixKeyMaxLength, pixKeyPlaceholder} from "@/lib/pix-masks";
@@ -80,6 +82,26 @@ function mascararTelefone(valor: string) {
     return n.slice(0, 11).replace(/(\d{2})(\d)/, "($1) $2").replace(/(\d{5})(\d{1,4})$/, "$1-$2");
 }
 
+// ─── Máscaras dos dados bancários (Conta TED) ───────────────────────────────
+// Código do banco: apenas dígitos, até 3 (ex: 033, 341, 001)
+function mascararCodigoBanco(valor: string) {
+    return valor.replace(/\D/g, "").slice(0, 3);
+}
+
+// Agência: dígitos + dígito verificador opcional após um hífen (ex: 1234-5)
+function mascararAgencia(valor: string) {
+    const n = valor.replace(/\D/g, "").slice(0, 5);
+    if (n.length <= 1) return n;
+    return `${n.slice(0, -1)}-${n.slice(-1)}`;
+}
+
+// Conta: dígitos + dígito verificador após um hífen (ex: 00012345-6)
+function mascararConta(valor: string) {
+    const n = valor.replace(/\D/g, "").slice(0, 13);
+    if (n.length <= 1) return n;
+    return `${n.slice(0, -1)}-${n.slice(-1)}`;
+}
+
 function docNumeros(s: string) {
     return s.replace(/\D/g, "");
 }
@@ -114,28 +136,26 @@ function resolveStatus(p: ParceiroRow): "ativo" | "inativo" {
     return p.ativo && !p.bloqueado ? "ativo" : "inativo";
 }
 
+// Converte o array plano vindo da API (itens {tipo:"PIX",...} | {tipo:"TED",...})
+// em um único grupo "Conta" com múltiplas chaves PIX e múltiplas contas TED.
 function dadosBancariosFromApi(
     dados_bancarios: unknown,
     chaves_pix: unknown,
     tipoPessoa: "PF" | "PJ",
-): DadoBancarioFormItem[] {
-    const result: DadoBancarioFormItem[] = [];
+): ContaBancariaFormItem[] {
+    const pix: PixKeyFormItem[] = [];
+    const ted: TedContaFormItem[] = [];
     const dbanc = dados_bancarios as Array<Record<string, unknown>> | null;
 
     if (dbanc && Array.isArray(dbanc)) {
         for (const item of dbanc) {
             if (item.tipo === "PIX") {
-                result.push({
-                    tipo: "PIX",
-                    tipo_chave: (item.tipo_chave as DadoBancarioFormItem["tipo_chave"]) ?? "cnpj",
+                pix.push({
+                    tipo_chave: (item.tipo_chave as PixKeyFormItem["tipo_chave"]) ?? "cnpj",
                     chave: String(item.chave ?? ""),
-                    banco_codigo: "", banco_nome: "", agencia: "", conta: "",
                 });
             } else if (item.tipo === "TED") {
-                result.push({
-                    tipo: "TED",
-                    tipo_chave: undefined,
-                    chave: "",
+                ted.push({
                     banco_codigo: String(item.banco_codigo ?? ""),
                     banco_nome: String(item.banco_nome ?? ""),
                     agencia: String(item.agencia ?? ""),
@@ -143,10 +163,7 @@ function dadosBancariosFromApi(
                 });
             } else if (item.banco) {
                 // Migração do formato legado: { banco: "TED", agencia, conta }
-                result.push({
-                    tipo: "TED",
-                    tipo_chave: undefined,
-                    chave: "",
+                ted.push({
                     banco_codigo: "",
                     banco_nome: String(item.banco ?? ""),
                     agencia: String(item.agencia ?? ""),
@@ -157,19 +174,23 @@ function dadosBancariosFromApi(
     }
 
     // Migração de chaves_pix legadas
-    if (result.length === 0) {
+    if (pix.length === 0) {
         const cpix = chaves_pix as Array<{ tipo: string; chave: string }> | null;
         if (cpix && Array.isArray(cpix) && cpix.length > 0) {
-            result.push({
-                tipo: "PIX",
+            pix.push({
                 tipo_chave: tipoPessoa === "PJ" ? "cnpj" : "cpf",
                 chave: cpix[0].chave,
-                banco_codigo: "", banco_nome: "", agencia: "", conta: "",
             });
         }
     }
 
-    return result;
+    if (pix.length === 0 && ted.length === 0) return [];
+
+    const formasPagamento: ("PIX" | "TED")[] = [];
+    if (pix.length > 0) formasPagamento.push("PIX");
+    if (ted.length > 0) formasPagamento.push("TED");
+
+    return [{formasPagamento, pix, ted}];
 }
 
 function parceiroRowToFormValues(p: ParceiroRow): ParceiroFormValues {
@@ -188,25 +209,29 @@ function parceiroRowToFormValues(p: ParceiroRow): ParceiroFormValues {
     };
 }
 
-function parceiroFormToApiBody(values: ParceiroFormValues) {
+// Achata os grupos de "Conta" de volta para o array plano esperado pela API,
+// preservando total compatibilidade com o formato já persistido no banco.
+// `statusAtual` preserva o ciclo de vida (ativo/bloqueado) já existente no
+// registro quando estamos editando, para que salvar o cadastro nunca
+// reative/desbloqueie um parceiro sem que o usuário tenha pedido isso.
+function parceiroFormToApiBody(values: ParceiroFormValues, statusAtual?: { ativo: boolean; bloqueado: boolean }) {
     const dig = docNumeros(values.documento);
     const deptRaw = values.departamento_id?.trim() ?? "";
 
-    const dados_bancarios = values.dadosBancarios.map((item) => {
-        if (item.tipo === "PIX") {
-            return {
-                tipo: "PIX" as const,
-                tipo_chave: item.tipo_chave!,
-                chave: item.chave,
-            };
-        }
-        return {
-            tipo: "TED" as const,
-            banco_codigo: item.banco_codigo,
-            banco_nome: item.banco_nome,
-            agencia: item.agencia,
-            conta: item.conta,
-        };
+    const dados_bancarios = values.dadosBancarios.flatMap((grupo) => {
+        const pixItems = grupo.formasPagamento.includes("PIX")
+            ? grupo.pix.map((p) => ({tipo: "PIX" as const, tipo_chave: p.tipo_chave, chave: p.chave}))
+            : [];
+        const tedItems = grupo.formasPagamento.includes("TED")
+            ? grupo.ted.map((t) => ({
+                tipo: "TED" as const,
+                banco_codigo: t.banco_codigo,
+                banco_nome: t.banco_nome,
+                agencia: t.agencia,
+                conta: t.conta,
+            }))
+            : [];
+        return [...pixItems, ...tedItems];
     });
 
     return {
@@ -219,8 +244,8 @@ function parceiroFormToApiBody(values: ParceiroFormValues) {
         tipos: values.tiposParceiro,
         departamento_id: deptRaw ? Number(deptRaw) : null,
         centro_custo_id: null as number | null,
-        ativo: true,
-        bloqueado: false,
+        ativo: statusAtual ? statusAtual.ativo : true,
+        bloqueado: statusAtual ? statusAtual.bloqueado : false,
         dados_bancarios,
     };
 }
@@ -259,7 +284,13 @@ const defaultParceiroForm: ParceiroFormValues = {
     dadosBancarios: [],
 };
 
-const PIX_TIPO_CHAVE_OPTIONS: { value: DadoBancarioFormItem["tipo_chave"] & string; label: string }[] = [
+const defaultContaBancaria: ContaBancariaFormItem = {
+    formasPagamento: ["PIX"],
+    pix: [{tipo_chave: "cnpj", chave: ""}],
+    ted: [],
+};
+
+const PIX_TIPO_CHAVE_OPTIONS: { value: PixKeyFormItem["tipo_chave"] & string; label: string }[] = [
     {value: "cpf", label: "CPF"},
     {value: "cnpj", label: "CNPJ"},
     {value: "email", label: "E-mail"},
@@ -267,7 +298,7 @@ const PIX_TIPO_CHAVE_OPTIONS: { value: DadoBancarioFormItem["tipo_chave"] & stri
     {value: "aleatoria", label: "Chave Aleatória"},
 ];
 
-// Helpers de estilo reutilizados pelo sub-componente de item
+// Helpers de estilo reutilizados pelos sub-componentes
 const innerFieldCls = (hasError?: boolean) =>
     `w-full bg-white/5 border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 transition-colors ${
         hasError ? "border-destructive/60 focus:border-destructive" : "border-white/10"
@@ -276,7 +307,178 @@ const innerFieldCls = (hasError?: boolean) =>
 const selectCls =
     "w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 transition-colors [&>option]:bg-[#1A1A24] [&>option]:text-white";
 
-type ContaBancariaItemProps = {
+type ErrRecord = Record<string, { message?: string } | undefined>;
+
+// ─── Linha de uma chave PIX dentro da tabela ────────────────────────────────
+function PixKeyRow({contaIndex, pixIndex, control, setValue, remove, canRemove, errs}: {
+    contaIndex: number;
+    pixIndex: number;
+    control: Control<ParceiroFormValues>;
+    setValue: UseFormSetValue<ParceiroFormValues>;
+    remove: (index: number) => void;
+    canRemove: boolean;
+    errs?: ErrRecord;
+}) {
+    const tipoChave = useWatch({control, name: `dadosBancarios.${contaIndex}.pix.${pixIndex}.tipo_chave`}) ?? "";
+
+    return (
+        <tr className="border-t border-white/5">
+            <td className="px-3 py-2 align-top">
+                <Controller
+                    name={`dadosBancarios.${contaIndex}.pix.${pixIndex}.tipo_chave`}
+                    control={control}
+                    render={({field}) => (
+                        <select
+                            value={field.value ?? ""}
+                            onChange={(e) => {
+                                field.onChange(e.target.value);
+                                setValue(`dadosBancarios.${contaIndex}.pix.${pixIndex}.chave`, "", {shouldDirty: true});
+                            }}
+                            onBlur={field.onBlur}
+                            className={selectCls}
+                        >
+                            {PIX_TIPO_CHAVE_OPTIONS.map((o) => (
+                                <option key={o.value} value={o.value}>{o.label}</option>
+                            ))}
+                        </select>
+                    )}
+                />
+                {errs?.tipo_chave?.message && (
+                    <p className="text-[11px] text-destructive mt-1">{errs.tipo_chave.message}</p>
+                )}
+            </td>
+            <td className="px-3 py-2 align-top">
+                <Controller
+                    name={`dadosBancarios.${contaIndex}.pix.${pixIndex}.chave`}
+                    control={control}
+                    render={({field}) => (
+                        <input
+                            value={field.value}
+                            onChange={(e) => field.onChange(maskChavePix(e.target.value, tipoChave))}
+                            onBlur={field.onBlur}
+                            ref={field.ref}
+                            maxLength={pixKeyMaxLength(tipoChave)}
+                            placeholder={pixKeyPlaceholder(tipoChave)}
+                            className={innerFieldCls(!!errs?.chave)}
+                        />
+                    )}
+                />
+                {errs?.chave?.message && (
+                    <p className="text-[11px] text-destructive mt-1">{errs.chave.message}</p>
+                )}
+            </td>
+            <td className="px-2 py-2 align-top text-right w-[40px]">
+                {canRemove && (
+                    <button type="button" onClick={() => remove(pixIndex)}
+                            className="p-1 hover:bg-destructive/20 rounded text-muted-foreground hover:text-destructive transition-colors"
+                            title="Remover chave">
+                        <Trash2 className="w-3.5 h-3.5"/>
+                    </button>
+                )}
+            </td>
+        </tr>
+    );
+}
+
+// ─── Linha de uma conta TED dentro da tabela ────────────────────────────────
+// Código do banco, agência e conta recebem máscara (apenas dígitos, com
+// dígito verificador separado por hífen em agência/conta). Nome do banco
+// permanece livre.
+function TedContaRow({contaIndex, tedIndex, control, register, remove, canRemove, errs}: {
+    contaIndex: number;
+    tedIndex: number;
+    control: Control<ParceiroFormValues>;
+    register: UseFormRegister<ParceiroFormValues>;
+    remove: (index: number) => void;
+    canRemove: boolean;
+    errs?: ErrRecord;
+}) {
+    return (
+        <tr className="border-t border-white/5">
+            <td className="px-3 py-2 align-top w-[90px]">
+                <Controller
+                    name={`dadosBancarios.${contaIndex}.ted.${tedIndex}.banco_codigo`}
+                    control={control}
+                    render={({field}) => (
+                        <input
+                            value={field.value}
+                            onChange={(e) => field.onChange(mascararCodigoBanco(e.target.value))}
+                            onBlur={field.onBlur}
+                            ref={field.ref}
+                            inputMode="numeric"
+                            className={innerFieldCls(!!errs?.banco_codigo)}
+                            placeholder="033"
+                        />
+                    )}
+                />
+                {errs?.banco_codigo?.message && (
+                    <p className="text-[11px] text-destructive mt-1">{errs.banco_codigo.message}</p>
+                )}
+            </td>
+            <td className="px-3 py-2 align-top">
+                <input
+                    {...register(`dadosBancarios.${contaIndex}.ted.${tedIndex}.banco_nome`)}
+                    className={innerFieldCls(!!errs?.banco_nome)}
+                    placeholder="Ex: Santander"
+                />
+                {errs?.banco_nome?.message && (
+                    <p className="text-[11px] text-destructive mt-1">{errs.banco_nome.message}</p>
+                )}
+            </td>
+            <td className="px-3 py-2 align-top w-[110px]">
+                <Controller
+                    name={`dadosBancarios.${contaIndex}.ted.${tedIndex}.agencia`}
+                    control={control}
+                    render={({field}) => (
+                        <input
+                            value={field.value}
+                            onChange={(e) => field.onChange(mascararAgencia(e.target.value))}
+                            onBlur={field.onBlur}
+                            ref={field.ref}
+                            inputMode="numeric"
+                            className={innerFieldCls(!!errs?.agencia)}
+                            placeholder="0000-0"
+                        />
+                    )}
+                />
+                {errs?.agencia?.message && (
+                    <p className="text-[11px] text-destructive mt-1">{errs.agencia.message}</p>
+                )}
+            </td>
+            <td className="px-3 py-2 align-top w-[130px]">
+                <Controller
+                    name={`dadosBancarios.${contaIndex}.ted.${tedIndex}.conta`}
+                    control={control}
+                    render={({field}) => (
+                        <input
+                            value={field.value}
+                            onChange={(e) => field.onChange(mascararConta(e.target.value))}
+                            onBlur={field.onBlur}
+                            ref={field.ref}
+                            inputMode="numeric"
+                            className={innerFieldCls(!!errs?.conta)}
+                            placeholder="00000-0"
+                        />
+                    )}
+                />
+                {errs?.conta?.message && (
+                    <p className="text-[11px] text-destructive mt-1">{errs.conta.message}</p>
+                )}
+            </td>
+            <td className="px-2 py-2 align-top text-right w-[40px]">
+                {canRemove && (
+                    <button type="button" onClick={() => remove(tedIndex)}
+                            className="p-1 hover:bg-destructive/20 rounded text-muted-foreground hover:text-destructive transition-colors"
+                            title="Remover conta TED">
+                        <Trash2 className="w-3.5 h-3.5"/>
+                    </button>
+                )}
+            </td>
+        </tr>
+    );
+}
+
+type ContaBancariaGroupProps = {
     index: number;
     control: Control<ParceiroFormValues>;
     register: UseFormRegister<ParceiroFormValues>;
@@ -285,44 +487,50 @@ type ContaBancariaItemProps = {
     errors: FieldErrors<ParceiroFormValues>;
 };
 
-function ContaBancariaItem({index, control, register, setValue, remove, errors}: ContaBancariaItemProps) {
-    const tipo = useWatch({control, name: `dadosBancarios.${index}.tipo`});
-    const tipoChave = useWatch({control, name: `dadosBancarios.${index}.tipo_chave`}) ?? "";
+// Grupo "Conta N": permite selecionar PIX e/ou TED simultaneamente,
+// cada um com 1 ou mais valores (chaves PIX / contas TED).
+function ContaBancariaGroup({index, control, register, setValue, remove, errors}: ContaBancariaGroupProps) {
+    const formasPagamento = (useWatch({control, name: `dadosBancarios.${index}.formasPagamento`}) ?? []) as ("PIX" | "TED")[];
+
+    const {fields: pixFields, append: appendPix, remove: removePix} = useFieldArray({
+        control,
+        name: `dadosBancarios.${index}.pix`,
+    });
+    const {fields: tedFields, append: appendTed, remove: removeTed} = useFieldArray({
+        control,
+        name: `dadosBancarios.${index}.ted`,
+    });
 
     const errs = (
         errors.dadosBancarios as unknown as
-            | Record<number, Record<string, { message?: string } | undefined>>
+            | Record<number, {
+                formasPagamento?: { message?: string };
+                pix?: Record<number, ErrRecord>;
+                ted?: Record<number, ErrRecord>;
+            } | undefined>
             | undefined
     )?.[index];
 
-    function handleTipoChange(novoTipo: "PIX" | "TED") {
-        if (novoTipo === tipo) return;
+    function toggleForma(forma: "PIX" | "TED") {
+        const checked = formasPagamento.includes(forma);
+        const next = checked ? formasPagamento.filter((f) => f !== forma) : [...formasPagamento, forma];
+        setValue(`dadosBancarios.${index}.formasPagamento`, next, {shouldDirty: true, shouldValidate: true});
 
-        if (novoTipo === "PIX") {
-            // Limpeza dos campos TED antes de mostrar os campos PIX
-            setValue(`dadosBancarios.${index}.tipo`, "PIX", {shouldDirty: true});
-            setValue(`dadosBancarios.${index}.tipo_chave`, "cnpj", {shouldDirty: true});
-            setValue(`dadosBancarios.${index}.chave`, "", {shouldDirty: true});
-            setValue(`dadosBancarios.${index}.banco_codigo`, "", {shouldDirty: true});
-            setValue(`dadosBancarios.${index}.banco_nome`, "", {shouldDirty: true});
-            setValue(`dadosBancarios.${index}.agencia`, "", {shouldDirty: true});
-            setValue(`dadosBancarios.${index}.conta`, "", {shouldDirty: true});
+        if (!checked) {
+            // Ao habilitar a forma, garante ao menos um valor pronto para preencher
+            if (forma === "PIX" && pixFields.length === 0) appendPix({tipo_chave: "cnpj", chave: ""});
+            if (forma === "TED" && tedFields.length === 0) appendTed({banco_codigo: "", banco_nome: "", agencia: "", conta: ""});
         } else {
-            // Limpeza dos campos PIX antes de mostrar os campos TED
-            setValue(`dadosBancarios.${index}.tipo`, "TED", {shouldDirty: true});
-            setValue(`dadosBancarios.${index}.tipo_chave`, undefined, {shouldDirty: true});
-            setValue(`dadosBancarios.${index}.chave`, "", {shouldDirty: true});
-            setValue(`dadosBancarios.${index}.banco_codigo`, "", {shouldDirty: true});
-            setValue(`dadosBancarios.${index}.banco_nome`, "", {shouldDirty: true});
-            setValue(`dadosBancarios.${index}.agencia`, "", {shouldDirty: true});
-            setValue(`dadosBancarios.${index}.conta`, "", {shouldDirty: true});
+            // Ao desabilitar, limpa os valores para não enviar dados obsoletos
+            if (forma === "PIX") setValue(`dadosBancarios.${index}.pix`, [], {shouldDirty: true});
+            if (forma === "TED") setValue(`dadosBancarios.${index}.ted`, [], {shouldDirty: true});
         }
     }
 
     return (
-        <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+        <div className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-4">
             {/* Cabeçalho */}
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold text-white/80">Conta {index + 1}</span>
                 <button
                     type="button"
@@ -334,128 +542,121 @@ function ContaBancariaItem({index, control, register, setValue, remove, errors}:
                 </button>
             </div>
 
-            {/* Selector PIX / TED */}
-            <div className="mb-3">
-                <label className="text-xs text-muted-foreground mb-1.5 block">Tipo de Pagamento</label>
+            {/* Formas de pagamento - multi-seleção (PIX e TED podem ficar ativos juntos) */}
+            <div>
+                <label className="text-xs text-muted-foreground mb-1.5 block">Formas de Pagamento</label>
                 <div className="flex gap-2">
-                    {(["PIX", "TED"] as const).map((t) => (
-                        <button
-                            key={t}
-                            type="button"
-                            onClick={() => handleTipoChange(t)}
-                            className={`px-5 py-1.5 rounded-lg text-xs font-semibold transition-all border ${
-                                tipo === t
-                                    ? "bg-primary text-white border-primary"
-                                    : "bg-white/5 text-muted-foreground border-white/10 hover:border-white/20"
-                            }`}
-                        >
-                            {t}
-                        </button>
-                    ))}
+                    {(["PIX", "TED"] as const).map((f) => {
+                        const checked = formasPagamento.includes(f);
+                        return (
+                            <button
+                                key={f}
+                                type="button"
+                                onClick={() => toggleForma(f)}
+                                aria-pressed={checked}
+                                className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all border ${
+                                    checked
+                                        ? "bg-primary text-white border-primary"
+                                        : "bg-white/5 text-muted-foreground border-white/10 hover:border-white/20"
+                                }`}
+                            >
+                                {checked && <CheckCircle className="w-3.5 h-3.5"/>}
+                                {f}
+                            </button>
+                        );
+                    })}
                 </div>
+                {errs?.formasPagamento?.message && (
+                    <p className="text-[11px] text-destructive mt-1">{errs.formasPagamento.message}</p>
+                )}
             </div>
 
-            {/* Campos PIX */}
-            {tipo === "PIX" && (
-                <div className="grid grid-cols-2 gap-3">
-                    <div>
-                        <label className="text-xs text-muted-foreground mb-1 block">Tipo de Chave *</label>
-                        <Controller
-                            name={`dadosBancarios.${index}.tipo_chave`}
-                            control={control}
-                            render={({field}) => (
-                                <select
-                                    value={field.value ?? ""}
-                                    onChange={(e) => {
-                                        field.onChange(e.target.value);
-                                        // Limpeza síncrona: troca de tipo invalida a chave anterior
-                                        setValue(`dadosBancarios.${index}.chave`, "", {shouldDirty: true});
-                                    }}
-                                    onBlur={field.onBlur}
-                                    className={selectCls}
-                                >
-                                    {PIX_TIPO_CHAVE_OPTIONS.map((o) => (
-                                        <option key={o.value} value={o.value}>{o.label}</option>
-                                    ))}
-                                </select>
-                            )}
-                        />
-                        {errs?.tipo_chave?.message && (
-                            <p className="text-[11px] text-destructive mt-1">{errs.tipo_chave.message}</p>
-                        )}
+            {/* Chaves PIX (1 ou mais) */}
+            {formasPagamento.includes("PIX") && (
+                <div>
+                    <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs text-muted-foreground">Tipo de Chave PIX</span>
+                        <button
+                            type="button"
+                            onClick={() => appendPix({tipo_chave: "cnpj", chave: ""})}
+                            className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold"
+                        >
+                            <Plus className="w-3 h-3"/> Adicionar Chave
+                        </button>
                     </div>
-                    <div>
-                        <label className="text-xs text-muted-foreground mb-1 block">Chave *</label>
-                        <Controller
-                            name={`dadosBancarios.${index}.chave`}
-                            control={control}
-                            render={({field}) => (
-                                <input
-                                    value={field.value}
-                                    onChange={(e) => field.onChange(maskChavePix(e.target.value, tipoChave))}
-                                    onBlur={field.onBlur}
-                                    ref={field.ref}
-                                    maxLength={pixKeyMaxLength(tipoChave)}
-                                    placeholder={pixKeyPlaceholder(tipoChave)}
-                                    className={innerFieldCls(!!errs?.chave)}
+                    <div className="bg-black/10 border border-white/10 rounded-lg overflow-hidden">
+                        <table className="w-full text-left text-sm">
+                            <thead className="bg-black/20">
+                            <tr>
+                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Tipo de Chave</th>
+                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Chave</th>
+                                <th className="px-2 py-2 w-[40px]"/>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            {pixFields.map((field, pixIndex) => (
+                                <PixKeyRow
+                                    key={field.id}
+                                    contaIndex={index}
+                                    pixIndex={pixIndex}
+                                    control={control}
+                                    setValue={setValue}
+                                    remove={removePix}
+                                    canRemove={pixFields.length > 1}
+                                    errs={errs?.pix?.[pixIndex]}
                                 />
-                            )}
-                        />
-                        {errs?.chave?.message && (
-                            <p className="text-[11px] text-destructive mt-1">{errs.chave.message}</p>
-                        )}
+                            ))}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             )}
 
-            {/* Campos TED */}
-            {tipo === "TED" && (
-                <div className="grid grid-cols-2 gap-3">
-                    <div>
-                        <label className="text-xs text-muted-foreground mb-1 block">Código do Banco *</label>
-                        <input
-                            {...register(`dadosBancarios.${index}.banco_codigo`)}
-                            className={innerFieldCls(!!errs?.banco_codigo)}
-                            placeholder="033"
-                        />
-                        {errs?.banco_codigo?.message && (
-                            <p className="text-[11px] text-destructive mt-1">{errs.banco_codigo.message}</p>
-                        )}
+            {/* Contas TED (1 ou mais) */}
+            {formasPagamento.includes("TED") && (
+                <div>
+                    <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs text-muted-foreground">Contas TED</span>
+                        <button
+                            type="button"
+                            onClick={() => appendTed({banco_codigo: "", banco_nome: "", agencia: "", conta: ""})}
+                            className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold"
+                        >
+                            <Plus className="w-3 h-3"/> Adicionar Conta TED
+                        </button>
                     </div>
-                    <div>
-                        <label className="text-xs text-muted-foreground mb-1 block">Nome do Banco *</label>
-                        <input
-                            {...register(`dadosBancarios.${index}.banco_nome`)}
-                            className={innerFieldCls(!!errs?.banco_nome)}
-                            placeholder="Ex: Santander"
-                        />
-                        {errs?.banco_nome?.message && (
-                            <p className="text-[11px] text-destructive mt-1">{errs.banco_nome.message}</p>
-                        )}
-                    </div>
-                    <div>
-                        <label className="text-xs text-muted-foreground mb-1 block">Agência *</label>
-                        <input
-                            {...register(`dadosBancarios.${index}.agencia`)}
-                            className={innerFieldCls(!!errs?.agencia)}
-                            placeholder="0000"
-                        />
-                        {errs?.agencia?.message && (
-                            <p className="text-[11px] text-destructive mt-1">{errs.agencia.message}</p>
-                        )}
-                    </div>
-                    <div>
-                        <label className="text-xs text-muted-foreground mb-1 block">Conta *</label>
-                        <input
-                            {...register(`dadosBancarios.${index}.conta`)}
-                            className={innerFieldCls(!!errs?.conta)}
-                            placeholder="00000-0"
-                        />
-                        {errs?.conta?.message && (
-                            <p className="text-[11px] text-destructive mt-1">{errs.conta.message}</p>
-                        )}
+                    <div className="bg-black/10 border border-white/10 rounded-lg overflow-hidden">
+                        <table className="w-full text-left text-sm">
+                            <thead className="bg-black/20">
+                            <tr>
+                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Cód.</th>
+                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Nome do Banco</th>
+                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Agência</th>
+                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Conta</th>
+                                <th className="px-2 py-2 w-[40px]"/>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            {tedFields.map((field, tedIndex) => (
+                                <TedContaRow
+                                    key={field.id}
+                                    contaIndex={index}
+                                    tedIndex={tedIndex}
+                                    control={control}
+                                    register={register}
+                                    remove={removeTed}
+                                    canRemove={tedFields.length > 1}
+                                    errs={errs?.ted?.[tedIndex]}
+                                />
+                            ))}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
+            )}
+
+            {formasPagamento.length === 0 && (
+                <p className="text-[11px] text-muted-foreground">Selecione ao menos uma forma de pagamento para esta conta.</p>
             )}
         </div>
     );
@@ -500,13 +701,24 @@ function NovoParceiroModal({onClose, initialData}: { onClose: () => void; initia
     const tipoPessoa = watch("tipoPessoa");
     const tiposParceiro = watch("tiposParceiro");
 
+    // Revalida o documento ao trocar PF/PJ, mas nunca na primeira renderização:
+    // caso contrário, um formulário novo (documento vazio) já nasceria mostrando
+    // "CPF é obrigatório" antes mesmo do usuário tocar no campo.
+    const isFirstRenderRef = useRef(true);
     useEffect(() => {
+        if (isFirstRenderRef.current) {
+            isFirstRenderRef.current = false;
+            return;
+        }
         void trigger("documento");
-    }, [tipoPessoa]);
+    }, [tipoPessoa, trigger]);
 
     const saveMutation = useMutation({
         mutationFn: (values: ParceiroFormValues) => {
-            const body = parceiroFormToApiBody(values);
+            const body = parceiroFormToApiBody(
+                values,
+                isEdit ? {ativo: initialData.ativo, bloqueado: initialData.bloqueado} : undefined,
+            );
             if (isEdit)
                 return fetchApiData<ParceiroRow>(`/parceiros/${initialData.id}`, {
                     method: "PUT",
@@ -714,17 +926,7 @@ function NovoParceiroModal({onClose, initialData}: { onClose: () => void; initia
                                     </label>
                                     <button
                                         type="button"
-                                        onClick={() =>
-                                            append({
-                                                tipo: "PIX",
-                                                tipo_chave: "cnpj",
-                                                chave: "",
-                                                banco_codigo: "",
-                                                banco_nome: "",
-                                                agencia: "",
-                                                conta: ""
-                                            })
-                                        }
+                                        onClick={() => append({...defaultContaBancaria})}
                                         className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-semibold transition-colors"
                                     >
                                         <Plus className="w-3.5 h-3.5"/> Adicionar Conta
@@ -735,12 +937,12 @@ function NovoParceiroModal({onClose, initialData}: { onClose: () => void; initia
                                     <div className="border border-dashed border-white/10 rounded-xl p-5 text-center">
                                         <Landmark className="w-6 h-6 text-muted-foreground/40 mx-auto mb-2"/>
                                         <p className="text-xs text-muted-foreground">Nenhuma conta cadastrada. Clique em
-                                            "Adicionar Conta" para incluir PIX ou TED.</p>
+                                            "Adicionar Conta" para incluir PIX e/ou TED.</p>
                                     </div>
                                 ) : (
                                     <div className="space-y-3">
                                         {fields.map((field, index) => (
-                                            <ContaBancariaItem
+                                            <ContaBancariaGroup
                                                 key={field.id}
                                                 index={index}
                                                 control={control}
@@ -771,10 +973,22 @@ function NovoParceiroModal({onClose, initialData}: { onClose: () => void; initia
     );
 }
 
+// Hook simples para "atrasar" a atualização de um valor (usado na busca da
+// listagem, para não disparar uma requisição a cada tecla digitada).
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+    const [debounced, setDebounced] = useState(value);
+    useEffect(() => {
+        const timer = setTimeout(() => setDebounced(value), delayMs);
+        return () => clearTimeout(timer);
+    }, [value, delayMs]);
+    return debounced;
+}
+
 export default function Parceiros() {
     const queryClient = useQueryClient();
     const {toast} = useToast();
     const [search, setSearch] = useState("");
+    const debouncedSearch = useDebouncedValue(search, 400);
     const [showModal, setShowModal] = useState(false);
     const [editingParceiro, setEditingParceiro] = useState<ParceiroRow | null>(null);
     const {confirm, ConfirmDialogProps} = useConfirm();
@@ -787,9 +1001,9 @@ export default function Parceiros() {
     const deptNomeById = useMemo(() => new Map(departamentos.map((d) => [d.id, d.nome])), [departamentos]);
 
     const {data: parceirosLista = [], isLoading} = useQuery({
-        queryKey: ["parceiros", search],
+        queryKey: ["parceiros", debouncedSearch],
         queryFn: () => {
-            const q = search.trim();
+            const q = debouncedSearch.trim();
             const qs = new URLSearchParams({limit: "200", page: "1"});
             if (q) qs.set("search", q);
             return fetchApiData<ParceiroRow[]>(`/parceiros?${qs.toString()}`);
