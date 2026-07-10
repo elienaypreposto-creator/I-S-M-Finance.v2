@@ -108,7 +108,7 @@ function docNumeros(s: string) {
 
 type DepartamentoRow = { id: number; nome: string };
 
-type ParceiroRow = {
+export type ParceiroRow = {
     id: number;
     tipo_pessoa: string;
     cpf_cnpj: string | null;
@@ -490,7 +490,10 @@ type ContaBancariaGroupProps = {
 // Grupo "Conta N": permite selecionar PIX e/ou TED simultaneamente,
 // cada um com 1 ou mais valores (chaves PIX / contas TED).
 function ContaBancariaGroup({index, control, register, setValue, remove, errors}: ContaBancariaGroupProps) {
-    const formasPagamento = (useWatch({control, name: `dadosBancarios.${index}.formasPagamento`}) ?? []) as ("PIX" | "TED")[];
+    const formasPagamento = (useWatch({
+        control,
+        name: `dadosBancarios.${index}.formasPagamento`
+    }) ?? []) as ("PIX" | "TED")[];
 
     const {fields: pixFields, append: appendPix, remove: removePix} = useFieldArray({
         control,
@@ -504,10 +507,10 @@ function ContaBancariaGroup({index, control, register, setValue, remove, errors}
     const errs = (
         errors.dadosBancarios as unknown as
             | Record<number, {
-                formasPagamento?: { message?: string };
-                pix?: Record<number, ErrRecord>;
-                ted?: Record<number, ErrRecord>;
-            } | undefined>
+            formasPagamento?: { message?: string };
+            pix?: Record<number, ErrRecord>;
+            ted?: Record<number, ErrRecord>;
+        } | undefined>
             | undefined
     )?.[index];
 
@@ -519,7 +522,12 @@ function ContaBancariaGroup({index, control, register, setValue, remove, errors}
         if (!checked) {
             // Ao habilitar a forma, garante ao menos um valor pronto para preencher
             if (forma === "PIX" && pixFields.length === 0) appendPix({tipo_chave: "cnpj", chave: ""});
-            if (forma === "TED" && tedFields.length === 0) appendTed({banco_codigo: "", banco_nome: "", agencia: "", conta: ""});
+            if (forma === "TED" && tedFields.length === 0) appendTed({
+                banco_codigo: "",
+                banco_nome: "",
+                agencia: "",
+                conta: ""
+            });
         } else {
             // Ao desabilitar, limpa os valores para não enviar dados obsoletos
             if (forma === "PIX") setValue(`dadosBancarios.${index}.pix`, [], {shouldDirty: true});
@@ -588,7 +596,9 @@ function ContaBancariaGroup({index, control, register, setValue, remove, errors}
                         <table className="w-full text-left text-sm">
                             <thead className="bg-black/20">
                             <tr>
-                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Tipo de Chave</th>
+                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Tipo
+                                    de Chave
+                                </th>
                                 <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Chave</th>
                                 <th className="px-2 py-2 w-[40px]"/>
                             </tr>
@@ -630,7 +640,9 @@ function ContaBancariaGroup({index, control, register, setValue, remove, errors}
                             <thead className="bg-black/20">
                             <tr>
                                 <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Cód.</th>
-                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Nome do Banco</th>
+                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Nome
+                                    do Banco
+                                </th>
                                 <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Agência</th>
                                 <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Conta</th>
                                 <th className="px-2 py-2 w-[40px]"/>
@@ -656,13 +668,18 @@ function ContaBancariaGroup({index, control, register, setValue, remove, errors}
             )}
 
             {formasPagamento.length === 0 && (
-                <p className="text-[11px] text-muted-foreground">Selecione ao menos uma forma de pagamento para esta conta.</p>
+                <p className="text-[11px] text-muted-foreground">Selecione ao menos uma forma de pagamento para esta
+                    conta.</p>
             )}
         </div>
     );
 }
 
-function NovoParceiroModal({onClose, initialData}: { onClose: () => void; initialData?: ParceiroRow }) {
+export function NovoParceiroModal({onClose, initialData, onSaved}: {
+    onClose: () => void;
+    initialData?: ParceiroRow | null;
+    onSaved?: () => void;
+}) {
     const queryClient = useQueryClient();
     const {toast} = useToast();
     const [showConfirmCancel, setShowConfirmCancel] = useState(false);
@@ -693,7 +710,7 @@ function NovoParceiroModal({onClose, initialData}: { onClose: () => void; initia
     const {fields, append, remove} = useFieldArray({control, name: "dadosBancarios"});
 
     useEffect(() => {
-        if (isEdit) reset(parceiroRowToFormValues(initialData));
+        if (isEdit && initialData) reset(parceiroRowToFormValues(initialData));
         else reset(defaultParceiroForm);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -732,6 +749,7 @@ function NovoParceiroModal({onClose, initialData}: { onClose: () => void; initia
                 title: isEdit ? "Parceiro atualizado" : "Parceiro cadastrado",
                 description: "O registro foi salvo com sucesso.",
             });
+            onSaved?.();
             reset(defaultParceiroForm);
             onClose();
         },
@@ -774,7 +792,7 @@ function NovoParceiroModal({onClose, initialData}: { onClose: () => void; initia
                     onDismiss={() => setShowConfirmCancel(false)}
                 />
             )}
-            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
                 <div
                     className="bg-card border border-white/10 rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
                     <div
