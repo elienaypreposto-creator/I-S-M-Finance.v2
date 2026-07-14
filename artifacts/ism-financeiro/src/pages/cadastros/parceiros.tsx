@@ -34,7 +34,14 @@ import {
     type TedContaFormItem,
 } from "@/validations/cadastros.schema";
 import {exportToExcel} from "@/lib/export";
-import {maskChavePix, pixKeyMaxLength, pixKeyPlaceholder} from "@/lib/pix-masks";
+import {
+    maskChavePix,
+    mascararCodigoBanco,
+    mascararAgencia,
+    mascararConta,
+    pixKeyMaxLength,
+    pixKeyPlaceholder
+} from "@/lib/pix-ted-masks.ts";
 import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
@@ -80,26 +87,6 @@ function mascararDocumento(valor: string, tipo: "PJ" | "PF") {
 function mascararTelefone(valor: string) {
     const n = valor.replace(/\D/g, "");
     return n.slice(0, 11).replace(/(\d{2})(\d)/, "($1) $2").replace(/(\d{5})(\d{1,4})$/, "$1-$2");
-}
-
-// ─── Máscaras dos dados bancários (Conta TED) ───────────────────────────────
-// Código do banco: apenas dígitos, até 3 (ex: 033, 341, 001)
-function mascararCodigoBanco(valor: string) {
-    return valor.replace(/\D/g, "").slice(0, 3);
-}
-
-// Agência: dígitos + dígito verificador opcional após um hífen (ex: 1234-5)
-function mascararAgencia(valor: string) {
-    const n = valor.replace(/\D/g, "").slice(0, 5);
-    if (n.length <= 1) return n;
-    return `${n.slice(0, -1)}-${n.slice(-1)}`;
-}
-
-// Conta: dígitos + dígito verificador após um hífen (ex: 00012345-6)
-function mascararConta(valor: string) {
-    const n = valor.replace(/\D/g, "").slice(0, 13);
-    if (n.length <= 1) return n;
-    return `${n.slice(0, -1)}-${n.slice(-1)}`;
 }
 
 function docNumeros(s: string) {
@@ -252,7 +239,7 @@ function parceiroFormToApiBody(values: ParceiroFormValues, statusAtual?: { ativo
 
 function ConfirmacaoCancelModal({onConfirm, onDismiss}: { onConfirm: () => void; onDismiss: () => void }) {
     return (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
             <div className="bg-card border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl p-6 text-center">
                 <AlertTriangle className="w-10 h-10 text-warning mx-auto mb-3"/>
                 <h3 className="font-bold text-white text-lg mb-1">Cancelar cadastro?</h3>

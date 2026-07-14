@@ -1,5 +1,5 @@
 /**
- * Utilitário de máscara e metadados para campos de Chave PIX.
+ * Utilitários de máscara para campos PIX e TED (banco/agência/conta).
  */
 
 export type TipoChavePix = "cpf" | "cnpj" | "email" | "telefone" | "aleatoria";
@@ -70,4 +70,24 @@ export function pixKeyPlaceholder(tipo: string): string {
         default:
             return "Informe a chave PIX";
     }
+}
+
+
+/** Código do banco: somente 3 dígitos. */
+export function mascararCodigoBanco(valor: string): string {
+    return valor.replace(/\D/g, "").slice(0, 3);
+}
+
+/** Agência: até 5 dígitos com hífen antes do dígito verificador (ex: 1234-5). */
+export function mascararAgencia(valor: string): string {
+    const n = valor.replace(/\D/g, "").slice(0, 5);
+    if (n.length <= 1) return n;
+    return `${n.slice(0, -1)}-${n.slice(-1)}`;
+}
+
+/** Conta: até 13 dígitos com hífen antes do dígito verificador (ex: 000012345-6). */
+export function mascararConta(valor: string): string {
+    const n = valor.replace(/\D/g, "").slice(0, 13);
+    if (n.length <= 1) return n;
+    return `${n.slice(0, -1)}-${n.slice(-1)}`;
 }
