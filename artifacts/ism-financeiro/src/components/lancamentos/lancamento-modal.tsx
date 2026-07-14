@@ -17,7 +17,7 @@ import {format as formatBtn, parseISO} from "date-fns";
 import {ptBR} from "date-fns/locale";
 import {cn} from "@/lib/utils";
 import {fetchApiData} from "@/lib/api-config";
-import {maskChavePix, pixKeyMaxLength, pixKeyPlaceholder} from "@/lib/pix-masks";
+import {maskChavePix, mascararCodigoBanco, mascararAgencia, mascararConta, pixKeyMaxLength, pixKeyPlaceholder} from "@/lib/pix-ted-masks.ts";
 import {
     formatValorBrInput,
     getLancamentoModalDefaultValues,
@@ -344,6 +344,103 @@ function PagamentoPixSection({index, control, setValue, errors}: PagamentoPixSec
     );
 }
 
+const pmtCellInputCls =
+    "w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 transition-colors placeholder:text-muted-foreground/30";
+const pmtCellSelectCls =
+    "w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 transition-colors appearance-none cursor-pointer [&>option]:bg-[#1a1c23]";
+const pmtErrCls = "text-[11px] text-destructive mt-1";
+
+type PagamentoPIXRowProps = {
+    index: number;
+    control: Control<LancamentoModalFormValues>;
+    setValue: UseFormSetValue<LancamentoModalFormValues>;
+    removePagamento: (index: number) => void;
+    errors: FieldErrors<LancamentoModalFormValues>;
+};
+
+function PagamentoPIXRow({index, control, setValue, removePagamento, errors}: PagamentoPIXRowProps) {
+    const tipoChave = useWatch({control, name: `pagamentos.${index}.tipo_chave_pix`}) ?? "";
+    const itemErr = errors.pagamentos?.[index];
+
+    return (
+        <tr className="border-t border-white/5">
+            <td className="px-3 py-2 align-top">
+                <Controller
+                    name={`pagamentos.${index}.tipo_chave_pix`}
+                    control={control}
+                    render={({field}) => (
+                        <select
+                            value={field.value ?? ""}
+                            onChange={(e) => {
+                                field.onChange(e.target.value);
+                                setValue(`pagamentos.${index}.chave_pix`, "", {shouldDirty: true});
+                            }}
+                            onBlur={field.onBlur}
+                            className={pmtCellSelectCls}
+                        >
+                            <option value="">Selecione...</option>
+                            <option value="cpf">CPF</option>
+                            <option value="cnpj">CNPJ</option>
+                            <option value="email">E-mail</option>
+                            <option value="telefone">Telefone</option>
+                            <option value="aleatoria">Chave Aleatória</option>
+                        </select>
+                    )}
+                />
+                {itemErr?.tipo_chave_pix && <p className={pmtErrCls}>{itemErr.tipo_chave_pix.message}</p>}
+            </td>
+            <td className="px-3 py-2 align-top">
+                <Controller
+                    name={`pagamentos.${index}.chave_pix`}
+                    control={control}
+                    render={({field}) => (
+                        <input
+                            value={field.value ?? ""}
+                            onChange={(e) => field.onChange(maskChavePix(e.target.value, tipoChave))}
+                            onBlur={field.onBlur}
+                            ref={field.ref}
+                            maxLength={pixKeyMaxLength(tipoChave)}
+                            placeholder={pixKeyPlaceholder(tipoChave)}
+                            className={pmtCellInputCls}
+                        />
+                    )}
+                />
+                {itemErr?.chave_pix && <p className={pmtErrCls}>{itemErr.chave_pix.message}</p>}
+            </td>
+            <td className="px-3 py-2 align-top w-[120px]">
+                <Controller
+                    name={`pagamentos.${index}.valorBr`}
+                    control={control}
+                    render={({field: f}) => (
+                        <input
+                            type="text"
+                            inputMode="numeric"
+                            autoComplete="off"
+                            value={f.value}
+                            onChange={(e) => f.onChange(formatValorBrInput(e.target.value))}
+                            onBlur={f.onBlur}
+                            ref={f.ref}
+                            className={`${pmtCellInputCls} font-bold text-primary`}
+                            placeholder="0,00"
+                        />
+                    )}
+                />
+                {itemErr?.valorBr && <p className={pmtErrCls}>{itemErr.valorBr.message}</p>}
+            </td>
+            <td className="px-2 py-2 align-top text-right w-[40px]">
+                <button
+                    type="button"
+                    onClick={() => removePagamento(index)}
+                    className="p-1 hover:bg-destructive/20 rounded text-muted-foreground hover:text-destructive transition-colors"
+                    title="Remover chave PIX"
+                >
+                    <Trash2 className="w-3.5 h-3.5"/>
+                </button>
+            </td>
+        </tr>
+    );
+}
+
 type LancamentoModalProps = {
     onClose: () => void;
     onSaved: () => void;
@@ -388,6 +485,11 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
         control,
         name: "pagamentos",
     });
+
+    const pagamentosWatched = (watch("pagamentos") ?? []) as Array<{tipo: string}>;
+    const pixEntries    = pagamentosFields.map((f, i) => ({f, i})).filter(({i}) => pagamentosWatched[i]?.tipo === "PIX");
+    const tedEntries    = pagamentosFields.map((f, i) => ({f, i})).filter(({i}) => pagamentosWatched[i]?.tipo === "TED");
+    const boletoEntries = pagamentosFields.map((f, i) => ({f, i})).filter(({i}) => pagamentosWatched[i]?.tipo === "Boleto");
 
     // Limpa campos irrelevantes ao trocar o tipo de um item
     function handlePagamentoTipoChange(index: number, newTipo: PagamentoItemFormValues["tipo"]) {
@@ -847,154 +949,200 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
                             </div>
                         </div>
 
-                        {/* Formas de Pagamento - split (apenas CP) */}
+                        {/* Formas de Pagamento - sub-seções modulares por tipo */}
                         {isCP && (
-                            <div className="border border-white/10 rounded-2xl p-5 space-y-4 bg-white/[0.02]">
+                            <div className="border border-white/10 rounded-2xl p-5 space-y-3 bg-white/[0.02]">
+                                {/* Cabeçalho com botões de adição por tipo */}
                                 <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-2">
                                         <CreditCard className="w-4 h-4 text-primary"/>
                                         <label className={`${labelCls} mb-0`}>Formas de Pagamento</label>
                                     </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => appendPagamento({...pagamentoItemDefault})}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded-lg text-xs font-bold transition-all"
-                                    >
-                                        <Plus className="w-3.5 h-3.5"/> Adicionar
-                                    </button>
+                                    <div className="flex items-center gap-4">
+                                        <button type="button"
+                                                onClick={() => appendPagamento({...pagamentoItemDefault, tipo: "PIX"})}
+                                                className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold transition-colors">
+                                            <Plus className="w-3 h-3"/> PIX
+                                        </button>
+                                        <button type="button"
+                                                onClick={() => appendPagamento({...pagamentoItemDefault, tipo: "TED"})}
+                                                className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold transition-colors">
+                                            <Plus className="w-3 h-3"/> TED
+                                        </button>
+                                        <button type="button"
+                                                onClick={() => appendPagamento({...pagamentoItemDefault, tipo: "Boleto"})}
+                                                className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold transition-colors">
+                                            <Plus className="w-3 h-3"/> Boleto
+                                        </button>
+                                    </div>
                                 </div>
 
-                                {pagamentosFields.length === 0 && (
+                                {pagamentosFields.length === 0 ? (
                                     <p className="text-xs text-muted-foreground/50 text-center py-3">
-                                        Nenhuma forma de pagamento. Clique em "Adicionar" para informar como este
-                                        lançamento
-                                        será pago.
+                                        Nenhuma forma de pagamento. Use os botões acima para adicionar PIX, TED ou Boleto.
                                     </p>
+                                ) : (
+                                    <div className="space-y-3">
+
+                                        {/* Sub-bloco PIX */}
+                                        {pixEntries.length > 0 && (
+                                            <div>
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <span className="text-xs text-muted-foreground">Tipo de Chave PIX</span>
+                                                    <button type="button"
+                                                            onClick={() => appendPagamento({...pagamentoItemDefault, tipo: "PIX"})}
+                                                            className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold">
+                                                        <Plus className="w-3 h-3"/> Adicionar Chave
+                                                    </button>
+                                                </div>
+                                                <div className="bg-black/10 border border-white/10 rounded-lg overflow-hidden">
+                                                    <table className="w-full text-left text-sm">
+                                                        <thead className="bg-black/20">
+                                                            <tr>
+                                                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Tipo de Chave</th>
+                                                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Chave</th>
+                                                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Valor</th>
+                                                                <th className="px-2 py-2 w-[40px]"/>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {pixEntries.map(({f, i}) => (
+                                                                <PagamentoPIXRow
+                                                                    key={f.id}
+                                                                    index={i}
+                                                                    control={control}
+                                                                    setValue={setValue}
+                                                                    removePagamento={removePagamento}
+                                                                    errors={errors}
+                                                                />
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Sub-bloco TED */}
+                                        {tedEntries.length > 0 && (
+                                            <div>
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <span className="text-xs text-muted-foreground">Contas TED</span>
+                                                    <button type="button"
+                                                            onClick={() => appendPagamento({...pagamentoItemDefault, tipo: "TED"})}
+                                                            className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold">
+                                                        <Plus className="w-3 h-3"/> Adicionar Conta TED
+                                                    </button>
+                                                </div>
+                                                <div className="bg-black/10 border border-white/10 rounded-lg overflow-hidden">
+                                                    <table className="w-full text-left text-sm">
+                                                        <thead className="bg-black/20">
+                                                            <tr>
+                                                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Cód.</th>
+                                                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Nome do Banco</th>
+                                                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Agência</th>
+                                                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Conta</th>
+                                                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Valor</th>
+                                                                <th className="px-2 py-2 w-[40px]"/>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {tedEntries.map(({f, i}) => {
+                                                                const itemErr = errors.pagamentos?.[i];
+                                                                return (
+                                                                    <tr key={f.id} className="border-t border-white/5">
+                                                                        <td className="px-3 py-2 align-top w-[90px]">
+                                                                            <Controller name={`pagamentos.${i}.banco_codigo`} control={control} render={({field}) => (
+                                                                                <input value={field.value ?? ""} onChange={(e) => field.onChange(mascararCodigoBanco(e.target.value))} onBlur={field.onBlur} ref={field.ref} inputMode="numeric" className={pmtCellInputCls} placeholder="033"/>
+                                                                            )}/>
+                                                                            {itemErr?.banco_codigo && <p className={pmtErrCls}>{itemErr.banco_codigo.message}</p>}
+                                                                        </td>
+                                                                        <td className="px-3 py-2 align-top">
+                                                                            <input {...register(`pagamentos.${i}.banco_nome`)} className={pmtCellInputCls} placeholder="Ex: Santander"/>
+                                                                            {itemErr?.banco_nome && <p className={pmtErrCls}>{itemErr.banco_nome.message}</p>}
+                                                                        </td>
+                                                                        <td className="px-3 py-2 align-top w-[110px]">
+                                                                            <Controller name={`pagamentos.${i}.banco_agencia`} control={control} render={({field}) => (
+                                                                                <input value={field.value ?? ""} onChange={(e) => field.onChange(mascararAgencia(e.target.value))} onBlur={field.onBlur} ref={field.ref} inputMode="numeric" className={pmtCellInputCls} placeholder="0000-0"/>
+                                                                            )}/>
+                                                                            {itemErr?.banco_agencia && <p className={pmtErrCls}>{itemErr.banco_agencia.message}</p>}
+                                                                        </td>
+                                                                        <td className="px-3 py-2 align-top w-[120px]">
+                                                                            <Controller name={`pagamentos.${i}.banco_conta`} control={control} render={({field}) => (
+                                                                                <input value={field.value ?? ""} onChange={(e) => field.onChange(mascararConta(e.target.value))} onBlur={field.onBlur} ref={field.ref} inputMode="numeric" className={pmtCellInputCls} placeholder="00000-0"/>
+                                                                            )}/>
+                                                                            {itemErr?.banco_conta && <p className={pmtErrCls}>{itemErr.banco_conta.message}</p>}
+                                                                        </td>
+                                                                        <td className="px-3 py-2 align-top w-[120px]">
+                                                                            <Controller name={`pagamentos.${i}.valorBr`} control={control} render={({field: fv}) => (
+                                                                                <input type="text" inputMode="numeric" autoComplete="off" value={fv.value} onChange={(e) => fv.onChange(formatValorBrInput(e.target.value))} onBlur={fv.onBlur} ref={fv.ref} className={`${pmtCellInputCls} font-bold text-primary`} placeholder="0,00"/>
+                                                                            )}/>
+                                                                            {itemErr?.valorBr && <p className={pmtErrCls}>{itemErr.valorBr.message}</p>}
+                                                                        </td>
+                                                                        <td className="px-2 py-2 align-top text-right w-[40px]">
+                                                                            <button type="button" onClick={() => removePagamento(i)} className="p-1 hover:bg-destructive/20 rounded text-muted-foreground hover:text-destructive transition-colors" title="Remover conta TED">
+                                                                                <Trash2 className="w-3.5 h-3.5"/>
+                                                                            </button>
+                                                                        </td>
+                                                                    </tr>
+                                                                );
+                                                            })}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Sub-bloco Boleto */}
+                                        {boletoEntries.length > 0 && (
+                                            <div>
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <span className="text-xs text-muted-foreground">Boletos</span>
+                                                    <button type="button"
+                                                            onClick={() => appendPagamento({...pagamentoItemDefault, tipo: "Boleto"})}
+                                                            className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold">
+                                                        <Plus className="w-3 h-3"/> Adicionar Boleto
+                                                    </button>
+                                                </div>
+                                                <div className="bg-black/10 border border-white/10 rounded-lg overflow-hidden">
+                                                    <table className="w-full text-left text-sm">
+                                                        <thead className="bg-black/20">
+                                                            <tr>
+                                                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Código de Barras</th>
+                                                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Valor</th>
+                                                                <th className="px-2 py-2 w-[40px]"/>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {boletoEntries.map(({f, i}) => {
+                                                                const itemErr = errors.pagamentos?.[i];
+                                                                return (
+                                                                    <tr key={f.id} className="border-t border-white/5">
+                                                                        <td className="px-3 py-2 align-top">
+                                                                            <input {...register(`pagamentos.${i}.boleto_codigo_barras`)} className={pmtCellInputCls} placeholder="00000000000000000000000000000000000000000000"/>
+                                                                            {itemErr?.boleto_codigo_barras && <p className={pmtErrCls}>{itemErr.boleto_codigo_barras.message}</p>}
+                                                                        </td>
+                                                                        <td className="px-3 py-2 align-top w-[120px]">
+                                                                            <Controller name={`pagamentos.${i}.valorBr`} control={control} render={({field: fv}) => (
+                                                                                <input type="text" inputMode="numeric" autoComplete="off" value={fv.value} onChange={(e) => fv.onChange(formatValorBrInput(e.target.value))} onBlur={fv.onBlur} ref={fv.ref} className={`${pmtCellInputCls} font-bold text-primary`} placeholder="0,00"/>
+                                                                            )}/>
+                                                                            {itemErr?.valorBr && <p className={pmtErrCls}>{itemErr.valorBr.message}</p>}
+                                                                        </td>
+                                                                        <td className="px-2 py-2 align-top text-right w-[40px]">
+                                                                            <button type="button" onClick={() => removePagamento(i)} className="p-1 hover:bg-destructive/20 rounded text-muted-foreground hover:text-destructive transition-colors" title="Remover boleto">
+                                                                                <Trash2 className="w-3.5 h-3.5"/>
+                                                                            </button>
+                                                                        </td>
+                                                                    </tr>
+                                                                );
+                                                            })}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                    </div>
                                 )}
-
-                                {pagamentosFields.map((field, index) => {
-                                    const itemTipo = watch(`pagamentos.${index}.tipo`);
-                                    const itemErr = errors.pagamentos?.[index];
-                                    return (
-                                        <div key={field.id}
-                                             className="bg-black/20 rounded-xl p-4 space-y-3 border border-white/5">
-                                            {/* Cabeçalho do item */}
-                                            <div className="flex items-center justify-between">
-                                                <p className="text-[10px] font-bold text-white/50 uppercase tracking-widest">
-                                                    Pagamento {index + 1}
-                                                </p>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => removePagamento(index)}
-                                                    className="p-1 hover:bg-destructive/20 rounded text-muted-foreground hover:text-destructive transition-colors"
-                                                >
-                                                    <Trash2 className="w-3.5 h-3.5"/>
-                                                </button>
-                                            </div>
-
-                                            {/* Tipo + Valor */}
-                                            <div className="grid grid-cols-2 gap-3">
-                                                <div>
-                                                    <label className={innerLabelCls}>Tipo *</label>
-                                                    <select
-                                                        value={itemTipo}
-                                                        onChange={(e) =>
-                                                            handlePagamentoTipoChange(
-                                                                index,
-                                                                e.target.value as PagamentoItemFormValues["tipo"],
-                                                            )
-                                                        }
-                                                        className={innerSelectCls}
-                                                    >
-                                                        <option value="PIX">PIX</option>
-                                                        <option value="TED">TED</option>
-                                                        <option value="Boleto">Boleto</option>
-                                                    </select>
-                                                </div>
-                                                <div>
-                                                    <label className={innerLabelCls}>Valor (R$) *</label>
-                                                    <Controller
-                                                        name={`pagamentos.${index}.valorBr`}
-                                                        control={control}
-                                                        render={({field: f}) => (
-                                                            <input
-                                                                type="text"
-                                                                inputMode="numeric"
-                                                                autoComplete="off"
-                                                                value={f.value}
-                                                                onChange={(e) => f.onChange(formatValorBrInput(e.target.value))}
-                                                                onBlur={f.onBlur}
-                                                                ref={f.ref}
-                                                                className={`${innerInputCls} font-bold text-primary`}
-                                                                placeholder="0,00"
-                                                            />
-                                                        )}
-                                                    />
-                                                    {itemErr?.valorBr &&
-                                                        <p className={errorCls}>{itemErr.valorBr.message}</p>}
-                                                </div>
-                                            </div>
-
-                                            {/* Campos PIX - subcomponente isolado com useWatch por item */}
-                                            {itemTipo === "PIX" && (
-                                                <PagamentoPixSection
-                                                    index={index}
-                                                    control={control}
-                                                    setValue={setValue}
-                                                    errors={errors}
-                                                />
-                                            )}
-
-                                            {/* Campos TED */}
-                                            {itemTipo === "TED" && (
-                                                <div className="grid grid-cols-2 gap-3">
-                                                    <div>
-                                                        <label className={innerLabelCls}>Código do Banco *</label>
-                                                        <input {...register(`pagamentos.${index}.banco_codigo`)}
-                                                               className={innerInputCls} placeholder="033"/>
-                                                        {itemErr?.banco_codigo &&
-                                                            <p className={errorCls}>{itemErr.banco_codigo.message}</p>}
-                                                    </div>
-                                                    <div>
-                                                        <label className={innerLabelCls}>Nome do Banco *</label>
-                                                        <input {...register(`pagamentos.${index}.banco_nome`)}
-                                                               className={innerInputCls} placeholder="Ex: Santander"/>
-                                                        {itemErr?.banco_nome &&
-                                                            <p className={errorCls}>{itemErr.banco_nome.message}</p>}
-                                                    </div>
-                                                    <div>
-                                                        <label className={innerLabelCls}>Agência *</label>
-                                                        <input {...register(`pagamentos.${index}.banco_agencia`)}
-                                                               className={innerInputCls} placeholder="0000"/>
-                                                        {itemErr?.banco_agencia &&
-                                                            <p className={errorCls}>{itemErr.banco_agencia.message}</p>}
-                                                    </div>
-                                                    <div>
-                                                        <label className={innerLabelCls}>Conta *</label>
-                                                        <input {...register(`pagamentos.${index}.banco_conta`)}
-                                                               className={innerInputCls} placeholder="00000-0"/>
-                                                        {itemErr?.banco_conta &&
-                                                            <p className={errorCls}>{itemErr.banco_conta.message}</p>}
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {/* Campos Boleto */}
-                                            {itemTipo === "Boleto" && (
-                                                <div>
-                                                    <label className={innerLabelCls}>Código de Barras *</label>
-                                                    <input
-                                                        {...register(`pagamentos.${index}.boleto_codigo_barras`)}
-                                                        className={innerInputCls}
-                                                        placeholder="00000000000000000000000000000000000000000000"
-                                                    />
-                                                    {itemErr?.boleto_codigo_barras &&
-                                                        <p className={errorCls}>{itemErr.boleto_codigo_barras.message}</p>}
-                                                </div>
-                                            )}
-                                        </div>
-                                    );
-                                })}
                             </div>
                         )}
 
