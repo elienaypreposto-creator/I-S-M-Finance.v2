@@ -219,6 +219,164 @@ function CompetenciaPicker({
   );
 }
 
+
+function groupPlanoContasPorCategoria(itens: PlanoConta[]): { categoria: string; itens: PlanoConta[] }[] {
+  const map = new Map<string, PlanoConta[]>();
+  for (const item of itens) {
+    const lista = map.get(item.categoria) ?? [];
+    lista.push(item);
+    map.set(item.categoria, lista);
+  }
+  return Array.from(map.entries()).map(([categoria, grupoItens]) => ({ categoria, itens: grupoItens }));
+}
+
+function PlanoContaCombobox({
+  value,
+  onChange,
+  error,
+  planoContas,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  error?: string;
+  planoContas: PlanoConta[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
+  // Debounce de 200ms
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchTerm.trim()), 200);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+
+  const shouldSearchServer = debouncedSearch.length >= 3;
+
+  const { data: searchResults, isFetching } = useQuery<PlanoConta[]>({
+    queryKey: ["plano-contas-search", debouncedSearch],
+    queryFn: async () => {
+      try {
+        const res = await fetch(`${API_URL}/plano-contas?search=${encodeURIComponent(debouncedSearch)}`);
+        if (!res.ok) return [];
+        const json = await res.json();
+        return Array.isArray(json) ? json : (json.data ?? []);
+      } catch {
+        return [];
+      }
+    },
+    enabled: shouldSearchServer,
+  });
+
+  const localFiltered = searchTerm.trim().length === 0
+    ? planoContas
+    : planoContas.filter((p) => {
+        const haystack = `${p.categoria} ${p.subcategoria ?? ""}`.toLowerCase();
+        return haystack.includes(searchTerm.trim().toLowerCase());
+      });
+
+  const options = shouldSearchServer ? (searchResults ?? []) : localFiltered;
+  const grupos = groupPlanoContasPorCategoria(options);
+  const selected = planoContas.find((p) => String(p.id) === value);
+
+  const handleSelect = (p: PlanoConta) => {
+    onChange(String(p.id));
+    setOpen(false);
+    setSearchTerm("");
+  };
+
+  return (
+    <div>
+      <Popover open={open} onOpenChange={(next) => { setOpen(next); if (!next) setSearchTerm(""); }}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className={cn(
+              inputCls(!!error),
+              "flex items-center justify-between text-left font-normal",
+              !selected && "text-muted-foreground/30"
+            )}
+          >
+            <span className="truncate">
+              {selected
+                ? `${selected.categoria}${selected.subcategoria ? ` — ${selected.subcategoria}` : ""}`
+                : "Indique a categoria contábil..."}
+            </span>
+            <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          className="bg-[#1a1c23] border border-white/10 rounded-xl shadow-2xl p-0 w-[--radix-popover-trigger-width] min-w-[280px]"
+        >
+          <div className="p-2 border-b border-white/5">
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-black/30 border border-white/10 focus-within:border-primary/50 transition-all">
+              <Search className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+              <input
+                autoFocus
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Buscar categoria ou subcategoria..."
+                className="bg-transparent border-none outline-none text-xs text-white w-full placeholder:text-muted-foreground/40"
+              />
+            </div>
+          </div>
+
+          <div className="max-h-64 overflow-y-auto custom-scrollbar py-1">
+            <button
+              type="button"
+              onClick={() => { onChange(""); setOpen(false); setSearchTerm(""); }}
+              className="w-full text-left px-4 py-2.5 text-xs text-muted-foreground hover:bg-white/5 transition-colors border-b border-white/5 mb-1"
+            >
+              Indique a categoria contábil...
+            </button>
+
+            {shouldSearchServer && isFetching ? (
+              <div className="px-4 py-6 flex items-center justify-center gap-2 text-muted-foreground text-xs">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Buscando...
+              </div>
+            ) : grupos.length === 0 ? (
+              <div className="px-4 py-6 text-center text-muted-foreground text-xs">
+                Nenhuma categoria encontrada.
+              </div>
+            ) : (
+              grupos.map((grupo) => (
+                <div key={grupo.categoria} className="py-1">
+                  {/* Cabeçalho da categoria - mostrado uma única vez por grupo */}
+                  <p className="px-4 py-1 text-[11px] font-bold text-white uppercase tracking-wide">
+                    {grupo.categoria}
+                  </p>
+                  {grupo.itens.map((item) => {
+                    const isSelected = String(item.id) === value;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => handleSelect(item)}
+                        className={cn(
+                          "w-full text-left pl-8 pr-4 py-1.5 text-xs transition-colors",
+                          isSelected
+                            ? "bg-primary/10 text-primary font-semibold"
+                            : "text-white/70 hover:bg-white/5"
+                        )}
+                      >
+                        {item.subcategoria || item.categoria}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
+      {error && <p className="mt-1 text-[10px] text-red-400 font-semibold">{error}</p>}
+    </div>
+  );
+}
+
 // ─── Risk levels ──────────────────────────────────────────────────────────────
 
 const BASE_RISK_LEVELS: Record<number, { label: string; color: string; tags: string[] }> = {
@@ -695,15 +853,14 @@ function LancamentoModal({
               {/* Plano de Contas */}
               <div>
                 <label className={labelCls}>Classificação (Plano de Contas)</label>
-                <select {...register("plano_conta_id")} className={selectCls(!!errors.plano_conta_id)}>
-                  <option value="">Indique a categoria contábil...</option>
-                  {Array.isArray(planoContas) && planoContas.map((p: PlanoConta) => (
-                    <option key={p.id} value={p.id}>
-                      {p.categoria}{p.subcategoria ? ` — ${p.subcategoria}` : ""}
-                    </option>
-                  ))}
-                </select>
-                <FieldError message={errors.plano_conta_id?.message} />
+                <Controller name="plano_conta_id" control={control} render={({ field }) => (
+                  <PlanoContaCombobox
+                    value={field.value}
+                    onChange={field.onChange}
+                    error={errors.plano_conta_id?.message}
+                    planoContas={Array.isArray(planoContas) ? planoContas : []}
+                  />
+                )} />
               </div>
 
               {/* Departamento */}

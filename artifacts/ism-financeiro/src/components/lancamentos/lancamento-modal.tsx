@@ -43,12 +43,110 @@ import {
     CreditCard,
     Trash2,
     Edit2,
+    AlertTriangle,
 } from "lucide-react";
 import {NovoParceiroModal, type ParceiroRow} from "@/pages/cadastros/parceiros";
 
 type PlanoConta = { id: number; tipo: string; categoria: string; subcategoria: string | null };
 type Departamento = { id: number; nome: string };
 type CentroCusto = { id: number; nome: string; departamento_id: number | null };
+
+// ─── ConfirmDialog ────────────────────────────────────────────────────────────
+// Modal de confirmação genérico e reutilizável, seguindo o padrão visual usado
+// em toda a aplicação (ícone no topo, título em negrito, descrição centralizada,
+// dois botões lado a lado). Usado aqui para confirmar o cancelamento do
+// cadastro/edição quando há alterações não salvas no formulário.
+type ConfirmDialogTone = "warning" | "danger" | "info";
+
+function ConfirmDialog({
+                            open,
+                            icon,
+                            tone = "warning",
+                            title,
+                            description,
+                            confirmLabel,
+                            cancelLabel = "Cancelar",
+                            onConfirm,
+                            onCancel,
+                        }: {
+    open: boolean;
+    icon?: React.ReactNode;
+    tone?: ConfirmDialogTone;
+    title: string;
+    description?: string;
+    confirmLabel: string;
+    cancelLabel?: string;
+    onConfirm: () => void;
+    onCancel: () => void;
+}) {
+    if (!open) return null;
+
+    const toneCls: Record<ConfirmDialogTone, { iconBg: string; iconColor: string; confirmBtn: string }> = {
+        warning: {
+            iconBg: "bg-yellow-500/10",
+            iconColor: "text-yellow-400",
+            confirmBtn: "bg-destructive hover:bg-destructive/90",
+        },
+        danger: {
+            iconBg: "bg-destructive/10",
+            iconColor: "text-destructive",
+            confirmBtn: "bg-destructive hover:bg-destructive/90",
+        },
+        info: {
+            iconBg: "bg-primary/10",
+            iconColor: "text-primary",
+            confirmBtn: "bg-primary hover:bg-primary/90",
+        },
+    };
+    const t = toneCls[tone];
+
+    return (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 backdrop-blur-md p-4">
+            <div className="bg-[#181a20] border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl p-6 flex flex-col items-center text-center gap-4">
+                <div className={`w-12 h-12 rounded-full flex items-center justify-center ${t.iconBg}`}>
+                    {icon ?? <AlertTriangle className={`w-6 h-6 ${t.iconColor}`}/>}
+                </div>
+                <div className="space-y-1.5">
+                    <h3 className="text-base font-black text-white tracking-tight">{title}</h3>
+                    {description && (
+                        <p className="text-xs text-muted-foreground leading-relaxed">{description}</p>
+                    )}
+                </div>
+                <div className="flex gap-3 w-full pt-2">
+                    <button
+                        type="button"
+                        onClick={onCancel}
+                        className="flex-1 px-4 py-2.5 rounded-xl border border-white/10 text-white hover:bg-white/5 text-sm font-bold transition-all"
+                    >
+                        {cancelLabel}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={onConfirm}
+                        className={`flex-1 px-4 py-2.5 rounded-xl text-white text-sm font-bold transition-all ${t.confirmBtn}`}
+                    >
+                        {confirmLabel}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// Agrupa os itens de Plano de Contas por `categoria` (mostrada uma única vez,
+// como cabeçalho) com cada `subcategoria` indentada logo abaixo — mesmo quando
+// categorias diferentes compartilham a mesma subcategoria (ex.: "Aluguel"
+// aparecendo tanto em "Despesas Gerais" quanto em "Despesas Financeiros"
+// formam dois grupos distintos).
+function groupPlanoContasPorCategoria(itens: PlanoConta[]): { categoria: string; itens: PlanoConta[] }[] {
+    const map = new Map<string, PlanoConta[]>();
+    for (const item of itens) {
+        const lista = map.get(item.categoria) ?? [];
+        lista.push(item);
+        map.set(item.categoria, lista);
+    }
+    return Array.from(map.entries()).map(([categoria, grupoItens]) => ({categoria, itens: grupoItens}));
+}
 
 const BASE_RISK_LEVELS: Record<number, { label: string; color: string; tags: string[] }> = {
     1: {
@@ -275,6 +373,160 @@ function ParceiroCombobox({
     );
 }
 
+// ─── PlanoContaCombobox ───────────────────────────────────────────────────────
+// Campo de busca para Classificação (Plano de Contas), seguindo o mesmo
+// padrão visual do ParceiroCombobox acima. Enquanto o termo digitado tem
+// menos de 3 caracteres, filtra localmente na lista já carregada (`planoContas`,
+// recebida via prop); a partir de 3 caracteres, dispara (com debounce de
+// 200ms) uma busca no servidor via GET /plano-contas?search=<termo>. A lista
+// é sempre agrupada por categoria (cabeçalho em negrito, subcategorias
+// indentadas embaixo).
+function PlanoContaCombobox({
+                                value,
+                                onChange,
+                                planoContas,
+                                error,
+                            }: {
+    value: string;
+    onChange: (v: string) => void;
+    planoContas: PlanoConta[];
+    error?: string;
+}) {
+    const [open, setOpen] = useState(false);
+    const [searchTerm, setSearchTerm] = useState("");
+    const [debouncedSearch, setDebouncedSearch] = useState("");
+
+    // Debounce de 200ms
+    useEffect(() => {
+        const t = setTimeout(() => setDebouncedSearch(searchTerm.trim()), 200);
+        return () => clearTimeout(t);
+    }, [searchTerm]);
+
+    const shouldSearchServer = debouncedSearch.length >= 3;
+
+    const {data: searchResults, isFetching} = useQuery<PlanoConta[]>({
+        queryKey: ["plano-contas-search", debouncedSearch],
+        queryFn: () => fetchApiData<PlanoConta[]>(`/plano-contas?search=${encodeURIComponent(debouncedSearch)}`),
+        enabled: shouldSearchServer,
+    });
+
+    // Enquanto não há termo suficiente para acionar o servidor, filtra
+    // localmente na lista já carregada (útil para 1-2 caracteres, sem bater
+    // no servidor a cada tecla digitada).
+    const localFiltered = searchTerm.trim().length === 0
+        ? planoContas
+        : planoContas.filter((p) => {
+            const haystack = `${p.categoria} ${p.subcategoria ?? ""}`.toLowerCase();
+            return haystack.includes(searchTerm.trim().toLowerCase());
+        });
+
+    const options = shouldSearchServer ? (searchResults ?? []) : localFiltered;
+    const grupos = groupPlanoContasPorCategoria(options);
+    const selected = planoContas.find((p) => String(p.id) === value);
+
+    const handleOpenChange = (o: boolean) => {
+        setOpen(o);
+        if (!o) setSearchTerm("");
+    };
+
+    const handleSelect = (p: PlanoConta) => {
+        onChange(String(p.id));
+        setOpen(false);
+        setSearchTerm("");
+    };
+
+    return (
+        <div>
+            <Popover open={open} onOpenChange={handleOpenChange}>
+                <PopoverTrigger asChild>
+                    <button
+                        type="button"
+                        className={`w-full bg-[#1a1c23] border rounded-xl px-4 py-2.5 text-sm text-left flex items-center justify-between hover:border-white/20 transition-all ${
+                            error ? "border-red-500/60" : "border-white/10"
+                        }`}
+                    >
+                        <span className={selected ? "text-white truncate" : "text-muted-foreground/40"}>
+                            {selected
+                                ? `${selected.categoria}${selected.subcategoria ? ` — ${selected.subcategoria}` : ""}`
+                                : "Indique a categoria contábil..."}
+                        </span>
+                        <Search className="w-4 h-4 text-muted-foreground shrink-0 ml-2"/>
+                    </button>
+                </PopoverTrigger>
+                <PopoverContent
+                    align="start"
+                    sideOffset={4}
+                    className="p-0 bg-[#1a1c23] border border-white/10 rounded-xl shadow-2xl"
+                    style={{width: "var(--radix-popover-trigger-width)"}}
+                >
+                    {/* Barra de busca */}
+                    <div className="p-3 border-b border-white/5">
+                        <div className="flex items-center gap-2 bg-black/30 rounded-lg px-3 py-2">
+                            <Search className="w-4 h-4 text-muted-foreground shrink-0"/>
+                            <input
+                                autoFocus
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                placeholder="Buscar categoria ou subcategoria..."
+                                className="bg-transparent text-sm text-white outline-none w-full placeholder:text-muted-foreground/40"
+                            />
+                        </div>
+                    </div>
+
+                    {/* Lista de resultados - agrupada por categoria */}
+                    <div className="max-h-64 overflow-y-auto">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                onChange("");
+                                setOpen(false);
+                                setSearchTerm("");
+                            }}
+                            className="w-full text-left px-4 py-2.5 text-xs text-muted-foreground hover:bg-white/5 transition-colors border-b border-white/5"
+                        >
+                            Indique a categoria contábil...
+                        </button>
+
+                        {shouldSearchServer && isFetching ? (
+                            <p className="px-4 py-3 text-xs text-muted-foreground text-center animate-pulse">Buscando...</p>
+                        ) : grupos.length === 0 ? (
+                            <p className="px-4 py-3 text-xs text-muted-foreground text-center">Nenhuma categoria
+                                encontrada.</p>
+                        ) : (
+                            grupos.map((grupo) => (
+                                <div key={grupo.categoria} className="py-1">
+                                    {/* Cabeçalho da categoria - mostrado uma única vez por grupo */}
+                                    <p className="px-4 py-1 text-[11px] font-bold text-white uppercase tracking-wide">
+                                        {grupo.categoria}
+                                    </p>
+                                    {grupo.itens.map((item) => {
+                                        const isSelected = String(item.id) === value;
+                                        return (
+                                            <button
+                                                key={item.id}
+                                                type="button"
+                                                onClick={() => handleSelect(item)}
+                                                className={`w-full text-left pl-8 pr-4 py-1.5 text-xs transition-colors ${
+                                                    isSelected
+                                                        ? "bg-primary/10 text-primary font-semibold"
+                                                        : "text-white/70 hover:bg-white/5"
+                                                }`}
+                                            >
+                                                {item.subcategoria || item.categoria}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </PopoverContent>
+            </Popover>
+            {error && <p className="text-[10px] text-destructive mt-1 font-medium">{error}</p>}
+        </div>
+    );
+}
+
 // Sub-componente isolado para campos PIX
 
 type PagamentoPixSectionProps = {
@@ -456,6 +708,10 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
     const [nivelRisco, setNivelRisco] = useState(0);
     const [searchParceiro, setSearchParceiro] = useState("");
 
+    // Controla a exibição do modal "Cancelar cadastro?" quando o usuário
+    // tenta fechar/cancelar um formulário que já possui alterações não salvas
+    const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+
     type ParceiroSubModal = { mode: "create" } | { mode: "edit"; data: ParceiroRow };
     const [parceiroSubModal, setParceiroSubModal] = useState<ParceiroSubModal | null>(null);
 
@@ -471,7 +727,7 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
         watch,
         setValue,
         reset,
-        formState: {errors},
+        formState: {errors, isDirty},
     } = form;
 
     const vencimento = watch("vencimento");
@@ -503,6 +759,16 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
         setValue(`pagamentos.${index}.boleto_codigo_barras`, "");
     }
 
+    // Tenta fechar o modal: se o formulário tiver alterações não salvas,
+    // exibe a confirmação antes de descartar; caso contrário, fecha direto.
+    function handleRequestClose() {
+        if (isDirty) {
+            setShowCancelConfirm(true);
+        } else {
+            onClose();
+        }
+    }
+
     // Reset ao abrir / mudar item
 
     useEffect(() => {
@@ -510,6 +776,7 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
         setNivelRisco(0);
         setRiskLevels(BASE_RISK_LEVELS);
         setShowAddTag(false);
+        setShowCancelConfirm(false);
     }, [editItem, reset]);
 
     // Sincroniza status ao mudar tipo
@@ -637,6 +904,21 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
                 />
             )}
 
+            {/* Confirmação de cancelamento - só aparece se o formulário tiver alterações não salvas */}
+            <ConfirmDialog
+                open={showCancelConfirm}
+                tone="warning"
+                title="Cancelar cadastro?"
+                description="As informações preenchidas serão perdidas. Deseja realmente cancelar?"
+                confirmLabel="Sim, cancelar"
+                cancelLabel="Não, continuar"
+                onCancel={() => setShowCancelConfirm(false)}
+                onConfirm={() => {
+                    setShowCancelConfirm(false);
+                    onClose();
+                }}
+            />
+
             <div
                 className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 backdrop-blur-md p-4 pt-16 overflow-hidden">
                 <div
@@ -651,7 +933,7 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
                             </h2>
                             <p className="text-xs text-muted-foreground">Preencha os dados financeiros detalhados</p>
                         </div>
-                        <button type="button" onClick={onClose}
+                        <button type="button" onClick={handleRequestClose}
                                 className="p-2 hover:bg-white/5 rounded-xl text-muted-foreground hover:text-white transition-all group">
                             <X className="w-5 h-5 group-hover:rotate-90 transition-transform"/>
                         </button>
@@ -780,19 +1062,19 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
                             {/* ── Coluna direita ──────────────────────────────────────────── */}
                             <div className="space-y-5">
 
-                                {/* Classificação (Plano de Contas) */}
+                                {/* Classificação (Plano de Contas) - combobox com busca:
+                                    debounce de 200ms, busca no servidor a partir de 3 caracteres,
+                                    resultados agrupados por categoria */}
                                 <div>
                                     <label className={labelCls}>Classificação (Plano de Contas)</label>
-                                    <select {...register("plano_conta_id")} className={selectCls}>
-                                        <option value="">Indique a categoria contábil...</option>
-                                        {planoContas.map((p) => (
-                                            <option key={p.id} value={p.id}>
-                                                {p.categoria} {p.subcategoria ? `— ${p.subcategoria}` : ""}
-                                            </option>
-                                        ))}
-                                    </select>
-                                    {errors.plano_conta_id &&
-                                        <p className={errorCls}>{errors.plano_conta_id.message}</p>}
+                                    <Controller name="plano_conta_id" control={control} render={({field}) => (
+                                        <PlanoContaCombobox
+                                            value={field.value}
+                                            onChange={field.onChange}
+                                            planoContas={planoContas}
+                                            error={errors.plano_conta_id?.message}
+                                        />
+                                    )}/>
                                 </div>
 
                                 {/* Valor + Status */}
@@ -1148,7 +1430,7 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
 
                         {/* Largura natural, alinhados à direita */}
                         <div className="flex justify-end gap-3 pt-4 border-t border-white/5">
-                            <button type="button" onClick={onClose}
+                            <button type="button" onClick={handleRequestClose}
                                     className="px-6 py-2.5 rounded-xl border border-white/10 text-white hover:bg-white/5 text-sm font-bold transition-all">
                                 Cancelar
                             </button>

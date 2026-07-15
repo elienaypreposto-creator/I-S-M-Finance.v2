@@ -8,6 +8,8 @@ import { Plus, Search, Filter, Download, Loader2, AlertCircle, Calendar, Pencil,
 import { ApiEnvelope, fetchApi, fetchApiData } from "@/lib/api-config";
 import { LancamentoModal } from "@/components/lancamentos/lancamento-modal";
 import { exportToExcel, fmtBRL, fmtDate as fmtDateExport } from "@/lib/export";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { useConfirm } from "@/hooks/use-confirm";
 
 type Lancamento = {
   id: number;
@@ -88,6 +90,7 @@ export default function Lancamentos() {
   const [editItem, setEditItem] = useState<Lancamento | null>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { confirm, ConfirmDialogProps } = useConfirm();
   const limit = 25;
 
   const handleSearchChange = (value: string) => {
@@ -125,6 +128,32 @@ export default function Lancamentos() {
       toast({ variant: "destructive", title: "Erro", description: msg });
     },
   });
+
+  // Confirmação estilizada antes de excluir (substitui o window.confirm nativo)
+  const handleDelete = async (l: Lancamento) => {
+    const label = l.descricao ? `"${l.descricao.toUpperCase()}"` : `lançamento #${l.id}`;
+    const ok = await confirm({
+      title: `Excluir ${label}?`,
+      description: "Esta ação não pode ser desfeita. O lançamento será removido permanentemente.",
+      confirmLabel: "Excluir",
+      cancelLabel: "Cancelar",
+      variant: "destructive",
+    });
+    if (ok) deleteMutation.mutate(l.id);
+  };
+
+  // Confirmação estilizada antes de abrir o formulário de edição
+  const handleEdit = async (l: Lancamento) => {
+    const label = l.descricao ? `"${l.descricao.toUpperCase()}"` : `lançamento #${l.id}`;
+    const ok = await confirm({
+      title: `Editar ${label}?`,
+      description: "Você será direcionado ao formulário de edição deste lançamento.",
+      confirmLabel: "Editar",
+      cancelLabel: "Cancelar",
+      variant: "default",
+    });
+    if (ok) setEditItem(l);
+  };
 
   const lancamentos = data?.items ?? [];
   const total = data?.total ?? 0;
@@ -178,6 +207,8 @@ export default function Lancamentos() {
 
   return (
     <div className="flex flex-col gap-2 h-full">
+      <ConfirmDialog {...ConfirmDialogProps} />
+
       {(modalOpen || editItem) && (
         <LancamentoModal
           onClose={() => {
@@ -393,15 +424,13 @@ export default function Lancamentos() {
                     <td className="px-3 py-2.5">
                       <div className="flex items-center justify-end gap-1">
                         <button
-                          onClick={() => setEditItem(l)}
+                          onClick={() => handleEdit(l)}
                           className="p-1 rounded hover:bg-white/10 text-muted-foreground hover:text-primary transition-colors"
                           title="Editar">
                           <Pencil className="w-3.5 h-3.5" />
                         </button>
                         <button
-                          onClick={() => {
-                            if (confirm("Deseja excluir este lançamento?")) deleteMutation.mutate(l.id);
-                          }}
+                          onClick={() => handleDelete(l)}
                           className="p-1 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
                           title="Excluir">
                           <Trash2 className="w-3.5 h-3.5" />
