@@ -17,7 +17,10 @@ export const parceirosService = {
         if (excluir_com_usuario) {
             conditions.push(
                 not(
-                    sql`${parceirosTable.nome} IN (SELECT nome FROM ${usuariosTable})`,
+                    sql`${parceirosTable.nome}
+                    IN (SELECT nome FROM
+                    ${usuariosTable}
+                    )`,
                 ),
             );
         }
@@ -40,17 +43,37 @@ export const parceirosService = {
     },
 
     async create(payload: CreateParceiroBody) {
-        const [item] = await db
-            .insert(parceirosTable)
-            .values({
-                ...payload,
-                tipos: payload.tipos ?? [],
-                chaves_pix: payload.chaves_pix ?? [],
-                dados_bancarios: payload.dados_bancarios ?? [],
-            })
-            .returning();
+        try {
+            const [item] = await db
+                .insert(parceirosTable)
+                .values({
+                    ...payload,
+                    tipos: payload.tipos ?? [],
+                    chaves_pix: payload.chaves_pix ?? [],
+                    dados_bancarios: payload.dados_bancarios ?? [],
+                })
+                .returning();
 
-        return item;
+            return item;
+        } catch (error: unknown) {
+            const root = (
+                (error as { cause?: unknown }).cause ?? error
+            ) as { code?: string; constraint?: string; message?: string };
+
+            const isUniqueViolation =
+                root.code === "23505" ||
+                root.constraint?.includes("cpf_cnpj") ||
+                (root.message ?? "").includes("parceiros_cpf_cnpj_unique_idx");
+
+            if (isUniqueViolation) {
+                throw new AppError(
+                    422,
+                    "CPF_CNPJ_JA_CADASTRADO",
+                    "Este CPF/CNPJ já está cadastrado no sistema para outro cliente ou fornecedor.",
+                );
+            }
+            throw error;
+        }
     },
 
     async getById(id: number) {

@@ -20,7 +20,7 @@ import crypto from "crypto";
 import {and, count, eq, ilike} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {parceirosTable, permissoesTable, usuariosTable} from "@workspace/db/schema";
-import {sendWelcomeEmail} from "../services/email.service";
+import {sendWelcomeEmail, sendAdminCreatedAccountEmail} from "../services/email.service";
 import {revokeAllTokensForUser} from "../services/session.service";
 import {generateOtp} from "../services/token.service";
 import {errorResponse, successResponse} from "../utils/response";
@@ -34,11 +34,14 @@ import {validateBody} from "../middlewares/validate";
 const createUsuarioBodySchema = z.object({
     nome: z.string().trim().min(2, "Nome deve ter pelo menos 2 caracteres."),
     email: z.string().trim().email("E-mail inválido.").toLowerCase(),
-    // [ALTERADO] perfil_base agora é obrigatório
     perfil_base: z.string().trim().min(1, "Perfil base é obrigatório."),
     cargo: z.string().trim().min(1).optional(),
     telefone: z.string().trim().min(1).optional(),
     celular: z.string().trim().min(1).optional(),
+    senha: z.preprocess(
+        (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+        z.string().min(8, "A senha deve ter pelo menos 8 caracteres.").optional(),
+    ),
 });
 
 const updateUsuarioBodySchema = z.object({
@@ -118,27 +121,31 @@ router.post(
     validateBody(createUsuarioBodySchema),
     async (req, res) => {
         try {
-            const {nome, email, cargo, perfil_base, telefone, celular} = req.body as CreateUsuarioBody;
+            const {nome, email, cargo, perfil_base, telefone, celular, senha} = req.body as CreateUsuarioBody;
 
-            // ── Validação: parceiro já tem usuário cadastrado ─────────────────────────
+            const frontendUrl = process.env.FRONTEND_URL;
+            if (!frontendUrl) {
+                console.error("[CONFIG] FRONTEND_URL não definido — criação de utilizador bloqueada.");
+                return errorResponse(res, 500, "CONFIGURATION_ERROR", "Serviço temporariamente indisponível. Contacte o administrador.");
+            }
+
             const [usuarioExistente] = await db
-                .select({ id: usuariosTable.id })
+                .select({id: usuariosTable.id})
                 .from(usuariosTable)
-                .where(ilike(usuariosTable.nome, nome.trim()))
+                .where(eq(usuariosTable.email, email))
                 .limit(1);
 
             if (usuarioExistente) {
                 return errorResponse(
                     res,
                     422,
-                    "PARCEIRO_JA_CADASTRADO",
-                    "Este parceiro já possui um usuário cadastrado no sistema.",
+                    "EMAIL_JA_CADASTRADO",
+                    "Já existe um utilizador cadastrado com este e-mail.",
                 );
             }
 
-            // ── Validação: parceiro com flag Cliente ou Fornecedor ativa ──────────────
             const [parceiro] = await db
-                .select({ id: parceirosTable.id, tipos: parceirosTable.tipos })
+                .select({id: parceirosTable.id, tipos: parceirosTable.tipos})
                 .from(parceirosTable)
                 .where(ilike(parceirosTable.nome, nome.trim()))
                 .limit(1);
@@ -151,19 +158,25 @@ router.post(
                         res,
                         422,
                         "PARCEIRO_FLAG_BLOQUEADA",
-                        `Usuário não pode ser cadastrado, pois a flag ${flagsAtivas.map((f) => `"${f}"`).join(" e ")} está habilitada. Desabilite essa flag para prosseguir.`,
+                        `Utilizador não pode ser cadastrado, pois a flag ${flagsAtivas.map((f) => `"${f}"`).join(" e ")} está habilitada. Desabilite essa flag para prosseguir.`,
                     );
                 }
             }
-            // ─────────────────────────────────────────────────────────────────────────
 
-            const otp = generateOtp();
-            const otpHash = await bcrypt.hash(otp, BCRYPT_SALT_ROUNDS);
+            // Fluxo A: admin definiu senha -> login directo sem OTP
+            // Fluxo B: sem senha -> gera OTP de primeiro acesso
+            const adminDefineSenha = typeof senha === "string" && senha.length >= 8;
 
-            const placeholderHash = await bcrypt.hash(
-                crypto.randomBytes(32).toString("hex"),
-                BCRYPT_SALT_ROUNDS,
-            );
+            const senhaHash = adminDefineSenha
+                ? await bcrypt.hash(senha!, BCRYPT_SALT_ROUNDS)
+                : await bcrypt.hash(crypto.randomBytes(32).toString("hex"), BCRYPT_SALT_ROUNDS);
+
+            let otp: string | null = null;
+            let otpHash: string | null = null;
+            if (!adminDefineSenha) {
+                otp = generateOtp();
+                otpHash = await bcrypt.hash(otp, BCRYPT_SALT_ROUNDS);
+            }
 
             const novoUsuario = await db.transaction(async (tx) => {
                 const [user] = await tx
@@ -175,7 +188,7 @@ router.post(
                         perfil_base,
                         telefone,
                         celular,
-                        senha_hash: placeholderHash,
+                        senha_hash: senhaHash,
                         senha_unica_hash: otpHash,
                         senha_unica_utilizada: false,
                         bloqueado: false,
@@ -185,9 +198,13 @@ router.post(
             });
 
             try {
-                const originUrl = process.env.FRONTEND_URL ?? "http://localhost:5173";
-                await sendWelcomeEmail(email, nome, otp, originUrl);
+                if (adminDefineSenha) {
+                    await sendAdminCreatedAccountEmail(email, nome, frontendUrl);
+                } else {
+                    await sendWelcomeEmail(email, nome, otp!, frontendUrl);
+                }
             } catch (emailErr) {
+                // Reverte o OTP para não deixar um hash inutilizável gravado
                 await db
                     .update(usuariosTable)
                     .set({senha_unica_hash: null})
@@ -198,11 +215,15 @@ router.post(
                     res,
                     503,
                     "EMAIL_ERROR",
-                    "Utilizador criado, mas o e-mail de boas-vindas falhou. Tente reenviar o OTP.",
+                    "Utilizador criado, mas o e-mail de boas-vindas falhou. Verifique as configurações SMTP.",
                 );
             }
 
-            return successResponse(res, novoUsuario, {message: "OTP enviado para o e-mail."}, 201);
+            const meta = adminDefineSenha
+                ? {message: "Conta criada. E-mail de confirmação enviado."}
+                : {message: "Conta criada. Código de activação enviado por e-mail."};
+
+            return successResponse(res, novoUsuario, meta, 201);
         } catch (e: unknown) {
             return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao criar usuário.", String(e));
         }
