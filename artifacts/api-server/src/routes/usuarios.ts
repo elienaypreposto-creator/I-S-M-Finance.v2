@@ -123,7 +123,7 @@ router.post(
         try {
             const {nome, email, cargo, perfil_base, telefone, celular, senha} = req.body as CreateUsuarioBody;
 
-            const frontendUrl = process.env.FRONTEND_URL;
+            const frontendUrl = process.env.FRONTEND_URL ?? "http://localhost:5173";
             if (!frontendUrl) {
                 console.error("[CONFIG] FRONTEND_URL não definido — criação de utilizador bloqueada.");
                 return errorResponse(res, 500, "CONFIGURATION_ERROR", "Serviço temporariamente indisponível. Contacte o administrador.");
