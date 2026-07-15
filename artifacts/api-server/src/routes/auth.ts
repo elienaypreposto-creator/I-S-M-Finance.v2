@@ -60,6 +60,8 @@ router.post("/auth/login", async (req, res) => {
                 email: usuariosTable.email,
                 senha_hash: usuariosTable.senha_hash,
                 bloqueado: usuariosTable.bloqueado,
+                ultimo_acesso: usuariosTable.ultimo_acesso,
+                senha_unica_utilizada: usuariosTable.senha_unica_utilizada,
             })
             .from(usuariosTable)
             .where(eq(usuariosTable.email, email))
@@ -89,10 +91,29 @@ router.post("/auth/login", async (req, res) => {
                 .where(eq(usuariosTable.id, usuario.id));
         }
 
+        // Detecção de primeiro acesso
+        // Critério: nunca fez login antes (ultimo_acesso === null) E não passou pelo fluxo OTP/definir-senha (senha_unica_utilizada === false).
+        const ehPrimeiroAcesso =
+            !usuario.ultimo_acesso && !usuario.senha_unica_utilizada;
+
         await db
             .update(usuariosTable)
             .set({ultimo_acesso: new Date()})
             .where(eq(usuariosTable.id, usuario.id));
+
+        if (ehPrimeiroAcesso) {
+            const setupToken = await signPurposeToken({
+                sub: String(usuario.id),
+                email: usuario.email,
+                purpose: "password_setup",
+            });
+
+            return successResponse(
+                res,
+                {primeiroAcesso: true, setupToken, email: usuario.email},
+                {message: "Primeiro acesso detectado. Por favor, defina uma nova senha."},
+            );
+        }
 
         // Permissões consultadas no banco para embutir no JWE
         const permissions = await fetchPermissions(usuario.id);
@@ -371,6 +392,72 @@ router.post("/auth/setup-password", async (req, res) => {
         return successResponse(res, null, {message: "Senha definida com sucesso. Faça login."});
     } catch (error: unknown) {
         console.error("Erro em setup-password:", error);
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao definir senha.", String(error));
+    }
+});
+
+/**
+ * Endpoint unificado de primeiro acesso - combina verify-otp + setup-password num único passo.
+ * O link do e-mail de boas-vindas aponta para /definir-senha com email e token na query string; o utilizador só precisa de escolher a senha.
+ */
+router.post("/auth/definir-senha", async (req, res) => {
+    try {
+        const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : null;
+        const token = typeof req.body?.token === "string" ? req.body.token.trim().toUpperCase() : null;
+        const novaSenha = typeof req.body?.novaSenha === "string" ? req.body.novaSenha : null;
+
+        if (!email || !token || !novaSenha) {
+            return errorResponse(res, 400, "VALIDATION_ERROR", "Campos obrigatórios: email, token e novaSenha.");
+        }
+
+        if (novaSenha.length < 8) {
+            return errorResponse(res, 400, "VALIDATION_ERROR", "A senha deve ter pelo menos 8 caracteres.");
+        }
+        if (!/[A-Z]/.test(novaSenha)) {
+            return errorResponse(res, 400, "VALIDATION_ERROR", "A senha deve conter ao menos 1 letra maiúscula.");
+        }
+        if (!/[0-9]/.test(novaSenha)) {
+            return errorResponse(res, 400, "VALIDATION_ERROR", "A senha deve conter ao menos 1 número.");
+        }
+
+        const [usuario] = await db
+            .select({
+                id: usuariosTable.id,
+                email: usuariosTable.email,
+                senha_unica_hash: usuariosTable.senha_unica_hash,
+                senha_unica_utilizada: usuariosTable.senha_unica_utilizada,
+                bloqueado: usuariosTable.bloqueado,
+            })
+            .from(usuariosTable)
+            .where(eq(usuariosTable.email, email))
+            .limit(1);
+
+        if (!usuario || !usuario.senha_unica_hash || usuario.senha_unica_utilizada) {
+            return errorResponse(res, 400, "INVALID_TOKEN", "Token de ativação inválido ou já utilizado.");
+        }
+
+        if (usuario.bloqueado) {
+            return errorResponse(res, 403, "FORBIDDEN", "Conta bloqueada. Contacte o administrador.");
+        }
+
+        const tokenValido = await bcrypt.compare(token, usuario.senha_unica_hash);
+        if (!tokenValido) {
+            return errorResponse(res, 400, "INVALID_TOKEN", "Token de ativação inválido ou já utilizado.");
+        }
+
+        await db
+            .update(usuariosTable)
+            .set({
+                senha_hash: await bcrypt.hash(novaSenha, BCRYPT_SALT_ROUNDS),
+                senha_unica_hash: null,
+                senha_unica_utilizada: true,
+                updated_at: new Date(),
+            })
+            .where(eq(usuariosTable.id, usuario.id));
+
+        return successResponse(res, null, {message: "Senha definida com sucesso. Faça login para continuar."});
+    } catch (error: unknown) {
+        console.error("Erro em definir-senha:", error);
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao definir senha.", String(error));
     }
 });

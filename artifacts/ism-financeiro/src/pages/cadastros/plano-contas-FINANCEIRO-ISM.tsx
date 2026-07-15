@@ -1,380 +1,414 @@
-import { useMemo, useState } from "react";
-import { PageHeader } from "@/components/shared/page-header";
-import { Plus, Edit, Trash2, Lock } from "lucide-react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useToast } from "@/hooks/use-toast";
-import { ConfirmDialog } from "@/components/shared/confirm-dialog";
-import { useConfirm } from "@/hooks/use-confirm";
+import {useMemo, useState} from "react";
+import {PageHeader} from "@/components/shared/page-header";
+import {Plus, Edit, Trash2, Lock} from "lucide-react";
+import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
+import {useToast} from "@/hooks/use-toast";
+import {ConfirmDialog} from "@/components/shared/confirm-dialog";
+import {useConfirm} from "@/hooks/use-confirm";
 
-import { fetchApi, fetchApiData } from "@/lib/api-config";
+import {fetchApi, fetchApiData} from "@/lib/api-config";
 
 type PlanoConta = {
-  id: number;
-  tipo: string;
-  categoria: string;
-  subcategoria: string | null;
-  ativo: boolean;
+    id: number;
+    tipo: string;
+    categoria: string;
+    subcategoria: string | null;
+    ativo: boolean;
 };
 
 // Comparador alfabético 
-const collator = new Intl.Collator("pt-BR", { sensitivity: "base" });
+const collator = new Intl.Collator("pt-BR", {sensitivity: "base"});
 
 const normalizeText = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
 
 // Modal simples para formulário de Conta
 function FormModal({
-  isOpen,
-  onClose,
-  onSubmit,
-  initialData,
-  lockedTipo = false,
-  lockedCategoria = false,
-}: any) {
-  const [tipo, setTipo] = useState(initialData?.tipo || 'despesa');
-  const [categoria, setCategoria] = useState(initialData?.categoria || '');
-  const [subcategoria, setSubcategoria] = useState(initialData?.subcategoria || '');
+                       isOpen,
+                       onClose,
+                       onSubmit,
+                       initialData,
+                       lockedTipo = false,
+                       lockedCategoria = false,
+                   }: any) {
+    const [tipo, setTipo] = useState(initialData?.tipo || 'despesa');
+    const [categoria, setCategoria] = useState(initialData?.categoria || '');
+    const [subcategoria, setSubcategoria] = useState(initialData?.subcategoria || '');
 
-  if (!isOpen) return null;
+    if (!isOpen) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-[#1a1c23] border border-white/10 rounded-2xl w-full max-w-md p-6 shadow-2xl">
-        <h2 className="text-lg font-bold text-white mb-4">
-          {initialData?.id
-            ? 'Editar Categoria'
-            : lockedCategoria
-            ? 'Nova Subcategoria'
-            : 'Nova Categoria'}
-        </h2>
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div className="bg-[#1a1c23] border border-white/10 rounded-2xl w-full max-w-md p-6 shadow-2xl">
+                <h2 className="text-lg font-bold text-white mb-4">
+                    {initialData?.id
+                        ? 'Editar Categoria'
+                        : lockedCategoria
+                            ? 'Nova Subcategoria'
+                            : 'Nova Categoria'}
+                </h2>
 
-        <form onSubmit={(e) => {
-          e.preventDefault();
-          onSubmit({ id: initialData?.id, tipo, categoria, subcategoria });
-        }} className="space-y-4">
+                <form onSubmit={(e) => {
+                    e.preventDefault();
+                    onSubmit({id: initialData?.id, tipo, categoria, subcategoria});
+                }} className="space-y-4">
 
-         <div>
-  <label className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
-    Tipo
-    {lockedTipo && <Lock className="w-3 h-3 text-red-400" />}
-  </label>
-  <select
-    value={tipo}
-    onChange={e => setTipo(e.target.value)}
-    disabled={lockedTipo}
-    className={`mt-1 w-full border rounded-lg p-2.5 outline-none focus:border-primary/50 transition-colors ${
-      lockedTipo
-        ? 'bg-white/5 border-red-400/30 text-white/70 cursor-not-allowed'
-        : 'bg-black/20 border-white/10 text-white'
-    }`}
-  >
-    <option value="receita" className="bg-[#1a1c23] text-white">Receita</option>
-    <option value="custo" className="bg-[#1a1c23] text-white">Custo</option>
-    <option value="despesa" className="bg-[#1a1c23] text-white">Despesa</option>
-  </select>
-  {lockedTipo && (
-    <p className="text-xs text-red-400/80 mt-1">Tipo travado pelo grupo selecionado</p>
-  )}
-</div>
+                    <div>
+                        <label className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                            Tipo
+                            {lockedTipo && <Lock className="w-3 h-3 text-red-400"/>}
+                        </label>
+                        <select
+                            value={tipo}
+                            onChange={e => setTipo(e.target.value)}
+                            disabled={lockedTipo}
+                            className={`mt-1 w-full border rounded-lg p-2.5 outline-none focus:border-primary/50 transition-colors ${
+                                lockedTipo
+                                    ? 'bg-white/5 border-red-400/30 text-white/70 cursor-not-allowed'
+                                    : 'bg-black/20 border-white/10 text-white'
+                            }`}
+                        >
+                            <option value="receita" className="bg-[#1a1c23] text-white">Receita</option>
+                            <option value="custo" className="bg-[#1a1c23] text-white">Custo</option>
+                            <option value="despesa" className="bg-[#1a1c23] text-white">Despesa</option>
+                        </select>
+                        {lockedTipo && (
+                            <p className="text-xs text-red-400/80 mt-1">Tipo travado pelo grupo selecionado</p>
+                        )}
+                    </div>
 
-          <div>
-            <label className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
-              Grupo Principal (Categoria)
-              {lockedCategoria && <Lock className="w-3 h-3 text-red-400" />}
-            </label>
-            <input
-              required
-              type="text"
-              value={categoria}
-              onChange={e => setCategoria(e.target.value)}
-              readOnly={lockedCategoria}
-              className={`mt-1 w-full border rounded-lg p-2.5 outline-none focus:border-primary/50 transition-colors ${
-                lockedCategoria
-                  ? 'bg-white/5 border-red-400/30 text-white/70 cursor-not-allowed'
-                  : 'bg-black/20 border-white/10 text-white'
-              }`}
-              placeholder="Ex: Despesas Administrativas"
-            />
-            {lockedCategoria && (
-              <p className="text-xs text-red-400/80 mt-1">Categoria travada — você está adicionando uma subcategoria</p>
-            )}
-          </div>
+                    <div>
+                        <label className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                            Grupo Principal (Categoria)
+                            {lockedCategoria && <Lock className="w-3 h-3 text-red-400"/>}
+                        </label>
+                        <input
+                            required
+                            type="text"
+                            value={categoria}
+                            onChange={e => setCategoria(e.target.value)}
+                            readOnly={lockedCategoria}
+                            className={`mt-1 w-full border rounded-lg p-2.5 outline-none focus:border-primary/50 transition-colors ${
+                                lockedCategoria
+                                    ? 'bg-white/5 border-red-400/30 text-white/70 cursor-not-allowed'
+                                    : 'bg-black/20 border-white/10 text-white'
+                            }`}
+                            placeholder="Ex: Despesas Administrativas"
+                        />
+                        {lockedCategoria && (
+                            <p className="text-xs text-red-400/80 mt-1">Categoria travada — você está adicionando uma
+                                subcategoria</p>
+                        )}
+                    </div>
 
-          <div>
-            <label className="text-sm font-medium text-muted-foreground">Subcategoria (Opcional)</label>
-            <input
-              type="text" value={subcategoria} onChange={e => setSubcategoria(e.target.value)}
-              className="mt-1 w-full bg-black/20 border border-white/10 rounded-lg p-2.5 text-white outline-none focus:border-primary/50"
-              placeholder="Ex: Aluguel"
-              autoFocus={lockedCategoria}
-            />
-          </div>
+                    <div>
+                        <label className="text-sm font-medium text-muted-foreground">Subcategoria (Opcional)</label>
+                        <input
+                            type="text" value={subcategoria} onChange={e => setSubcategoria(e.target.value)}
+                            className="mt-1 w-full bg-black/20 border border-white/10 rounded-lg p-2.5 text-white outline-none focus:border-primary/50"
+                            placeholder="Ex: Aluguel"
+                            autoFocus={lockedCategoria}
+                        />
+                    </div>
 
-          <div className="flex gap-3 pt-4">
-            <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-white/10 text-white hover:bg-white/5 transition-colors">Cancelar</button>
-            <button type="submit" className="flex-1 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-medium transition-colors">Salvar</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
+                    <div className="flex gap-3 pt-4">
+                        <button type="button" onClick={onClose}
+                                className="flex-1 py-2.5 rounded-xl border border-white/10 text-white hover:bg-white/5 transition-colors">Cancelar
+                        </button>
+                        <button type="submit"
+                                className="flex-1 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-medium transition-colors">Salvar
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
 }
 
 export default function PlanoContas() {
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-  const { confirm, ConfirmDialogProps } = useConfirm();
+    const queryClient = useQueryClient();
+    const {toast} = useToast();
+    const {confirm, ConfirmDialogProps} = useConfirm();
 
-  const [modal, setModal] = useState<{
-    open: boolean;
-    data: PlanoConta | null;
-    key: number;
-    lockedTipo: boolean;
-    lockedCategoria: boolean;
-  }>({
-    open: false,
-    data: null,
-    key: 0,
-    lockedTipo: false,
-    lockedCategoria: false,
-  });
-
-  const { data: contas = [], isLoading } = useQuery<PlanoConta[]>({
-    queryKey: ['plano-contas'],
-    queryFn: () => fetchApiData("/plano-contas")
-  });
-
-  const saveMutation = useMutation({
-    mutationFn: (data: any) => {
-      const method = data.id ? 'PUT' : 'POST';
-      const path = data.id ? `/plano-contas/${data.id}` : "/plano-contas";
-      return fetchApi(path, {
-        method,
-        body: JSON.stringify(data)
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['plano-contas'] });
-      setModal(prev => ({ ...prev, open: false, data: null }));
-      toast({ title: 'Sucesso', description: 'Categoria salva com sucesso.' });
-    },
-    onError: (error) => {
-      toast({ variant: 'destructive', title: 'Erro', description: error.message });
-    }
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (id: number) => fetchApi(`/plano-contas/${id}`, { method: 'DELETE' }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['plano-contas'] });
-      toast({ title: 'Sucesso', description: 'Categoria removida.' });
-    },
-    onError: async (error: Error) => {
-      const vinculada = /vincul|em uso|associad|relacionad/i.test(error.message);
-      await confirm({
-        title: vinculada ? 'Não é possível excluir' : 'Erro ao excluir',
-        description: vinculada
-          ? 'Categorias com lançamentos vinculados não podem ser removidas.'
-          : error.message,
-        confirmLabel: 'Entendi',
-        variant: vinculada ? 'default' : 'destructive',
-      });
-    }
-  });
-
-  const handleCreate = (tipoDef?: string) => {
-    setModal(prev => ({
-      open: true,
-      data: tipoDef ? { tipo: tipoDef } as any : null,
-      key: prev.key + 1,
-      lockedTipo: !!tipoDef,
-      lockedCategoria: false,
-    }));
-  };
-
-  const handleAddSubcategoria = (categoria: string, tipo: string) => {
-    setModal(prev => ({
-      open: true,
-      data: { tipo, categoria } as any,
-      key: prev.key + 1,
-      lockedTipo: true,
-      lockedCategoria: true,
-    }));
-  };
-
-  const handleEdit = (item: PlanoConta) => {
-    setModal(prev => ({
-      open: true,
-      data: item,
-      key: prev.key + 1,
-      lockedTipo: false,
-      lockedCategoria: false,
-    }));
-  };
-
-  const handleDelete = async (cat: PlanoConta) => {
-    const label = cat.subcategoria
-      ? `"${cat.subcategoria.toUpperCase()}"`
-      : `"${cat.categoria.toUpperCase()}"`;
-    const ok = await confirm({
-      title: `Excluir ${label}?`,
-      description: 'Esta ação não pode ser desfeita. A categoria será removida permanentemente.',
-      confirmLabel: 'Excluir',
-      cancelLabel: 'Cancelar',
-      variant: 'destructive',
+    const [modal, setModal] = useState<{
+        open: boolean;
+        data: PlanoConta | null;
+        key: number;
+        lockedTipo: boolean;
+        lockedCategoria: boolean;
+    }>({
+        open: false,
+        data: null,
+        key: 0,
+        lockedTipo: false,
+        lockedCategoria: false,
     });
-    if (ok) deleteMutation.mutate(cat.id);
-  };
 
-  // ── Validação de categoria duplicada dentro do mesmo tipo ──────────────
-  const handleSubmit = (data: any) => {
-    const categoriaTrim = (data.categoria as string).trim().replace(/\s+/g, ' ');
-    const categoriaNorm = normalizeText(categoriaTrim);
+    const {data: contas = [], isLoading} = useQuery<PlanoConta[]>({
+        queryKey: ['plano-contas'],
+        queryFn: () => fetchApiData("/plano-contas")
+    });
 
-    const isReaproveitandoCategoriaTravada =
-      !data.id &&
-      contas.some(c => c.tipo === data.tipo && normalizeText(c.categoria) === categoriaNorm);
+    const saveMutation = useMutation({
+        mutationFn: (data: any) => {
+            const method = data.id ? 'PUT' : 'POST';
+            const path = data.id ? `/plano-contas/${data.id}` : "/plano-contas";
+            return fetchApi(path, {
+                method,
+                body: JSON.stringify(data)
+            });
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({queryKey: ['plano-contas']});
+            setModal(prev => ({...prev, open: false, data: null}));
+            toast({title: 'Sucesso', description: 'Categoria salva com sucesso.'});
+        },
+        onError: (error) => {
+            toast({variant: 'destructive', title: 'Erro', description: error.message});
+        }
+    });
 
-    if (!isReaproveitandoCategoriaTravada) {
-      const existeDuplicada = contas.some(
-        c => c.tipo === data.tipo &&
-             normalizeText(c.categoria) === categoriaNorm &&
-             c.id !== data.id
-      );
+    const deleteMutation = useMutation({
+        mutationFn: (id: number) => fetchApi(`/plano-contas/${id}`, {method: 'DELETE'}),
+        onSuccess: () => {
+            queryClient.invalidateQueries({queryKey: ['plano-contas']});
+            toast({title: 'Sucesso', description: 'Categoria removida.'});
+        },
+        onError: async (error: Error) => {
+            const vinculada = /vincul|em uso|associad|relacionad/i.test(error.message);
+            await confirm({
+                title: vinculada ? 'Não é possível excluir' : 'Erro ao excluir',
+                description: vinculada
+                    ? 'Categorias com lançamentos vinculados não podem ser removidas.'
+                    : error.message,
+                confirmLabel: 'Entendi',
+                variant: vinculada ? 'default' : 'destructive',
+            });
+        }
+    });
 
-      if (existeDuplicada) {
-        toast({
-          variant: 'destructive',
-          title: 'Categoria duplicada',
-          description: `Já existe uma categoria "${categoriaTrim}" neste tipo de plano de contas.`,
+    const handleCreate = (tipoDef?: string) => {
+        setModal(prev => ({
+            open: true,
+            data: tipoDef ? {tipo: tipoDef} as any : null,
+            key: prev.key + 1,
+            lockedTipo: !!tipoDef,
+            lockedCategoria: false,
+        }));
+    };
+
+    const handleAddSubcategoria = (categoria: string, tipo: string) => {
+        setModal(prev => ({
+            open: true,
+            data: {tipo, categoria} as any,
+            key: prev.key + 1,
+            lockedTipo: true,
+            lockedCategoria: true,
+        }));
+    };
+
+    const handleEdit = (item: PlanoConta) => {
+        setModal(prev => ({
+            open: true,
+            data: item,
+            key: prev.key + 1,
+            lockedTipo: false,
+            lockedCategoria: false,
+        }));
+    };
+
+    const handleDelete = async (cat: PlanoConta) => {
+        const label = cat.subcategoria
+            ? `"${cat.subcategoria.toUpperCase()}"`
+            : `"${cat.categoria.toUpperCase()}"`;
+        const ok = await confirm({
+            title: `Excluir ${label}?`,
+            description: 'Esta ação não pode ser desfeita. A categoria será removida permanentemente.',
+            confirmLabel: 'Excluir',
+            cancelLabel: 'Cancelar',
+            variant: 'destructive',
         });
-        return;
-      }
-    }
+        if (ok) deleteMutation.mutate(cat.id);
+    };
 
-    saveMutation.mutate({ ...data, categoria: categoriaTrim });
-  };
+    // ── Validação de categoria duplicada dentro do mesmo tipo ──────────────
+    const handleSubmit = (data: any) => {
+        const categoriaTrim = (data.categoria as string).trim().replace(/\s+/g, ' ');
+        const categoriaNorm = normalizeText(categoriaTrim);
 
-  const receitas = contas.filter(c => c.tipo === 'receita');
-  const custos = contas.filter(c => c.tipo === 'custo');
-  const despesas = contas.filter(c => c.tipo === 'despesa');
+        const isReaproveitandoCategoriaTravada =
+            !data.id &&
+            contas.some(c => c.tipo === data.tipo && normalizeText(c.categoria) === categoriaNorm);
 
-  // Agrupa por categoria normalizada 
-  const groupByCategoriaOrdenado = (items: PlanoConta[]) => {
-    const grouped: Record<string, { label: string; items: PlanoConta[] }> = {};
+        if (!isReaproveitandoCategoriaTravada) {
+            const existeDuplicada = contas.some(
+                c => c.tipo === data.tipo &&
+                    normalizeText(c.categoria) === categoriaNorm &&
+                    c.id !== data.id
+            );
 
-    items.forEach(item => {
-      const key = normalizeText(item.categoria);
-      const labelLimpo = item.categoria.trim().replace(/\s+/g, ' ');
-      if (!grouped[key]) {
-        grouped[key] = { label: labelLimpo, items: [] };
-      }
-      grouped[key].items.push(item);
-    });
+            if (existeDuplicada) {
+                toast({
+                    variant: 'destructive',
+                    title: 'Categoria duplicada',
+                    description: `Já existe uma categoria "${categoriaTrim}" neste tipo de plano de contas.`,
+                });
+                return;
+            }
+        }
 
-    Object.values(grouped).forEach(group => {
-      group.items.sort((a, b) =>
-        collator.compare((a.subcategoria || "").trim(), (b.subcategoria || "").trim())
-      );
-    });
+        saveMutation.mutate({
+            ...data,
+            categoria: categoriaTrim,
+            subcategoria: data.subcategoria?.trim() || null,
+        });
+    };
 
-    return Object.values(grouped)
-      .sort((a, b) => collator.compare(a.label, b.label))
-      .map(group => [group.label, group.items] as [string, PlanoConta[]]);
-  };
+    const receitas = contas.filter(c => c.tipo === 'receita');
+    const custos = contas.filter(c => c.tipo === 'custo');
+    const despesas = contas.filter(c => c.tipo === 'despesa');
 
-  const renderSection = (title: string, tipoCode: string, colorConfig: any, items: PlanoConta[], tipoDef: string) => {
-    const groupedEntries = groupByCategoriaOrdenado(items);
+    // Agrupa por categoria normalizada
+    const groupByCategoriaOrdenado = (items: PlanoConta[]) => {
+        const grouped: Record<string, { label: string; items: PlanoConta[] }> = {};
 
-    return (
-      <div className={`glass-panel rounded-2xl overflow-hidden ${colorConfig.border}`}>
-        <div className={`${colorConfig.bg} p-4 border-b ${colorConfig.borderHeader} flex justify-between items-center`}>
-          <h3 className={`font-bold ${colorConfig.text}`}>{title}</h3>
-          <span className={`text-xs ${colorConfig.bgBadge} ${colorConfig.textBadge} px-2 py-1 rounded`}>Grupo {tipoCode}</span>
-        </div>
+        items.forEach(item => {
+            const key = normalizeText(item.categoria);
+            const labelLimpo = item.categoria.trim().replace(/\s+/g, ' ');
+            if (!grouped[key]) {
+                grouped[key] = {label: labelLimpo, items: []};
+            }
+            grouped[key].items.push(item);
+        });
 
-        <div className="p-4 space-y-4">
-          {isLoading ? (
-            <div className="text-sm text-muted-foreground animate-pulse p-2">Carregando...</div>
-          ) : groupedEntries.length === 0 ? (
-            <div className="text-sm text-muted-foreground p-4 text-center">Nenhuma categoria cadastrada</div>
-          ) : (
-            groupedEntries.map(([categoria, subcontas]) => (
-              <div key={categoria} className="space-y-1">
-                 <div className="flex items-center justify-between pl-2 mb-2 border-l-2 border-white/20 group/cat">
-                   <div className="text-sm font-bold text-white/80 capitalize">{categoria}</div>
-                   <button
-                     onClick={() => handleAddSubcategoria(categoria, tipoDef)}
-                     title="Adicionar subcategoria"
-                     className="p-1 rounded text-muted-foreground/70 hover:text-white hover:bg-white/10 transition-all"
-                   >
-                     <Plus className="w-3.5 h-3.5" />
-                   </button>
-                 </div>
-                 {subcontas.map(cat => (
-                   <div key={cat.id} className="p-3 bg-white/5 rounded-lg border border-white/5 flex justify-between items-center hover:bg-white/10 transition-colors group">
+        Object.values(grouped).forEach(group => {
+            group.items.sort((a, b) =>
+                collator.compare((a.subcategoria || "").trim(), (b.subcategoria || "").trim())
+            );
+        });
+
+        return Object.values(grouped)
+            .sort((a, b) => collator.compare(a.label, b.label))
+            .map(group => [group.label, group.items] as [string, PlanoConta[]]);
+    };
+
+    const renderSection = (title: string, tipoCode: string, colorConfig: any, items: PlanoConta[], tipoDef: string) => {
+        const groupedEntries = groupByCategoriaOrdenado(items);
+
+        return (
+            <div className={`glass-panel rounded-2xl overflow-hidden ${colorConfig.border}`}>
+                <div
+                    className={`${colorConfig.bg} p-4 border-b ${colorConfig.borderHeader} flex justify-between items-center`}>
+                    <h3 className={`font-bold ${colorConfig.text}`}>{title}</h3>
+                    <span
+                        className={`text-xs ${colorConfig.bgBadge} ${colorConfig.textBadge} px-2 py-1 rounded`}>Grupo {tipoCode}</span>
+                </div>
+
+                <div className="p-4 space-y-4">
+                    {isLoading ? (
+                        <div className="text-sm text-muted-foreground animate-pulse p-2">Carregando...</div>
+                    ) : groupedEntries.length === 0 ? (
+                        <div className="text-sm text-muted-foreground p-4 text-center">Nenhuma categoria
+                            cadastrada</div>
+                    ) : (
+                        groupedEntries.map(([categoria, subcontas]) => (
+                            <div key={categoria} className="space-y-1">
+                                <div
+                                    className="flex items-center justify-between pl-2 mb-2 border-l-2 border-white/20 group/cat">
+                                    <div className="text-sm font-bold text-white/80 capitalize">{categoria}</div>
+                                    <button
+                                        onClick={() => handleAddSubcategoria(categoria, tipoDef)}
+                                        title="Adicionar subcategoria"
+                                        className="p-1 rounded text-muted-foreground/70 hover:text-white hover:bg-white/10 transition-all"
+                                    >
+                                        <Plus className="w-3.5 h-3.5"/>
+                                    </button>
+                                </div>
+                                {subcontas.map(cat => (
+                                    <div key={cat.id}
+                                         className="p-3 bg-white/5 rounded-lg border border-white/5 flex justify-between items-center hover:bg-white/10 transition-colors group">
                      <span className="text-sm font-medium text-white pl-4 capitalize truncate max-w-[200px]">
                        {cat.subcategoria?.trim() || "—"}
                      </span>
-                     <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                       <button onClick={() => handleEdit(cat)} className="text-muted-foreground hover:text-white p-1">
-                          <Edit className="w-4 h-4" />
-                       </button>
-                       <button onClick={() => handleDelete(cat)} className="text-muted-foreground hover:text-rose-400 p-1">
-                          <Trash2 className="w-4 h-4" />
-                       </button>
-                     </div>
-                   </div>
-                 ))}
-              </div>
-            ))
-          )}
+                                        <div
+                                            className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button onClick={() => handleEdit(cat)}
+                                                    className="text-muted-foreground hover:text-white p-1">
+                                                <Edit className="w-4 h-4"/>
+                                            </button>
+                                            <button onClick={() => handleDelete(cat)}
+                                                    className="text-muted-foreground hover:text-rose-400 p-1">
+                                                <Trash2 className="w-4 h-4"/>
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ))
+                    )}
 
-          <button onClick={() => handleCreate(tipoDef)} className="w-full py-2 border-2 border-dashed border-white/10 rounded-lg text-sm text-muted-foreground hover:text-white hover:border-white/30 transition-all flex items-center justify-center gap-2 mt-4">
-            <Plus className="w-4 h-4" /> Adicionar Categoria
-          </button>
+                    <button onClick={() => handleCreate(tipoDef)}
+                            className="w-full py-2 border-2 border-dashed border-white/10 rounded-lg text-sm text-muted-foreground hover:text-white hover:border-white/30 transition-all flex items-center justify-center gap-2 mt-4">
+                        <Plus className="w-4 h-4"/> Adicionar Categoria
+                    </button>
+                </div>
+            </div>
+        );
+    };
+
+    return (
+        <div className="space-y-6">
+            <ConfirmDialog {...ConfirmDialogProps} />
+
+            <PageHeader
+                title="Plano de Contas"
+                description="Estrutura hierárquica de categorias financeiras para receitas, custos e despesas"
+                actions={
+                    <button onClick={() => handleCreate()}
+                            className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25">
+                        <Plus className="w-4 h-4"/>
+                        Nova Categoria
+                    </button>
+                }
+            />
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {renderSection('Receitas (+)', '1.0', {
+                    border: 'border-teal-500/20',
+                    bg: 'bg-teal-500/20',
+                    borderHeader: 'border-teal-500/30',
+                    text: 'text-teal-400',
+                    bgBadge: 'bg-teal-500/20',
+                    textBadge: 'text-teal-300'
+                }, receitas, 'receita')}
+
+                {renderSection('Custos (-)', '2.0', {
+                    border: 'border-blue-500/20',
+                    bg: 'bg-blue-500/20',
+                    borderHeader: 'border-blue-500/30',
+                    text: 'text-blue-400',
+                    bgBadge: 'bg-blue-500/20',
+                    textBadge: 'text-blue-300'
+                }, custos, 'custo')}
+
+                {renderSection('Despesas (-)', '3.0', {
+                    border: 'border-orange-500/20',
+                    bg: 'bg-orange-500/20',
+                    borderHeader: 'border-orange-500/30',
+                    text: 'text-orange-400',
+                    bgBadge: 'bg-orange-500/20',
+                    textBadge: 'text-orange-300'
+                }, despesas, 'despesa')}
+            </div>
+
+            <FormModal
+                key={modal.key}
+                isOpen={modal.open}
+                onClose={() => setModal(prev => ({...prev, open: false, data: null}))}
+                onSubmit={handleSubmit}
+                initialData={modal.data}
+                lockedTipo={modal.lockedTipo}
+                lockedCategoria={modal.lockedCategoria}
+            />
         </div>
-      </div>
     );
-  };
-
-  return (
-    <div className="space-y-6">
-      <ConfirmDialog {...ConfirmDialogProps} />
-
-      <PageHeader
-        title="Plano de Contas"
-        description="Estrutura hierárquica de categorias financeiras para receitas, custos e despesas"
-        actions={
-          <button onClick={() => handleCreate()} className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25">
-            <Plus className="w-4 h-4" />
-            Nova Categoria
-          </button>
-        }
-      />
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {renderSection('Receitas (+)', '1.0', {
-          border: 'border-teal-500/20', bg: 'bg-teal-500/20', borderHeader: 'border-teal-500/30', text: 'text-teal-400', bgBadge: 'bg-teal-500/20', textBadge: 'text-teal-300'
-        }, receitas, 'receita')}
-
-        {renderSection('Custos (-)', '2.0', {
-          border: 'border-blue-500/20', bg: 'bg-blue-500/20', borderHeader: 'border-blue-500/30', text: 'text-blue-400', bgBadge: 'bg-blue-500/20', textBadge: 'text-blue-300'
-        }, custos, 'custo')}
-
-        {renderSection('Despesas (-)', '3.0', {
-          border: 'border-orange-500/20', bg: 'bg-orange-500/20', borderHeader: 'border-orange-500/30', text: 'text-orange-400', bgBadge: 'bg-orange-500/20', textBadge: 'text-orange-300'
-        }, despesas, 'despesa')}
-      </div>
-
-      <FormModal
-        key={modal.key}
-        isOpen={modal.open}
-        onClose={() => setModal(prev => ({ ...prev, open: false, data: null }))}
-        onSubmit={handleSubmit}
-        initialData={modal.data}
-        lockedTipo={modal.lockedTipo}
-        lockedCategoria={modal.lockedCategoria}
-      />
-    </div>
-  );
 }

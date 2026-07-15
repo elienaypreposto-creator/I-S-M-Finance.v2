@@ -11,10 +11,6 @@ export type TipoConta = (typeof TIPOS_CONTA)[number];
 
 /**
  * Formulário de conta bancária - Wizard 3 passos.
- *  - `tipo` : seleção no Passo 1, obrigatória.
- *  - `banco/agencia/conta`: obrigatórios para Corrente e Poupança (Passo 2).
- *  - `data_inicio`: obrigatório no Passo 3.
- *  - `saldo_inicial_br`: opcional, máscara BR "1.234,56".
  */
 export const contaBancariaFormSchema = z
     .object({
@@ -57,55 +53,91 @@ export type ContaBancariaFormValues = z.infer<typeof contaBancariaFormSchema>;
 
 const docNumeros = (s: string) => s.replace(/\D/g, "");
 
-// Dados Bancários - item plano (todos os campos opcionais exceto `tipo`)
-export const dadoBancarioFormItemSchema = z
+/** Uma chave PIX dentro de um grupo de dados bancários. */
+export const pixKeyFormItemSchema = z.object({
+    tipo_chave: z.enum(["cpf", "cnpj", "email", "telefone", "aleatoria"]),
+    chave: z.string().default(""),
+});
+export type PixKeyFormItem = z.infer<typeof pixKeyFormItemSchema>;
+
+/** Uma conta TED dentro de um grupo de dados bancários. */
+export const tedContaFormItemSchema = z.object({
+    banco_codigo: z.string().default(""),
+    banco_nome: z.string().default(""),
+    agencia: z.string().default(""),
+    conta: z.string().default(""),
+});
+export type TedContaFormItem = z.infer<typeof tedContaFormItemSchema>;
+
+/**
+ * Grupo "Conta N": agrupa formasPagamento (PIX e/ou TED) com suas listade chaves/contas. Essa estrutura agrupada é usada pelo formulário
+ */
+export const contaBancariaFormItemSchema = z
     .object({
-        tipo: z.enum(["PIX", "TED"]),
-        tipo_chave: z
-            .enum(["cpf", "cnpj", "email", "telefone", "aleatoria"])
-            .optional(),
-        chave: z.string().default(""),
-        banco_codigo: z.string().default(""),
-        banco_nome: z.string().default(""),
-        agencia: z.string().default(""),
-        conta: z.string().default(""),
+        formasPagamento: z.array(z.enum(["PIX", "TED"])).min(1, "Selecione ao menos uma forma de pagamento."),
+        pix: z.array(pixKeyFormItemSchema).default([]),
+        ted: z.array(tedContaFormItemSchema).default([]),
     })
     .superRefine((item, ctx) => {
-        if (item.tipo === "PIX") {
-            if (!item.tipo_chave)
-                ctx.addIssue({code: "custom", message: "Selecione o tipo de chave.", path: ["tipo_chave"]});
-            if (!item.chave.trim()) {
-                ctx.addIssue({code: "custom", message: "Chave PIX é obrigatória.", path: ["chave"]});
-            } else {
-                const chave = item.chave.trim();
-                const nums = chave.replace(/\D/g, "");
-                if (item.tipo_chave === "cpf" && nums.length !== 11)
-                    ctx.addIssue({code: "custom", message: "CPF inválido - verifique os 11 dígitos.", path: ["chave"]});
-                else if (item.tipo_chave === "cnpj" && nums.length !== 14)
+        if (item.formasPagamento.includes("PIX")) {
+            item.pix.forEach((p, i) => {
+                if (!p.tipo_chave)
                     ctx.addIssue({
                         code: "custom",
-                        message: "CNPJ inválido - verifique os 14 dígitos.",
-                        path: ["chave"]
+                        message: "Selecione o tipo de chave.",
+                        path: ["pix", i, "tipo_chave"]
                     });
-                else if (item.tipo_chave === "email" && !z.string().email().safeParse(chave).success)
-                    ctx.addIssue({code: "custom", message: "E-mail inválido.", path: ["chave"]});
-                else if (item.tipo_chave === "telefone" && (nums.length < 10 || nums.length > 11))
-                    ctx.addIssue({code: "custom", message: "Telefone deve ter 10 ou 11 dígitos.", path: ["chave"]});
-            }
+                if (!p.chave.trim()) {
+                    ctx.addIssue({code: "custom", message: "Chave PIX é obrigatória.", path: ["pix", i, "chave"]});
+                } else {
+                    const chave = p.chave.trim();
+                    const nums = chave.replace(/\D/g, "");
+                    if (p.tipo_chave === "cpf" && nums.length !== 11)
+                        ctx.addIssue({
+                            code: "custom",
+                            message: "CPF inválido - verifique os 11 dígitos.",
+                            path: ["pix", i, "chave"]
+                        });
+                    else if (p.tipo_chave === "cnpj" && nums.length !== 14)
+                        ctx.addIssue({
+                            code: "custom",
+                            message: "CNPJ inválido - verifique os 14 dígitos.",
+                            path: ["pix", i, "chave"]
+                        });
+                    else if (p.tipo_chave === "email" && !z.string().email().safeParse(chave).success)
+                        ctx.addIssue({code: "custom", message: "E-mail inválido.", path: ["pix", i, "chave"]});
+                    else if (p.tipo_chave === "telefone" && (nums.length < 10 || nums.length > 11))
+                        ctx.addIssue({
+                            code: "custom",
+                            message: "Telefone deve ter 10 ou 11 dígitos.",
+                            path: ["pix", i, "chave"]
+                        });
+                }
+            });
         }
-        if (item.tipo === "TED") {
-            if (!item.banco_codigo.trim())
-                ctx.addIssue({code: "custom", message: "Código do banco é obrigatório.", path: ["banco_codigo"]});
-            if (!item.banco_nome.trim())
-                ctx.addIssue({code: "custom", message: "Nome do banco é obrigatório.", path: ["banco_nome"]});
-            if (!item.agencia.trim())
-                ctx.addIssue({code: "custom", message: "Agência é obrigatória.", path: ["agencia"]});
-            if (!item.conta.trim())
-                ctx.addIssue({code: "custom", message: "Conta é obrigatória.", path: ["conta"]});
+        if (item.formasPagamento.includes("TED")) {
+            item.ted.forEach((t, i) => {
+                if (!t.banco_codigo.trim())
+                    ctx.addIssue({
+                        code: "custom",
+                        message: "Código do banco é obrigatório.",
+                        path: ["ted", i, "banco_codigo"]
+                    });
+                if (!t.banco_nome.trim())
+                    ctx.addIssue({
+                        code: "custom",
+                        message: "Nome do banco é obrigatório.",
+                        path: ["ted", i, "banco_nome"]
+                    });
+                if (!t.agencia.trim())
+                    ctx.addIssue({code: "custom", message: "Agência é obrigatória.", path: ["ted", i, "agencia"]});
+                if (!t.conta.trim())
+                    ctx.addIssue({code: "custom", message: "Conta é obrigatória.", path: ["ted", i, "conta"]});
+            });
         }
     });
 
-export type DadoBancarioFormItem = z.infer<typeof dadoBancarioFormItemSchema>;
+export type ContaBancariaFormItem = z.infer<typeof contaBancariaFormItemSchema>;
 
 export const parceiroFormSchema = z
     .object({
@@ -125,7 +157,7 @@ export const parceiroFormSchema = z
         tiposParceiro: z.array(z.string()).min(1, "Selecione ao menos um tipo de parceiro."),
         email: z.string().default(""),
         telefone: z.string().optional().default(""),
-        dadosBancarios: z.array(dadoBancarioFormItemSchema).default([]),
+        dadosBancarios: z.array(contaBancariaFormItemSchema).default([]),
     })
     .superRefine((data, ctx) => {
         const n = docNumeros(data.documento);
