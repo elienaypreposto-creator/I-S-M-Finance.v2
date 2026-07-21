@@ -187,6 +187,7 @@ function parceiroRowToFormValues(p: ParceiroRow): ParceiroFormValues {
     return {
         tipoPessoa: tipo,
         nomeRazao: p.nome,
+        nomeFantasia: p.nome_fantasia ?? "",
         documento: rawDoc ? mascararDocumento(rawDoc, tipo) : "",
         departamento_id: p.departamento_id ? String(p.departamento_id) : "",
         tiposParceiro: tiposArray(p.tipos),
@@ -225,7 +226,7 @@ function parceiroFormToApiBody(values: ParceiroFormValues, statusAtual?: { ativo
         tipo_pessoa: values.tipoPessoa,
         cpf_cnpj: dig || null,
         nome: values.nomeRazao.trim(),
-        nome_fantasia: null as string | null,
+        nome_fantasia: values.nomeFantasia?.trim() || null,
         email: values.email?.trim() || null,
         telefone: docNumeros(values.telefone ?? "") || null,
         tipos: values.tiposParceiro,
@@ -263,6 +264,7 @@ function ConfirmacaoCancelModal({onConfirm, onDismiss}: { onConfirm: () => void;
 const defaultParceiroForm: ParceiroFormValues = {
     tipoPessoa: "PJ",
     nomeRazao: "",
+    nomeFantasia: "",
     documento: "",
     departamento_id: "",
     tiposParceiro: [],
@@ -850,6 +852,24 @@ export function NovoParceiroModal({onClose, initialData, onSaved}: {
                                         <p className="text-[11px] text-destructive mt-1">{errors.documento.message}</p>}
                                 </div>
                             </div>
+
+                            {/* Nome Fantasia - apenas para PJ */}
+                            {tipoPessoa === "PJ" && (
+                                <div>
+                                    <label
+                                        className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                                        Nome Fantasia
+                                    </label>
+                                    <input
+                                        {...register("nomeFantasia")}
+                                        className={fieldCls(!!errors.nomeFantasia)}
+                                        placeholder="Ex: Soluções Tech"
+                                    />
+                                    {errors.nomeFantasia && (
+                                        <p className="text-[11px] text-destructive mt-1">{errors.nomeFantasia.message}</p>
+                                    )}
+                                </div>
+                            )}
 
                             {/* E-mail + Telefone */}
                             <div className="grid grid-cols-2 gap-4">

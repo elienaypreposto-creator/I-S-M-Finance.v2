@@ -1,11 +1,11 @@
 /**
  * Rotas de Usuários
  *
- * GET    /usuarios                — Lista paginada
- * POST   /usuarios                — Cria utilizador + envia OTP por e-mail
- * PUT    /usuarios/:id            — Atualização
- * GET    /usuarios/:id/permissoes — Leitura de permissões
- * PUT    /usuarios/:id/permissoes — Substituição de permissões
+ * GET    /usuarios                - Lista paginada
+ * POST   /usuarios                - Cria utilizador + envia OTP por e-mail
+ * PUT    /usuarios/:id            - Atualização
+ * GET    /usuarios/:id/permissoes - Leitura de permissões
+ * PUT    /usuarios/:id/permissoes - Substituição de permissões
  *
  * Validações no POST /usuarios:
  *   - Parceiro com flag "Cliente" ou "Fornecedor" ativa → 422 com mensagem clara
@@ -17,7 +17,7 @@ import {Router} from "express";
 import {z} from "zod";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
-import {and, count, eq, ilike} from "drizzle-orm";
+import {and, count, eq, ilike, ne} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {parceirosTable, permissoesTable, usuariosTable} from "@workspace/db/schema";
 import {sendWelcomeEmail, sendAdminCreatedAccountEmail} from "../services/email.service";
@@ -31,6 +31,12 @@ import {validateBody} from "../middlewares/validate";
 // Schemas de validação
 // ---------------------
 
+const senhaForteSchema = z
+    .string()
+    .min(8, "A senha deve ter pelo menos 8 caracteres.")
+    .regex(/[A-Z]/, "A senha deve conter ao menos 1 letra maiúscula.")
+    .regex(/[0-9]/, "A senha deve conter ao menos 1 número.");
+
 const createUsuarioBodySchema = z.object({
     nome: z.string().trim().min(2, "Nome deve ter pelo menos 2 caracteres."),
     email: z.string().trim().email("E-mail inválido.").toLowerCase(),
@@ -40,18 +46,22 @@ const createUsuarioBodySchema = z.object({
     celular: z.string().trim().min(1).optional(),
     senha: z.preprocess(
         (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
-        z.string().min(8, "A senha deve ter pelo menos 8 caracteres.").optional(),
+        senhaForteSchema.optional(),
     ),
 });
 
 const updateUsuarioBodySchema = z.object({
     nome: z.string().trim().min(2, "Nome deve ter pelo menos 2 caracteres.").optional(),
+    email: z.string().trim().email("E-mail inválido.").toLowerCase().optional(),
     cargo: z.string().trim().min(1).optional(),
     perfil_base: z.string().trim().min(1).optional(),
     telefone: z.string().trim().min(1).optional(),
     celular: z.string().trim().min(1).optional(),
     bloqueado: z.boolean().optional(),
-    senha: z.string().min(8, "A senha deve ter pelo menos 8 caracteres.").optional(),
+    senha: z.preprocess(
+        (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+        senhaForteSchema.optional(),
+    ),
 });
 
 const updatePermissoesBodySchema = z.object({
@@ -241,11 +251,38 @@ router.put(
                 return errorResponse(res, 400, "VALIDATION_ERROR", "ID de usuário inválido.");
             }
 
-            const {nome, cargo, perfil_base, telefone, celular, bloqueado, senha} = req.body as UpdateUsuarioBody;
+            const {
+                nome,
+                email,
+                cargo,
+                perfil_base,
+                telefone,
+                celular,
+                bloqueado,
+                senha
+            } = req.body as UpdateUsuarioBody;
+
+            if (email !== undefined) {
+                const [conflito] = await db
+                    .select({id: usuariosTable.id})
+                    .from(usuariosTable)
+                    .where(and(eq(usuariosTable.email, email), ne(usuariosTable.id, id)))
+                    .limit(1);
+
+                if (conflito) {
+                    return errorResponse(
+                        res,
+                        422,
+                        "EMAIL_JA_CADASTRADO",
+                        "Já existe um utilizador cadastrado com este e-mail.",
+                    );
+                }
+            }
 
             type UsuarioUpdate = {
                 updated_at: Date;
                 nome?: string;
+                email?: string;
                 cargo?: string;
                 perfil_base?: string;
                 telefone?: string;
@@ -256,6 +293,7 @@ router.put(
 
             const updateData: UsuarioUpdate = {updated_at: new Date()};
             if (nome !== undefined) updateData.nome = nome;
+            if (email !== undefined) updateData.email = email;
             if (cargo !== undefined) updateData.cargo = cargo;
             if (perfil_base !== undefined) updateData.perfil_base = perfil_base;
             if (telefone !== undefined) updateData.telefone = telefone;
@@ -273,7 +311,7 @@ router.put(
 
             if (!item) return errorResponse(res, 404, "NOT_FOUND", "Utilizador não encontrado.");
 
-            if (bloqueado === true || senha !== undefined) {
+            if (bloqueado === true || senha !== undefined || email !== undefined) {
                 await revokeAllTokensForUser(id);
             }
 

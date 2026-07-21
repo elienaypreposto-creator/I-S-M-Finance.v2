@@ -2,13 +2,10 @@ import {z} from "zod";
 
 const nullableId = z.coerce.number().int().positive().nullable().optional();
 
-// Esquema de chave PIX legado
-const chavePixSchema = z.object({
-    tipo: z.string().trim().min(1),
-    chave: z.string().trim().min(1),
-});
-
 /**
+ * Fonte única de verdade para dados bancários de parceiros.
+ * todo o tráfego de dados bancários usa este discriminatedUnion.
+ *
  * PIX - requer tipo_chave e chave.
  * TED - requer banco_codigo, banco_nome, agencia e conta.
  */
@@ -46,7 +43,7 @@ export const parceiroIdParamSchema = z.object({
 
 export const createParceiroBodySchema = z.object({
     tipo_pessoa: z.string().trim().min(1),
-    cpf_cnpj: z.string().trim().min(1).nullable().optional(),
+    cpf_cnpj: z.string().trim().min(1).nullable(),
     nome: z.string().trim().min(1),
     nome_fantasia: z.string().trim().min(1).nullable().optional(),
     email: z.string().trim().nullable().optional(),
@@ -58,7 +55,6 @@ export const createParceiroBodySchema = z.object({
     ativo: z.boolean().optional(),
     bloqueado: z.boolean().optional(),
     status: z.enum(["ativo", "inativo"]).default("ativo").optional(),
-    chaves_pix: z.array(chavePixSchema).optional(),
     dados_bancarios: z.array(dadoBancarioSchema).optional(),
 });
 

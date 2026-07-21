@@ -8,31 +8,39 @@ export const lancamentoStatusEnum = z.enum([
     "cancelado",
 ]);
 
-// Tipos de dados de pagamento
 
-export type DadosPagamentoPIX = {
-    tipo: "PIX";
-    valor: number;
-    tipo_chave: "cpf" | "cnpj" | "email" | "telefone" | "aleatoria";
-    chave: string;
-};
+const dadosPagamentoPixApiSchema = z.object({
+    tipo: z.literal("PIX"),
+    valor: z.number().positive(),
+    tipo_chave: z.enum(["cpf", "cnpj", "email", "telefone", "aleatoria"]),
+    chave: z.string().min(1),
+});
 
-export type DadosPagamentoTED = {
-    tipo: "TED";
-    valor: number;
-    banco_codigo: string;
-    banco_nome: string;
-    agencia: string;
-    conta: string;
-};
+const dadosPagamentoTedApiSchema = z.object({
+    tipo: z.literal("TED"),
+    valor: z.number().positive(),
+    banco_codigo: z.string().min(1),
+    banco_nome: z.string().min(1),
+    agencia: z.string().min(1),
+    conta: z.string().min(1),
+});
 
-export type DadosPagamentoBoleto = {
-    tipo: "Boleto";
-    valor: number;
-    codigo_barras: string;
-};
+const dadosPagamentoBoletoApiSchema = z.object({
+    tipo: z.literal("Boleto"),
+    valor: z.number().positive(),
+    codigo_barras: z.string().min(1),
+});
 
-export type DadosPagamentoItem = DadosPagamentoPIX | DadosPagamentoTED | DadosPagamentoBoleto;
+export const dadosPagamentoItemApiSchema = z.discriminatedUnion("tipo", [
+    dadosPagamentoPixApiSchema,
+    dadosPagamentoTedApiSchema,
+    dadosPagamentoBoletoApiSchema,
+]);
+
+export type DadosPagamentoPIX = z.infer<typeof dadosPagamentoPixApiSchema>;
+export type DadosPagamentoTED = z.infer<typeof dadosPagamentoTedApiSchema>;
+export type DadosPagamentoBoleto = z.infer<typeof dadosPagamentoBoletoApiSchema>;
+export type DadosPagamentoItem = z.infer<typeof dadosPagamentoItemApiSchema>;
 
 // Schema de body da API
 
@@ -50,15 +58,15 @@ export const lancamentoApiBodySchema = z.object({
             const n = Number(v);
             return !isNaN(n) && isFinite(n);
         }, "Valor numérico inválido."),
-    status: z.string().trim().min(1).optional(),
+    status: lancamentoStatusEnum.optional(),
     plano_conta_id: z.number().int().positive().nullable().optional(),
     departamento_id: z.number().int().positive().nullable().optional(),
     centro_custo_id: z.number().int().positive().nullable().optional(),
     parcela_atual: z.number().int().positive().optional(),
     total_parcelas: z.number().int().positive().optional(),
     riscos: z.array(z.string()).optional(),
-    forma_pagamento: z.string().nullable().optional(),
-    dados_pagamento: z.array(z.custom<DadosPagamentoItem>()).nullable().optional(),
+    forma_pagamento: z.enum(["PIX", "TED", "Boleto"]).nullable().optional(),
+    dados_pagamento: z.array(dadosPagamentoItemApiSchema).nullable().optional(),
 });
 
 export type LancamentoApiBody = z.infer<typeof lancamentoApiBodySchema>;
@@ -241,6 +249,7 @@ export const lancamentoModalFormSchema = z.object({
     competencia: competenciaSchema,
 
     parceiro_id: optionalIdSelect,
+    conta_id: optionalIdSelect,
     descricao: z.string().optional(),
 
     valorBr: z
@@ -270,13 +279,14 @@ export const lancamentoModalFormSchema = z.object({
 
 export type LancamentoModalFormValues = z.infer<typeof lancamentoModalFormSchema>;
 
-// Tipo de edição (retorno da API → valores iniciais)
+// Tipo de edição (retorno da API -> valores iniciais)
 
 export type LancamentoEditItem = {
     id: number;
     tipo: string;
     vencimento: string;
     competencia: string | null;
+    conta_id: number | null;
     parceiro_id: number | null;
     descricao: string | null;
     valor: string | number;
@@ -286,7 +296,6 @@ export type LancamentoEditItem = {
     centro_custo_id?: number | null;
     riscos?: string[];
     forma_pagamento?: string | null;
-    // Aceita array (novo formato) ou objeto único (legado) para compatibilidade
     dados_pagamento?: DadosPagamentoItem[] | DadosPagamentoItem | null;
 };
 
@@ -304,22 +313,43 @@ function normalizeStatusForForm(tipo: string, status: string): z.infer<typeof la
 }
 
 /**
- * Converte dados_pagamento da API (array ou objeto legado) para o formato do
- * useFieldArray, populando corretamente os campos planos de cada meio de pagamento.
+ * Mapeamento de VOLTA (API -> Formulário).
+ *
+ * Recebe `dados_pagamento` (array numérico da API / BD) e devolve o array
+ * `pagamentos` do `useFieldArray`, onde cada `valor` numérico (ex: 150.5) é
+ * reconvertido para a máscara de moeda BR (ex: "150,50") no campo `valorBr`.
+ *
+ * Cada item é validado via `dadosPagamentoItemApiSchema.safeParse()` antes do
+ * mapeamento - registros com estrutura obsoleta ou corrompida na BD são
+ * descartados silenciosamente, em vez de provocar erros em runtime.
  */
 function normalizeDadosPagamentoParaForm(
     dp: DadosPagamentoItem[] | DadosPagamentoItem | null | undefined,
 ): PagamentoItemFormValues[] {
     if (!dp) return [];
-    const items: DadosPagamentoItem[] = Array.isArray(dp) ? dp : [dp];
+
+    const raws: unknown[] = Array.isArray(dp) ? dp : [dp];
+
+    const items: DadosPagamentoItem[] = [];
+    for (const raw of raws) {
+        const parsed = dadosPagamentoItemApiSchema.safeParse(raw);
+        if (parsed.success) items.push(parsed.data);
+    }
+
     return items.map((item): PagamentoItemFormValues => {
         const base: PagamentoItemFormValues = {
             ...pagamentoItemDefault,
             tipo: item.tipo,
             valorBr: apiValorToValorBr(item.valor),
         };
+
         if (item.tipo === "PIX")
-            return {...base, tipo_chave_pix: item.tipo_chave, chave_pix: item.chave};
+            return {
+                ...base,
+                tipo_chave_pix: item.tipo_chave,
+                chave_pix: item.chave,
+            };
+
         if (item.tipo === "TED")
             return {
                 ...base,
@@ -328,18 +358,40 @@ function normalizeDadosPagamentoParaForm(
                 banco_agencia: item.agencia,
                 banco_conta: item.conta,
             };
+
         if (item.tipo === "Boleto")
             return {...base, boleto_codigo_barras: item.codigo_barras};
+
         return base;
     });
 }
 
+/**
+ * Mapeamento de VOLTA (API -> Formulário).
+ *
+ * Devolve os `defaultValues` para o `useForm`. Quando `editItem` é fornecido
+ * (modo edição), converte os campos da API para o formato interno do formulário:
+ *
+ * • `valor` (number da API) -> `valorBr` (máscara BR, ex: "1.234,56")
+ * • `riscos` (string[]) -> copiado para o form - sem conversão, apenas spread
+ *   defensivo para evitar mutação do array original e garantir que nunca é
+ *   `undefined` (o que causaria Data Loss ao salvar: tags seriam apagadas)
+ * • `dados_pagamento[]` (valores numéricos) -> `pagamentos[]` (useFieldArray)
+ *   via `normalizeDadosPagamentoParaForm`
+ * • IDs numéricos -> strings ("42") para os `<select>` controlados
+ * • `competencia` ISO -> "MM/YYYY" para o `CompetenciaPicker`
+ *
+ * ATENÇÃO: o `editItem` passado inicialmente vem da lista (sem `dados_pagamento`).
+ * O `lancamento-modal.tsx` faz um segundo `reset()` assim que o `useQuery` de
+ * fetch-por-ID completa, garantindo a hidratação dos pagamentos.
+ */
 export function getLancamentoModalDefaultValues(editItem?: LancamentoEditItem | null): LancamentoModalFormValues {
     const base: LancamentoModalFormValues = {
         tipo: "CP",
         vencimento: "",
         competencia: "",
         parceiro_id: "",
+        conta_id: "",
         descricao: "",
         valorBr: "",
         status: "pendente",
@@ -358,13 +410,14 @@ export function getLancamentoModalDefaultValues(editItem?: LancamentoEditItem | 
         vencimento: editItem.vencimento ?? "",
         competencia: isoToCompetenciaDisplay(editItem.competencia),
         parceiro_id: editItem.parceiro_id != null ? String(editItem.parceiro_id) : "",
+        conta_id: editItem.conta_id != null ? String(editItem.conta_id) : "",
         descricao: editItem.descricao ?? "",
         valorBr: apiValorToValorBr(editItem.valor),
         status: normalizeStatusForForm(editItem.tipo, editItem.status),
         plano_conta_id: editItem.plano_conta_id != null ? String(editItem.plano_conta_id) : "",
         departamento_id: editItem.departamento_id != null ? String(editItem.departamento_id) : "",
         centro_custo_id: editItem.centro_custo_id != null ? String(editItem.centro_custo_id) : "",
-        riscos: Array.isArray(editItem.riscos) ? [...editItem.riscos] : [],
+        riscos: editItem.riscos ?? [],
         pagamentos: normalizeDadosPagamentoParaForm(editItem.dados_pagamento),
     };
 }
@@ -391,9 +444,22 @@ function isoToCompetenciaDisplay(value: string | null | undefined): string {
     return `${match[2]}/${match[1]}`;
 }
 
+/**
+ * Mapeamento de IDA, passo 1/2 (Form -> estrutura numérica intermédia).
+ *
+ * Converte cada item do `useFieldArray` (onde `valorBr` é uma string mascarada,
+ * ex: "1.234,56") para a estrutura numérica esperada pelo backend, incluindo
+ * o renomeamento de campos do formulário para a nomenclatura da API:
+ *
+ *   Form (pagamentos[i])         API intermédia (DadosPagamentoItem)
+ *   valorBr: "1.234,56"       -> valor: 1234.56  (number)
+ *   banco_agencia: "1234-5"   -> agencia: "1234-5"
+ *   banco_conta:   "000001-2" -> conta:   "000001-2"
+ */
 function buildDadosPagamentoArray(pagamentos: PagamentoItemFormValues[]): DadosPagamentoItem[] {
     return pagamentos.map((p): DadosPagamentoItem => {
         const valor = parseFloat(brMoneyDisplayToApiString(p.valorBr)) || 0;
+
         if (p.tipo === "PIX") {
             return {
                 tipo: "PIX",
@@ -420,6 +486,22 @@ function buildDadosPagamentoArray(pagamentos: PagamentoItemFormValues[]): DadosP
     });
 }
 
+/**
+ * Mapeamento de IDA, passo 2/2 (Form completo -> body da API).
+ *
+ * Traduz `LancamentoModalFormValues` (react-hook-form) para `LancamentoApiBody`
+ * (JSON enviado no POST/PUT). Os pontos críticos de conversão são:
+ *
+ * • `valorBr` (string mascarada) -> `valor` (string decimal para o backend aceitar
+ *    `z.union([z.string(), z.number()])`)
+ * • `pagamentos[]` (useFieldArray com `valorBr`) -> `dados_pagamento[]` (array
+ *    numérico estruturado) - via `buildDadosPagamentoArray`
+ * • Selects de ID ("" | "42") -> number | null
+ * • `competencia` ("MM/YYYY") -> ISO date ("YYYY-MM-01") ou null
+ *
+ * Apenas lançamentos do tipo "CP" (Contas a Pagar) geram `dados_pagamento`;
+ * para "CR" o campo é enviado como `null`.
+ */
 export function mapModalFormToApiBody(values: LancamentoModalFormValues): LancamentoApiBody {
     const dadosPagamento =
         values.tipo === "CP" && values.pagamentos.length > 0
@@ -430,6 +512,7 @@ export function mapModalFormToApiBody(values: LancamentoModalFormValues): Lancam
         tipo: values.tipo,
         vencimento: values.vencimento.trim(),
         competencia: competenciaToIso(values.competencia),
+        conta_id: values.conta_id === "" ? null : Number(values.conta_id),
         parceiro_id: values.parceiro_id === "" ? null : Number(values.parceiro_id),
         descricao: values.descricao?.trim() || null,
         valor: brMoneyDisplayToApiString(values.valorBr),

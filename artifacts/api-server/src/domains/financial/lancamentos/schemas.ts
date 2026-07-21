@@ -2,6 +2,14 @@ import {z} from "zod";
 
 const nullableId = z.coerce.number().int().positive().nullable().optional();
 
+export const lancamentoStatusEnum = z.enum([
+    "pendente",
+    "pago",
+    "recebido",
+    "atrasado",
+    "cancelado",
+]);
+
 // Schemas individuais de cada meio de pagamento
 const pagamentoValorField = z.coerce
     .number({invalid_type_error: "Informe um valor numérico."})
@@ -44,7 +52,7 @@ export const listLancamentosQuerySchema = z.object({
     page: z.coerce.number().int().positive().default(1),
     limit: z.coerce.number().int().positive().max(200).default(20),
     tipo: z.enum(["CP", "CR"]).optional(),
-    status: z.string().trim().min(1).optional(),
+    status: lancamentoStatusEnum.optional(),
     conta_id: z.coerce.number().int().positive().optional(),
     parceiro_id: z.coerce.number().int().positive().optional(),
     data_inicio: z.string().trim().min(1).optional(),
@@ -66,7 +74,7 @@ const lancamentoBaseSchema = z.object({
     parceiro_id: nullableId,
     descricao: z.string().trim().min(1).nullable().optional(),
     valor: z.union([z.string(), z.number()]).transform((v) => String(v)),
-    status: z.string().trim().min(1).optional(),
+    status: lancamentoStatusEnum.optional(),
     plano_conta_id: nullableId,
     departamento_id: nullableId,
     centro_custo_id: nullableId,

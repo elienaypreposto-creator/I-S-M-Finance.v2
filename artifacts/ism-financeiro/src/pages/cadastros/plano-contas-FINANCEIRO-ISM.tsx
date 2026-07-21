@@ -1,11 +1,13 @@
 import {useMemo, useState} from "react";
+import {useForm} from "react-hook-form";
+import {zodResolver} from "@hookform/resolvers/zod";
+import {z} from "zod";
 import {PageHeader} from "@/components/shared/page-header";
 import {Plus, Edit, Trash2, Lock} from "lucide-react";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
-
 import {fetchApi, fetchApiData} from "@/lib/api-config";
 
 type PlanoConta = {
@@ -21,6 +23,26 @@ const collator = new Intl.Collator("pt-BR", {sensitivity: "base"});
 
 const normalizeText = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
 
+const planoContaFormSchema = z.object({
+    tipo: z.enum(["receita", "custo", "despesa"], {
+        required_error: "Selecione o tipo.",
+        invalid_type_error: "Tipo inválido.",
+    }),
+    categoria: z.string().trim().min(1, "Categoria é obrigatória."),
+    subcategoria: z.string().trim().optional().default(""),
+});
+
+type PlanoContaFormValues = z.infer<typeof planoContaFormSchema>;
+
+type FormModalProps = {
+    isOpen: boolean;
+    onClose: () => void;
+    onSubmit: (data: { id?: number } & PlanoContaFormValues) => void;
+    initialData?: Partial<PlanoConta> | null;
+    lockedTipo?: boolean;
+    lockedCategoria?: boolean;
+};
+
 // Modal simples para formulário de Conta
 function FormModal({
                        isOpen,
@@ -29,10 +51,19 @@ function FormModal({
                        initialData,
                        lockedTipo = false,
                        lockedCategoria = false,
-                   }: any) {
-    const [tipo, setTipo] = useState(initialData?.tipo || 'despesa');
-    const [categoria, setCategoria] = useState(initialData?.categoria || '');
-    const [subcategoria, setSubcategoria] = useState(initialData?.subcategoria || '');
+                   }: FormModalProps) {
+    const {
+        register,
+        handleSubmit,
+        formState: {errors},
+    } = useForm<PlanoContaFormValues>({
+        resolver: zodResolver(planoContaFormSchema),
+        defaultValues: {
+            tipo: (initialData?.tipo as PlanoContaFormValues["tipo"]) ?? "despesa",
+            categoria: initialData?.categoria ?? "",
+            subcategoria: initialData?.subcategoria ?? "",
+        },
+    });
 
     if (!isOpen) return null;
 
@@ -47,19 +78,19 @@ function FormModal({
                             : 'Nova Categoria'}
                 </h2>
 
-                <form onSubmit={(e) => {
-                    e.preventDefault();
-                    onSubmit({id: initialData?.id, tipo, categoria, subcategoria});
-                }} className="space-y-4">
-
+                <form
+                    onSubmit={handleSubmit((values) => onSubmit({id: initialData?.id, ...values}))}
+                    className="space-y-4"
+                    noValidate
+                >
+                    {/* Tipo */}
                     <div>
                         <label className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
                             Tipo
                             {lockedTipo && <Lock className="w-3 h-3 text-red-400"/>}
                         </label>
                         <select
-                            value={tipo}
-                            onChange={e => setTipo(e.target.value)}
+                            {...register("tipo")}
                             disabled={lockedTipo}
                             className={`mt-1 w-full border rounded-lg p-2.5 outline-none focus:border-primary/50 transition-colors ${
                                 lockedTipo
@@ -74,23 +105,27 @@ function FormModal({
                         {lockedTipo && (
                             <p className="text-xs text-red-400/80 mt-1">Tipo travado pelo grupo selecionado</p>
                         )}
+                        {errors.tipo && (
+                            <p className="text-xs text-destructive mt-1">{errors.tipo.message}</p>
+                        )}
                     </div>
 
+                    {/* Categoria */}
                     <div>
                         <label className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
                             Grupo Principal (Categoria)
                             {lockedCategoria && <Lock className="w-3 h-3 text-red-400"/>}
                         </label>
                         <input
-                            required
                             type="text"
-                            value={categoria}
-                            onChange={e => setCategoria(e.target.value)}
+                            {...register("categoria")}
                             readOnly={lockedCategoria}
                             className={`mt-1 w-full border rounded-lg p-2.5 outline-none focus:border-primary/50 transition-colors ${
                                 lockedCategoria
                                     ? 'bg-white/5 border-red-400/30 text-white/70 cursor-not-allowed'
-                                    : 'bg-black/20 border-white/10 text-white'
+                                    : errors.categoria
+                                        ? 'bg-black/20 border-destructive/60 text-white'
+                                        : 'bg-black/20 border-white/10 text-white'
                             }`}
                             placeholder="Ex: Despesas Administrativas"
                         />
@@ -98,12 +133,17 @@ function FormModal({
                             <p className="text-xs text-red-400/80 mt-1">Categoria travada — você está adicionando uma
                                 subcategoria</p>
                         )}
+                        {errors.categoria && (
+                            <p className="text-xs text-destructive mt-1">{errors.categoria.message}</p>
+                        )}
                     </div>
 
+                    {/* Subcategoria */}
                     <div>
                         <label className="text-sm font-medium text-muted-foreground">Subcategoria (Opcional)</label>
                         <input
-                            type="text" value={subcategoria} onChange={e => setSubcategoria(e.target.value)}
+                            type="text"
+                            {...register("subcategoria")}
                             className="mt-1 w-full bg-black/20 border border-white/10 rounded-lg p-2.5 text-white outline-none focus:border-primary/50"
                             placeholder="Ex: Aluguel"
                             autoFocus={lockedCategoria}
@@ -230,9 +270,9 @@ export default function PlanoContas() {
         if (ok) deleteMutation.mutate(cat.id);
     };
 
-    // ── Validação de categoria duplicada dentro do mesmo tipo ──────────────
-    const handleSubmit = (data: any) => {
-        const categoriaTrim = (data.categoria as string).trim().replace(/\s+/g, ' ');
+    // Validação de categoria duplicada dentro do mesmo tipo
+    const handleSubmit = (data: { id?: number } & PlanoContaFormValues) => {
+        const categoriaTrim = data.categoria.trim().replace(/\s+/g, ' ');
         const categoriaNorm = normalizeText(categoriaTrim);
 
         const isReaproveitandoCategoriaTravada =

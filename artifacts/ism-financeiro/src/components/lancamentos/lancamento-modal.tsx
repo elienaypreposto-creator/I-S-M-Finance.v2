@@ -17,8 +17,16 @@ import {format as formatBtn, parseISO} from "date-fns";
 import {ptBR} from "date-fns/locale";
 import {cn} from "@/lib/utils";
 import {fetchApiData} from "@/lib/api-config";
-import {maskChavePix, mascararCodigoBanco, mascararAgencia, mascararConta, pixKeyMaxLength, pixKeyPlaceholder} from "@/lib/pix-ted-masks.ts";
 import {
+    maskChavePix,
+    mascararCodigoBanco,
+    mascararAgencia,
+    mascararConta,
+    pixKeyMaxLength,
+    pixKeyPlaceholder
+} from "@/lib/pix-ted-masks.ts";
+import {
+    brMoneyDisplayToApiString,
     formatValorBrInput,
     getLancamentoModalDefaultValues,
     lancamentoModalFormSchema,
@@ -51,7 +59,6 @@ type PlanoConta = { id: number; tipo: string; categoria: string; subcategoria: s
 type Departamento = { id: number; nome: string };
 type CentroCusto = { id: number; nome: string; departamento_id: number | null };
 
-// ─── ConfirmDialog ────────────────────────────────────────────────────────────
 // Modal de confirmação genérico e reutilizável, seguindo o padrão visual usado
 // em toda a aplicação (ícone no topo, título em negrito, descrição centralizada,
 // dois botões lado a lado). Usado aqui para confirmar o cancelamento do
@@ -59,16 +66,16 @@ type CentroCusto = { id: number; nome: string; departamento_id: number | null };
 type ConfirmDialogTone = "warning" | "danger" | "info";
 
 function ConfirmDialog({
-                            open,
-                            icon,
-                            tone = "warning",
-                            title,
-                            description,
-                            confirmLabel,
-                            cancelLabel = "Cancelar",
-                            onConfirm,
-                            onCancel,
-                        }: {
+                           open,
+                           icon,
+                           tone = "warning",
+                           title,
+                           description,
+                           confirmLabel,
+                           cancelLabel = "Cancelar",
+                           onConfirm,
+                           onCancel,
+                       }: {
     open: boolean;
     icon?: React.ReactNode;
     tone?: ConfirmDialogTone;
@@ -102,7 +109,8 @@ function ConfirmDialog({
 
     return (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 backdrop-blur-md p-4">
-            <div className="bg-[#181a20] border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl p-6 flex flex-col items-center text-center gap-4">
+            <div
+                className="bg-[#181a20] border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl p-6 flex flex-col items-center text-center gap-4">
                 <div className={`w-12 h-12 rounded-full flex items-center justify-center ${t.iconBg}`}>
                     {icon ?? <AlertTriangle className={`w-6 h-6 ${t.iconColor}`}/>}
                 </div>
@@ -134,7 +142,7 @@ function ConfirmDialog({
 }
 
 // Agrupa os itens de Plano de Contas por `categoria` (mostrada uma única vez,
-// como cabeçalho) com cada `subcategoria` indentada logo abaixo — mesmo quando
+// como cabeçalho) com cada `subcategoria` indentada logo abaixo - mesmo quando
 // categorias diferentes compartilham a mesma subcategoria (ex.: "Aluguel"
 // aparecendo tanto em "Despesas Gerais" quanto em "Despesas Financeiros"
 // formam dois grupos distintos).
@@ -730,6 +738,13 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
         formState: {errors, isDirty},
     } = form;
 
+    const {data: editItemFull} = useQuery<LancamentoEditItem>({
+        queryKey: ["lancamento-edit", editItem?.id],
+        queryFn: () => fetchApiData<LancamentoEditItem>(`/lancamentos/${editItem!.id}`),
+        enabled: !!editItem?.id,
+        staleTime: 0,
+    });
+
     const vencimento = watch("vencimento");
     const tipo = watch("tipo");
     const status = watch("status");
@@ -742,12 +757,23 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
         name: "pagamentos",
     });
 
-    const pagamentosWatched = (watch("pagamentos") ?? []) as Array<{tipo: string}>;
-    const pixEntries    = pagamentosFields.map((f, i) => ({f, i})).filter(({i}) => pagamentosWatched[i]?.tipo === "PIX");
-    const tedEntries    = pagamentosFields.map((f, i) => ({f, i})).filter(({i}) => pagamentosWatched[i]?.tipo === "TED");
-    const boletoEntries = pagamentosFields.map((f, i) => ({f, i})).filter(({i}) => pagamentosWatched[i]?.tipo === "Boleto");
+    const pagamentosWatched = (watch("pagamentos") ?? []) as Array<{ tipo: string }>;
+    const pixEntries = pagamentosFields.map((f, i) => ({f, i})).filter(({i}) => pagamentosWatched[i]?.tipo === "PIX");
+    const tedEntries = pagamentosFields.map((f, i) => ({f, i})).filter(({i}) => pagamentosWatched[i]?.tipo === "TED");
+    const boletoEntries = pagamentosFields.map((f, i) => ({
+        f,
+        i
+    })).filter(({i}) => pagamentosWatched[i]?.tipo === "Boleto");
 
-    // Limpa campos irrelevantes ao trocar o tipo de um item
+    const valorBrWatched = useWatch({control, name: "valorBr"});
+    const pagamentosFullWatch = useWatch({control, name: "pagamentos"});
+
+    const valorTotal = parseFloat(brMoneyDisplayToApiString(valorBrWatched ?? "")) || 0;
+    const valorAlocado = (pagamentosFullWatch ?? []).reduce<number>((acc, p) => {
+        return acc + (parseFloat(brMoneyDisplayToApiString(p?.valorBr ?? "")) || 0);
+    }, 0);
+    const valorRestante = Math.round((valorTotal - valorAlocado) * 100) / 100;
+
     function handlePagamentoTipoChange(index: number, newTipo: PagamentoItemFormValues["tipo"]) {
         setValue(`pagamentos.${index}.tipo`, newTipo, {shouldDirty: true});
         setValue(`pagamentos.${index}.tipo_chave_pix`, "");
@@ -769,8 +795,7 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
         }
     }
 
-    // Reset ao abrir / mudar item
-
+    // Reset ao abrir / mudar item (usa dados da lista - sem pagamentos ainda)
     useEffect(() => {
         reset(getLancamentoModalDefaultValues(editItem));
         setNivelRisco(0);
@@ -778,6 +803,12 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
         setShowAddTag(false);
         setShowCancelConfirm(false);
     }, [editItem, reset]);
+
+    useEffect(() => {
+        if (editItemFull) {
+            reset(getLancamentoModalDefaultValues(editItemFull));
+        }
+    }, [editItemFull, reset]);
 
     // Sincroniza status ao mudar tipo
 
@@ -1235,11 +1266,32 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
                         {isCP && (
                             <div className="border border-white/10 rounded-2xl p-5 space-y-3 bg-white/[0.02]">
                                 {/* Cabeçalho com botões de adição por tipo */}
-                                <div className="flex items-center justify-between">
+                                <div className="flex items-center justify-between flex-wrap gap-y-2">
                                     <div className="flex items-center gap-2">
                                         <CreditCard className="w-4 h-4 text-primary"/>
                                         <label className={`${labelCls} mb-0`}>Formas de Pagamento</label>
                                     </div>
+                                    {/* Indicador de saldo - só aparece quando um valor previsto foi informado */}
+                                    {valorTotal > 0 && (
+                                        <div
+                                            className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold border transition-colors ${
+                                                valorRestante === 0
+                                                    ? "bg-success/10 border-success/30 text-success"
+                                                    : valorRestante < 0
+                                                        ? "bg-destructive/10 border-destructive/30 text-destructive"
+                                                        : "bg-white/5 border-white/10 text-muted-foreground"
+                                            }`}>
+                                            {valorRestante === 0 ? "✓ Totalmente alocado" : (
+                                                <>
+                                                    Restante:&nbsp;
+                                                    <span>R$ {valorRestante.toLocaleString("pt-BR", {
+                                                        minimumFractionDigits: 2,
+                                                        maximumFractionDigits: 2
+                                                    })}</span>
+                                                </>
+                                            )}
+                                        </div>
+                                    )}
                                     <div className="flex items-center gap-4">
                                         <button type="button"
                                                 onClick={() => appendPagamento({...pagamentoItemDefault, tipo: "PIX"})}
@@ -1252,7 +1304,10 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
                                             <Plus className="w-3 h-3"/> TED
                                         </button>
                                         <button type="button"
-                                                onClick={() => appendPagamento({...pagamentoItemDefault, tipo: "Boleto"})}
+                                                onClick={() => appendPagamento({
+                                                    ...pagamentoItemDefault,
+                                                    tipo: "Boleto"
+                                                })}
                                                 className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold transition-colors">
                                             <Plus className="w-3 h-3"/> Boleto
                                         </button>
@@ -1261,7 +1316,8 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
 
                                 {pagamentosFields.length === 0 ? (
                                     <p className="text-xs text-muted-foreground/50 text-center py-3">
-                                        Nenhuma forma de pagamento. Use os botões acima para adicionar PIX, TED ou Boleto.
+                                        Nenhuma forma de pagamento. Use os botões acima para adicionar PIX, TED ou
+                                        Boleto.
                                     </p>
                                 ) : (
                                     <div className="space-y-3">
@@ -1270,34 +1326,41 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
                                         {pixEntries.length > 0 && (
                                             <div>
                                                 <div className="flex items-center justify-between mb-2">
-                                                    <span className="text-xs text-muted-foreground">Tipo de Chave PIX</span>
+                                                    <span
+                                                        className="text-xs text-muted-foreground">Tipo de Chave PIX</span>
                                                     <button type="button"
-                                                            onClick={() => appendPagamento({...pagamentoItemDefault, tipo: "PIX"})}
+                                                            onClick={() => appendPagamento({
+                                                                ...pagamentoItemDefault,
+                                                                tipo: "PIX"
+                                                            })}
                                                             className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold">
                                                         <Plus className="w-3 h-3"/> Adicionar Chave
                                                     </button>
                                                 </div>
-                                                <div className="bg-black/10 border border-white/10 rounded-lg overflow-hidden">
+                                                <div
+                                                    className="bg-black/10 border border-white/10 rounded-lg overflow-hidden">
                                                     <table className="w-full text-left text-sm">
                                                         <thead className="bg-black/20">
-                                                            <tr>
-                                                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Tipo de Chave</th>
-                                                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Chave</th>
-                                                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Valor</th>
-                                                                <th className="px-2 py-2 w-[40px]"/>
-                                                            </tr>
+                                                        <tr>
+                                                            <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Tipo
+                                                                de Chave
+                                                            </th>
+                                                            <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Chave</th>
+                                                            <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Valor</th>
+                                                            <th className="px-2 py-2 w-[40px]"/>
+                                                        </tr>
                                                         </thead>
                                                         <tbody>
-                                                            {pixEntries.map(({f, i}) => (
-                                                                <PagamentoPIXRow
-                                                                    key={f.id}
-                                                                    index={i}
-                                                                    control={control}
-                                                                    setValue={setValue}
-                                                                    removePagamento={removePagamento}
-                                                                    errors={errors}
-                                                                />
-                                                            ))}
+                                                        {pixEntries.map(({f, i}) => (
+                                                            <PagamentoPIXRow
+                                                                key={f.id}
+                                                                index={i}
+                                                                control={control}
+                                                                setValue={setValue}
+                                                                removePagamento={removePagamento}
+                                                                errors={errors}
+                                                            />
+                                                        ))}
                                                         </tbody>
                                                     </table>
                                                 </div>
@@ -1310,64 +1373,112 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
                                                 <div className="flex items-center justify-between mb-2">
                                                     <span className="text-xs text-muted-foreground">Contas TED</span>
                                                     <button type="button"
-                                                            onClick={() => appendPagamento({...pagamentoItemDefault, tipo: "TED"})}
+                                                            onClick={() => appendPagamento({
+                                                                ...pagamentoItemDefault,
+                                                                tipo: "TED"
+                                                            })}
                                                             className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold">
                                                         <Plus className="w-3 h-3"/> Adicionar Conta TED
                                                     </button>
                                                 </div>
-                                                <div className="bg-black/10 border border-white/10 rounded-lg overflow-hidden">
+                                                <div
+                                                    className="bg-black/10 border border-white/10 rounded-lg overflow-hidden">
                                                     <table className="w-full text-left text-sm">
                                                         <thead className="bg-black/20">
-                                                            <tr>
-                                                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Cód.</th>
-                                                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Nome do Banco</th>
-                                                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Agência</th>
-                                                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Conta</th>
-                                                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Valor</th>
-                                                                <th className="px-2 py-2 w-[40px]"/>
-                                                            </tr>
+                                                        <tr>
+                                                            <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Cód.</th>
+                                                            <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Nome
+                                                                do Banco
+                                                            </th>
+                                                            <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Agência</th>
+                                                            <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Conta</th>
+                                                            <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Valor</th>
+                                                            <th className="px-2 py-2 w-[40px]"/>
+                                                        </tr>
                                                         </thead>
                                                         <tbody>
-                                                            {tedEntries.map(({f, i}) => {
-                                                                const itemErr = errors.pagamentos?.[i];
-                                                                return (
-                                                                    <tr key={f.id} className="border-t border-white/5">
-                                                                        <td className="px-3 py-2 align-top w-[90px]">
-                                                                            <Controller name={`pagamentos.${i}.banco_codigo`} control={control} render={({field}) => (
-                                                                                <input value={field.value ?? ""} onChange={(e) => field.onChange(mascararCodigoBanco(e.target.value))} onBlur={field.onBlur} ref={field.ref} inputMode="numeric" className={pmtCellInputCls} placeholder="033"/>
-                                                                            )}/>
-                                                                            {itemErr?.banco_codigo && <p className={pmtErrCls}>{itemErr.banco_codigo.message}</p>}
-                                                                        </td>
-                                                                        <td className="px-3 py-2 align-top">
-                                                                            <input {...register(`pagamentos.${i}.banco_nome`)} className={pmtCellInputCls} placeholder="Ex: Santander"/>
-                                                                            {itemErr?.banco_nome && <p className={pmtErrCls}>{itemErr.banco_nome.message}</p>}
-                                                                        </td>
-                                                                        <td className="px-3 py-2 align-top w-[110px]">
-                                                                            <Controller name={`pagamentos.${i}.banco_agencia`} control={control} render={({field}) => (
-                                                                                <input value={field.value ?? ""} onChange={(e) => field.onChange(mascararAgencia(e.target.value))} onBlur={field.onBlur} ref={field.ref} inputMode="numeric" className={pmtCellInputCls} placeholder="0000-0"/>
-                                                                            )}/>
-                                                                            {itemErr?.banco_agencia && <p className={pmtErrCls}>{itemErr.banco_agencia.message}</p>}
-                                                                        </td>
-                                                                        <td className="px-3 py-2 align-top w-[120px]">
-                                                                            <Controller name={`pagamentos.${i}.banco_conta`} control={control} render={({field}) => (
-                                                                                <input value={field.value ?? ""} onChange={(e) => field.onChange(mascararConta(e.target.value))} onBlur={field.onBlur} ref={field.ref} inputMode="numeric" className={pmtCellInputCls} placeholder="00000-0"/>
-                                                                            )}/>
-                                                                            {itemErr?.banco_conta && <p className={pmtErrCls}>{itemErr.banco_conta.message}</p>}
-                                                                        </td>
-                                                                        <td className="px-3 py-2 align-top w-[120px]">
-                                                                            <Controller name={`pagamentos.${i}.valorBr`} control={control} render={({field: fv}) => (
-                                                                                <input type="text" inputMode="numeric" autoComplete="off" value={fv.value} onChange={(e) => fv.onChange(formatValorBrInput(e.target.value))} onBlur={fv.onBlur} ref={fv.ref} className={`${pmtCellInputCls} font-bold text-primary`} placeholder="0,00"/>
-                                                                            )}/>
-                                                                            {itemErr?.valorBr && <p className={pmtErrCls}>{itemErr.valorBr.message}</p>}
-                                                                        </td>
-                                                                        <td className="px-2 py-2 align-top text-right w-[40px]">
-                                                                            <button type="button" onClick={() => removePagamento(i)} className="p-1 hover:bg-destructive/20 rounded text-muted-foreground hover:text-destructive transition-colors" title="Remover conta TED">
-                                                                                <Trash2 className="w-3.5 h-3.5"/>
-                                                                            </button>
-                                                                        </td>
-                                                                    </tr>
-                                                                );
-                                                            })}
+                                                        {tedEntries.map(({f, i}) => {
+                                                            const itemErr = errors.pagamentos?.[i];
+                                                            return (
+                                                                <tr key={f.id} className="border-t border-white/5">
+                                                                    <td className="px-3 py-2 align-top w-[90px]">
+                                                                        <Controller
+                                                                            name={`pagamentos.${i}.banco_codigo`}
+                                                                            control={control} render={({field}) => (
+                                                                            <input value={field.value ?? ""}
+                                                                                   onChange={(e) => field.onChange(mascararCodigoBanco(e.target.value))}
+                                                                                   onBlur={field.onBlur} ref={field.ref}
+                                                                                   inputMode="numeric"
+                                                                                   className={pmtCellInputCls}
+                                                                                   placeholder="033"/>
+                                                                        )}/>
+                                                                        {itemErr?.banco_codigo &&
+                                                                            <p className={pmtErrCls}>{itemErr.banco_codigo.message}</p>}
+                                                                    </td>
+                                                                    <td className="px-3 py-2 align-top">
+                                                                        <input {...register(`pagamentos.${i}.banco_nome`)}
+                                                                               className={pmtCellInputCls}
+                                                                               placeholder="Ex: Santander"/>
+                                                                        {itemErr?.banco_nome &&
+                                                                            <p className={pmtErrCls}>{itemErr.banco_nome.message}</p>}
+                                                                    </td>
+                                                                    <td className="px-3 py-2 align-top w-[110px]">
+                                                                        <Controller
+                                                                            name={`pagamentos.${i}.banco_agencia`}
+                                                                            control={control} render={({field}) => (
+                                                                            <input value={field.value ?? ""}
+                                                                                   onChange={(e) => field.onChange(mascararAgencia(e.target.value))}
+                                                                                   onBlur={field.onBlur} ref={field.ref}
+                                                                                   inputMode="numeric"
+                                                                                   className={pmtCellInputCls}
+                                                                                   placeholder="0000-0"/>
+                                                                        )}/>
+                                                                        {itemErr?.banco_agencia &&
+                                                                            <p className={pmtErrCls}>{itemErr.banco_agencia.message}</p>}
+                                                                    </td>
+                                                                    <td className="px-3 py-2 align-top w-[120px]">
+                                                                        <Controller name={`pagamentos.${i}.banco_conta`}
+                                                                                    control={control}
+                                                                                    render={({field}) => (
+                                                                                        <input value={field.value ?? ""}
+                                                                                               onChange={(e) => field.onChange(mascararConta(e.target.value))}
+                                                                                               onBlur={field.onBlur}
+                                                                                               ref={field.ref}
+                                                                                               inputMode="numeric"
+                                                                                               className={pmtCellInputCls}
+                                                                                               placeholder="00000-0"/>
+                                                                                    )}/>
+                                                                        {itemErr?.banco_conta &&
+                                                                            <p className={pmtErrCls}>{itemErr.banco_conta.message}</p>}
+                                                                    </td>
+                                                                    <td className="px-3 py-2 align-top w-[120px]">
+                                                                        <Controller name={`pagamentos.${i}.valorBr`}
+                                                                                    control={control}
+                                                                                    render={({field: fv}) => (
+                                                                                        <input type="text"
+                                                                                               inputMode="numeric"
+                                                                                               autoComplete="off"
+                                                                                               value={fv.value}
+                                                                                               onChange={(e) => fv.onChange(formatValorBrInput(e.target.value))}
+                                                                                               onBlur={fv.onBlur}
+                                                                                               ref={fv.ref}
+                                                                                               className={`${pmtCellInputCls} font-bold text-primary`}
+                                                                                               placeholder="0,00"/>
+                                                                                    )}/>
+                                                                        {itemErr?.valorBr &&
+                                                                            <p className={pmtErrCls}>{itemErr.valorBr.message}</p>}
+                                                                    </td>
+                                                                    <td className="px-2 py-2 align-top text-right w-[40px]">
+                                                                        <button type="button"
+                                                                                onClick={() => removePagamento(i)}
+                                                                                className="p-1 hover:bg-destructive/20 rounded text-muted-foreground hover:text-destructive transition-colors"
+                                                                                title="Remover conta TED">
+                                                                            <Trash2 className="w-3.5 h-3.5"/>
+                                                                        </button>
+                                                                    </td>
+                                                                </tr>
+                                                            );
+                                                        })}
                                                         </tbody>
                                                     </table>
                                                 </div>
@@ -1380,43 +1491,66 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
                                                 <div className="flex items-center justify-between mb-2">
                                                     <span className="text-xs text-muted-foreground">Boletos</span>
                                                     <button type="button"
-                                                            onClick={() => appendPagamento({...pagamentoItemDefault, tipo: "Boleto"})}
+                                                            onClick={() => appendPagamento({
+                                                                ...pagamentoItemDefault,
+                                                                tipo: "Boleto"
+                                                            })}
                                                             className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold">
                                                         <Plus className="w-3 h-3"/> Adicionar Boleto
                                                     </button>
                                                 </div>
-                                                <div className="bg-black/10 border border-white/10 rounded-lg overflow-hidden">
+                                                <div
+                                                    className="bg-black/10 border border-white/10 rounded-lg overflow-hidden">
                                                     <table className="w-full text-left text-sm">
                                                         <thead className="bg-black/20">
-                                                            <tr>
-                                                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Código de Barras</th>
-                                                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Valor</th>
-                                                                <th className="px-2 py-2 w-[40px]"/>
-                                                            </tr>
+                                                        <tr>
+                                                            <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Código
+                                                                de Barras
+                                                            </th>
+                                                            <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Valor</th>
+                                                            <th className="px-2 py-2 w-[40px]"/>
+                                                        </tr>
                                                         </thead>
                                                         <tbody>
-                                                            {boletoEntries.map(({f, i}) => {
-                                                                const itemErr = errors.pagamentos?.[i];
-                                                                return (
-                                                                    <tr key={f.id} className="border-t border-white/5">
-                                                                        <td className="px-3 py-2 align-top">
-                                                                            <input {...register(`pagamentos.${i}.boleto_codigo_barras`)} className={pmtCellInputCls} placeholder="00000000000000000000000000000000000000000000"/>
-                                                                            {itemErr?.boleto_codigo_barras && <p className={pmtErrCls}>{itemErr.boleto_codigo_barras.message}</p>}
-                                                                        </td>
-                                                                        <td className="px-3 py-2 align-top w-[120px]">
-                                                                            <Controller name={`pagamentos.${i}.valorBr`} control={control} render={({field: fv}) => (
-                                                                                <input type="text" inputMode="numeric" autoComplete="off" value={fv.value} onChange={(e) => fv.onChange(formatValorBrInput(e.target.value))} onBlur={fv.onBlur} ref={fv.ref} className={`${pmtCellInputCls} font-bold text-primary`} placeholder="0,00"/>
-                                                                            )}/>
-                                                                            {itemErr?.valorBr && <p className={pmtErrCls}>{itemErr.valorBr.message}</p>}
-                                                                        </td>
-                                                                        <td className="px-2 py-2 align-top text-right w-[40px]">
-                                                                            <button type="button" onClick={() => removePagamento(i)} className="p-1 hover:bg-destructive/20 rounded text-muted-foreground hover:text-destructive transition-colors" title="Remover boleto">
-                                                                                <Trash2 className="w-3.5 h-3.5"/>
-                                                                            </button>
-                                                                        </td>
-                                                                    </tr>
-                                                                );
-                                                            })}
+                                                        {boletoEntries.map(({f, i}) => {
+                                                            const itemErr = errors.pagamentos?.[i];
+                                                            return (
+                                                                <tr key={f.id} className="border-t border-white/5">
+                                                                    <td className="px-3 py-2 align-top">
+                                                                        <input {...register(`pagamentos.${i}.boleto_codigo_barras`)}
+                                                                               className={pmtCellInputCls}
+                                                                               placeholder="00000000000000000000000000000000000000000000"/>
+                                                                        {itemErr?.boleto_codigo_barras &&
+                                                                            <p className={pmtErrCls}>{itemErr.boleto_codigo_barras.message}</p>}
+                                                                    </td>
+                                                                    <td className="px-3 py-2 align-top w-[120px]">
+                                                                        <Controller name={`pagamentos.${i}.valorBr`}
+                                                                                    control={control}
+                                                                                    render={({field: fv}) => (
+                                                                                        <input type="text"
+                                                                                               inputMode="numeric"
+                                                                                               autoComplete="off"
+                                                                                               value={fv.value}
+                                                                                               onChange={(e) => fv.onChange(formatValorBrInput(e.target.value))}
+                                                                                               onBlur={fv.onBlur}
+                                                                                               ref={fv.ref}
+                                                                                               className={`${pmtCellInputCls} font-bold text-primary`}
+                                                                                               placeholder="0,00"/>
+                                                                                    )}/>
+                                                                        {itemErr?.valorBr &&
+                                                                            <p className={pmtErrCls}>{itemErr.valorBr.message}</p>}
+                                                                    </td>
+                                                                    <td className="px-2 py-2 align-top text-right w-[40px]">
+                                                                        <button type="button"
+                                                                                onClick={() => removePagamento(i)}
+                                                                                className="p-1 hover:bg-destructive/20 rounded text-muted-foreground hover:text-destructive transition-colors"
+                                                                                title="Remover boleto">
+                                                                            <Trash2 className="w-3.5 h-3.5"/>
+                                                                        </button>
+                                                                    </td>
+                                                                </tr>
+                                                            );
+                                                        })}
                                                         </tbody>
                                                     </table>
                                                 </div>
