@@ -18,7 +18,10 @@ export const contaBancariaFormSchema = z
         nome: z.string().trim().min(1, "Informe o nome da conta."),
         banco: z.string().optional().default(""),
         agencia: z.string().optional().default(""),
+        digito_agencia: z.string().optional().default(""),
         conta: z.string().optional().default(""),
+        digito_conta: z.string().optional().default(""),
+        empresa: z.string().optional().default(""),
         saldo_inicial_br: z
             .string()
             .optional()
@@ -56,16 +59,16 @@ const docNumeros = (s: string) => s.replace(/\D/g, "");
 /** Uma chave PIX dentro de um grupo de dados bancários. */
 export const pixKeyFormItemSchema = z.object({
     tipo_chave: z.enum(["cpf", "cnpj", "email", "telefone", "aleatoria"]),
-    chave: z.string().default(""),
+    chave: z.string().min(1, "Chave PIX é obrigatória."),
 });
 export type PixKeyFormItem = z.infer<typeof pixKeyFormItemSchema>;
 
 /** Uma conta TED dentro de um grupo de dados bancários. */
 export const tedContaFormItemSchema = z.object({
-    banco_codigo: z.string().default(""),
-    banco_nome: z.string().default(""),
-    agencia: z.string().default(""),
-    conta: z.string().default(""),
+    banco_codigo: z.string().min(1, "Código do banco é obrigatório."),
+    banco_nome: z.string().min(1, "Nome do banco é obrigatório."),
+    agencia: z.string().min(1, "Agência é obrigatória."),
+    conta: z.string().min(1, "Conta é obrigatória."),
 });
 export type TedContaFormItem = z.infer<typeof tedContaFormItemSchema>;
 
@@ -143,6 +146,7 @@ export const parceiroFormSchema = z
     .object({
         tipoPessoa: z.enum(["PF", "PJ"]),
         nomeRazao: z.string().trim().min(1, "Nome é obrigatório."),
+        nomeFantasia: z.string().trim().optional().default(""),
 
         documento: z
             .string()

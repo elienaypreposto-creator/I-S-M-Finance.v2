@@ -45,7 +45,10 @@ type ContaBancaria = {
     nome: string;
     banco: string | null;
     agencia: string | null;
+    digito_agencia: string | null;
     conta: string | null;
+    digito_conta: string | null;
+    empresa: string | null;
     tipo: string;
     status: string;
     cor: string;
@@ -66,9 +69,11 @@ function maskAgencia(value: string): string {
 }
 
 function maskConta(value: string): string {
-    const digits = value.replace(/\D/g, "").slice(0, 8);
-    if (digits.length <= 1) return digits;
-    return `${digits.slice(0, -1)}-${digits.slice(-1)}`;
+    return value.replace(/\D/g, "").slice(0, 8);
+}
+
+function maskDigito(value: string): string {
+    return value.replace(/[^0-9Xx]/g, "").slice(0, 1).toUpperCase();
 }
 
 const TIPO_CONFIG = [
@@ -115,16 +120,26 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
     const todayIso = useMemo(() => new Date().toISOString().split("T")[0], []);
 
     const defaultValues = useMemo<ContaBancariaFormValues>(
-        () => ({
-            tipo: initialData?.tipo ?? "",
-            nome: initialData?.nome ?? "",
-            banco: initialData?.banco ?? "",
-            agencia: initialData?.agencia ?? "",
-            conta: initialData?.conta ?? "",
-            saldo_inicial_br: initialData ? apiValorToValorBr(initialData.saldo_inicial) : "",
-            data_inicio: initialData?.data_inicio ?? todayIso,
-            cor: initialData?.cor?.match(/^#[0-9A-Fa-f]{6}$/i) ? initialData.cor : "#3BA8DC",
-        }),
+        () => {
+            const contaRaw = initialData?.conta ?? "";
+            const hasHyphen = contaRaw.includes("-");
+            const contaBase = hasHyphen ? contaRaw.split("-")[0] : contaRaw;
+            const contaDigitoLegacy = hasHyphen ? (contaRaw.split("-")[1] ?? "") : "";
+
+            return {
+                tipo: initialData?.tipo ?? "",
+                nome: initialData?.nome ?? "",
+                banco: initialData?.banco ?? "",
+                agencia: initialData?.agencia ?? "",
+                digito_agencia: initialData?.digito_agencia ?? "",
+                conta: contaBase,
+                digito_conta: initialData?.digito_conta ?? contaDigitoLegacy,
+                empresa: initialData?.empresa ?? "",
+                saldo_inicial_br: initialData ? apiValorToValorBr(initialData.saldo_inicial) : "",
+                data_inicio: initialData?.data_inicio ?? todayIso,
+                cor: initialData?.cor?.match(/^#[0-9A-Fa-f]{6}$/i) ? initialData.cor : "#3BA8DC",
+            };
+        },
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [initialData],
     );
@@ -162,10 +177,11 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                 newTipo === "Conta Corrente" || newTipo === "Conta Poupança";
 
             if (precisavaBanco && !precisaBanco) {
-                // Mudou para Conta Movimento: limpa dados bancários
                 setValue("banco", "");
                 setValue("agencia", "");
+                setValue("digito_agencia", "");
                 setValue("conta", "");
+                setValue("digito_conta", "");
             }
         }
         setValue("tipo", newTipo, {shouldValidate: true});
@@ -178,10 +194,13 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
             const saldoApi = brMoneyDisplayToApiString(values.saldo_inicial_br) || "0.00";
             const body = {
                 nome: values.nome.trim(),
+                tipo: values.tipo,
                 banco: values.banco?.trim() || null,
                 agencia: values.agencia?.trim() || null,
+                digito_agencia: values.digito_agencia?.trim() || null,
                 conta: values.conta?.trim() || null,
-                tipo: values.tipo,
+                digito_conta: values.digito_conta?.trim() || null,
+                empresa: values.empresa?.trim() || null,
                 saldo_inicial: saldoApi,
                 data_inicio: values.data_inicio,
                 cor: values.cor,
@@ -376,13 +395,13 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                                     </div>
                                 )}
 
-                                {/* Agência + Conta - Conta Corrente e Conta Poupança */}
+                                {/* Agência + Dígito - Conta Corrente e Conta Poupança */}
                                 {(tipo === "Conta Corrente" || tipo === "Conta Poupança") && (
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div>
+                                    <div className="grid grid-cols-4 gap-3">
+                                        <div className="col-span-3">
                                             <label
                                                 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                                                Agência (sem dígito) <Req/>
+                                                Agência <Req/>
                                             </label>
                                             <Controller
                                                 name="agencia"
@@ -404,10 +423,39 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                                                 <p className="text-[11px] text-destructive mt-1">{errors.agencia.message}</p>
                                             )}
                                         </div>
+                                        {/* Dígito verificador da agência */}
                                         <div>
                                             <label
                                                 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                                                Conta (com dígito) <Req/>
+                                                Díg. Ag.
+                                            </label>
+                                            <Controller
+                                                name="digito_agencia"
+                                                control={control}
+                                                render={({field}) => (
+                                                    <input
+                                                        type="text"
+                                                        inputMode="numeric"
+                                                        autoComplete="off"
+                                                        value={field.value ?? ""}
+                                                        onChange={(e) => field.onChange(maskDigito(e.target.value))}
+                                                        className={monoInputCls}
+                                                        placeholder="0"
+                                                        maxLength={1}
+                                                    />
+                                                )}
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Conta + Dígito - Conta Corrente e Conta Poupança */}
+                                {(tipo === "Conta Corrente" || tipo === "Conta Poupança") && (
+                                    <div className="grid grid-cols-4 gap-3">
+                                        <div className="col-span-3">
+                                            <label
+                                                className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                                                Nº da Conta <Req/>
                                             </label>
                                             <Controller
                                                 name="conta"
@@ -420,8 +468,8 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                                                         value={field.value ?? ""}
                                                         onChange={(e) => field.onChange(maskConta(e.target.value))}
                                                         className={monoInputCls}
-                                                        placeholder="00000-0"
-                                                        maxLength={9}
+                                                        placeholder="00000000"
+                                                        maxLength={8}
                                                     />
                                                 )}
                                             />
@@ -429,8 +477,44 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                                                 <p className="text-[11px] text-destructive mt-1">{errors.conta.message}</p>
                                             )}
                                         </div>
+                                        {/* Dígito verificador da conta */}
+                                        <div>
+                                            <label
+                                                className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                                                Dígito
+                                            </label>
+                                            <Controller
+                                                name="digito_conta"
+                                                control={control}
+                                                render={({field}) => (
+                                                    <input
+                                                        type="text"
+                                                        inputMode="numeric"
+                                                        autoComplete="off"
+                                                        value={field.value ?? ""}
+                                                        onChange={(e) => field.onChange(maskDigito(e.target.value))}
+                                                        className={monoInputCls}
+                                                        placeholder="0"
+                                                        maxLength={1}
+                                                    />
+                                                )}
+                                            />
+                                        </div>
                                     </div>
                                 )}
+
+                                {/* Empresa - todos os tipos, opcional */}
+                                <div>
+                                    <label
+                                        className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                                        Empresa / Titular
+                                    </label>
+                                    <input
+                                        {...register("empresa")}
+                                        className={inputCls}
+                                        placeholder="Ex: ISM Soluções Ltda."
+                                    />
+                                </div>
 
                                 {/* Cor de identificação - todos os tipos */}
                                 <div>

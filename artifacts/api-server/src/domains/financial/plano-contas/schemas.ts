@@ -11,7 +11,10 @@ export const createPlanoContaBodySchema = z.object({
         (v) => (typeof v === "string" && v.trim() === "" ? null : v),
         z.string().trim().min(1).nullable().optional(),
     ),
-    codigo: z.string().trim().min(1).nullable().optional(),
+    codigo: z.preprocess(
+        (v) => (typeof v === "string" && v.trim() === "" ? null : v),
+        z.string().trim().min(1).nullable().optional(),
+    ),
     ativo: z.boolean().optional(),
 });
 

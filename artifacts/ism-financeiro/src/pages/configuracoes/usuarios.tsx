@@ -63,7 +63,7 @@ const baseUsuarioSchema = z.object({
     nome: z.string().trim().min(2, "Nome deve ter ao menos 2 caracteres.").max(120, "Nome muito longo (máx. 120 caracteres)."),
     email: z.string().min(1, "E-mail obrigatório.").refine(
         (v) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim()),
-        "E-mail inválido — use o formato nome@dominio.com"
+        "E-mail inválido - use o formato nome@dominio.com"
     ),
     cargo: z.string().max(100, "Cargo muito longo (máx. 100 caracteres).").optional(),
     perfil_base: z.string().min(1, "Perfil base é obrigatório."),
@@ -71,12 +71,12 @@ const baseUsuarioSchema = z.object({
         if (!v || v.trim() === "") return true;
         const d = digitsOnly(v);
         return d.length >= 10 && d.length <= 11;
-    }, "Telefone inválido — informe DDD + número (10 ou 11 dígitos)"),
+    }, "Telefone inválido - informe DDD + número (10 ou 11 dígitos)"),
     celular: z.string().optional().refine((v) => {
         if (!v || v.trim() === "") return true;
         const d = digitsOnly(v);
         return d.length >= 10 && d.length <= 11;
-    }, "Celular inválido — informe DDD + número (10 ou 11 dígitos)"),
+    }, "Celular inválido - informe DDD + número (10 ou 11 dígitos)"),
 });
 
 const criarUsuarioSchema = baseUsuarioSchema
@@ -478,7 +478,7 @@ function ParceiroAutocomplete({
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
-    // [NOVO] &excluir_com_usuario=true — backend irá filtrar parceiros que já têm usuário
+    // [NOVO] &excluir_com_usuario=true - backend irá filtrar parceiros que já têm usuário
     // e que possuem tag Cliente ou Fornecedor
     const {data: parceiros = [], isLoading} = useQuery<
         { id: number; nome: string; email: string | null; telefone: string | null; celular: string | null }[]
@@ -509,7 +509,7 @@ function ParceiroAutocomplete({
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         setSearch(e.target.value);
         onChange(e.target.value);
-        // [NOVO] Ao digitar manualmente, limpa a seleção — obriga nova escolha via lista
+        // [NOVO] Ao digitar manualmente, limpa a seleção - obriga nova escolha via lista
         onSelectionChange(null);
         setIsOpen(true);
     };
@@ -570,7 +570,7 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
     const schema = isEdit ? editarUsuarioSchema : criarUsuarioSchema;
 
     // [NOVO] Controla se há um parceiro selecionado via lista no autocomplete.
-    // No modo edição não é necessário — campo fica desabilitado.
+    // No modo edição não é necessário - campo fica desabilitado.
     const [parceiroSelecionadoId, setParceiroSelecionadoId] = useState<number | null>(null);
 
     const {register, handleSubmit, setValue, control, formState: {errors}} = useForm<UsuarioFormValues>({
@@ -810,10 +810,10 @@ export default function Usuarios() {
                     email: data.email,
                     // Só envia senha se foi preenchida; caso contrário o backend usa fluxo OTP
                     ...(data.senha ? {senha: data.senha} : {}),
-                    cargo: data.cargo || undefined,
-                    perfil_base: data.perfil_base || undefined,
-                    telefone: data.telefone || undefined,
-                    celular: data.celular || undefined,
+                    cargo: data.cargo?.trim() || undefined,
+                    perfil_base: data.perfil_base?.trim() || undefined,
+                    telefone: digitsOnly(data.telefone ?? "") || undefined,
+                    celular: digitsOnly(data.celular ?? "") || undefined,
                 }),
             }),
         onSuccess: async (createdUser, variables) => {
@@ -836,9 +836,12 @@ export default function Usuarios() {
             fetchApiData<UsuarioRow>(`/usuarios/${id}`, {
                 method: "PUT",
                 body: JSON.stringify({
-                    nome: data.nome, email: data.email,
-                    cargo: data.cargo || undefined, perfil_base: data.perfil_base || undefined,
-                    telefone: data.telefone || undefined, celular: data.celular || undefined,
+                    nome: data.nome,
+                    email: data.email,
+                    cargo: data.cargo?.trim() || undefined,
+                    perfil_base: data.perfil_base?.trim() || undefined,
+                    telefone: digitsOnly(data.telefone ?? "") || undefined,
+                    celular: digitsOnly(data.celular ?? "") || undefined,
                 }),
             }).then((res) => ({user: res, variables: data})),
         onSuccess: async ({user, variables}) => {
