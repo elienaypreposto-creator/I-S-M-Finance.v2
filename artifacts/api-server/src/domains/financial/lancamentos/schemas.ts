@@ -10,21 +10,14 @@ export const lancamentoStatusEnum = z.enum([
     "cancelado",
 ]);
 
-// Schemas individuais de cada meio de pagamento
-const pagamentoValorField = z.coerce
-    .number({invalid_type_error: "Informe um valor numérico."})
-    .positive("O valor deve ser maior que zero.");
-
 const dadosPagamentoPixSchema = z.object({
     tipo: z.literal("PIX"),
-    valor: pagamentoValorField,
     tipo_chave: z.enum(["cpf", "cnpj", "email", "telefone", "aleatoria"]),
     chave: z.string().trim().min(1, "Informe a chave PIX."),
 });
 
 const dadosPagamentoTedSchema = z.object({
     tipo: z.literal("TED"),
-    valor: pagamentoValorField,
     banco_codigo: z.string().trim().min(1, "Código do banco é obrigatório."),
     banco_nome: z.string().trim().min(1, "Nome do banco é obrigatório."),
     agencia: z.string().trim().min(1, "Agência é obrigatória."),
@@ -33,7 +26,6 @@ const dadosPagamentoTedSchema = z.object({
 
 const dadosPagamentoBoletoSchema = z.object({
     tipo: z.literal("Boleto"),
-    valor: pagamentoValorField,
     codigo_barras: z.string().trim().min(1, "Informe o código de barras."),
 });
 
