@@ -26,7 +26,6 @@ import {
     pixKeyPlaceholder
 } from "@/lib/pix-ted-masks.ts";
 import {
-    brMoneyDisplayToApiString,
     formatValorBrInput,
     getLancamentoModalDefaultValues,
     lancamentoModalFormSchema,
@@ -667,26 +666,6 @@ function PagamentoPIXRow({index, control, setValue, removePagamento, errors}: Pa
                 />
                 {itemErr?.chave_pix && <p className={pmtErrCls}>{itemErr.chave_pix.message}</p>}
             </td>
-            <td className="px-3 py-2 align-top w-[120px]">
-                <Controller
-                    name={`pagamentos.${index}.valorBr`}
-                    control={control}
-                    render={({field: f}) => (
-                        <input
-                            type="text"
-                            inputMode="numeric"
-                            autoComplete="off"
-                            value={f.value}
-                            onChange={(e) => f.onChange(formatValorBrInput(e.target.value))}
-                            onBlur={f.onBlur}
-                            ref={f.ref}
-                            className={`${pmtCellInputCls} font-bold text-primary`}
-                            placeholder="0,00"
-                        />
-                    )}
-                />
-                {itemErr?.valorBr && <p className={pmtErrCls}>{itemErr.valorBr.message}</p>}
-            </td>
             <td className="px-2 py-2 align-top text-right w-[40px]">
                 <button
                     type="button"
@@ -764,15 +743,6 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
         f,
         i
     })).filter(({i}) => pagamentosWatched[i]?.tipo === "Boleto");
-
-    const valorBrWatched = useWatch({control, name: "valorBr"});
-    const pagamentosFullWatch = useWatch({control, name: "pagamentos"});
-
-    const valorTotal = parseFloat(brMoneyDisplayToApiString(valorBrWatched ?? "")) || 0;
-    const valorAlocado = (pagamentosFullWatch ?? []).reduce<number>((acc, p) => {
-        return acc + (parseFloat(brMoneyDisplayToApiString(p?.valorBr ?? "")) || 0);
-    }, 0);
-    const valorRestante = Math.round((valorTotal - valorAlocado) * 100) / 100;
 
     function handlePagamentoTipoChange(index: number, newTipo: PagamentoItemFormValues["tipo"]) {
         setValue(`pagamentos.${index}.tipo`, newTipo, {shouldDirty: true});
@@ -1271,27 +1241,6 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
                                         <CreditCard className="w-4 h-4 text-primary"/>
                                         <label className={`${labelCls} mb-0`}>Formas de Pagamento</label>
                                     </div>
-                                    {/* Indicador de saldo - só aparece quando um valor previsto foi informado */}
-                                    {valorTotal > 0 && (
-                                        <div
-                                            className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold border transition-colors ${
-                                                valorRestante === 0
-                                                    ? "bg-success/10 border-success/30 text-success"
-                                                    : valorRestante < 0
-                                                        ? "bg-destructive/10 border-destructive/30 text-destructive"
-                                                        : "bg-white/5 border-white/10 text-muted-foreground"
-                                            }`}>
-                                            {valorRestante === 0 ? "✓ Totalmente alocado" : (
-                                                <>
-                                                    Restante:&nbsp;
-                                                    <span>R$ {valorRestante.toLocaleString("pt-BR", {
-                                                        minimumFractionDigits: 2,
-                                                        maximumFractionDigits: 2
-                                                    })}</span>
-                                                </>
-                                            )}
-                                        </div>
-                                    )}
                                     <div className="flex items-center gap-4">
                                         <button type="button"
                                                 onClick={() => appendPagamento({...pagamentoItemDefault, tipo: "PIX"})}
@@ -1346,7 +1295,6 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
                                                                 de Chave
                                                             </th>
                                                             <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Chave</th>
-                                                            <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Valor</th>
                                                             <th className="px-2 py-2 w-[40px]"/>
                                                         </tr>
                                                         </thead>
@@ -1392,7 +1340,6 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
                                                             </th>
                                                             <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Agência</th>
                                                             <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Conta</th>
-                                                            <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Valor</th>
                                                             <th className="px-2 py-2 w-[40px]"/>
                                                         </tr>
                                                         </thead>
@@ -1451,23 +1398,6 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
                                                                         {itemErr?.banco_conta &&
                                                                             <p className={pmtErrCls}>{itemErr.banco_conta.message}</p>}
                                                                     </td>
-                                                                    <td className="px-3 py-2 align-top w-[120px]">
-                                                                        <Controller name={`pagamentos.${i}.valorBr`}
-                                                                                    control={control}
-                                                                                    render={({field: fv}) => (
-                                                                                        <input type="text"
-                                                                                               inputMode="numeric"
-                                                                                               autoComplete="off"
-                                                                                               value={fv.value}
-                                                                                               onChange={(e) => fv.onChange(formatValorBrInput(e.target.value))}
-                                                                                               onBlur={fv.onBlur}
-                                                                                               ref={fv.ref}
-                                                                                               className={`${pmtCellInputCls} font-bold text-primary`}
-                                                                                               placeholder="0,00"/>
-                                                                                    )}/>
-                                                                        {itemErr?.valorBr &&
-                                                                            <p className={pmtErrCls}>{itemErr.valorBr.message}</p>}
-                                                                    </td>
                                                                     <td className="px-2 py-2 align-top text-right w-[40px]">
                                                                         <button type="button"
                                                                                 onClick={() => removePagamento(i)}
@@ -1507,7 +1437,6 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
                                                             <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Código
                                                                 de Barras
                                                             </th>
-                                                            <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Valor</th>
                                                             <th className="px-2 py-2 w-[40px]"/>
                                                         </tr>
                                                         </thead>
@@ -1522,23 +1451,6 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
                                                                                placeholder="00000000000000000000000000000000000000000000"/>
                                                                         {itemErr?.boleto_codigo_barras &&
                                                                             <p className={pmtErrCls}>{itemErr.boleto_codigo_barras.message}</p>}
-                                                                    </td>
-                                                                    <td className="px-3 py-2 align-top w-[120px]">
-                                                                        <Controller name={`pagamentos.${i}.valorBr`}
-                                                                                    control={control}
-                                                                                    render={({field: fv}) => (
-                                                                                        <input type="text"
-                                                                                               inputMode="numeric"
-                                                                                               autoComplete="off"
-                                                                                               value={fv.value}
-                                                                                               onChange={(e) => fv.onChange(formatValorBrInput(e.target.value))}
-                                                                                               onBlur={fv.onBlur}
-                                                                                               ref={fv.ref}
-                                                                                               className={`${pmtCellInputCls} font-bold text-primary`}
-                                                                                               placeholder="0,00"/>
-                                                                                    )}/>
-                                                                        {itemErr?.valorBr &&
-                                                                            <p className={pmtErrCls}>{itemErr.valorBr.message}</p>}
                                                                     </td>
                                                                     <td className="px-2 py-2 align-top text-right w-[40px]">
                                                                         <button type="button"

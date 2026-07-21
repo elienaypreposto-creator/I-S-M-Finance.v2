@@ -1453,13 +1453,6 @@ export default function Lancamentos() {
                             const isCR = l.tipo === "CR";
                             const riscos = l.riscos ?? [];
 
-                            const dadosPag = Array.isArray(l.dados_pagamento) ? l.dados_pagamento : [];
-                            const valorAlocado = dadosPag.reduce<number>(
-                                (acc, p) => acc + (p.valor || 0),
-                                0,
-                            );
-                            const valorRestante = Math.round((l.valor - valorAlocado) * 100) / 100;
-
                             return (
                                 <tr key={l.id} className="hover:bg-white/[0.04] transition-colors group">
                                     <td className="px-3 py-2.5 text-center" data-label="Tipo">
@@ -1523,7 +1516,7 @@ export default function Lancamentos() {
                                     </td>
                                     <td className={cn("px-3 py-2.5 text-right font-bold", isCR ? "text-teal-300" : "text-white/90")}
                                         data-label="Valor">
-                                        {isCR ? "" : "- "}{formatCurrency(valorRestante).replace("R$", "").trim()}
+                                        {isCR ? "" : "- "}{formatCurrency(l.valor).replace("R$", "").trim()}
                                     </td>
                                     <td className="px-3 py-2.5 text-center" data-label="Status">
                                         <StatusBadge status={l.status}/>

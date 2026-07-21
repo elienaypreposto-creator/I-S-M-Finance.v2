@@ -11,14 +11,12 @@ export const lancamentoStatusEnum = z.enum([
 
 const dadosPagamentoPixApiSchema = z.object({
     tipo: z.literal("PIX"),
-    valor: z.number().positive(),
     tipo_chave: z.enum(["cpf", "cnpj", "email", "telefone", "aleatoria"]),
     chave: z.string().min(1),
 });
 
 const dadosPagamentoTedApiSchema = z.object({
     tipo: z.literal("TED"),
-    valor: z.number().positive(),
     banco_codigo: z.string().min(1),
     banco_nome: z.string().min(1),
     agencia: z.string().min(1),
@@ -27,7 +25,6 @@ const dadosPagamentoTedApiSchema = z.object({
 
 const dadosPagamentoBoletoApiSchema = z.object({
     tipo: z.literal("Boleto"),
-    valor: z.number().positive(),
     codigo_barras: z.string().min(1),
 });
 
@@ -131,12 +128,9 @@ export const competenciaSchema = z
         return mm >= 1 && mm <= 12 && yyyy >= 2000 && yyyy <= 2100;
     }, "Competência inválida - use MM/AAAA com mês entre 01 e 12.");
 
-// Schema por item de pagamento (um meio dentro do split)
-
 export const pagamentoItemFormSchema = z
     .object({
         tipo: z.enum(["PIX", "TED", "Boleto"]),
-        valorBr: z.string().min(1, "Informe o valor desta parcela."),
         tipo_chave_pix: z
             .enum(["cpf", "cnpj", "email", "telefone", "aleatoria", ""])
             .optional(),
@@ -148,14 +142,6 @@ export const pagamentoItemFormSchema = z
         boleto_codigo_barras: z.string().optional(),
     })
     .superRefine((item, ctx) => {
-        const api = brMoneyDisplayToApiString(item.valorBr);
-        if (!api || parseFloat(api) <= 0) {
-            ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: "O valor deve ser maior que zero.",
-                path: ["valorBr"],
-            });
-        }
         if (item.tipo === "PIX") {
             if (!item.tipo_chave_pix)
                 ctx.addIssue({
@@ -219,7 +205,6 @@ export type PagamentoItemFormValues = z.infer<typeof pagamentoItemFormSchema>;
 /** Valor inicial para um novo item de pagamento adicionado via useFieldArray. */
 export const pagamentoItemDefault: PagamentoItemFormValues = {
     tipo: "PIX",
-    valorBr: "",
     tipo_chave_pix: "",
     chave_pix: "",
     banco_codigo: "",
@@ -315,13 +300,11 @@ function normalizeStatusForForm(tipo: string, status: string): z.infer<typeof la
 /**
  * Mapeamento de VOLTA (API -> Formulário).
  *
- * Recebe `dados_pagamento` (array numérico da API / BD) e devolve o array
- * `pagamentos` do `useFieldArray`, onde cada `valor` numérico (ex: 150.5) é
- * reconvertido para a máscara de moeda BR (ex: "150,50") no campo `valorBr`.
- *
- * Cada item é validado via `dadosPagamentoItemApiSchema.safeParse()` antes do
- * mapeamento - registros com estrutura obsoleta ou corrompida na BD são
- * descartados silenciosamente, em vez de provocar erros em runtime.
+ * Recebe `dados_pagamento` (array da API / BD) e devolve o array
+ * `pagamentos` do `useFieldArray`. Cada item é validado via
+ * `dadosPagamentoItemApiSchema.safeParse()` antes do mapeamento —
+ * registros com estrutura obsoleta ou corrompida na BD são descartados
+ * silenciosamente, em vez de provocar erros em runtime.
  */
 function normalizeDadosPagamentoParaForm(
     dp: DadosPagamentoItem[] | DadosPagamentoItem | null | undefined,
@@ -340,7 +323,6 @@ function normalizeDadosPagamentoParaForm(
         const base: PagamentoItemFormValues = {
             ...pagamentoItemDefault,
             tipo: item.tipo,
-            valorBr: apiValorToValorBr(item.valor),
         };
 
         if (item.tipo === "PIX")
@@ -445,25 +427,20 @@ function isoToCompetenciaDisplay(value: string | null | undefined): string {
 }
 
 /**
- * Mapeamento de IDA, passo 1/2 (Form -> estrutura numérica intermédia).
+ * Mapeamento de IDA, passo 1/2 (Form -> estrutura intermédia).
  *
- * Converte cada item do `useFieldArray` (onde `valorBr` é uma string mascarada,
- * ex: "1.234,56") para a estrutura numérica esperada pelo backend, incluindo
- * o renomeamento de campos do formulário para a nomenclatura da API:
+ * Converte cada item do `useFieldArray` para a estrutura esperada pelo backend,
+ * renomeando campos do formulário para a nomenclatura da API:
  *
  *   Form (pagamentos[i])         API intermédia (DadosPagamentoItem)
- *   valorBr: "1.234,56"       -> valor: 1234.56  (number)
  *   banco_agencia: "1234-5"   -> agencia: "1234-5"
  *   banco_conta:   "000001-2" -> conta:   "000001-2"
  */
 function buildDadosPagamentoArray(pagamentos: PagamentoItemFormValues[]): DadosPagamentoItem[] {
     return pagamentos.map((p): DadosPagamentoItem => {
-        const valor = parseFloat(brMoneyDisplayToApiString(p.valorBr)) || 0;
-
         if (p.tipo === "PIX") {
             return {
                 tipo: "PIX",
-                valor,
                 tipo_chave: (p.tipo_chave_pix || "aleatoria") as DadosPagamentoPIX["tipo_chave"],
                 chave: p.chave_pix?.trim() ?? "",
             };
@@ -471,7 +448,6 @@ function buildDadosPagamentoArray(pagamentos: PagamentoItemFormValues[]): DadosP
         if (p.tipo === "TED") {
             return {
                 tipo: "TED",
-                valor,
                 banco_codigo: p.banco_codigo?.trim() ?? "",
                 banco_nome: p.banco_nome?.trim() ?? "",
                 agencia: p.banco_agencia?.trim() ?? "",
@@ -480,7 +456,6 @@ function buildDadosPagamentoArray(pagamentos: PagamentoItemFormValues[]): DadosP
         }
         return {
             tipo: "Boleto",
-            valor,
             codigo_barras: p.boleto_codigo_barras?.trim() ?? "",
         };
     });
@@ -494,8 +469,8 @@ function buildDadosPagamentoArray(pagamentos: PagamentoItemFormValues[]): DadosP
  *
  * • `valorBr` (string mascarada) -> `valor` (string decimal para o backend aceitar
  *    `z.union([z.string(), z.number()])`)
- * • `pagamentos[]` (useFieldArray com `valorBr`) -> `dados_pagamento[]` (array
- *    numérico estruturado) - via `buildDadosPagamentoArray`
+ * • `pagamentos[]` (useFieldArray) -> `dados_pagamento[]` (métodos de transação,
+ *    sem valor individual) - via `buildDadosPagamentoArray`
  * • Selects de ID ("" | "42") -> number | null
  * • `competencia` ("MM/YYYY") -> ISO date ("YYYY-MM-01") ou null
  *
