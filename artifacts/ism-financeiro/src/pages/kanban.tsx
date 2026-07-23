@@ -2,9 +2,10 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   DndContext, DragOverlay,
-  PointerSensor, useSensor, useSensors,
+  PointerSensor, TouchSensor, useSensor, useSensors,
   DragStartEvent, DragEndEvent,
   rectIntersection,
+  MeasuringStrategy,
 } from "@dnd-kit/core";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
@@ -157,7 +158,7 @@ function SortableCard({
   return (
     <div
       ref={setNodeRef}
-      style={style}
+      style={{ ...style, touchAction: "pan-y" }}
       {...attributes}
       {...listeners}
       onClick={(e) => {
@@ -215,7 +216,7 @@ function KanbanColumn({
 
   return (
     <div
-      className="w-80 flex-shrink-0 flex flex-col h-full max-h-full rounded-xl overflow-hidden"
+      className="w-[85vw] max-w-80 sm:w-80 flex-shrink-0 flex flex-col h-full max-h-full rounded-xl overflow-hidden"
       style={{ backgroundColor: isConcluido ? undefined : COLORS.colunas }}
     >
       <div
@@ -375,7 +376,8 @@ export default function Kanban() {
 
   // ── Sensores ──────────────────────────────────────────────────────────────
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } })
   );
 
   // ── Filtros ───────────────────────────────────────────────────────────────
@@ -452,10 +454,10 @@ export default function Kanban() {
     setModalMode("edit");
     setModalOpen(true);
   };
-const handleDeleteCard = (card: Card) => {
-  console.log("🗑️ handleDeleteCard chamado", card.id);
-  deleteMutation.mutate(card.id);
-};
+
+  const handleDeleteCard = (card: Card) => {
+    deleteMutation.mutate(card.id);
+  };
 
   const handleSaveCard = (data: any) => {
     if (modalMode === "edit" && selectedCard) {
@@ -473,7 +475,7 @@ const handleDeleteCard = (card: Card) => {
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="h-[calc(100vh-8rem)] flex flex-col">
+    <div className="h-[calc(100vh-8rem)] h-[calc(100dvh-8rem)] flex flex-col">
 
       <div className="flex items-center justify-between mb-4 px-1">
         <div>
@@ -490,8 +492,8 @@ const handleDeleteCard = (card: Card) => {
       </div>
 
       <div className="mb-4 px-1">
-        <div className="flex items-center gap-4">
-          <div className="relative flex-1 max-w-md">
+        <div className="flex items-center gap-4 flex-wrap">
+          <div className="relative flex-1 min-w-[200px] max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
             <Input
               type="text"
@@ -501,7 +503,7 @@ const handleDeleteCard = (card: Card) => {
               className="pl-10 bg-[#1A1A1A] border-white/10 text-white placeholder:text-gray-500"
             />
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             {QUICK_FILTERS.map(f => (
               <button
                 key={f.id}
@@ -535,6 +537,14 @@ const handleDeleteCard = (card: Card) => {
         <DndContext
           sensors={sensors}
           collisionDetection={rectIntersection}
+          // FIX: por padrão o DndContext remede continuamente os retângulos
+          // de todos os droppables (as colunas) a cada mudança de layout,
+          // inclusive em eventos de scroll — não só durante um drag ativo.
+          // Com 5 colunas cheias de cards, isso pesava justamente ao
+          // arrastar a barra de rolagem horizontal do board, travando a UI.
+          // WhileDragging restringe a medição para acontecer só durante um
+          // drag de fato.
+          measuring={{ droppable: { strategy: MeasuringStrategy.WhileDragging } }}
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         >

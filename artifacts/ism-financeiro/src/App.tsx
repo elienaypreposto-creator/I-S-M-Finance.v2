@@ -65,26 +65,63 @@ const queryClient = new QueryClient({
 });
 
 // ─── Mapa de dependências de cache
-// Ao invalidar uma chave, todas as chaves listadas também são invalidadas.
-// Ex: um novo lançamento deve forçar refetch do dashboard, DRE e fluxo de caixa.
+//
+// IMPORTANTE: os valores aqui são PREFIXOS de queryKey, não chaves exatas.
+// Ao invalidar uma chave "gatilho", todas as queries cujo primeiro elemento
+// da queryKey COMEÇA COM algum dos prefixos listados também são invalidadas
+// (via `predicate`, não por match exato de array).
+//
+// Isso resolve dois problemas que uma lista de chaves exatas não resolve:
+// 1) Uma página pode ter várias queries sob o mesmo "namespace"
+//    (ex: dashboard-kpis, dashboard-fluxo, dashboard-projecao-mes, ...).
+//    Um prefixo "dashboard" cobre todas de uma vez, hoje e no futuro.
+// 2) Queries novas criadas depois (ex: dashboard-nova-metrica) já entram
+//    automaticamente na invalidação, sem precisar lembrar de atualizar
+//    este mapa toda vez que uma query nova for adicionada.
+//
+// Regra de nomenclatura que este mapa assume (e que já é seguida no projeto):
+// toda queryKey de uma "família" deve começar com o mesmo prefixo textual
+// (ex: tudo relacionado ao dashboard começa com "dashboard").
+//
+// @example
+// // Em qualquer mutation de lançamento:
+// onSuccess: () => invalidateRelated(queryClient, "lancamentos")
+// // → invalida ["lancamentos"] exato + tudo que comece com "dashboard" ou "relatorio" + ["conciliacoes-list"]
 const QUERY_DEPENDENCIES: Record<string, string[]> = {
-    "lancamentos": ["dashboard", "fluxo-caixa", "dre", "conciliacao"],
+    "lancamentos": ["dashboard", "relatorio", "conciliacoes-list"],
     "kanban-cards": ["dashboard"],
-    "conciliacao": ["dashboard", "lancamentos"],
+    "conciliacoes-list": ["dashboard", "lancamentos"],
+    "plano-contas": ["dashboard", "relatorio", "lancamentos"],
+    "parceiros": ["lancamentos"], // combobox de parceiro no modal de lançamento
     "metas": ["dashboard"],
 };
 
 /**
  * Função utilitária global para invalidar uma chave de cache e todas as suas dependentes.
  *
+ * Invalida:
+ * 1. A própria chave, por match exato (["key"] casa com ["key", ...args]).
+ * 2. Todas as queries cujo primeiro elemento da queryKey comece com algum
+ *    dos prefixos listados em QUERY_DEPENDENCIES[key].
+ *
  * @example
- * // Em qualquer mutation de lançamento:
  * onSuccess: () => invalidateRelated(queryClient, "lancamentos")
- * // → invalida: lancamentos, dashboard, fluxo-caixa, dre, conciliacao
  */
 export function invalidateRelated(qc: QueryClient, key: string) {
-    const keys = [key, ...(QUERY_DEPENDENCIES[key] ?? [])];
-    keys.forEach((k) => qc.invalidateQueries({queryKey: [k]}));
+    // 1. Invalidação exata da própria chave (cobre ["lancamentos", filtros...])
+    void qc.invalidateQueries({queryKey: [key]});
+
+    // 2. Invalidação por prefixo de todas as chaves dependentes
+    const prefixes = QUERY_DEPENDENCIES[key] ?? [];
+    if (prefixes.length === 0) return;
+
+    void qc.invalidateQueries({
+        predicate: (query) => {
+            const first = query.queryKey[0];
+            if (typeof first !== "string") return false;
+            return prefixes.some((prefix) => first.startsWith(prefix));
+        },
+    });
 }
 
 // Exportar queryClient para uso externo (ex: kanban.tsx, lancamentos.tsx)

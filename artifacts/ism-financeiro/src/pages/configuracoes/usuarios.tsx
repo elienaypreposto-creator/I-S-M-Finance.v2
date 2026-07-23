@@ -16,8 +16,6 @@ import {
     Search,
     Loader2,
     UserCircle,
-    Eye,
-    EyeOff,
 } from "lucide-react";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
@@ -79,30 +77,7 @@ const baseUsuarioSchema = z.object({
     }, "Celular inválido - informe DDD + número (10 ou 11 dígitos)"),
 });
 
-const criarUsuarioSchema = baseUsuarioSchema
-    .extend({
-        // Senha é opcional: se vazia, o backend gera OTP e envia e-mail de primeiro acesso.
-        // Se preenchida, deve seguir as regras de força e o utilizador pode fazer login directo.
-        senha: z.preprocess(
-            (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
-            z
-                .string()
-                .min(8, "Senha deve ter ao menos 8 caracteres.")
-                .refine((v) => /[A-Z]/.test(v), "Senha deve conter ao menos 1 letra maiúscula.")
-                .refine((v) => /[0-9]/.test(v), "Senha deve conter ao menos 1 número.")
-                .optional(),
-        ),
-        confirmarSenha: z.string().optional(),
-    })
-    .refine(
-        (data) => {
-            // Só valida confirmação se a senha foi preenchida
-            if (data.senha) return data.senha === data.confirmarSenha;
-            return true;
-        },
-        {message: "As senhas não coincidem.", path: ["confirmarSenha"]},
-    );
-
+const criarUsuarioSchema = baseUsuarioSchema;
 const editarUsuarioSchema = baseUsuarioSchema;
 
 type CriarUsuarioFormValues = z.infer<typeof criarUsuarioSchema>;
@@ -565,8 +540,6 @@ interface UserModalProps {
 
 function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
     const isEdit = !!initialData;
-    const [showSenha, setShowSenha] = useState(false);
-    const [showConfirmar, setShowConfirmar] = useState(false);
     const schema = isEdit ? editarUsuarioSchema : criarUsuarioSchema;
 
     // [NOVO] Controla se há um parceiro selecionado via lista no autocomplete.
@@ -582,7 +555,6 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
             perfil_base: initialData?.perfil_base ?? "",
             telefone: initialData?.telefone ?? "",
             celular: initialData?.celular ?? "",
-            ...(!isEdit && {senha: "", confirmarSenha: ""}),
         } as UsuarioFormValues,
     });
 
@@ -699,56 +671,6 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
                                 <FieldError message={e.celular?.message}/>
                             </div>
                         </div>
-
-                        {!isEdit && (
-                            <div className="border-t border-white/5 pt-4">
-                                <p className="text-xs text-muted-foreground mb-3 font-medium uppercase tracking-wide">Credenciais
-                                    de Acesso</p>
-                                <div
-                                    className="bg-white/5 border border-white/10 rounded-xl p-3 text-xs text-muted-foreground mb-4 space-y-1">
-                                    <p><strong className="text-white">Sem senha:</strong> o sistema envia um link de
-                                        ativação por e-mail. O próprio utilizador define a senha no primeiro acesso.</p>
-                                    <p><strong className="text-white">Com senha:</strong> a conta fica pronta de
-                                        imediato. O utilizador deverá alterá-la no primeiro login.</p>
-                                </div>
-                                <div className="mb-4">
-                                    <label
-                                        className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                                        Senha <span
-                                        className="text-muted-foreground/50 font-normal normal-case">(opcional)</span>
-                                    </label>
-                                    <div className="relative">
-                                        <input {...register("senha" as any)} type={showSenha ? "text" : "password"}
-                                               className={inputCls(!!e.senha) + " pr-10"}
-                                               placeholder="Deixe em branco para usar fluxo de e-mail"
-                                               autoComplete="new-password"/>
-                                        <button type="button" tabIndex={-1} onClick={() => setShowSenha((v) => !v)}
-                                                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-white transition-colors">
-                                            {showSenha ? <EyeOff className="w-4 h-4"/> : <Eye className="w-4 h-4"/>}
-                                        </button>
-                                    </div>
-                                    <FieldError message={e.senha?.message}/>
-                                </div>
-                                <div>
-                                    <label
-                                        className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                                        Confirmar Senha <span
-                                        className="text-muted-foreground/50 font-normal normal-case">(se informada)</span>
-                                    </label>
-                                    <div className="relative">
-                                        <input {...register("confirmarSenha" as any)}
-                                               type={showConfirmar ? "text" : "password"}
-                                               className={inputCls(!!e.confirmarSenha) + " pr-10"}
-                                               placeholder="Repita a senha" autoComplete="new-password"/>
-                                        <button type="button" tabIndex={-1} onClick={() => setShowConfirmar((v) => !v)}
-                                                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-white transition-colors">
-                                            {showConfirmar ? <EyeOff className="w-4 h-4"/> : <Eye className="w-4 h-4"/>}
-                                        </button>
-                                    </div>
-                                    <FieldError message={e.confirmarSenha?.message}/>
-                                </div>
-                            </div>
-                        )}
                     </div>
 
                     <div className="flex gap-3 p-4 sm:p-6 pt-0">
@@ -808,8 +730,6 @@ export default function Usuarios() {
                 body: JSON.stringify({
                     nome: data.nome,
                     email: data.email,
-                    // Só envia senha se foi preenchida; caso contrário o backend usa fluxo OTP
-                    ...(data.senha ? {senha: data.senha} : {}),
                     cargo: data.cargo?.trim() || undefined,
                     perfil_base: data.perfil_base?.trim() || undefined,
                     telefone: digitsOnly(data.telefone ?? "") || undefined,
