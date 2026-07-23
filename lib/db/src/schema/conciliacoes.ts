@@ -24,6 +24,9 @@ export const extratosTable = pgTable("extratos", {
     total_linhas: integer("total_linhas").default(0).notNull(),
     total_creditos: numeric("total_creditos", {precision: 15, scale: 2}).default("0").notNull(),
     total_debitos: numeric("total_debitos", {precision: 15, scale: 2}).default("0").notNull(),
+    /** Saldo informado pelo banco (LEDGERBAL) - DEF-03. */
+    saldo_final_banco: numeric("saldo_final_banco", {precision: 15, scale: 2}),
+    saldo_banco_data: date("saldo_banco_data"),
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [
@@ -34,7 +37,11 @@ export const extratosTable = pgTable("extratos", {
 export const extratoLinhasTable = pgTable("extrato_linhas", {
     id: serial("id").primaryKey(),
     extrato_id: integer("extrato_id").references(() => extratosTable.id).notNull(),
+    /** Desnormalizado para dedupe entre extratos (DEF-02). */
+    conta_id: integer("conta_id").references(() => contasBancariasTable.id).notNull(),
     identificador_externo: text("identificador_externo"),
+    /** SHA-256 estável por conta - dedupe entre recortes (DEF-02). */
+    hash_linha: text("hash_linha").notNull(),
     valor: numeric("valor", {precision: 15, scale: 2}).notNull(),
     saldo_pos_linha: numeric("saldo_pos_linha", {precision: 15, scale: 2}),
     tipo_movimento: tipoMovimentoExtratoEnum("tipo_movimento").notNull(),
@@ -46,7 +53,11 @@ export const extratoLinhasTable = pgTable("extrato_linhas", {
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [
-    uniqueIndex("extrato_linhas_extrato_id_identificador_externo_idx").on(table.extrato_id, table.identificador_externo),
+    uniqueIndex("extrato_linhas_conta_id_identificador_externo_idx").on(
+        table.conta_id,
+        table.identificador_externo,
+    ),
+    uniqueIndex("extrato_linhas_conta_id_hash_linha_idx").on(table.conta_id, table.hash_linha),
 ]);
 
 export const conciliacoesTable = pgTable("conciliacoes", {
@@ -93,7 +104,7 @@ export const itensConciliacaoLancamentosTable = pgTable("itens_conciliacao_lanca
     lancamento_id: integer("lancamento_id").references(() => lancamentosTable.id).notNull(),
     valor_vinculado: numeric("valor_vinculado", {precision: 15, scale: 2}).notNull(),
     desconto: numeric("desconto", {precision: 15, scale: 2}).default("0").notNull(),
-    acrescimo: numeric("acrescimo", {precision: 15, scale: 2}).default("0").notNull(),
+    juros_multa: numeric("juros_multa", {precision: 15, scale: 2}).default("0").notNull(),
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [

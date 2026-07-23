@@ -22,6 +22,20 @@
       "when": 1782224516052,
       "tag": "0002_opposite_hedge_knight",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784749800000,
+      "tag": "0003_conciliacao_juros_multa",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784751000000,
+      "tag": "0004_extrato_dedupe_saldo",
+      "breakpoints": true
     }
   ]
 }
