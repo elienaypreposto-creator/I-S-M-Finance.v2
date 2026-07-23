@@ -16,6 +16,7 @@ import {
     Search,
     Loader2,
     UserCircle,
+    KeyRound,
 } from "lucide-react";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
@@ -671,6 +672,27 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
                                 <FieldError message={e.celular?.message}/>
                             </div>
                         </div>
+
+                        {/* Nota informativa sobre credenciais de acesso — apenas na criação */}
+                        {!isEdit && (
+                            <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-2">
+                                <div className="flex items-center gap-2">
+                                    <KeyRound className="w-4 h-4 text-primary shrink-0"/>
+                                    <p className="text-xs font-semibold text-white uppercase tracking-wide">
+                                        Credenciais de Acesso
+                                    </p>
+                                </div>
+                                <p className="text-xs text-muted-foreground leading-relaxed">
+                                    <span className="font-medium text-white">Sem senha:</span> o sistema envia um
+                                    link de ativação por e-mail. O próprio utilizador define a senha no primeiro
+                                    acesso.
+                                </p>
+                                <p className="text-xs text-muted-foreground leading-relaxed">
+                                    <span className="font-medium text-white">Com senha:</span> a conta fica pronta
+                                    de imediato. O utilizador deverá alterá-la no primeiro login.
+                                </p>
+                            </div>
+                        )}
                     </div>
 
                     <div className="flex gap-3 p-4 sm:p-6 pt-0">
