@@ -4,8 +4,8 @@
  * Handles:
  *  - Separators `,` and `;` (auto-detected)
  *  - Date formats DD/MM/YYYY, DD/MM/YY and YYYY-MM-DD
- *  - Brazilian currency notation: 1.500,50 → 1500.50
- *  - Parentheses negatives: (1.500,00) → -1500.00
+ *  - Brazilian currency notation: 1.500,50 -> 1500.50
+ *  - Parentheses negatives: (1.500,00) -> -1500.00
  *  - Single signed value column OR split Débito / Crédito columns
  *  - Quoted CSV fields
  *  - Informational header rows before the actual column header
@@ -53,11 +53,11 @@ function splitLine(line: string, sep: string): string[] {
  * Converts a Brazilian monetary string to a signed float.
  *
  * Examples that are handled:
- *   "1.500,50"  → 1500.50  (BR thousand-sep + decimal-comma)
- *   "1500,50"   → 1500.50  (decimal-comma only)
- *   "-150.00"   → -150.00  (plain negative)
- *   "(1.500,00)" → -1500.00 (parentheses notation)
- *   "1,500.50"  → 1500.50  (US thousand-sep + decimal-dot)
+ *   "1.500,50"  -> 1500.50  (BR thousand-sep + decimal-comma)
+ *   "1500,50"   -> 1500.50  (decimal-comma only)
+ *   "-150.00"   -> -150.00  (plain negative)
+ *   "(1.500,00)" -> -1500.00 (parentheses notation)
+ *   "1,500.50"  -> 1500.50  (US thousand-sep + decimal-dot)
  */
 function parseBRCurrency(raw: string): number {
     const s = raw.trim().replace(/\s/g, "");
@@ -238,6 +238,7 @@ export function parseCSV(buffer: Buffer): OFXParseResult {
     }
 
     const transacoes: OFXTransaction[] = [];
+    const grupos = new Map<string, number>();
     const maxIdx = Math.max(
         cols.dateIdx,
         cols.descIdx,
@@ -290,11 +291,14 @@ export function parseCSV(buffer: Buffer): OFXParseResult {
             }
         }
 
-        // Deterministic surrogate ID: no FITID in CSV files.
+        // Surrogate estável: ordinal no grupo (data, tipo, valor), sem índice global
+        const groupKey = `${data}|${tipo}|${valor}`;
+        const ordinal = grupos.get(groupKey) ?? 0;
+        grupos.set(groupKey, ordinal + 1);
         const slug = descricao.replace(/\s+/g, "_").slice(0, 20);
-        const fitid = `${data}_${tipo}_${valor}_${slug}_${transacoes.length}`;
+        const fitid = `${data}_${tipo}_${valor}_${slug}_${ordinal}`;
 
-        transacoes.push({fitid, tipo, data, valor, descricao});
+        transacoes.push({fitid, tipo, data, valor, descricao, ordinal_no_grupo: ordinal});
     }
 
     if (transacoes.length === 0) {
@@ -305,6 +309,10 @@ export function parseCSV(buffer: Buffer): OFXParseResult {
     return {
         periodo_inicio: datas[0],
         periodo_fim: datas[datas.length - 1],
+        periodo_arquivo_inicio: null,
+        periodo_arquivo_fim: null,
+        saldo_final_banco: null,
+        saldo_banco_data: null,
         transacoes,
     };
 }

@@ -19,6 +19,9 @@ import {errorResponse, successResponse} from "../utils/response";
 import {parseOFX} from "../utils/ofx-parser";
 import {parseCSV} from "../utils/csv-parser";
 import type {OFXParseResult} from "../utils/ofx-parser";
+import {centsToDecimalString, fromCents, sumCents, toCents} from "../utils/money";
+import {decidirVincular, statusAposQuitacao} from "../utils/conciliacao-vincular";
+import {hashLinhaExtrato} from "../utils/extrato-hash";
 
 const router = Router();
 const upload = multer({storage: multer.memoryStorage()});
@@ -30,6 +33,11 @@ const upload = multer({storage: multer.memoryStorage()});
 /** Valida o campo de formulário multipart enviado junto ao arquivo OFX/CSV. */
 const importarBodySchema = z.object({
     conta_id: z.coerce.number().int().positive("conta_id deve ser um número inteiro positivo."),
+    /** Se true, importa só linhas cujo hash/FITID ainda não existem na conta (DEF-02). */
+    apenas_novas: z
+        .union([z.boolean(), z.enum(["true", "false", "1", "0"])])
+        .optional()
+        .transform((v) => v === true || v === "true" || v === "1"),
 });
 
 const vincularBodySchema = z.object({
@@ -37,18 +45,24 @@ const vincularBodySchema = z.object({
         .array(
             z.object({
                 lancamento_id: z.coerce.number().int().positive(),
-                desconto: z.number().min(0).optional(),
-                acrescimo: z.number().min(0).optional(),
+                desconto: z.coerce.number().min(0).optional(),
+                /** Campo canônico (DEF-05). */
+                juros_multa: z.coerce.number().min(0).optional(),
+                /** Alias legado - mapeado para juros_multa. */
+                acrescimo: z.coerce.number().min(0).optional(),
             }),
         )
         .min(1, "Envie ao menos um lançamento para vincular."),
     gerar_parcial: z.boolean().default(false),
+    /** Obrigatório com 2+ lançamentos quando gerar_parcial=true (DEF-07). */
+    residuo_lancamento_id: z.coerce.number().int().positive().optional(),
 });
 
 type ImportarBody = z.infer<typeof importarBodySchema>;
 type VincularBody = z.infer<typeof vincularBodySchema>;
 
-const toNumber = (value: unknown) => Number(value ?? 0);
+/** Decimal na borda HTTP: normaliza via centavos (DEF-06). */
+const toDecimal = (value: unknown) => fromCents(toCents(value));
 
 const atualizarResumoConciliacao = async (
     tx: typeof db,
@@ -138,19 +152,144 @@ router.get("/conciliacoes", async (req, res) => {
     }
 });
 
+function enrichTransacoesComHash(
+    contaId: number,
+    transacoes: OFXParseResult["transacoes"],
+) {
+    return transacoes.map((t) => ({
+        ...t,
+        hash_linha: hashLinhaExtrato({
+            contaId,
+            data: t.data,
+            tipo: t.tipo,
+            valor: t.valor,
+            descricao: t.descricao,
+            ordinalNoGrupo: t.ordinal_no_grupo,
+        }),
+    }));
+}
+
+async function parseExtratoUpload(req: {
+    file?: { buffer: Buffer; originalname: string };
+}): Promise<
+    | { parsed: OFXParseResult }
+    | { error: { status: number; code: string; message: string; detail?: string } }
+> {
+    if (!req.file) {
+        return {error: {status: 400, code: "VALIDATION_ERROR", message: "Campo obrigatório: arquivo (OFX ou CSV)."}};
+    }
+    const ext = req.file.originalname.split(".").pop()?.toLowerCase() ?? "";
+    if (ext !== "ofx" && ext !== "csv") {
+        return {
+            error: {
+                status: 400,
+                code: "VALIDATION_ERROR",
+                message: "Formato de arquivo não suportado. Envie OFX ou CSV.",
+            },
+        };
+    }
+    try {
+        const parsed = ext === "csv" ? parseCSV(req.file.buffer) : parseOFX(req.file.buffer);
+        return {parsed};
+    } catch (parseErr) {
+        return {
+            error: {
+                status: 422,
+                code: "PARSE_ERROR",
+                message: "Arquivo inválido ou malformado.",
+                detail: String(parseErr),
+            },
+        };
+    }
+}
+
+/** Pré-análise sem persistir (DEF-02). */
+router.post(
+    "/conciliacoes/pre-analise",
+    upload.single("arquivo"),
+    validateBody(importarBodySchema),
+    async (req, res) => {
+        const {conta_id} = req.body as ImportarBody;
+        const [conta] = await db
+            .select({id: contasBancariasTable.id})
+            .from(contasBancariasTable)
+            .where(eq(contasBancariasTable.id, conta_id))
+            .limit(1);
+        if (!conta) {
+            return errorResponse(res, 404, "NOT_FOUND", "Conta bancária não encontrada.");
+        }
+
+        const parsedOrErr = await parseExtratoUpload(req);
+        if ("error" in parsedOrErr) {
+            const e = parsedOrErr.error;
+            return errorResponse(res, e.status, e.code, e.message, e.detail);
+        }
+        const {parsed} = parsedOrErr;
+        const enriched = enrichTransacoesComHash(conta_id, parsed.transacoes);
+        const hashes = enriched.map((t) => t.hash_linha);
+        const fitids = enriched.map((t) => t.fitid).filter(Boolean);
+
+        const existentes =
+            hashes.length === 0
+                ? []
+                : await db
+                    .select({
+                        hash_linha: extratoLinhasTable.hash_linha,
+                        identificador_externo: extratoLinhasTable.identificador_externo,
+                        item_status: itensConciliacaoTable.status,
+                    })
+                    .from(extratoLinhasTable)
+                    .leftJoin(
+                        itensConciliacaoTable,
+                        eq(itensConciliacaoTable.extrato_linha_id, extratoLinhasTable.id),
+                    )
+                    .where(
+                        and(
+                            eq(extratoLinhasTable.conta_id, conta_id),
+                            or(
+                                inArray(extratoLinhasTable.hash_linha, hashes),
+                                fitids.length > 0
+                                    ? inArray(extratoLinhasTable.identificador_externo, fitids)
+                                    : sql`false`,
+                            ),
+                        ),
+                    );
+
+        const existingKeys = new Set<string>();
+        let jaConciliadas = 0;
+        for (const row of existentes) {
+            if (row.hash_linha) existingKeys.add(`h:${row.hash_linha}`);
+            if (row.identificador_externo) existingKeys.add(`f:${row.identificador_externo}`);
+            if (row.item_status === "vinculado" || row.item_status === "ignorado") {
+                jaConciliadas += 1;
+            }
+        }
+
+        const novas = enriched.filter(
+            (t) => !existingKeys.has(`h:${t.hash_linha}`) && !existingKeys.has(`f:${t.fitid}`),
+        ).length;
+        const jaExistentes = enriched.length - novas;
+
+        return successResponse(res, {
+            total_linhas: enriched.length,
+            ja_existentes: jaExistentes,
+            ja_conciliadas: jaConciliadas,
+            novas,
+            periodo_inicio: parsed.periodo_inicio,
+            periodo_fim: parsed.periodo_fim,
+            saldo_final_banco: parsed.saldo_final_banco,
+            saldo_banco_data: parsed.saldo_banco_data,
+        });
+    },
+);
+
 router.post(
     "/conciliacoes/importar",
     upload.single("arquivo"),
-    // multer populates req.body with form fields before validateBody runs
     validateBody(importarBodySchema),
     async (req, res) => {
-        if (!req.file) {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "Campo obrigatório: arquivo (OFX ou CSV).");
-        }
+        const {conta_id, apenas_novas: apenasNovas} = req.body as ImportarBody;
 
-        const {conta_id} = req.body as ImportarBody;
-
-        // Validate that the bank account exists
         const [conta] = await db
             .select({id: contasBancariasTable.id, nome: contasBancariasTable.nome})
             .from(contasBancariasTable)
@@ -161,89 +300,111 @@ router.post(
             return errorResponse(res, 404, "NOT_FOUND", "Conta bancária não encontrada.");
         }
 
-        // Duplicate detection: SHA-256 of the raw file bytes
-        const arquivoHash = createHash("sha256").update(req.file.buffer).digest("hex");
-        const [existing] = await db
-            .select({id: extratosTable.id})
-            .from(extratosTable)
-            .where(eq(extratosTable.arquivo_hash, arquivoHash))
-            .limit(1);
+        const parsedOrErr = await parseExtratoUpload(req);
+        if ("error" in parsedOrErr) {
+            const e = parsedOrErr.error;
+            return errorResponse(res, e.status, e.code, e.message, e.detail);
+        }
+        const {parsed} = parsedOrErr;
+        const enriched = enrichTransacoesComHash(conta_id, parsed.transacoes);
 
-        if (existing) {
+        const hashes = enriched.map((t) => t.hash_linha);
+        const fitids = enriched.map((t) => t.fitid).filter(Boolean);
+        const existentes = await db
+            .select({
+                hash_linha: extratoLinhasTable.hash_linha,
+                identificador_externo: extratoLinhasTable.identificador_externo,
+            })
+            .from(extratoLinhasTable)
+            .where(
+                and(
+                    eq(extratoLinhasTable.conta_id, conta_id),
+                    or(
+                        inArray(extratoLinhasTable.hash_linha, hashes),
+                        fitids.length > 0
+                            ? inArray(extratoLinhasTable.identificador_externo, fitids)
+                            : sql`false`,
+                    ),
+                ),
+            );
+
+        const existingKeys = new Set<string>();
+        for (const row of existentes) {
+            if (row.hash_linha) existingKeys.add(`h:${row.hash_linha}`);
+            if (row.identificador_externo) existingKeys.add(`f:${row.identificador_externo}`);
+        }
+
+        const filtrarNovas = apenasNovas !== false; // default: só novas
+        const paraImportar = filtrarNovas
+            ? enriched.filter(
+                (t) => !existingKeys.has(`h:${t.hash_linha}`) && !existingKeys.has(`f:${t.fitid}`),
+            )
+            : enriched;
+
+        if (paraImportar.length === 0) {
             return errorResponse(
                 res,
                 409,
                 "CONFLICT",
-                `Este arquivo já foi importado (extrato #${existing.id}). Importe um arquivo diferente.`,
+                "Todas as linhas deste arquivo já existem nesta conta. Nada a importar.",
             );
         }
 
-        // Route to the correct parser based on file extension.
-        const ext = req.file.originalname.split(".").pop()?.toLowerCase();
-        if (ext !== "ofx" && ext !== "csv") {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "Formato de arquivo não suportado. Envie OFX ou CSV.");
-        }
+        const arquivoHash = createHash("sha256").update(req.file!.buffer).digest("hex");
 
-        let parsed: OFXParseResult;
-        try {
-            parsed = ext === "csv"
-                ? parseCSV(req.file.buffer)
-                : parseOFX(req.file.buffer);
-        } catch (parseErr) {
-            return errorResponse(res, 422, "PARSE_ERROR", "Arquivo inválido ou malformado.", String(parseErr));
-        }
+        const totalCreditosCents = sumCents(
+            paraImportar.filter((t) => t.tipo === "credito").map((t) => toCents(t.valor)),
+        );
+        const totalDebitosCents = sumCents(
+            paraImportar.filter((t) => t.tipo === "debito").map((t) => toCents(t.valor)),
+        );
 
-        // Compute totals for extrato header
-        const totalCreditos = parsed.transacoes
-            .filter((t) => t.tipo === "credito")
-            .reduce((acc, t) => acc + parseFloat(t.valor), 0);
-        const totalDebitos = parsed.transacoes
-            .filter((t) => t.tipo === "debito")
-            .reduce((acc, t) => acc + parseFloat(t.valor), 0);
+        const datas = paraImportar.map((t) => t.data).sort();
+        const periodo_inicio = datas[0]!;
+        const periodo_fim = datas[datas.length - 1]!;
 
-        // Atomic import: extrato + conciliacao + linhas + itens_conciliacao
-        // Any DB error rolls back the entire operation automatically.
         const resultado = await db.transaction(async (tx) => {
-            // 1. extrato header
             const [extrato] = await tx
                 .insert(extratosTable)
                 .values({
                     conta_id,
-                    periodo_inicio: parsed.periodo_inicio,
-                    periodo_fim: parsed.periodo_fim,
+                    periodo_inicio,
+                    periodo_fim,
                     arquivo_nome: req.file!.originalname,
                     arquivo_hash: arquivoHash,
-                    total_linhas: parsed.transacoes.length,
-                    total_creditos: totalCreditos.toFixed(2),
-                    total_debitos: totalDebitos.toFixed(2),
+                    total_linhas: paraImportar.length,
+                    total_creditos: centsToDecimalString(totalCreditosCents),
+                    total_debitos: centsToDecimalString(totalDebitosCents),
+                    saldo_final_banco: parsed.saldo_final_banco,
+                    saldo_banco_data: parsed.saldo_banco_data,
                     status: "pendente",
                 })
                 .returning();
 
-            // 2. conciliacao record
             const [conciliacao] = await tx
                 .insert(conciliacoesTable)
                 .values({
                     extrato_id: extrato.id,
                     conta_id,
-                    periodo_inicio: parsed.periodo_inicio,
-                    periodo_fim: parsed.periodo_fim,
+                    periodo_inicio,
+                    periodo_fim,
                     arquivo_nome: req.file!.originalname,
                     status: "pendente",
                     resumo_conciliados: 0,
                     resumo_ignorados: 0,
-                    resumo_pendentes: parsed.transacoes.length,
-                    resumo_total: parsed.transacoes.length,
+                    resumo_pendentes: paraImportar.length,
+                    resumo_total: paraImportar.length,
                 })
                 .returning();
 
-            // 3. extrato_linhas (batch insert)
             const linhasInseridas = await tx
                 .insert(extratoLinhasTable)
                 .values(
-                    parsed.transacoes.map((t) => ({
+                    paraImportar.map((t) => ({
                         extrato_id: extrato.id,
+                        conta_id,
                         identificador_externo: t.fitid,
+                        hash_linha: t.hash_linha,
                         valor: t.valor,
                         tipo_movimento: t.tipo,
                         descricao: t.descricao,
@@ -258,22 +419,19 @@ router.post(
                     data_movimento: extratoLinhasTable.data_movimento,
                 });
 
-            // 4. itens_conciliacao — one pending item per extrato line
-            await tx
-                .insert(itensConciliacaoTable)
-                .values(
-                    linhasInseridas.map((l) => ({
-                        conciliacao_id: conciliacao.id,
-                        extrato_linha_id: l.id,
-                        valor_extrato: l.valor,
-                        valor_vinculado_total: "0.00",
-                        valor_saldo: l.valor,
-                        status: "pendente" as const,
-                        tipo_extrato: l.tipo_movimento,
-                        descricao: l.descricao,
-                        data: l.data_movimento,
-                    })),
-                );
+            await tx.insert(itensConciliacaoTable).values(
+                linhasInseridas.map((l) => ({
+                    conciliacao_id: conciliacao.id,
+                    extrato_linha_id: l.id,
+                    valor_extrato: l.valor,
+                    valor_vinculado_total: "0.00",
+                    valor_saldo: l.valor,
+                    status: "pendente" as const,
+                    tipo_extrato: l.tipo_movimento,
+                    descricao: l.descricao,
+                    data: l.data_movimento,
+                })),
+            );
 
             return {conciliacao, extrato};
         });
@@ -283,13 +441,17 @@ router.post(
             {
                 conciliacao_id: resultado.conciliacao.id,
                 extrato_id: resultado.extrato.id,
+                extrato: {id: resultado.extrato.id, arquivo_nome: req.file!.originalname},
+                conciliacao: {id: resultado.conciliacao.id},
                 conta_id,
                 conta_nome: conta.nome,
-                total_linhas: parsed.transacoes.length,
-                total_creditos: Number(totalCreditos.toFixed(2)),
-                total_debitos: Number(totalDebitos.toFixed(2)),
-                periodo_inicio: parsed.periodo_inicio,
-                periodo_fim: parsed.periodo_fim,
+                total_linhas: paraImportar.length,
+                linhas_ignoradas_duplicadas: enriched.length - paraImportar.length,
+                total_creditos: fromCents(totalCreditosCents),
+                total_debitos: fromCents(totalDebitosCents),
+                periodo_inicio,
+                periodo_fim,
+                saldo_final_banco: parsed.saldo_final_banco,
             },
             null,
             201,
@@ -350,7 +512,7 @@ router.get("/conciliacoes/buscar-lancamentos", async (req, res) => {
 
         return successResponse(
             res,
-            lancamentos.map((l) => ({...l, valor: toNumber(l.valor)})),
+            lancamentos.map((l) => ({...l, valor: toDecimal(l.valor)})),
             {linha_id: linha.id, tipo_movimento: linha.tipo_movimento, dias_janela: diasJanela},
         );
     } catch (e) {
@@ -420,7 +582,7 @@ router.get("/conciliacoes/:extrato_id", async (req, res) => {
                     lancamento_id: itensConciliacaoLancamentosTable.lancamento_id,
                     valor_vinculado: itensConciliacaoLancamentosTable.valor_vinculado,
                     desconto: itensConciliacaoLancamentosTable.desconto,
-                    acrescimo: itensConciliacaoLancamentosTable.acrescimo,
+                    juros_multa: itensConciliacaoLancamentosTable.juros_multa,
                     lancamento_descricao: lancamentosTable.descricao,
                     lancamento_tipo: lancamentosTable.tipo,
                     lancamento_status: lancamentosTable.status,
@@ -434,12 +596,12 @@ router.get("/conciliacoes/:extrato_id", async (req, res) => {
             linha_id: linha.linha_id,
             tipo_movimento: linha.tipo_movimento,
             descricao: linha.descricao,
-            valor: toNumber(linha.valor),
+            valor: toDecimal(linha.valor),
             data_movimento: linha.data_movimento,
             documento: linha.documento,
             status: linha.item_status,
-            valor_vinculado_total: toNumber(linha.valor_vinculado_total),
-            valor_saldo: toNumber(linha.valor_saldo),
+            valor_vinculado_total: toDecimal(linha.valor_vinculado_total),
+            valor_saldo: toDecimal(linha.valor_saldo),
             vinculacoes: vinculos
                 .filter((v) => v.item_conciliacao_id === linha.item_id)
                 .map((v) => ({
@@ -447,17 +609,19 @@ router.get("/conciliacoes/:extrato_id", async (req, res) => {
                     descricao: v.lancamento_descricao,
                     tipo: v.lancamento_tipo,
                     status: v.lancamento_status,
-                    valor_vinculado: toNumber(v.valor_vinculado),
-                    desconto: toNumber(v.desconto),
-                    acrescimo: toNumber(v.acrescimo),
+                    valor_vinculado: toDecimal(v.valor_vinculado),
+                    desconto: toDecimal(v.desconto),
+                    juros_multa: toDecimal(v.juros_multa),
+                    /** @deprecated alias - usar juros_multa */
+                    acrescimo: toDecimal(v.juros_multa),
                 })),
         }));
 
         return successResponse(res, {
             extrato: {
                 ...extrato,
-                total_creditos: toNumber(extrato.total_creditos),
-                total_debitos: toNumber(extrato.total_debitos),
+                total_creditos: toDecimal(extrato.total_creditos),
+                total_debitos: toDecimal(extrato.total_debitos),
             },
             conciliacao: {
                 id: conciliacao.id,
@@ -533,7 +697,11 @@ router.post(
     async (req, res) => {
         try {
             const linhaId = Number(req.params.linha_id);
-            const {lancamentos: lancamentosPayload, gerar_parcial: gerarParcial} =
+            const {
+                lancamentos: lancamentosPayload,
+                gerar_parcial: gerarParcial,
+                residuo_lancamento_id: residuoLancamentoId
+            } =
                 req.body as VincularBody;
 
             const [item] = await db
@@ -585,30 +753,42 @@ router.post(
                 return errorResponse(res, 400, "VALIDATION_ERROR", "Um ou mais lançamentos informados são inválidos.");
             }
 
-            const valorExtrato = toNumber(item.valor_extrato);
-            let totalConciliado = 0;
-
+            const valorExtratoCents = toCents(item.valor_extrato);
             const payloadMap = new Map(lancamentosPayload.map((l) => [l.lancamento_id, l]));
 
-            const vinculosParaInserir = lancamentos.map((lancamento) => {
-                const p = payloadMap.get(lancamento.id) ?? {desconto: 0, acrescimo: 0};
-                const desconto = Number(p.desconto ?? 0);
-                const acrescimo = Number(p.acrescimo ?? 0);
-                const valorBase = toNumber(lancamento.valor);
-                const valorVinculado = valorBase - desconto + acrescimo;
-                totalConciliado += valorVinculado;
-                return {lancamento, desconto, acrescimo, valorVinculado};
+            const decision = decidirVincular({
+                extratoCents: valorExtratoCents,
+                lancamentos: lancamentos.map((lancamento) => {
+                    const p = payloadMap.get(lancamento.id);
+                    const jurosMulta = p?.juros_multa ?? p?.acrescimo ?? 0;
+                    return {
+                        lancamento_id: lancamento.id,
+                        valorCents: toCents(lancamento.valor),
+                        descontoCents: toCents(p?.desconto ?? 0),
+                        jurosMultaCents: toCents(jurosMulta),
+                        quitadoAnteriorCents: toCents(lancamento.valor_quitado),
+                    };
+                }),
+                gerarParcial,
+                residuoLancamentoId: residuoLancamentoId ?? null,
             });
 
-            const valorSaldo = Math.max(0, Number((valorExtrato - totalConciliado).toFixed(2)));
+            if (!decision.ok) {
+                return errorResponse(res, decision.status, decision.code, decision.message);
+            }
+
+            const lancamentoById = new Map(lancamentos.map((l) => [l.id, l]));
+            const totalConciliadoCents = sumCents(
+                decision.itens.map((i) => i.valorVinculadoCents),
+            );
 
             const resultado = await db.transaction(async (tx) => {
                 let novoResiduo: unknown = null;
 
-                if (gerarParcial && valorSaldo > 0) {
-                    const origem = vinculosParaInserir[0]?.lancamento;
+                if (decision.residual) {
+                    const origem = lancamentoById.get(decision.residual.origemLancamentoId);
                     if (!origem) {
-                        throw new Error("Não foi possível identificar lançamento de origem para gerar resíduo.");
+                        throw new Error("Não foi possível identificar lançamento de origem para o residual.");
                     }
 
                     const [residuo] = await tx
@@ -619,8 +799,8 @@ router.post(
                             competencia: origem.competencia,
                             conta_id: origem.conta_id,
                             parceiro_id: origem.parceiro_id,
-                            descricao: `${origem.descricao ?? "Lançamento"} (Resíduo parcial automático)`,
-                            valor: String(valorSaldo.toFixed(2)),
+                            descricao: `${origem.descricao ?? "Lançamento"} (pagamento parcial)`,
+                            valor: centsToDecimalString(decision.residual.valorCents),
                             status: "pendente",
                             origem: "residuo_parcial",
                             plano_conta_id: origem.plano_conta_id,
@@ -639,40 +819,52 @@ router.post(
                 }
 
                 await tx.insert(itensConciliacaoLancamentosTable).values(
-                    vinculosParaInserir.map((v) => ({
+                    decision.itens.map((v) => ({
                         item_conciliacao_id: item.id,
-                        lancamento_id: v.lancamento.id,
-                        valor_vinculado: String(v.valorVinculado.toFixed(2)),
-                        desconto: String(v.desconto.toFixed(2)),
-                        acrescimo: String(v.acrescimo.toFixed(2)),
+                        lancamento_id: v.lancamento_id,
+                        valor_vinculado: centsToDecimalString(v.valorVinculadoCents),
+                        desconto: centsToDecimalString(v.descontoCents),
+                        juros_multa: centsToDecimalString(v.jurosMultaCents),
                     })),
                 );
 
-                const statusQuitacao = item.tipo_extrato === "credito" ? "recebido" : "pago";
-                for (const vinculo of vinculosParaInserir) {
+                for (const vinculo of decision.itens) {
+                    const lancamento = lancamentoById.get(vinculo.lancamento_id)!;
+                    const quitadoAnteriorCents = toCents(lancamento.valor_quitado);
+                    const quitadoAcumuladoCents =
+                        quitadoAnteriorCents + vinculo.valorQuitadoNesteVinculoCents;
+                    const valorLancamentoCents = toCents(lancamento.valor);
+
+                    const jurosAnteriorCents = toCents(lancamento.juros);
+                    const jurosNovoCents = jurosAnteriorCents + vinculo.jurosMultaCents;
+
+                    const statusQuitacao = statusAposQuitacao({
+                        tipoExtrato: item.tipo_extrato,
+                        valorLancamentoCents,
+                        valorQuitadoAcumuladoCents: quitadoAcumuladoCents,
+                    });
+
                     await tx
                         .update(lancamentosTable)
                         .set({
                             status: statusQuitacao,
                             data_quitacao: linhaExtrato.data_movimento,
-                            valor_quitado: String(vinculo.valorVinculado.toFixed(2)),
+                            valor_quitado: centsToDecimalString(quitadoAcumuladoCents),
                             desconto: sql`${lancamentosTable.desconto}
                             +
-                            ${String(vinculo.desconto.toFixed(2))}`,
-                            acrescimo: sql`${lancamentosTable.acrescimo}
-                            +
-                            ${String(vinculo.acrescimo.toFixed(2))}`,
+                            ${centsToDecimalString(vinculo.descontoCents)}`,
+                            juros: centsToDecimalString(jurosNovoCents),
                             updated_at: new Date(),
                         })
-                        .where(eq(lancamentosTable.id, vinculo.lancamento.id));
+                        .where(eq(lancamentosTable.id, vinculo.lancamento_id));
                 }
 
                 await tx
                     .update(itensConciliacaoTable)
                     .set({
                         status: "vinculado",
-                        valor_vinculado_total: String(totalConciliado.toFixed(2)),
-                        valor_saldo: String(valorSaldo.toFixed(2)),
+                        valor_vinculado_total: centsToDecimalString(totalConciliadoCents),
+                        valor_saldo: centsToDecimalString(decision.valorSaldoCents),
                         updated_at: new Date(),
                     })
                     .where(eq(itensConciliacaoTable.id, item.id));
@@ -681,14 +873,17 @@ router.post(
                     conciliacao_id: item.conciliacao_id,
                     item_conciliacao_id: item.id,
                     usuario_id: req.user?.id,
-                    acao: gerarParcial && valorSaldo > 0 ? "criar_residuo_parcial" : "vincular",
+                    acao: decision.residual ? "criar_residuo_parcial" : "vincular",
                     detalhes: JSON.stringify({
                         linha_id: linhaId,
                         lancamentos: lancamentosPayload,
                         gerar_parcial: gerarParcial,
-                        valor_extrato: valorExtrato,
-                        total_conciliado: Number(totalConciliado.toFixed(2)),
-                        valor_saldo: Number(valorSaldo.toFixed(2)),
+                        residuo_lancamento_id: residuoLancamentoId ?? null,
+                        valor_extrato: fromCents(valorExtratoCents),
+                        total_conciliado: fromCents(totalConciliadoCents),
+                        delta: fromCents(decision.deltaCents),
+                        ramo: decision.ramo,
+                        valor_saldo: fromCents(decision.valorSaldoCents),
                     }),
                 });
 
@@ -697,8 +892,10 @@ router.post(
                 return {
                     linha_id: linhaId,
                     status: "vinculado",
-                    total_conciliado: Number(totalConciliado.toFixed(2)),
-                    valor_saldo: Number(valorSaldo.toFixed(2)),
+                    ramo: decision.ramo,
+                    delta: fromCents(decision.deltaCents),
+                    total_conciliado: fromCents(totalConciliadoCents),
+                    valor_saldo: fromCents(decision.valorSaldoCents),
                     residuo: novoResiduo,
                 };
             });
@@ -754,6 +951,193 @@ router.post("/conciliacoes/:extrato_id/finalizar", async (req, res) => {
         return successResponse(res, {extrato_id: extratoId, status: "conciliado"});
     } catch (e) {
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao finalizar extrato.", String(e));
+    }
+});
+
+/** DEF-09: desfazer todos os vínculos da linha. */
+router.delete("/conciliacoes/linhas/:linha_id/vinculos", async (req, res) => {
+    try {
+        const linhaId = Number(req.params.linha_id);
+        const [item] = await db
+            .select()
+            .from(itensConciliacaoTable)
+            .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
+            .limit(1);
+
+        if (!item) {
+            return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada para conciliação.");
+        }
+        if (item.status !== "vinculado") {
+            return errorResponse(res, 400, "VALIDATION_ERROR", "A linha não está vinculada.");
+        }
+
+        const [conciliacao] = await db
+            .select()
+            .from(conciliacoesTable)
+            .where(eq(conciliacoesTable.id, item.conciliacao_id))
+            .limit(1);
+        if (!conciliacao) {
+            return errorResponse(res, 404, "NOT_FOUND", "Conciliação não encontrada.");
+        }
+
+        const vinculos = await db
+            .select()
+            .from(itensConciliacaoLancamentosTable)
+            .where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id));
+
+        const residuos = await db
+            .select()
+            .from(lancamentosTable)
+            .where(
+                and(
+                    eq(lancamentosTable.is_residuo_parcial, true),
+                    inArray(
+                        lancamentosTable.lancamento_origem_id,
+                        vinculos.map((v) => v.lancamento_id).length > 0
+                            ? vinculos.map((v) => v.lancamento_id)
+                            : [-1],
+                    ),
+                ),
+            );
+
+        const residuoQuitado = residuos.find(
+            (r) => r.status === "pago" || r.status === "recebido" || r.status === "pago_parcial",
+        );
+        if (residuoQuitado) {
+            return errorResponse(
+                res,
+                409,
+                "CONFLICT",
+                `Não é possível desfazer: o residual #${residuoQuitado.id} já foi quitado. Estorne o residual antes.`,
+            );
+        }
+
+        await db.transaction(async (tx) => {
+            for (const v of vinculos) {
+                const [lanc] = await tx
+                    .select()
+                    .from(lancamentosTable)
+                    .where(eq(lancamentosTable.id, v.lancamento_id))
+                    .limit(1);
+                if (!lanc) continue;
+
+                const quitadoNovo = Math.max(
+                    0,
+                    toCents(lanc.valor_quitado) - toCents(v.valor_vinculado),
+                );
+                const jurosNovo = Math.max(0, toCents(lanc.juros) - toCents(v.juros_multa));
+                const descontoNovo = Math.max(0, toCents(lanc.desconto) - toCents(v.desconto));
+
+                let novoStatus: "pendente" | "atrasado" | "pago_parcial" | "pago" | "recebido" =
+                    "pendente";
+                if (quitadoNovo > 0 && quitadoNovo < toCents(lanc.valor)) {
+                    novoStatus = "pago_parcial";
+                } else if (quitadoNovo >= toCents(lanc.valor) && toCents(lanc.valor) > 0) {
+                    novoStatus = lanc.tipo === "CR" ? "recebido" : "pago";
+                } else if (lanc.vencimento) {
+                    const hoje = new Date().toISOString().slice(0, 10);
+                    if (lanc.vencimento < hoje) novoStatus = "atrasado";
+                }
+
+                await tx
+                    .update(lancamentosTable)
+                    .set({
+                        status: novoStatus,
+                        valor_quitado: quitadoNovo > 0 ? centsToDecimalString(quitadoNovo) : null,
+                        data_quitacao: quitadoNovo > 0 ? lanc.data_quitacao : null,
+                        juros: centsToDecimalString(jurosNovo),
+                        desconto: centsToDecimalString(descontoNovo),
+                        updated_at: new Date(),
+                    })
+                    .where(eq(lancamentosTable.id, lanc.id));
+            }
+
+            if (residuos.length > 0) {
+                await tx.delete(lancamentosTable).where(
+                    inArray(
+                        lancamentosTable.id,
+                        residuos.map((r) => r.id),
+                    ),
+                );
+            }
+
+            await tx
+                .delete(itensConciliacaoLancamentosTable)
+                .where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id));
+
+            await tx
+                .update(itensConciliacaoTable)
+                .set({
+                    status: "pendente",
+                    valor_vinculado_total: "0.00",
+                    valor_saldo: item.valor_extrato,
+                    updated_at: new Date(),
+                })
+                .where(eq(itensConciliacaoTable.id, item.id));
+
+            await tx.insert(historicoConciliacaoTable).values({
+                conciliacao_id: item.conciliacao_id,
+                item_conciliacao_id: item.id,
+                usuario_id: req.user?.id,
+                acao: "desfazer_vinculo",
+                detalhes: JSON.stringify({linha_id: linhaId, vinculos_removidos: vinculos.length}),
+            });
+
+            await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
+        });
+
+        return successResponse(res, {linha_id: linhaId, status: "pendente"});
+    } catch (e) {
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao desfazer vínculos da linha.", String(e));
+    }
+});
+
+/** DEF-09: reverter linha ignorada (nunca exige motivo - RN-H5). */
+router.post("/conciliacoes/linhas/:linha_id/reverter-ignorar", async (req, res) => {
+    try {
+        const linhaId = Number(req.params.linha_id);
+        const [item] = await db
+            .select()
+            .from(itensConciliacaoTable)
+            .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
+            .limit(1);
+
+        if (!item) {
+            return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada para conciliação.");
+        }
+        if (item.status !== "ignorado") {
+            return errorResponse(res, 400, "VALIDATION_ERROR", "A linha não está ignorada.");
+        }
+
+        const [conciliacao] = await db
+            .select()
+            .from(conciliacoesTable)
+            .where(eq(conciliacoesTable.id, item.conciliacao_id))
+            .limit(1);
+        if (!conciliacao) {
+            return errorResponse(res, 404, "NOT_FOUND", "Conciliação não encontrada.");
+        }
+
+        await db.transaction(async (tx) => {
+            await tx
+                .update(itensConciliacaoTable)
+                .set({status: "pendente", updated_at: new Date()})
+                .where(eq(itensConciliacaoTable.id, item.id));
+
+            await tx.insert(historicoConciliacaoTable).values({
+                conciliacao_id: item.conciliacao_id,
+                item_conciliacao_id: item.id,
+                usuario_id: req.user?.id,
+                acao: "desfazer_vinculo",
+                detalhes: JSON.stringify({linha_id: linhaId, acao: "reverter_ignorar"}),
+            });
+
+            await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
+        });
+
+        return successResponse(res, {linha_id: linhaId, status: "pendente"});
+    } catch (e) {
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao reverter ignorar da linha.", String(e));
     }
 });
 

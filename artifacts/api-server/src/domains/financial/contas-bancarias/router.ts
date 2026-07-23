@@ -2,6 +2,7 @@ import {Router} from "express";
 import {withPermission} from "../../../middlewares/withPermission";
 import {validateBody} from "../../../middlewares/validate";
 import {asyncHandler} from "../../../utils/async-handler";
+import {AppError} from "../../../utils/app-error";
 import {successResponse} from "../../../utils/response";
 import {contasBancariasService} from "./contas-bancarias.service";
 import {
@@ -19,6 +20,20 @@ router.get(
     asyncHandler(async (_req, res) => {
         const items = await contasBancariasService.list();
         return successResponse(res, items);
+    }),
+);
+
+/** DEF-03: saldo posicional ?data=YYYY-MM-DD */
+router.get(
+    "/contas-bancarias/:id/saldo",
+    asyncHandler(async (req, res) => {
+        const {id} = contaBancariaIdParamSchema.parse(req.params);
+        const data = String(req.query.data ?? "");
+        if (!data) {
+            throw new AppError(400, "VALIDATION_ERROR", "Parâmetro obrigatório: data (YYYY-MM-DD).");
+        }
+        const item = await contasBancariasService.saldoNaData(id, data);
+        return successResponse(res, item);
     }),
 );
 
