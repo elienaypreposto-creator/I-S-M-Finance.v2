@@ -21,6 +21,13 @@ export interface OFXTransaction {
     descricao: string;
     /** Ordinal within (data, tipo, valor) group - for hash_linha (DEF-02). */
     ordinal_no_grupo: number;
+    /**
+     * Saldo posicional após esta linha, se o arquivo trouxer (comum em CSV
+     * de banco brasileiro). OFX/STMTTRN não tem saldo por transação - sempre
+     * null neste parser. Fallback: digitação manual via
+     * PATCH /conciliacoes/linhas/:linha_id/saldo (Card 41, DEF-04).
+     */
+    saldo_pos_linha: string | null;
 }
 
 export interface OFXParseResult {
@@ -105,7 +112,6 @@ export function parseOFX(buffer: Buffer): OFXParseResult {
         const memo = (extractTag(block, "MEMO") ?? extractTag(block, "NAME") ?? "").slice(0, 250);
 
         const amountCentsSigned = toCents(amtRaw.replace(",", "."));
-        // TRNAMT "0" / vazio inválido já vira 0 - ainda importa a linha
         const data = parseDate(dtRaw);
         const tipo = resolveMovimento(trnType, amountCentsSigned);
         const valor = centsToDecimalString(Math.abs(amountCentsSigned));
@@ -114,7 +120,6 @@ export function parseOFX(buffer: Buffer): OFXParseResult {
         const ordinal = grupos.get(groupKey) ?? 0;
         grupos.set(groupKey, ordinal + 1);
 
-        // FITID do banco; senão surrogate estável (sem índice global do arquivo)
         const fitid =
             fitidRaw?.trim() || `${data}_${tipo}_${valor}_${ordinal}`;
 
@@ -125,6 +130,7 @@ export function parseOFX(buffer: Buffer): OFXParseResult {
             valor,
             descricao: memo,
             ordinal_no_grupo: ordinal,
+            saldo_pos_linha: null,
         });
     }
 

@@ -2,10 +2,10 @@ import { useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/shared/page-header";
-import { ApiEnvelope, fetchApi } from "@/lib/api-config";
-import { formatDate } from "@/lib/utils";
+import { ApiEnvelope, fetchApi, fetchApiData } from "@/lib/api-config";
+import { formatDate, formatCurrency, cn } from "@/lib/utils";
 import { ImportExtratoModal } from "@/components/conciliacao/import-extrato-modal";
-import { Loader2, AlertCircle, Plus, FileStack, ChevronLeft, ChevronRight } from "lucide-react";
+import { Loader2, AlertCircle, Plus, FileStack, ChevronLeft, ChevronRight, Landmark } from "lucide-react";
 
 export type ConciliacaoListItem = {
   conciliacao_id: number;
@@ -23,6 +23,15 @@ export type ConciliacaoListItem = {
   created_at: string;
 };
 
+type ContaBancariaSaldo = {
+  id: number;
+  nome: string;
+  banco?: string | null;
+  status?: string | null;
+  cor?: string | null;
+  saldo_atual: string | number;
+};
+
 function num(v: number | null | undefined) {
   return Number(v ?? 0);
 }
@@ -38,6 +47,69 @@ function statusStyles(status: string) {
     default:
       return "bg-sky-500/15 text-sky-300 border-sky-500/30";
   }
+}
+
+/** Widget de saldo por conta (Card 42, item 4) — a empresa tem 10 contas. */
+function WidgetContasBancarias() {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["contas-bancarias-widget"],
+    queryFn: () => fetchApiData<ContaBancariaSaldo[]>("/contas-bancarias"),
+  });
+
+  const contas = data ?? [];
+
+  if (isLoading) {
+    return (
+      <div className="glass-panel rounded-2xl border border-white/10 p-4 flex items-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="w-4 h-4 animate-spin text-primary" />
+        Carregando saldo das contas…
+      </div>
+    );
+  }
+
+  if (isError || contas.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="glass-panel rounded-2xl border border-white/10 p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <Landmark className="w-4 h-4 text-primary" />
+        <h2 className="text-xs font-bold text-white uppercase tracking-wide">Saldo por conta</h2>
+        <span className="text-[10px] text-muted-foreground">
+          · {contas.length} conta{contas.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+      <div className="flex gap-3 overflow-x-auto pb-1">
+        {contas.map((conta) => {
+          const saldo = Number(conta.saldo_atual);
+          const positivo = saldo >= 0;
+          return (
+            <div
+              key={conta.id}
+              className="shrink-0 min-w-[180px] rounded-xl bg-black/30 border border-white/10 p-3"
+              style={conta.cor ? { borderLeftColor: conta.cor, borderLeftWidth: 3 } : undefined}
+            >
+              <p className="text-xs font-semibold text-white truncate" title={conta.nome}>
+                {conta.nome}
+              </p>
+              {conta.banco && (
+                <p className="text-[10px] text-muted-foreground truncate">{conta.banco}</p>
+              )}
+              <p
+                className={cn(
+                  "text-sm font-black mt-1",
+                  positivo ? "text-emerald-300" : "text-red-300",
+                )}
+              >
+                {formatCurrency(saldo)}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 export default function ConciliacaoList() {
@@ -92,6 +164,8 @@ export default function ConciliacaoList() {
           setLocation(`/conciliacao/extrato/${extratoId}`);
         }}
       />
+
+      <WidgetContasBancarias />
 
       <div className="glass-panel rounded-2xl flex flex-col overflow-hidden flex-1 min-h-0 border border-white/10">
         <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between bg-black/20">
@@ -225,7 +299,6 @@ export default function ConciliacaoList() {
           </table>
         </div>
 
-        {/* Paginação */}
         <div className="px-4 py-3 border-t border-white/5 flex items-center justify-between text-xs text-muted-foreground bg-black/15">
           <span>
             Página {page} de {totalPages}

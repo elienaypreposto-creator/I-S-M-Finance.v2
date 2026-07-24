@@ -14,6 +14,10 @@ import {
     Ban,
     CheckCircle2,
     Flag,
+    Scale,
+    TrendingUp,
+    TrendingDown,
+    AlertTriangle,
 } from "lucide-react";
 import {invalidateRelated} from "@/App";
 
@@ -28,6 +32,8 @@ type ExtratoDetalheExtrato = {
     total_linhas: number;
     total_creditos: string | number;
     total_debitos: string | number;
+    saldo_final_banco: string | number | null;
+    saldo_banco_data: string | null;
     created_at: string;
 };
 
@@ -61,13 +67,36 @@ export type LinhaDetalhe = {
     status: string;
     valor_vinculado_total: string | number;
     valor_saldo: string | number;
+    saldo_pos_linha: string | number | null;
     vinculacoes: VinculacaoDetalhe[];
 };
+
+type DiagnosticoSaldoInicial = {
+    data_referencia: string;
+    extrato_anterior_id: number;
+    saldo_sistema: number;
+    saldo_extrato_anterior: number;
+    diferenca: number;
+    bate: boolean;
+};
+
+type DiagnosticoSaldo = {
+    data_referencia: string;
+    saldo_sistema: number;
+    saldo_banco: number | null;
+    diferenca: number | null;
+    bate: boolean | null;
+    diagnostico: string;
+    linhas_ignoradas_valor: number;
+    linhas_ignoradas_explicam: boolean;
+    saldo_inicial: DiagnosticoSaldoInicial | null;
+} | null;
 
 type ExtratoDetalheResponse = {
     extrato: ExtratoDetalheExtrato;
     conciliacao: ConciliacaoResumo;
     linhas: LinhaDetalhe[];
+    diagnostico: DiagnosticoSaldo;
 };
 
 function statusExtratoBadge(status: string) {
@@ -92,6 +121,112 @@ function statusLinhaBadge(status: string) {
         default:
             return "bg-amber-500/15 text-amber-200 border-amber-500/25";
     }
+}
+
+/** Painel de conciliação: saldo do sistema × saldo do extrato × diferença (Card 42). */
+function PainelDiagnostico({diagnostico}: { diagnostico: DiagnosticoSaldo }) {
+    if (!diagnostico) return null;
+
+    const {
+        data_referencia,
+        saldo_sistema,
+        saldo_banco,
+        diferenca,
+        bate,
+        diagnostico: mensagem,
+        linhas_ignoradas_valor,
+        linhas_ignoradas_explicam,
+        saldo_inicial,
+    } = diagnostico;
+
+    const diferencaColor =
+        bate === true
+            ? "text-emerald-300"
+            : bate === false
+                ? diferenca !== null && diferenca > 0
+                    ? "text-orange-300"
+                    : "text-sky-300"
+                : "text-muted-foreground";
+
+    return (
+        <div className="glass-panel rounded-2xl p-6 border border-white/10 space-y-4">
+            <div className="flex items-center gap-2">
+                <Scale className="w-4 h-4 text-primary"/>
+                <h2 className="text-sm font-bold text-white uppercase tracking-wide">Diagnóstico de saldo</h2>
+                <span className="text-[10px] text-muted-foreground">· comparado em {formatDate(data_referencia)}</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="rounded-xl bg-black/30 border border-white/10 p-4">
+                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Saldo do
+                        sistema</p>
+                    <p className="text-xl font-black text-white mt-1">{formatCurrency(saldo_sistema)}</p>
+                </div>
+                <div className="rounded-xl bg-black/30 border border-white/10 p-4">
+                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Saldo do
+                        extrato (banco)</p>
+                    <p className="text-xl font-black text-white mt-1">
+                        {saldo_banco !== null ? formatCurrency(saldo_banco) : "—"}
+                    </p>
+                </div>
+                <div
+                    className={cn(
+                        "rounded-xl border p-4",
+                        bate === true
+                            ? "bg-emerald-500/10 border-emerald-500/25"
+                            : bate === false
+                                ? "bg-amber-500/10 border-amber-500/25"
+                                : "bg-black/30 border-white/10",
+                    )}>
+                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                        {bate === false && diferenca !== null && diferenca > 0 && <TrendingUp className="w-3 h-3"/>}
+                        {bate === false && diferenca !== null && diferenca < 0 && <TrendingDown className="w-3 h-3"/>}
+                        Diferença
+                    </p>
+                    <p className={cn("text-xl font-black mt-1", diferencaColor)}>
+                        {diferenca !== null ? formatCurrency(diferenca) : "—"}
+                    </p>
+                </div>
+            </div>
+
+            <p className={cn("text-xs", bate === true ? "text-emerald-300" : "text-white/80")}>{mensagem}</p>
+
+            {linhas_ignoradas_explicam && (
+                <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-300 shrink-0 mt-0.5"/>
+                    <p className="text-xs text-amber-200">
+                        Linhas ignoradas somam <strong>{formatCurrency(linhas_ignoradas_valor)}</strong>, na mesma
+                        direção da diferença encontrada. Isso pode indicar que uma ou mais dessas linhas foram
+                        ignoradas indevidamente — revise antes de finalizar.
+                    </p>
+                </div>
+            )}
+
+            {saldo_inicial && (
+                <div
+                    className={cn(
+                        "rounded-xl border p-3 flex items-start gap-2",
+                        saldo_inicial.bate
+                            ? "border-emerald-500/20 bg-emerald-500/5"
+                            : "border-red-500/25 bg-red-500/10",
+                    )}>
+                    {saldo_inicial.bate ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-300 shrink-0 mt-0.5"/>
+                    ) : (
+                        <AlertTriangle className="w-4 h-4 text-red-300 shrink-0 mt-0.5"/>
+                    )}
+                    <p className={cn("text-xs", saldo_inicial.bate ? "text-emerald-200" : "text-red-200")}>
+                        Fechamento de período: o saldo de abertura ({formatDate(saldo_inicial.data_referencia)}) 
+                        {saldo_inicial.bate ? " bate " : " NÃO bate "}
+                        com o fechamento do extrato anterior (#{saldo_inicial.extrato_anterior_id}). Sistema:{" "}
+                        {formatCurrency(saldo_inicial.saldo_sistema)} · Extrato
+                        anterior: {formatCurrency(saldo_inicial.saldo_extrato_anterior)}
+                        {!saldo_inicial.bate && ` · Diferença: ${formatCurrency(saldo_inicial.diferenca)}`}
+                    </p>
+                </div>
+            )}
+        </div>
+    );
 }
 
 export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: string }) {
@@ -164,8 +299,8 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                 body: JSON.stringify({}),
             }),
         onSuccess: () => {
-            invalidateRelated(queryClient, "conciliacao"); // ← ALTERADO: invalida conciliacao + dashboard + lancamentos
-            void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]}); // ← mantido: chave específica com parâmetro
+            invalidateRelated(queryClient, "conciliacao");
+            void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
             toast({title: "Extrato finalizado", description: "Conciliação concluída com sucesso."});
         },
         onError: (e: unknown) => {
@@ -177,6 +312,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     const extrato = data?.extrato;
     const conc = data?.conciliacao;
     const linhas = data?.linhas ?? [];
+    const diagnostico = data?.diagnostico ?? null;
     const podeFinalizar = (conc?.resumo_pendentes ?? 1) === 0;
 
     return (
@@ -296,6 +432,8 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                         </div>
                     </div>
 
+                    <PainelDiagnostico diagnostico={diagnostico}/>
+
                     <div
                         className="glass-panel rounded-2xl border border-white/10 overflow-hidden flex flex-col flex-1 min-h-0">
                         <div className="px-4 py-3 border-b border-white/5 bg-black/20">
@@ -346,6 +484,11 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                         Vinculado: {formatCurrency(Number(linha.valor_vinculado_total))} ·
                                                         Saldo linha:{" "}
                                                         {formatCurrency(Number(linha.valor_saldo))}
+                                                    </p>
+                                                )}
+                                                {linha.saldo_pos_linha != null && (
+                                                    <p className="text-[11px] text-muted-foreground">
+                                                        Saldo pós-linha: {formatCurrency(Number(linha.saldo_pos_linha))}
                                                     </p>
                                                 )}
                                             </div>

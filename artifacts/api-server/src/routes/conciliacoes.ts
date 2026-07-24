@@ -2,7 +2,7 @@ import {createHash} from "crypto";
 import {Router} from "express";
 import {z} from "zod";
 import multer from "multer";
-import {and, count, desc, eq, gte, inArray, lte, or, sql} from "drizzle-orm";
+import {and, count, desc, eq, gte, inArray, lt, lte, or, sql} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {
     conciliacoesTable,
@@ -22,6 +22,7 @@ import type {OFXParseResult} from "../utils/ofx-parser";
 import {centsToDecimalString, fromCents, sumCents, toCents} from "../utils/money";
 import {decidirVincular, statusAposQuitacao} from "../utils/conciliacao-vincular";
 import {hashLinhaExtrato} from "../utils/extrato-hash";
+import {contasBancariasService} from "../domains/financial/contas-bancarias/contas-bancarias.service";
 
 const router = Router();
 const upload = multer({storage: multer.memoryStorage()});
@@ -58,11 +59,151 @@ const vincularBodySchema = z.object({
     residuo_lancamento_id: z.coerce.number().int().positive().optional(),
 });
 
+/** DEF-04: digitação manual de saldo_pos_linha quando o arquivo não trouxer. */
+const saldoManualBodySchema = z.object({
+    saldo_pos_linha: z.union([z.string(), z.number()]),
+});
+
 type ImportarBody = z.infer<typeof importarBodySchema>;
 type VincularBody = z.infer<typeof vincularBodySchema>;
+type SaldoManualBody = z.infer<typeof saldoManualBodySchema>;
 
 /** Decimal na borda HTTP: normaliza via centavos (DEF-06). */
 const toDecimal = (value: unknown) => fromCents(toCents(value));
+
+/** Soma/subtrai dias de uma data ISO (YYYY-MM-DD), sem depender de fuso local. */
+function addDaysToISO(dateStr: string, days: number): string {
+    const d = new Date(`${dateStr}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Painel de conciliação (Card 42 / RN-J2, RN-J5, RN-J7, RN-J8).
+ *
+ * Compara SEMPRE na data final do extrato (regra D-1 do Card 41) — nunca
+ * "agora". Também verifica se o saldo de abertura deste extrato bate com o
+ * fechamento do extrato anterior da mesma conta (RN-J8 / exigência Receita-DRE),
+ * e se linhas ignoradas explicam uma eventual diferença (RN-J5).
+ */
+async function buildDiagnosticoSaldo(extrato: {
+    id: number;
+    conta_id: number;
+    periodo_inicio: string | null;
+    periodo_fim: string | null;
+    saldo_final_banco: string | null;
+}) {
+    if (!extrato.periodo_fim) {
+        return null;
+    }
+
+    // --- Saldo final: sistema × banco, na DATA FINAL do extrato (regra D-1) ---
+    const saldoSistemaFinal = await contasBancariasService.saldoNaData(extrato.conta_id, extrato.periodo_fim);
+    const saldoSistemaFinalCents = toCents(saldoSistemaFinal.saldo_decimal);
+    const saldoBancoFinalCents = extrato.saldo_final_banco != null ? toCents(extrato.saldo_final_banco) : null;
+
+    let diferencaCents: number | null = null;
+    let bate: boolean | null = null;
+    let diagnostico: string;
+
+    if (saldoBancoFinalCents === null) {
+        diagnostico = "O arquivo importado não trouxe o saldo do banco (LEDGERBAL/BALAMT). Não é possível comparar.";
+    } else {
+        diferencaCents = saldoSistemaFinalCents - saldoBancoFinalCents;
+        bate = diferencaCents === 0;
+        if (bate) {
+            diagnostico = "O saldo do sistema bate com o saldo do banco.";
+        } else if (diferencaCents < 0) {
+            diagnostico =
+                "O saldo do sistema é MENOR que o do banco: falta lançar uma entrada (crédito) ou há uma saída (débito) registrada a mais no sistema.";
+        } else {
+            diagnostico =
+                "O saldo do sistema é MAIOR que o do banco: falta lançar uma saída (débito) ou há uma entrada (crédito) registrada a mais no sistema.";
+        }
+    }
+
+    // --- Linhas ignoradas podem explicar a diferença (RN-J5) ---
+    const ignoradas = await db
+        .select({
+            valor: extratoLinhasTable.valor,
+            tipo_movimento: extratoLinhasTable.tipo_movimento,
+        })
+        .from(extratoLinhasTable)
+        .innerJoin(itensConciliacaoTable, eq(itensConciliacaoTable.extrato_linha_id, extratoLinhasTable.id))
+        .where(and(eq(extratoLinhasTable.extrato_id, extrato.id), eq(itensConciliacaoTable.status, "ignorado")));
+
+    const somaIgnoradasCents = sumCents(
+        ignoradas.map((l) => (l.tipo_movimento === "credito" ? toCents(l.valor) : -toCents(l.valor))),
+    );
+
+    // "Explicam a diferença" quando reintegrar as linhas ignoradas move o saldo
+    // do sistema na direção do saldo do banco (mesmo sinal do gap observado).
+    const linhasIgnoradasExplicam =
+        diferencaCents !== null &&
+        diferencaCents !== 0 &&
+        somaIgnoradasCents !== 0 &&
+        Math.sign(somaIgnoradasCents) === Math.sign(diferencaCents);
+
+    // --- Saldo inicial: fechamento do extrato anterior deve bater com o sistema
+    //     no dia anterior ao início deste extrato (RN-J8 / fechamento de período) ---
+    let saldoInicialCheck: {
+        data_referencia: string;
+        extrato_anterior_id: number;
+        saldo_sistema: number;
+        saldo_extrato_anterior: number;
+        diferenca: number;
+        bate: boolean;
+    } | null = null;
+
+    if (extrato.periodo_inicio) {
+        const [extratoAnterior] = await db
+            .select({
+                id: extratosTable.id,
+                periodo_fim: extratosTable.periodo_fim,
+                saldo_final_banco: extratosTable.saldo_final_banco,
+            })
+            .from(extratosTable)
+            .where(
+                and(
+                    eq(extratosTable.conta_id, extrato.conta_id),
+                    lt(extratosTable.periodo_fim, extrato.periodo_inicio),
+                ),
+            )
+            .orderBy(desc(extratosTable.periodo_fim))
+            .limit(1);
+
+        if (extratoAnterior?.saldo_final_banco != null) {
+            const dataRef = addDaysToISO(extrato.periodo_inicio, -1);
+            const saldoSistemaAbertura = await contasBancariasService.saldoNaData(extrato.conta_id, dataRef);
+            const saldoSistemaAberturaCents = toCents(saldoSistemaAbertura.saldo_decimal);
+            const saldoExtratoAnteriorCents = toCents(extratoAnterior.saldo_final_banco);
+            const diferencaAberturaCents = saldoSistemaAberturaCents - saldoExtratoAnteriorCents;
+
+            saldoInicialCheck = {
+                data_referencia: dataRef,
+                extrato_anterior_id: extratoAnterior.id,
+                saldo_sistema: fromCents(saldoSistemaAberturaCents),
+                saldo_extrato_anterior: fromCents(saldoExtratoAnteriorCents),
+                diferenca: fromCents(diferencaAberturaCents),
+                bate: diferencaAberturaCents === 0,
+            };
+        }
+        // Se não há extrato anterior (primeiro extrato da conta), não há o que
+        // comparar — saldoInicialCheck permanece null e a UI não exibe o bloco.
+    }
+
+    return {
+        data_referencia: extrato.periodo_fim,
+        saldo_sistema: fromCents(saldoSistemaFinalCents),
+        saldo_banco: saldoBancoFinalCents !== null ? fromCents(saldoBancoFinalCents) : null,
+        diferenca: diferencaCents !== null ? fromCents(diferencaCents) : null,
+        bate,
+        diagnostico,
+        linhas_ignoradas_valor: fromCents(somaIgnoradasCents),
+        linhas_ignoradas_explicam: linhasIgnoradasExplicam,
+        saldo_inicial: saldoInicialCheck,
+    };
+}
 
 const atualizarResumoConciliacao = async (
     tx: typeof db,
@@ -171,7 +312,7 @@ function enrichTransacoesComHash(
 
 async function parseExtratoUpload(req: {
     file?: { buffer: Buffer; originalname: string };
-}): Promise<
+}): Promise < 
     | { parsed: OFXParseResult }
     | { error: { status: number; code: string; message: string; detail?: string } }
 > {
@@ -409,6 +550,7 @@ router.post(
                         tipo_movimento: t.tipo,
                         descricao: t.descricao,
                         data_movimento: t.data,
+                        saldo_pos_linha: t.saldo_pos_linha,
                     })),
                 )
                 .returning({
@@ -535,6 +677,8 @@ router.get("/conciliacoes/:extrato_id", async (req, res) => {
                 total_linhas: extratosTable.total_linhas,
                 total_creditos: extratosTable.total_creditos,
                 total_debitos: extratosTable.total_debitos,
+                saldo_final_banco: extratosTable.saldo_final_banco,
+                saldo_banco_data: extratosTable.saldo_banco_data,
                 created_at: extratosTable.created_at,
             })
             .from(extratosTable)
@@ -564,6 +708,7 @@ router.get("/conciliacoes/:extrato_id", async (req, res) => {
                 valor: extratoLinhasTable.valor,
                 data_movimento: extratoLinhasTable.data_movimento,
                 documento: extratoLinhasTable.documento,
+                saldo_pos_linha: extratoLinhasTable.saldo_pos_linha,
                 item_id: itensConciliacaoTable.id,
                 item_status: itensConciliacaoTable.status,
                 valor_vinculado_total: itensConciliacaoTable.valor_vinculado_total,
@@ -602,6 +747,7 @@ router.get("/conciliacoes/:extrato_id", async (req, res) => {
             status: linha.item_status,
             valor_vinculado_total: toDecimal(linha.valor_vinculado_total),
             valor_saldo: toDecimal(linha.valor_saldo),
+            saldo_pos_linha: linha.saldo_pos_linha != null ? toDecimal(linha.saldo_pos_linha) : null,
             vinculacoes: vinculos
                 .filter((v) => v.item_conciliacao_id === linha.item_id)
                 .map((v) => ({
@@ -617,11 +763,20 @@ router.get("/conciliacoes/:extrato_id", async (req, res) => {
                 })),
         }));
 
+        const diagnostico = await buildDiagnosticoSaldo({
+            id: extrato.id,
+            conta_id: extrato.conta_id,
+            periodo_inicio: extrato.periodo_inicio,
+            periodo_fim: extrato.periodo_fim,
+            saldo_final_banco: extrato.saldo_final_banco,
+        });
+
         return successResponse(res, {
             extrato: {
                 ...extrato,
                 total_creditos: toDecimal(extrato.total_creditos),
                 total_debitos: toDecimal(extrato.total_debitos),
+                saldo_final_banco: extrato.saldo_final_banco != null ? toDecimal(extrato.saldo_final_banco) : null,
             },
             conciliacao: {
                 id: conciliacao.id,
@@ -632,6 +787,7 @@ router.get("/conciliacoes/:extrato_id", async (req, res) => {
                 resumo_total: conciliacao.resumo_total,
             },
             linhas: linhasDetalhadas,
+            diagnostico,
         });
     } catch (e) {
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao detalhar extrato.", String(e));
@@ -903,6 +1059,55 @@ router.post(
             return successResponse(res, resultado);
         } catch (e) {
             return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao vincular lançamentos da linha.", String(e));
+        }
+    },
+);
+
+/**
+ * DEF-04: digitação manual de saldo_pos_linha quando o arquivo (CSV/OFX) não
+ * trouxer essa informação. Não sobrescreve silenciosamente um valor já
+ * capturado do arquivo — passe ?force=true para corrigir um valor existente.
+ */
+router.patch(
+    "/conciliacoes/linhas/:linha_id/saldo",
+    validateBody(saldoManualBodySchema),
+    async (req, res) => {
+        try {
+            const linhaId = Number(req.params.linha_id);
+            const {saldo_pos_linha} = req.body as SaldoManualBody;
+            const force = req.query.force === "true";
+
+            const [linha] = await db
+                .select({id: extratoLinhasTable.id, saldo_pos_linha: extratoLinhasTable.saldo_pos_linha})
+                .from(extratoLinhasTable)
+                .where(eq(extratoLinhasTable.id, linhaId))
+                .limit(1);
+
+            if (!linha) {
+                return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada.");
+            }
+            if (linha.saldo_pos_linha != null && !force) {
+                return errorResponse(
+                    res,
+                    409,
+                    "CONFLICT",
+                    "Esta linha já possui saldo capturado do arquivo. Use force=true para sobrescrever.",
+                );
+            }
+
+            const saldoCents = toCents(saldo_pos_linha);
+            const [atualizado] = await db
+                .update(extratoLinhasTable)
+                .set({saldo_pos_linha: centsToDecimalString(saldoCents), updated_at: new Date()})
+                .where(eq(extratoLinhasTable.id, linhaId))
+                .returning({id: extratoLinhasTable.id, saldo_pos_linha: extratoLinhasTable.saldo_pos_linha});
+
+            return successResponse(res, {
+                linha_id: atualizado.id,
+                saldo_pos_linha: toDecimal(atualizado.saldo_pos_linha),
+            });
+        } catch (e) {
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao registrar saldo manual da linha.", String(e));
         }
     },
 );

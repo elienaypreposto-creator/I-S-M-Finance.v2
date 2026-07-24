@@ -7,6 +7,7 @@
  *  - Brazilian currency notation: 1.500,50 -> 1500.50
  *  - Parentheses negatives: (1.500,00) -> -1500.00
  *  - Single signed value column OR split Débito / Crédito columns
+ *  - Optional running-balance column (Saldo) - DEF-04
  *  - Quoted CSV fields
  *  - Informational header rows before the actual column header
  *
@@ -114,6 +115,8 @@ const DESC_KEYS = ["descri", "histor", "memo", "lancamento", "lancto", "detalhes
 const VALUE_KEYS = ["valor", "amount", "value", "montante"];
 const DEBIT_KEYS = ["debito", "saida", "saída", "debit", "despesa"];
 const CREDIT_KEYS = ["credito", "entrada", "credit", "receita"];
+/** DEF-04: coluna de saldo posicional (saldo do dia / saldo após lançamento). */
+const SALDO_KEYS = ["saldo", "balance", "balanco"];
 
 function nfNorm(s: string): string {
     return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -130,20 +133,26 @@ interface ColMap {
     valueIdx: number | null;
     debitIdx: number | null;
     creditIdx: number | null;
+    saldoIdx: number | null;
 }
 
 /**
  * Scans the header fields and maps each column to its semantic role.
- * Debit/Credit keywords are checked before the generic Value keyword so that
- * a column labelled "Crédito" is not misidentified as the generic value.
+ * Debit/Credit/Saldo keywords are checked before the generic Value keyword so
+ * that a column labelled "Crédito" or "Saldo" is not misidentified as the
+ * generic value column.
  */
 function detectColumns(headers: string[]): ColMap {
-    let dateIdx = -1, descIdx = -1, valueIdx = -1, debitIdx = -1, creditIdx = -1;
+    let dateIdx = -1, descIdx = -1, valueIdx = -1, debitIdx = -1, creditIdx = -1, saldoIdx = -1;
 
     for (let i = 0; i < headers.length; i++) {
         const h = headers[i];
         if (dateIdx === -1 && matchesCol(h, DATE_KEYS)) {
             dateIdx = i;
+            continue;
+        }
+        if (saldoIdx === -1 && matchesCol(h, SALDO_KEYS)) {
+            saldoIdx = i;
             continue;
         }
         if (debitIdx === -1 && matchesCol(h, DEBIT_KEYS)) {
@@ -177,6 +186,7 @@ function detectColumns(headers: string[]): ColMap {
         valueIdx: valueIdx === -1 ? null : valueIdx,
         debitIdx: debitIdx === -1 ? null : debitIdx,
         creditIdx: creditIdx === -1 ? null : creditIdx,
+        saldoIdx: saldoIdx === -1 ? null : saldoIdx,
     };
 }
 
@@ -245,6 +255,7 @@ export function parseCSV(buffer: Buffer): OFXParseResult {
         cols.valueIdx ?? 0,
         cols.debitIdx ?? 0,
         cols.creditIdx ?? 0,
+        cols.saldoIdx ?? 0,
     );
 
     for (const line of nonEmpty.slice(headerIdx + 1)) {
@@ -291,6 +302,16 @@ export function parseCSV(buffer: Buffer): OFXParseResult {
             }
         }
 
+        // DEF-04: saldo posicional após esta linha, se a coluna existir e o
+        // valor for numérico. Preserva o sinal (saldo pode ser negativo).
+        let saldo_pos_linha: string | null = null;
+        if (cols.saldoIdx !== null) {
+            const saldoAmt = parseBRCurrency(fields[cols.saldoIdx] ?? "");
+            if (!isNaN(saldoAmt)) {
+                saldo_pos_linha = saldoAmt.toFixed(2);
+            }
+        }
+
         // Surrogate estável: ordinal no grupo (data, tipo, valor), sem índice global
         const groupKey = `${data}|${tipo}|${valor}`;
         const ordinal = grupos.get(groupKey) ?? 0;
@@ -298,7 +319,7 @@ export function parseCSV(buffer: Buffer): OFXParseResult {
         const slug = descricao.replace(/\s+/g, "_").slice(0, 20);
         const fitid = `${data}_${tipo}_${valor}_${slug}_${ordinal}`;
 
-        transacoes.push({fitid, tipo, data, valor, descricao, ordinal_no_grupo: ordinal});
+        transacoes.push({fitid, tipo, data, valor, descricao, ordinal_no_grupo: ordinal, saldo_pos_linha});
     }
 
     if (transacoes.length === 0) {
