@@ -2,7 +2,7 @@ import {createHash} from "crypto";
 import {Router} from "express";
 import {z} from "zod";
 import multer from "multer";
-import {and, count, desc, eq, gte, inArray, lt, lte, or, sql} from "drizzle-orm";
+import {and, count, desc, eq, gte, inArray, isNull, lt, lte, or, sql} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {
     conciliacoesTable,
@@ -13,6 +13,9 @@ import {
     itensConciliacaoLancamentosTable,
     itensConciliacaoTable,
     lancamentosTable,
+    MOTIVOS_IGNORAR_PREDEFINIDOS,
+    PARAM_MOTIVO_IGNORAR_OBRIGATORIO,
+    parametrosSistemaTable,
 } from "@workspace/db/schema";
 import {validateBody} from "../middlewares/validate";
 import {errorResponse, successResponse} from "../utils/response";
@@ -23,6 +26,7 @@ import {centsToDecimalString, fromCents, sumCents, toCents} from "../utils/money
 import {decidirVincular, statusAposQuitacao} from "../utils/conciliacao-vincular";
 import {hashLinhaExtrato} from "../utils/extrato-hash";
 import {contasBancariasService} from "../domains/financial/contas-bancarias/contas-bancarias.service";
+import {promoverLancamentosAtrasados} from "../jobs/promover-atrasados";
 
 const router = Router();
 const upload = multer({storage: multer.memoryStorage()});
@@ -40,6 +44,42 @@ const importarBodySchema = z.object({
         .optional()
         .transform((v) => v === true || v === "true" || v === "1"),
 });
+
+const ignorarBodySchema = z
+    .object({
+        motivo_codigo: z.enum(MOTIVOS_IGNORAR_PREDEFINIDOS).optional(),
+        motivo: z.string().trim().max(500).optional(),
+    })
+    .default({});
+
+const parametrosBodySchema = z.object({
+    motivo_ignorar_obrigatorio: z.boolean(),
+});
+
+async function getMotivoIgnorarObrigatorio(): Promise<boolean> {
+    const [row] = await db
+        .select({valor: parametrosSistemaTable.valor})
+        .from(parametrosSistemaTable)
+        .where(eq(parametrosSistemaTable.chave, PARAM_MOTIVO_IGNORAR_OBRIGATORIO))
+        .limit(1);
+    return row?.valor === "true" || row?.valor === "1";
+}
+
+/** Intervalo civil YYYY-MM-DD do mês/ano (1–12). */
+function boundsDoMes(ano: number, mes: number): { inicio: string; fim: string } {
+    const inicio = `${ano}-${String(mes).padStart(2, "0")}-01`;
+    const lastDay = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+    const fim = `${ano}-${String(mes).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    return {inicio, fim};
+}
+
+function hojeIsoLocal(): string {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+}
 
 const vincularBodySchema = z.object({
     lancamentos: z
@@ -81,7 +121,7 @@ function addDaysToISO(dateStr: string, days: number): string {
 /**
  * Painel de conciliação (Card 42 / RN-J2, RN-J5, RN-J7, RN-J8).
  *
- * Compara SEMPRE na data final do extrato (regra D-1 do Card 41) — nunca
+ * Compara SEMPRE na data final do extrato (regra D-1 do Card 41) - nunca
  * "agora". Também verifica se o saldo de abertura deste extrato bate com o
  * fechamento do extrato anterior da mesma conta (RN-J8 / exigência Receita-DRE),
  * e se linhas ignoradas explicam uma eventual diferença (RN-J5).
@@ -189,7 +229,7 @@ async function buildDiagnosticoSaldo(extrato: {
             };
         }
         // Se não há extrato anterior (primeiro extrato da conta), não há o que
-        // comparar — saldoInicialCheck permanece null e a UI não exibe o bloco.
+        // comparar - saldoInicialCheck permanece null e a UI não exibe o bloco.
     }
 
     return {
@@ -252,8 +292,43 @@ router.get("/conciliacoes", async (req, res) => {
         const offset = (page - 1) * limit;
 
         const conditions = [];
-        if (req.query.status) conditions.push(eq(extratosTable.status, req.query.status as "pendente" | "parcial" | "conciliado" | "cancelado"));
-        if (req.query.conta_id) conditions.push(eq(conciliacoesTable.conta_id, parseInt(req.query.conta_id as string)));
+        if (req.query.status) {
+            conditions.push(
+                eq(
+                    extratosTable.status,
+                    req.query.status as "pendente" | "parcial" | "conciliado" | "cancelado",
+                ),
+            );
+        }
+        if (req.query.conta_id) {
+            conditions.push(eq(conciliacoesTable.conta_id, parseInt(req.query.conta_id as string)));
+        }
+
+        // DEF-11: filtra pelo período do extrato (não pela data_conciliacao)
+        let dataInicio = typeof req.query.data_inicio === "string" ? req.query.data_inicio : undefined;
+        let dataFim = typeof req.query.data_fim === "string" ? req.query.data_fim : undefined;
+
+        const mesQ = req.query.mes ? parseInt(req.query.mes as string, 10) : NaN;
+        const anoQ = req.query.ano ? parseInt(req.query.ano as string, 10) : NaN;
+        if (!Number.isNaN(mesQ) && !Number.isNaN(anoQ) && mesQ >= 1 && mesQ <= 12 && anoQ >= 2000) {
+            const b = boundsDoMes(anoQ, mesQ);
+            dataInicio = dataInicio ?? b.inicio;
+            dataFim = dataFim ?? b.fim;
+        }
+
+        if (dataInicio && dataFim) {
+            // Interseção: periodo_inicio <= data_fim AND periodo_fim >= data_inicio
+            conditions.push(
+                and(
+                    lte(conciliacoesTable.periodo_inicio, dataFim),
+                    gte(conciliacoesTable.periodo_fim, dataInicio),
+                )!,
+            );
+        } else if (dataInicio) {
+            conditions.push(gte(conciliacoesTable.periodo_fim, dataInicio));
+        } else if (dataFim) {
+            conditions.push(lte(conciliacoesTable.periodo_inicio, dataFim));
+        }
 
         const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -272,6 +347,7 @@ router.get("/conciliacoes", async (req, res) => {
                 arquivo_nome: extratosTable.arquivo_nome,
                 periodo_inicio: conciliacoesTable.periodo_inicio,
                 periodo_fim: conciliacoesTable.periodo_fim,
+                data_conciliacao: conciliacoesTable.data_conciliacao,
                 status: extratosTable.status,
                 resumo_conciliados: conciliacoesTable.resumo_conciliados,
                 resumo_ignorados: conciliacoesTable.resumo_ignorados,
@@ -290,6 +366,189 @@ router.get("/conciliacoes", async (req, res) => {
         return successResponse(res, items, {total: Number(totalResult.count), page, limit});
     } catch (e) {
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar conciliações.", String(e));
+    }
+});
+
+/** FEAT-07: pendências por mês (informativo). Deve ficar ANTES de /:extrato_id. */
+router.get("/conciliacoes/pendencias-mes", async (req, res) => {
+    try {
+        const agora = new Date();
+        const mesRef = req.query.mes ? parseInt(req.query.mes as string, 10) : agora.getMonth() + 1;
+        const anoRef = req.query.ano ? parseInt(req.query.ano as string, 10) : agora.getFullYear();
+
+        // Inclui mês de referência e meses anteriores com pendência (últimos 6)
+        const mesesAlvo: { mes: number; ano: number; inicio: string; fim: string }[] = [];
+        for (let i = 0; i < 6; i++) {
+            let m = mesRef - i;
+            let a = anoRef;
+            while (m <= 0) {
+                m += 12;
+                a -= 1;
+            }
+            const b = boundsDoMes(a, m);
+            mesesAlvo.push({mes: m, ano: a, inicio: b.inicio, fim: b.fim});
+        }
+
+        const rows = await db
+            .select({
+                conciliacao_id: conciliacoesTable.id,
+                extrato_id: extratosTable.id,
+                conta_id: conciliacoesTable.conta_id,
+                conta_nome: contasBancariasTable.nome,
+                periodo_inicio: conciliacoesTable.periodo_inicio,
+                periodo_fim: conciliacoesTable.periodo_fim,
+                status: extratosTable.status,
+                resumo_pendentes: conciliacoesTable.resumo_pendentes,
+            })
+            .from(conciliacoesTable)
+            .innerJoin(extratosTable, eq(conciliacoesTable.extrato_id, extratosTable.id))
+            .leftJoin(contasBancariasTable, eq(conciliacoesTable.conta_id, contasBancariasTable.id))
+            .where(
+                and(
+                    inArray(extratosTable.status, ["pendente", "parcial"]),
+                    gte(conciliacoesTable.periodo_fim, mesesAlvo[mesesAlvo.length - 1]!.inicio),
+                    lte(conciliacoesTable.periodo_inicio, mesesAlvo[0]!.fim),
+                ),
+            );
+
+        const linhasDatas = await db
+            .select({
+                conta_id: extratoLinhasTable.conta_id,
+                data_movimento: extratoLinhasTable.data_movimento,
+            })
+            .from(extratoLinhasTable)
+            .where(
+                and(
+                    gte(extratoLinhasTable.data_movimento, mesesAlvo[mesesAlvo.length - 1]!.inicio),
+                    lte(extratoLinhasTable.data_movimento, mesesAlvo[0]!.fim),
+                ),
+            );
+
+        const datasPorContaMes = new Map<string, Set<string>>();
+        for (const l of linhasDatas) {
+            if (!l.data_movimento) continue;
+            const [y, m] = l.data_movimento.split("-");
+            const key = `${l.conta_id}:${y}-${m}`;
+            if (!datasPorContaMes.has(key)) datasPorContaMes.set(key, new Set());
+            datasPorContaMes.get(key)!.add(l.data_movimento);
+        }
+
+        const meses = mesesAlvo
+            .map(({mes, ano, inicio, fim}) => {
+                const doMes = rows.filter((r) => {
+                    if (!r.periodo_inicio || !r.periodo_fim) return false;
+                    return r.periodo_inicio <= fim && r.periodo_fim >= inicio;
+                });
+                if (doMes.length === 0) return null;
+
+                const contasMap = new Map<
+                    number,
+                    {
+                        conta_id: number;
+                        conta_nome: string | null;
+                        extratos_pendentes: number;
+                        linhas_pendentes: number;
+                        dias_com_extrato: string[];
+                        dias_sem_extrato: string[];
+                    }
+                >();
+
+                for (const r of doMes) {
+                    const prev = contasMap.get(r.conta_id) ?? {
+                        conta_id: r.conta_id,
+                        conta_nome: r.conta_nome,
+                        extratos_pendentes: 0,
+                        linhas_pendentes: 0,
+                        dias_com_extrato: [] as string[],
+                        dias_sem_extrato: [] as string[],
+                    };
+                    prev.extratos_pendentes += 1;
+                    prev.linhas_pendentes += Number(r.resumo_pendentes ?? 0);
+                    contasMap.set(r.conta_id, prev);
+                }
+
+                const contas = [...contasMap.values()].map((c) => {
+                    const key = `${c.conta_id}:${ano}-${String(mes).padStart(2, "0")}`;
+                    const comExtrato = datasPorContaMes.get(key) ?? new Set<string>();
+                    const diasCom = [...comExtrato].sort();
+                    // Buracos: dias entre min e max cobertos sem linha
+                    const buracos: string[] = [];
+                    if (diasCom.length >= 2) {
+                        const cursor = new Date(diasCom[0]! + "T12:00:00Z");
+                        const end = new Date(diasCom[diasCom.length - 1]! + "T12:00:00Z");
+                        while (cursor < end) {
+                            cursor.setUTCDate(cursor.getUTCDate() + 1);
+                            const iso = cursor.toISOString().slice(0, 10);
+                            if (iso >= diasCom[diasCom.length - 1]!) break;
+                            if (!comExtrato.has(iso)) buracos.push(iso);
+                        }
+                    }
+                    return {
+                        ...c,
+                        dias_com_extrato: diasCom,
+                        dias_sem_extrato: buracos.slice(0, 31),
+                    };
+                });
+
+                return {
+                    mes,
+                    ano,
+                    extratos_pendentes: doMes.length,
+                    linhas_pendentes: doMes.reduce((s, r) => s + Number(r.resumo_pendentes ?? 0), 0),
+                    contas,
+                };
+            })
+            .filter((m): m is NonNullable<typeof m> => m !== null && m.extratos_pendentes > 0);
+
+        return successResponse(res, {meses});
+    } catch (e) {
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao consultar pendências do mês.", String(e));
+    }
+});
+
+/** FEAT-06: parâmetro motivo_ignorar_obrigatorio */
+router.get("/conciliacoes/parametros", async (_req, res) => {
+    try {
+        const obrigatorio = await getMotivoIgnorarObrigatorio();
+        return successResponse(res, {
+            motivo_ignorar_obrigatorio: obrigatorio,
+            motivos_predefinidos: MOTIVOS_IGNORAR_PREDEFINIDOS,
+        });
+    } catch (e) {
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao ler parâmetros.", String(e));
+    }
+});
+
+router.put("/conciliacoes/parametros", validateBody(parametrosBodySchema), async (req, res) => {
+    try {
+        const {motivo_ignorar_obrigatorio} = req.body as z.infer<typeof parametrosBodySchema>;
+        await db
+            .insert(parametrosSistemaTable)
+            .values({
+                chave: PARAM_MOTIVO_IGNORAR_OBRIGATORIO,
+                valor: motivo_ignorar_obrigatorio ? "true" : "false",
+                updated_at: new Date(),
+            })
+            .onConflictDoUpdate({
+                target: parametrosSistemaTable.chave,
+                set: {
+                    valor: motivo_ignorar_obrigatorio ? "true" : "false",
+                    updated_at: new Date(),
+                },
+            });
+        return successResponse(res, {motivo_ignorar_obrigatorio});
+    } catch (e) {
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao atualizar parâmetros.", String(e));
+    }
+});
+
+/** FEAT-08: dispara promoção pendente → atrasado (também roda no job periódico). */
+router.post("/conciliacoes/jobs/promover-atrasados", async (_req, res) => {
+    try {
+        const result = await promoverLancamentosAtrasados();
+        return successResponse(res, result);
+    } catch (e) {
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao promover atrasados.", String(e));
     }
 });
 
@@ -312,7 +571,7 @@ function enrichTransacoesComHash(
 
 async function parseExtratoUpload(req: {
     file?: { buffer: Buffer; originalname: string };
-}): Promise < 
+}): Promise<
     | { parsed: OFXParseResult }
     | { error: { status: number; code: string; message: string; detail?: string } }
 > {
@@ -794,59 +1053,102 @@ router.get("/conciliacoes/:extrato_id", async (req, res) => {
     }
 });
 
-router.post("/conciliacoes/linhas/:linha_id/ignorar", async (req, res) => {
-    try {
-        const linhaId = Number(req.params.linha_id);
-        const [item] = await db
-            .select({
-                id: itensConciliacaoTable.id,
-                conciliacao_id: itensConciliacaoTable.conciliacao_id,
-                extrato_linha_id: itensConciliacaoTable.extrato_linha_id,
-            })
-            .from(itensConciliacaoTable)
-            .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
-            .limit(1);
+router.post(
+    "/conciliacoes/linhas/:linha_id/ignorar",
+    validateBody(ignorarBodySchema),
+    async (req, res) => {
+        try {
+            const linhaId = Number(req.params.linha_id);
+            const body = req.body as z.infer<typeof ignorarBodySchema>;
+            const motivoObrigatorio = await getMotivoIgnorarObrigatorio();
 
-        if (!item) {
-            return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada para conciliação.");
-        }
+            if (motivoObrigatorio) {
+                const temCodigo = Boolean(body.motivo_codigo);
+                const temTexto = Boolean(body.motivo && body.motivo.length > 0);
+                if (!temCodigo && !temTexto) {
+                    return errorResponse(
+                        res,
+                        400,
+                        "VALIDATION_ERROR",
+                        "Motivo é obrigatório para ignorar (parâmetro motivo_ignorar_obrigatorio).",
+                    );
+                }
+            }
 
-        const [conciliacao] = await db
-            .select({extrato_id: conciliacoesTable.extrato_id})
-            .from(conciliacoesTable)
-            .where(eq(conciliacoesTable.id, item.conciliacao_id))
-            .limit(1);
-
-        if (!conciliacao) {
-            return errorResponse(res, 404, "NOT_FOUND", "Conciliação não encontrada.");
-        }
-
-        await db.transaction(async (tx) => {
-            await tx
-                .update(itensConciliacaoTable)
-                .set({
-                    status: "ignorado",
-                    updated_at: new Date(),
+            const [item] = await db
+                .select({
+                    id: itensConciliacaoTable.id,
+                    conciliacao_id: itensConciliacaoTable.conciliacao_id,
+                    extrato_linha_id: itensConciliacaoTable.extrato_linha_id,
+                    status: itensConciliacaoTable.status,
                 })
-                .where(eq(itensConciliacaoTable.id, item.id));
+                .from(itensConciliacaoTable)
+                .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
+                .limit(1);
 
-            await tx.insert(historicoConciliacaoTable).values({
-                conciliacao_id: item.conciliacao_id,
-                item_conciliacao_id: item.id,
-                usuario_id: req.user?.id,
-                acao: "ignorar",
-                detalhes: `Linha ${linhaId} marcada como ignorada.`,
+            if (!item) {
+                return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada para conciliação.");
+            }
+            if (item.status === "ignorado") {
+                return errorResponse(res, 400, "VALIDATION_ERROR", "A linha já está ignorada.");
+            }
+            if (item.status === "vinculado") {
+                return errorResponse(res, 400, "VALIDATION_ERROR", "Desfaça o vínculo antes de ignorar.");
+            }
+
+            const [conciliacao] = await db
+                .select({extrato_id: conciliacoesTable.extrato_id})
+                .from(conciliacoesTable)
+                .where(eq(conciliacoesTable.id, item.conciliacao_id))
+                .limit(1);
+
+            if (!conciliacao) {
+                return errorResponse(res, 404, "NOT_FOUND", "Conciliação não encontrada.");
+            }
+
+            const motivoTexto =
+                body.motivo ||
+                (body.motivo_codigo
+                    ? body.motivo_codigo.replace(/_/g, " ")
+                    : null);
+
+            await db.transaction(async (tx) => {
+                await tx
+                    .update(itensConciliacaoTable)
+                    .set({
+                        status: "ignorado",
+                        motivo_ignorar: motivoTexto,
+                        motivo_ignorar_codigo: body.motivo_codigo ?? null,
+                        data_conciliacao: hojeIsoLocal(),
+                        updated_at: new Date(),
+                    })
+                    .where(eq(itensConciliacaoTable.id, item.id));
+
+                await tx.insert(historicoConciliacaoTable).values({
+                    conciliacao_id: item.conciliacao_id,
+                    item_conciliacao_id: item.id,
+                    usuario_id: req.user?.id,
+                    acao: "ignorar",
+                    detalhes: JSON.stringify({
+                        linha_id: linhaId,
+                        motivo_codigo: body.motivo_codigo ?? null,
+                        motivo: motivoTexto,
+                    }),
+                });
+
+                await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
             });
 
-            await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
-        });
-
-        return successResponse(res, {linha_id: linhaId, status: "ignorado"});
-    } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao ignorar linha do extrato.", String(e));
-    }
-});
-
+            return successResponse(res, {
+                linha_id: linhaId,
+                status: "ignorado",
+                motivo_ignorar: motivoTexto,
+            });
+        } catch (e) {
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao ignorar linha do extrato.", String(e));
+        }
+    },
+);
 router.post(
     "/conciliacoes/linhas/:linha_id/vincular",
     validateBody(vincularBodySchema),
@@ -1021,6 +1323,7 @@ router.post(
                         status: "vinculado",
                         valor_vinculado_total: centsToDecimalString(totalConciliadoCents),
                         valor_saldo: centsToDecimalString(decision.valorSaldoCents),
+                        data_conciliacao: hojeIsoLocal(),
                         updated_at: new Date(),
                     })
                     .where(eq(itensConciliacaoTable.id, item.id));
@@ -1066,7 +1369,7 @@ router.post(
 /**
  * DEF-04: digitação manual de saldo_pos_linha quando o arquivo (CSV/OFX) não
  * trouxer essa informação. Não sobrescreve silenciosamente um valor já
- * capturado do arquivo — passe ?force=true para corrigir um valor existente.
+ * capturado do arquivo - passe ?force=true para corrigir um valor existente.
  */
 router.patch(
     "/conciliacoes/linhas/:linha_id/saldo",
@@ -1135,6 +1438,8 @@ router.post("/conciliacoes/:extrato_id/finalizar", async (req, res) => {
         }
 
         await db.transaction(async (tx) => {
+            const dataConciliacao = hojeIsoLocal();
+
             await tx
                 .update(extratosTable)
                 .set({status: "conciliado", updated_at: new Date()})
@@ -1142,18 +1447,37 @@ router.post("/conciliacoes/:extrato_id/finalizar", async (req, res) => {
 
             await tx
                 .update(conciliacoesTable)
-                .set({status: "conciliado", updated_at: new Date()})
+                .set({
+                    status: "conciliado",
+                    data_conciliacao: dataConciliacao,
+                    updated_at: new Date(),
+                })
                 .where(eq(conciliacoesTable.id, conciliacao.id));
+
+            // Espelha data nos itens ainda sem data (FEAT-08)
+            await tx
+                .update(itensConciliacaoTable)
+                .set({data_conciliacao: dataConciliacao, updated_at: new Date()})
+                .where(
+                    and(
+                        eq(itensConciliacaoTable.conciliacao_id, conciliacao.id),
+                        isNull(itensConciliacaoTable.data_conciliacao),
+                    ),
+                );
 
             await tx.insert(historicoConciliacaoTable).values({
                 conciliacao_id: conciliacao.id,
                 usuario_id: req.user?.id,
                 acao: "salvar",
-                detalhes: `Extrato ${extratoId} finalizado como conciliado.`,
+                detalhes: `Extrato ${extratoId} finalizado como conciliado em ${dataConciliacao}.`,
             });
         });
 
-        return successResponse(res, {extrato_id: extratoId, status: "conciliado"});
+        return successResponse(res, {
+            extrato_id: extratoId,
+            status: "conciliado",
+            data_conciliacao: hojeIsoLocal(),
+        });
     } catch (e) {
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao finalizar extrato.", String(e));
     }
@@ -1276,6 +1600,7 @@ router.delete("/conciliacoes/linhas/:linha_id/vinculos", async (req, res) => {
                     status: "pendente",
                     valor_vinculado_total: "0.00",
                     valor_saldo: item.valor_extrato,
+                    data_conciliacao: null,
                     updated_at: new Date(),
                 })
                 .where(eq(itensConciliacaoTable.id, item.id));
@@ -1326,7 +1651,13 @@ router.post("/conciliacoes/linhas/:linha_id/reverter-ignorar", async (req, res) 
         await db.transaction(async (tx) => {
             await tx
                 .update(itensConciliacaoTable)
-                .set({status: "pendente", updated_at: new Date()})
+                .set({
+                    status: "pendente",
+                    motivo_ignorar: null,
+                    motivo_ignorar_codigo: null,
+                    data_conciliacao: null,
+                    updated_at: new Date(),
+                })
                 .where(eq(itensConciliacaoTable.id, item.id));
 
             await tx.insert(historicoConciliacaoTable).values({

@@ -72,6 +72,7 @@ export const conciliacoesTable = pgTable("conciliacoes", {
     resumo_ignorados: integer("resumo_ignorados").default(0).notNull(),
     resumo_pendentes: integer("resumo_pendentes").default(0).notNull(),
     resumo_total: integer("resumo_total").default(0).notNull(),
+    data_conciliacao: date("data_conciliacao"),
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [
@@ -90,6 +91,9 @@ export const itensConciliacaoTable = pgTable("itens_conciliacao", {
     tipo_extrato: tipoMovimentoExtratoEnum("tipo_extrato").notNull(),
     descricao: text("descricao"),
     data: date("data"),
+    motivo_ignorar: text("motivo_ignorar"),
+    motivo_ignorar_codigo: text("motivo_ignorar_codigo"),
+    data_conciliacao: date("data_conciliacao"),
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [
