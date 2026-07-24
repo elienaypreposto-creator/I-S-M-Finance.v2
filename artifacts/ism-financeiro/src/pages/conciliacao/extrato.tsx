@@ -5,6 +5,8 @@ import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
 import {formatCurrency, formatDate, cn} from "@/lib/utils";
 import {VincularModal} from "@/components/conciliacao/vincular-modal";
+import {IgnorarLinhaModal, type MotivoIgnorarPayload} from "@/components/conciliacao/ignorar-linha-modal";
+import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {
     ArrowLeft,
     Loader2,
@@ -18,6 +20,8 @@ import {
     TrendingUp,
     TrendingDown,
     AlertTriangle,
+    RotateCcw,
+    Unlink,
 } from "lucide-react";
 import {invalidateRelated} from "@/App";
 
@@ -216,7 +220,7 @@ function PainelDiagnostico({diagnostico}: { diagnostico: DiagnosticoSaldo }) {
                         <AlertTriangle className="w-4 h-4 text-red-300 shrink-0 mt-0.5"/>
                     )}
                     <p className={cn("text-xs", saldo_inicial.bate ? "text-emerald-200" : "text-red-200")}>
-                        Fechamento de período: o saldo de abertura ({formatDate(saldo_inicial.data_referencia)}) 
+                        Fechamento de período: o saldo de abertura ({formatDate(saldo_inicial.data_referencia)})
                         {saldo_inicial.bate ? " bate " : " NÃO bate "}
                         com o fechamento do extrato anterior (#{saldo_inicial.extrato_anterior_id}). Sistema:{" "}
                         {formatCurrency(saldo_inicial.saldo_sistema)} · Extrato
@@ -235,6 +239,10 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     const {toast} = useToast();
 
     const [vincularLinha, setVincularLinha] = useState<{ id: number; valorAbs: string | number } | null>(null);
+    const [ignorarLinhaId, setIgnorarLinhaId] = useState<number | null>(null);
+    const [reverterLinhaId, setReverterLinhaId] = useState<number | null>(null);
+    const [desfazerLinhaId, setDesfazerLinhaId] = useState<number | null>(null);
+    const [finalizarOpen, setFinalizarOpen] = useState(false);
 
     const {data, isLoading, isError, refetch} = useQuery({
         queryKey: ["conciliacao-extrato", extratoId],
@@ -242,15 +250,28 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
         enabled: !!extratoId,
     });
 
+    const {data: parametros} = useQuery({
+        queryKey: ["conciliacoes-parametros"],
+        queryFn: () =>
+            fetchApiData<{
+                motivo_ignorar_obrigatorio: boolean;
+                motivos_predefinidos: string[];
+            }>("/conciliacoes/parametros"),
+        staleTime: 5 * 60_000,
+    });
+    const motivoObrigatorio = parametros?.motivo_ignorar_obrigatorio ?? false;
+
     const ignorarMutation = useMutation({
-        mutationFn: (linhaId: number) =>
+        mutationFn: ({linhaId, payload}: { linhaId: number; payload: MotivoIgnorarPayload }) =>
             fetchApiData<{ linha_id: number; status: string }>(`/conciliacoes/linhas/${linhaId}/ignorar`, {
                 method: "POST",
-                body: JSON.stringify({}),
+                body: JSON.stringify(payload),
             }),
         onSuccess: () => {
+            setIgnorarLinhaId(null);
             invalidateRelated(queryClient, "conciliacao");
             void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
+            void queryClient.invalidateQueries({queryKey: ["conciliacoes-pendencias-mes"]});
             toast({title: "Linha ignorada", description: "Esta movimentação foi marcada como ignorada."});
         },
         onError: (e: unknown) => {
@@ -266,6 +287,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                 {method: "POST", body: JSON.stringify({})},
             ),
         onSuccess: () => {
+            setReverterLinhaId(null);
             invalidateRelated(queryClient, "conciliacao");
             void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
             toast({title: "Ignorar revertido", description: "A linha voltou a pendente."});
@@ -282,6 +304,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                 method: "DELETE",
             }),
         onSuccess: () => {
+            setDesfazerLinhaId(null);
             invalidateRelated(queryClient, "conciliacao");
             void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
             toast({title: "Vínculos desfeitos", description: "A linha voltou a pendente."});
@@ -299,6 +322,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                 body: JSON.stringify({}),
             }),
         onSuccess: () => {
+            setFinalizarOpen(false);
             invalidateRelated(queryClient, "conciliacao");
             void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
             toast({title: "Extrato finalizado", description: "Conciliação concluída com sucesso."});
@@ -335,6 +359,56 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                     onSuccess={() => setVincularLinha(null)}
                 />
             )}
+
+            <IgnorarLinhaModal
+                open={ignorarLinhaId != null}
+                obrigatorio={motivoObrigatorio}
+                pending={ignorarMutation.isPending}
+                onClose={() => setIgnorarLinhaId(null)}
+                onConfirm={(payload) => {
+                    if (ignorarLinhaId == null) return;
+                    ignorarMutation.mutate({linhaId: ignorarLinhaId, payload});
+                }}
+            />
+
+            <ConfirmDialog
+                open={reverterLinhaId != null}
+                title="Reverter ignorar?"
+                description="A linha voltará ao status pendente e poderá ser vinculada novamente. Nenhum motivo é exigido."
+                confirmLabel="Reverter"
+                variant="warning"
+                icon={RotateCcw}
+                onCancel={() => setReverterLinhaId(null)}
+                onConfirm={() => {
+                    if (reverterLinhaId == null) return;
+                    reverterIgnorarMutation.mutate(reverterLinhaId);
+                }}
+            />
+
+            <ConfirmDialog
+                open={desfazerLinhaId != null}
+                title="Desfazer vínculos?"
+                description="Os lançamentos vinculados voltarão ao status anterior e a linha do extrato ficará pendente novamente."
+                confirmLabel="Desfazer vínculos"
+                variant="destructive"
+                icon={Unlink}
+                onCancel={() => setDesfazerLinhaId(null)}
+                onConfirm={() => {
+                    if (desfazerLinhaId == null) return;
+                    desfazerVinculosMutation.mutate(desfazerLinhaId);
+                }}
+            />
+
+            <ConfirmDialog
+                open={finalizarOpen}
+                title="Finalizar conciliação?"
+                description="Não pode haver linhas pendentes. Após concluir, o extrato será marcado como conciliado."
+                confirmLabel="Finalizar"
+                variant="default"
+                icon={CheckCircle2}
+                onCancel={() => setFinalizarOpen(false)}
+                onConfirm={() => finalizarMutation.mutate()}
+            />
 
             {isLoading ? (
                 <div className="glass-panel rounded-2xl p-16 flex flex-col items-center gap-3 border border-white/10">
@@ -420,9 +494,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                 disabled={!podeFinalizar || finalizarMutation.isPending || extrato.status === "conciliado"}
                                 onClick={() => {
                                     if (!podeFinalizar) return;
-                                    if (confirm("Finalizar conciliação deste extrato? Não poderá haver linhas pendentes.")) {
-                                        finalizarMutation.mutate();
-                                    }
+                                    setFinalizarOpen(true);
                                 }}
                                 className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-success hover:bg-success/90 text-white text-xs font-bold disabled:opacity-40 disabled:pointer-events-none shadow-lg shadow-success/20">
                                 {finalizarMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin"/> :
@@ -451,7 +523,13 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                 const isIgnorado = linha.status === "ignorado";
 
                                 return (
-                                    <div key={linha.linha_id} className="p-4 hover:bg-white/[0.02] transition-colors">
+                                    <div
+                                        key={linha.linha_id}
+                                        className={cn(
+                                            "p-4 hover:bg-white/[0.02] transition-colors",
+                                            isIgnorado && "opacity-45 grayscale-[0.35] bg-white/[0.015]",
+                                        )}
+                                    >
                                         <div className="flex flex-col xl:flex-row xl:items-stretch gap-4">
                                             <div className="flex-1 min-w-0 space-y-2">
                                                 <div className="flex flex-wrap items-center gap-2">
@@ -510,11 +588,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                         <button
                                                             type="button"
                                                             disabled={ignorarMutation.isPending}
-                                                            onClick={() => {
-                                                                if (confirm("Ignorar esta linha? Ela não será conciliada.")) {
-                                                                    ignorarMutation.mutate(linha.linha_id);
-                                                                }
-                                                            }}
+                                                            onClick={() => setIgnorarLinhaId(linha.linha_id)}
                                                             className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-xs font-semibold text-white/90">
                                                             <Ban className="w-3.5 h-3.5"/>
                                                             Ignorar
@@ -525,26 +599,20 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                     <button
                                                         type="button"
                                                         disabled={reverterIgnorarMutation.isPending}
-                                                        onClick={() => {
-                                                            if (confirm("Reverter ignorar? A linha voltará a pendente.")) {
-                                                                reverterIgnorarMutation.mutate(linha.linha_id);
-                                                            }
-                                                        }}
+                                                        onClick={() => setReverterLinhaId(linha.linha_id)}
                                                         className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-xs font-semibold text-amber-200">
-                                                        ↺ Reverter
+                                                        <RotateCcw className="w-3.5 h-3.5"/>
+                                                        Reverter
                                                     </button>
                                                 )}
                                                 {isVinculado && (
                                                     <button
                                                         type="button"
                                                         disabled={desfazerVinculosMutation.isPending}
-                                                        onClick={() => {
-                                                            if (confirm("Desfazer vínculos desta linha? Lançamentos voltarão ao status anterior.")) {
-                                                                desfazerVinculosMutation.mutate(linha.linha_id);
-                                                            }
-                                                        }}
+                                                        onClick={() => setDesfazerLinhaId(linha.linha_id)}
                                                         className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-xs font-semibold text-red-200">
-                                                        🗑 Desfazer vínculos
+                                                        <Unlink className="w-3.5 h-3.5"/>
+                                                        Desfazer vínculos
                                                     </button>
                                                 )}
                                             </div>
