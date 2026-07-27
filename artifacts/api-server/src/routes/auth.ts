@@ -132,7 +132,12 @@ router.post("/auth/login", async (req, res) => {
 
         return successResponse(
             res,
-            {accessToken, refreshToken, user: {id: usuario.id, nome: usuario.nome, email: usuario.email}},
+            {
+                accessToken,
+                refreshToken,
+                user: {id: usuario.id, nome: usuario.nome, email: usuario.email},
+                permissoes: permissions,
+            },
             {
                 tokenType: "Bearer",
                 accessTokenExpiresIn: "15m",

@@ -1,4 +1,4 @@
-import {useState, useEffect} from "react";
+import {useState, useEffect, useCallback} from "react";
 import {fetchApi, authStorage} from "@/lib/api-config";
 
 export type AuthUser = {
@@ -11,13 +11,22 @@ export type AuthUser = {
     ultimo_acesso?: string | null;
 };
 
+type MeResponse = {
+    data: {
+        user: AuthUser;
+        permissoes?: string[];
+    };
+};
+
 export function useAuth() {
     const [user, setUser] = useState<AuthUser | null>(null);
+    const [permissions, setPermissions] = useState<string[]>([]);
     const [loading, setLoading] = useState(true);
 
-    const login = (accessToken: string, refreshToken: string, userData: AuthUser) => {
+    const login = (accessToken: string, refreshToken: string, userData: AuthUser, perms: string[] = []) => {
         authStorage.setTokens(accessToken, refreshToken);
         setUser(userData);
+        setPermissions(perms);
     };
 
     const logout = async () => {
@@ -30,14 +39,23 @@ export function useAuth() {
                     body: JSON.stringify({refreshToken}),
                 });
             } catch {
-                // Best-effort: revoga no servidor quando possível, mas não bloqueia o logout local
+                // Best-effort
             }
         }
 
         authStorage.clearTokens();
         setUser(null);
+        setPermissions([]);
         window.location.href = "/login";
     };
+
+    const hasPermission = useCallback(
+        (permission: string) => {
+            if (!user) return false;
+            return permissions.includes("*") || permissions.includes(permission);
+        },
+        [user, permissions],
+    );
 
     useEffect(() => {
         const token = authStorage.getAccessToken();
@@ -46,19 +64,28 @@ export function useAuth() {
             return;
         }
 
-        fetchApi<{ data: { user: AuthUser } }>("/auth/me")
+        fetchApi<MeResponse>("/auth/me")
             .then((res) => {
                 if (res?.data?.user) {
                     setUser(res.data.user);
+                    setPermissions(Array.isArray(res.data.permissoes) ? res.data.permissoes : []);
                 }
             })
             .catch(() => {
-                // /auth/me falhou mesmo após tentativa de refresh — sessão inválida
                 authStorage.clearTokens();
                 setUser(null);
+                setPermissions([]);
             })
             .finally(() => setLoading(false));
     }, []);
 
-    return {user, loading, login, logout, isAuthenticated: !!user};
+    return {
+        user,
+        permissions,
+        loading,
+        login,
+        logout,
+        hasPermission,
+        isAuthenticated: !!user,
+    };
 }

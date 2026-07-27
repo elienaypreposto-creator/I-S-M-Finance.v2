@@ -1,4 +1,4 @@
-import {useEffect, useMemo, useRef} from "react";
+import {useEffect, useMemo, useRef, useState} from "react";
 import {useForm, useFieldArray, Controller, useWatch} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
@@ -13,7 +13,10 @@ import {
     type VincularFormValues,
 } from "@/validations/conciliacao-vincular.schema";
 import {formatValorBrInput, brMoneyDisplayToApiString} from "@/validations/lancamentos.schema";
-import {Loader2, X, Link2, AlertCircle, CheckCircle2} from "lucide-react";
+import {Loader2, X, Link2, AlertCircle, CheckCircle2, Pencil} from "lucide-react";
+import {useAuth} from "@/hooks/use-auth";
+import {PERM} from "@/lib/permissoes";
+import {EditarLancamentoConciliacaoModal} from "@/components/conciliacao/editar-lancamento-modal";
 
 export type LancamentoCompativel = {
     id: number;
@@ -69,6 +72,10 @@ function VincularFormBody({
 }) {
     const {toast} = useToast();
     const queryClient = useQueryClient();
+    const {hasPermission} = useAuth();
+    const canVincular = hasPermission(PERM.CONCILIACAO_VINCULAR);
+    const canEditarLancamento = hasPermission(PERM.LANCAMENTOS_EDITAR);
+    const [editarId, setEditarId] = useState<number | null>(null);
     /** Evita sobrescrever Juros/Multa se o usuário editou manualmente o valor. */
     const jurosManualRef = useRef<Set<number>>(new Set());
 
@@ -296,6 +303,16 @@ function VincularFormBody({
                                                     <p className="text-sm font-bold text-primary mt-0.5">
                                                         {formatCurrency(Number(l.valor))}
                                                     </p>
+                                                    {canEditarLancamento && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setEditarId(l.id)}
+                                                            className="mt-1 inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary"
+                                                        >
+                                                            <Pencil className="w-3 h-3"/>
+                                                            Corrigir lançamento
+                                                        </button>
+                                                    )}
                                                 </div>
                                             </div>
                                         )}
@@ -488,18 +505,35 @@ function VincularFormBody({
                     className="flex-1 py-2.5 rounded-xl border border-white/10 text-sm font-medium text-white hover:bg-white/5">
                     Cancelar
                 </button>
-                <button
-                    type="submit"
-                    disabled={vincularMutation.isPending || lancamentos.length === 0 || selectedItens.length === 0}
-                    className="flex-1 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
-                    {vincularMutation.isPending ? (
-                        <Loader2 className="w-4 h-4 animate-spin"/>
-                    ) : (
-                        <Link2 className="w-4 h-4"/>
-                    )}
-                    Confirmar vínculo
-                </button>
+                {canVincular && (
+                    <button
+                        type="submit"
+                        disabled={
+                            vincularMutation.isPending ||
+                            lancamentos.length === 0 ||
+                            selectedItens.length === 0
+                        }
+                        className="flex-1 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
+                        {vincularMutation.isPending ? (
+                            <Loader2 className="w-4 h-4 animate-spin"/>
+                        ) : (
+                            <Link2 className="w-4 h-4"/>
+                        )}
+                        Confirmar vínculo
+                    </button>
+                )}
             </div>
+
+            <EditarLancamentoConciliacaoModal
+                open={editarId != null}
+                lancamentoId={editarId}
+                onClose={() => setEditarId(null)}
+                onSaved={() => {
+                    void queryClient.invalidateQueries({
+                        queryKey: ["conciliacao-buscar-lancamentos", linhaId],
+                    });
+                }}
+            />
         </form>
     );
 }
