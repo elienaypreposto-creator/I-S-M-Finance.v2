@@ -6,7 +6,11 @@ import {fetchApiData} from "@/lib/api-config";
 import {formatCurrency, formatDate, cn} from "@/lib/utils";
 import {VincularModal} from "@/components/conciliacao/vincular-modal";
 import {IgnorarLinhaModal, type MotivoIgnorarPayload} from "@/components/conciliacao/ignorar-linha-modal";
+import {EditarLancamentoConciliacaoModal} from "@/components/conciliacao/editar-lancamento-modal";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
+import {RequiresPermission} from "@/components/auth/requires-permission";
+import {useAuth} from "@/hooks/use-auth";
+import {PERM} from "@/lib/permissoes";
 import {
     ArrowLeft,
     Loader2,
@@ -22,6 +26,7 @@ import {
     AlertTriangle,
     RotateCcw,
     Unlink,
+    Pencil,
 } from "lucide-react";
 import {invalidateRelated} from "@/App";
 
@@ -237,12 +242,19 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     const [, setLocation] = useLocation();
     const queryClient = useQueryClient();
     const {toast} = useToast();
+    const {hasPermission} = useAuth();
+
+    const canVincular = hasPermission(PERM.CONCILIACAO_VINCULAR);
+    const canIgnorar = hasPermission(PERM.CONCILIACAO_IGNORAR);
+    const canDesfazer = hasPermission(PERM.CONCILIACAO_DESFAZER);
+    const canEditarLancamento = hasPermission(PERM.LANCAMENTOS_EDITAR);
 
     const [vincularLinha, setVincularLinha] = useState<{ id: number; valorAbs: string | number } | null>(null);
     const [ignorarLinhaId, setIgnorarLinhaId] = useState<number | null>(null);
     const [reverterLinhaId, setReverterLinhaId] = useState<number | null>(null);
     const [desfazerLinhaId, setDesfazerLinhaId] = useState<number | null>(null);
     const [finalizarOpen, setFinalizarOpen] = useState(false);
+    const [editarLancamentoId, setEditarLancamentoId] = useState<number | null>(null);
 
     const {data, isLoading, isError, refetch} = useQuery({
         queryKey: ["conciliacao-extrato", extratoId],
@@ -410,6 +422,15 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                 onConfirm={() => finalizarMutation.mutate()}
             />
 
+            <EditarLancamentoConciliacaoModal
+                open={editarLancamentoId != null}
+                lancamentoId={editarLancamentoId}
+                onClose={() => setEditarLancamentoId(null)}
+                onSaved={() => {
+                    void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
+                }}
+            />
+
             {isLoading ? (
                 <div className="glass-panel rounded-2xl p-16 flex flex-col items-center gap-3 border border-white/10">
                     <Loader2 className="w-10 h-10 animate-spin text-primary"/>
@@ -489,18 +510,20 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                 </span>
                             </div>
                             <div className="flex-1"/>
-                            <button
-                                type="button"
-                                disabled={!podeFinalizar || finalizarMutation.isPending || extrato.status === "conciliado"}
-                                onClick={() => {
-                                    if (!podeFinalizar) return;
-                                    setFinalizarOpen(true);
-                                }}
-                                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-success hover:bg-success/90 text-white text-xs font-bold disabled:opacity-40 disabled:pointer-events-none shadow-lg shadow-success/20">
-                                {finalizarMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin"/> :
-                                    <CheckCircle2 className="w-4 h-4"/>}
-                                Finalizar conciliação
-                            </button>
+                            <RequiresPermission permission={PERM.CONCILIACAO_CONCLUIR}>
+                                <button
+                                    type="button"
+                                    disabled={!podeFinalizar || finalizarMutation.isPending || extrato.status === "conciliado"}
+                                    onClick={() => {
+                                        if (!podeFinalizar) return;
+                                        setFinalizarOpen(true);
+                                    }}
+                                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-success hover:bg-success/90 text-white text-xs font-bold disabled:opacity-40 disabled:pointer-events-none shadow-lg shadow-success/20">
+                                    {finalizarMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin"/> :
+                                        <CheckCircle2 className="w-4 h-4"/>}
+                                    Finalizar conciliação
+                                </button>
+                            </RequiresPermission>
                         </div>
                     </div>
 
@@ -575,27 +598,31 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                 className="flex flex-col sm:flex-row xl:flex-col gap-2 shrink-0 xl:w-56">
                                                 {isPendente && (
                                                     <>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => setVincularLinha({
-                                                                id: linha.linha_id,
-                                                                valorAbs
-                                                            })}
-                                                            className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-primary/90 hover:bg-primary text-primary-foreground text-xs font-bold shadow-md shadow-primary/20">
-                                                            <Link2 className="w-3.5 h-3.5"/>
-                                                            Vincular
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            disabled={ignorarMutation.isPending}
-                                                            onClick={() => setIgnorarLinhaId(linha.linha_id)}
-                                                            className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-xs font-semibold text-white/90">
-                                                            <Ban className="w-3.5 h-3.5"/>
-                                                            Ignorar
-                                                        </button>
+                                                        {canVincular && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setVincularLinha({
+                                                                    id: linha.linha_id,
+                                                                    valorAbs
+                                                                })}
+                                                                className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-primary/90 hover:bg-primary text-primary-foreground text-xs font-bold shadow-md shadow-primary/20">
+                                                                <Link2 className="w-3.5 h-3.5"/>
+                                                                Vincular
+                                                            </button>
+                                                        )}
+                                                        {canIgnorar && (
+                                                            <button
+                                                                type="button"
+                                                                disabled={ignorarMutation.isPending}
+                                                                onClick={() => setIgnorarLinhaId(linha.linha_id)}
+                                                                className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-xs font-semibold text-white/90">
+                                                                <Ban className="w-3.5 h-3.5"/>
+                                                                Ignorar
+                                                            </button>
+                                                        )}
                                                     </>
                                                 )}
-                                                {isIgnorado && (
+                                                {isIgnorado && canDesfazer && (
                                                     <button
                                                         type="button"
                                                         disabled={reverterIgnorarMutation.isPending}
@@ -605,7 +632,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                         Reverter
                                                     </button>
                                                 )}
-                                                {isVinculado && (
+                                                {isVinculado && canDesfazer && (
                                                     <button
                                                         type="button"
                                                         disabled={desfazerVinculosMutation.isPending}
@@ -654,6 +681,16 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                                     <span
                                                                         className="uppercase text-[9px]">{v.status}</span>
                                                                 </div>
+                                                                {canEditarLancamento && (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setEditarLancamentoId(v.lancamento_id)}
+                                                                        className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-emerald-300/80 hover:text-emerald-200"
+                                                                    >
+                                                                        <Pencil className="w-3 h-3"/>
+                                                                        Editar lançamento
+                                                                    </button>
+                                                                )}
                                                             </li>
                                                         ))}
                                                     </ul>

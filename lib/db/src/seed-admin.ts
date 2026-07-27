@@ -1,5 +1,5 @@
 /**
- * Seed — Usuário Administrador Padrão + Mapeamento Completo de Permissões
+ * Seed - Usuário Administrador Padrão + Mapeamento Completo de Permissões
  *
  * Execução:
  *   cd lib/db
@@ -22,6 +22,7 @@ const BCRYPT_ROUNDS = 12;
 const PERMISSOES_ADMIN: string[] = [
     "financeiro:lancamentos:criar",
     "financeiro:lancamentos:editar",
+    "financeiro:lancamentos:alterar_valor",
     "financeiro:lancamentos:deletar",
 
     "financeiro:parceiros:criar",
@@ -29,6 +30,14 @@ const PERMISSOES_ADMIN: string[] = [
     "financeiro:parceiros:deletar",
 
     "financeiro:metas:editar",
+
+    "financeiro:conciliacao:acessar",
+    "financeiro:conciliacao:importar",
+    "financeiro:conciliacao:vincular",
+    "financeiro:conciliacao:ignorar",
+    "financeiro:conciliacao:desfazer",
+    "financeiro:conciliacao:concluir",
+    "financeiro:conciliacao:configurar",
 
     "configuracoes:contas-bancarias:criar",
     "configuracoes:contas-bancarias:editar",
@@ -203,7 +212,7 @@ async function sincronizarPermissoes(adminId: number): Promise<void> {
 
     process.stdout.write(`    ${PERMISSOES_ADMIN.length} permissões inseridas com sucesso.\n`);
 
-    // Confirmação de leitura — garante que as permissões foram de facto persistidas
+    // Confirmação de leitura - garante que as permissões foram de facto persistidas
     const gravadas = await db
         .select({codigo: usuarioPermissoesTable.codigo_permissao})
         .from(usuarioPermissoesTable)

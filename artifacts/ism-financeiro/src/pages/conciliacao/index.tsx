@@ -5,6 +5,8 @@ import {PageHeader} from "@/components/shared/page-header";
 import {ApiEnvelope, fetchApi, fetchApiData} from "@/lib/api-config";
 import {formatDate, formatCurrency, cn} from "@/lib/utils";
 import {ImportExtratoModal} from "@/components/conciliacao/import-extrato-modal";
+import {RequiresPermission} from "@/components/auth/requires-permission";
+import {PERM} from "@/lib/permissoes";
 import {
     Loader2,
     AlertCircle,
@@ -275,14 +277,16 @@ export default function ConciliacaoList() {
                 title="Conciliação Bancária"
                 description="Extratos importados e progresso de vínculo com lançamentos"
                 actions={
-                    <button
-                        type="button"
-                        onClick={() => setImportOpen(true)}
-                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-semibold shadow-lg shadow-primary/25 transition-colors"
-                    >
-                        <Plus className="w-4 h-4"/>
-                        Importar extrato
-                    </button>
+                    <RequiresPermission permission={PERM.CONCILIACAO_IMPORTAR}>
+                        <button
+                            type="button"
+                            onClick={() => setImportOpen(true)}
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-semibold shadow-lg shadow-primary/25 transition-colors"
+                        >
+                            <Plus className="w-4 h-4"/>
+                            Importar extrato
+                        </button>
+                    </RequiresPermission>
                 }
             />
 

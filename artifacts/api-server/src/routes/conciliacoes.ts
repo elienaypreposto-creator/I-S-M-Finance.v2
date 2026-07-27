@@ -27,6 +27,8 @@ import {decidirVincular, statusAposQuitacao} from "../utils/conciliacao-vincular
 import {hashLinhaExtrato} from "../utils/extrato-hash";
 import {contasBancariasService} from "../domains/financial/contas-bancarias/contas-bancarias.service";
 import {promoverLancamentosAtrasados} from "../jobs/promover-atrasados";
+import {withPermission} from "../middlewares/withPermission";
+import {PERM} from "../constants/permissoes";
 
 const router = Router();
 const upload = multer({storage: multer.memoryStorage()});
@@ -519,38 +521,45 @@ router.get("/conciliacoes/parametros", async (_req, res) => {
     }
 });
 
-router.put("/conciliacoes/parametros", validateBody(parametrosBodySchema), async (req, res) => {
-    try {
-        const {motivo_ignorar_obrigatorio} = req.body as z.infer<typeof parametrosBodySchema>;
-        await db
-            .insert(parametrosSistemaTable)
-            .values({
-                chave: PARAM_MOTIVO_IGNORAR_OBRIGATORIO,
-                valor: motivo_ignorar_obrigatorio ? "true" : "false",
-                updated_at: new Date(),
-            })
-            .onConflictDoUpdate({
-                target: parametrosSistemaTable.chave,
-                set: {
+router.put(
+    "/conciliacoes/parametros",
+    withPermission(PERM.CONCILIACAO_CONFIGURAR),
+    validateBody(parametrosBodySchema),
+    async (req, res) => {
+        try {
+            const {motivo_ignorar_obrigatorio} = req.body as z.infer<typeof parametrosBodySchema>;
+            await db
+                .insert(parametrosSistemaTable)
+                .values({
+                    chave: PARAM_MOTIVO_IGNORAR_OBRIGATORIO,
                     valor: motivo_ignorar_obrigatorio ? "true" : "false",
                     updated_at: new Date(),
-                },
-            });
-        return successResponse(res, {motivo_ignorar_obrigatorio});
-    } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao atualizar parâmetros.", String(e));
-    }
-});
+                })
+                .onConflictDoUpdate({
+                    target: parametrosSistemaTable.chave,
+                    set: {
+                        valor: motivo_ignorar_obrigatorio ? "true" : "false",
+                        updated_at: new Date(),
+                    },
+                });
+            return successResponse(res, {motivo_ignorar_obrigatorio});
+        } catch (e) {
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao atualizar parâmetros.", String(e));
+        }
+    });
 
 /** FEAT-08: dispara promoção pendente → atrasado (também roda no job periódico). */
-router.post("/conciliacoes/jobs/promover-atrasados", async (_req, res) => {
-    try {
-        const result = await promoverLancamentosAtrasados();
-        return successResponse(res, result);
-    } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao promover atrasados.", String(e));
-    }
-});
+router.post(
+    "/conciliacoes/jobs/promover-atrasados",
+    withPermission(PERM.CONCILIACAO_CONFIGURAR),
+    async (_req, res) => {
+        try {
+            const result = await promoverLancamentosAtrasados();
+            return successResponse(res, result);
+        } catch (e) {
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao promover atrasados.", String(e));
+        }
+    });
 
 function enrichTransacoesComHash(
     contaId: number,
@@ -606,6 +615,7 @@ async function parseExtratoUpload(req: {
 /** Pré-análise sem persistir (DEF-02). */
 router.post(
     "/conciliacoes/pre-analise",
+    withPermission(PERM.CONCILIACAO_IMPORTAR),
     upload.single("arquivo"),
     validateBody(importarBodySchema),
     async (req, res) => {
@@ -685,6 +695,7 @@ router.post(
 
 router.post(
     "/conciliacoes/importar",
+    withPermission(PERM.CONCILIACAO_IMPORTAR),
     upload.single("arquivo"),
     validateBody(importarBodySchema),
     async (req, res) => {
@@ -1055,6 +1066,7 @@ router.get("/conciliacoes/:extrato_id", async (req, res) => {
 
 router.post(
     "/conciliacoes/linhas/:linha_id/ignorar",
+    withPermission(PERM.CONCILIACAO_IGNORAR),
     validateBody(ignorarBodySchema),
     async (req, res) => {
         try {
@@ -1151,6 +1163,7 @@ router.post(
 );
 router.post(
     "/conciliacoes/linhas/:linha_id/vincular",
+    withPermission(PERM.CONCILIACAO_VINCULAR),
     validateBody(vincularBodySchema),
     async (req, res) => {
         try {
@@ -1373,6 +1386,7 @@ router.post(
  */
 router.patch(
     "/conciliacoes/linhas/:linha_id/saldo",
+    withPermission(PERM.CONCILIACAO_VINCULAR),
     validateBody(saldoManualBodySchema),
     async (req, res) => {
         try {
@@ -1415,266 +1429,275 @@ router.patch(
     },
 );
 
-router.post("/conciliacoes/:extrato_id/finalizar", async (req, res) => {
-    try {
-        const extratoId = Number(req.params.extrato_id);
-        const [conciliacao] = await db
-            .select()
-            .from(conciliacoesTable)
-            .where(eq(conciliacoesTable.extrato_id, extratoId))
-            .limit(1);
+router.post(
+    "/conciliacoes/:extrato_id/finalizar",
+    withPermission(PERM.CONCILIACAO_CONCLUIR),
+    async (req, res) => {
+        try {
+            const extratoId = Number(req.params.extrato_id);
+            const [conciliacao] = await db
+                .select()
+                .from(conciliacoesTable)
+                .where(eq(conciliacoesTable.extrato_id, extratoId))
+                .limit(1);
 
-        if (!conciliacao) {
-            return errorResponse(res, 404, "NOT_FOUND", "Conciliação do extrato não encontrada.");
-        }
+            if (!conciliacao) {
+                return errorResponse(res, 404, "NOT_FOUND", "Conciliação do extrato não encontrada.");
+            }
 
-        const [pendente] = await db
-            .select({total: count()})
-            .from(itensConciliacaoTable)
-            .where(and(eq(itensConciliacaoTable.conciliacao_id, conciliacao.id), eq(itensConciliacaoTable.status, "pendente")));
+            const [pendente] = await db
+                .select({total: count()})
+                .from(itensConciliacaoTable)
+                .where(and(eq(itensConciliacaoTable.conciliacao_id, conciliacao.id), eq(itensConciliacaoTable.status, "pendente")));
 
-        if (Number(pendente.total) > 0) {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "Ainda existem linhas pendentes para conciliação.");
-        }
+            if (Number(pendente.total) > 0) {
+                return errorResponse(res, 400, "VALIDATION_ERROR", "Ainda existem linhas pendentes para conciliação.");
+            }
 
-        await db.transaction(async (tx) => {
-            const dataConciliacao = hojeIsoLocal();
+            await db.transaction(async (tx) => {
+                const dataConciliacao = hojeIsoLocal();
 
-            await tx
-                .update(extratosTable)
-                .set({status: "conciliado", updated_at: new Date()})
-                .where(eq(extratosTable.id, extratoId));
+                await tx
+                    .update(extratosTable)
+                    .set({status: "conciliado", updated_at: new Date()})
+                    .where(eq(extratosTable.id, extratoId));
 
-            await tx
-                .update(conciliacoesTable)
-                .set({
-                    status: "conciliado",
-                    data_conciliacao: dataConciliacao,
-                    updated_at: new Date(),
-                })
-                .where(eq(conciliacoesTable.id, conciliacao.id));
+                await tx
+                    .update(conciliacoesTable)
+                    .set({
+                        status: "conciliado",
+                        data_conciliacao: dataConciliacao,
+                        updated_at: new Date(),
+                    })
+                    .where(eq(conciliacoesTable.id, conciliacao.id));
 
-            // Espelha data nos itens ainda sem data (FEAT-08)
-            await tx
-                .update(itensConciliacaoTable)
-                .set({data_conciliacao: dataConciliacao, updated_at: new Date()})
-                .where(
-                    and(
-                        eq(itensConciliacaoTable.conciliacao_id, conciliacao.id),
-                        isNull(itensConciliacaoTable.data_conciliacao),
-                    ),
-                );
+                // Espelha data nos itens ainda sem data (FEAT-08)
+                await tx
+                    .update(itensConciliacaoTable)
+                    .set({data_conciliacao: dataConciliacao, updated_at: new Date()})
+                    .where(
+                        and(
+                            eq(itensConciliacaoTable.conciliacao_id, conciliacao.id),
+                            isNull(itensConciliacaoTable.data_conciliacao),
+                        ),
+                    );
 
-            await tx.insert(historicoConciliacaoTable).values({
-                conciliacao_id: conciliacao.id,
-                usuario_id: req.user?.id,
-                acao: "salvar",
-                detalhes: `Extrato ${extratoId} finalizado como conciliado em ${dataConciliacao}.`,
+                await tx.insert(historicoConciliacaoTable).values({
+                    conciliacao_id: conciliacao.id,
+                    usuario_id: req.user?.id,
+                    acao: "salvar",
+                    detalhes: `Extrato ${extratoId} finalizado como conciliado em ${dataConciliacao}.`,
+                });
             });
-        });
 
-        return successResponse(res, {
-            extrato_id: extratoId,
-            status: "conciliado",
-            data_conciliacao: hojeIsoLocal(),
-        });
-    } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao finalizar extrato.", String(e));
-    }
-});
+            return successResponse(res, {
+                extrato_id: extratoId,
+                status: "conciliado",
+                data_conciliacao: hojeIsoLocal(),
+            });
+        } catch (e) {
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao finalizar extrato.", String(e));
+        }
+    });
 
 /** DEF-09: desfazer todos os vínculos da linha. */
-router.delete("/conciliacoes/linhas/:linha_id/vinculos", async (req, res) => {
-    try {
-        const linhaId = Number(req.params.linha_id);
-        const [item] = await db
-            .select()
-            .from(itensConciliacaoTable)
-            .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
-            .limit(1);
+router.delete(
+    "/conciliacoes/linhas/:linha_id/vinculos",
+    withPermission(PERM.CONCILIACAO_DESFAZER),
+    async (req, res) => {
+        try {
+            const linhaId = Number(req.params.linha_id);
+            const [item] = await db
+                .select()
+                .from(itensConciliacaoTable)
+                .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
+                .limit(1);
 
-        if (!item) {
-            return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada para conciliação.");
-        }
-        if (item.status !== "vinculado") {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "A linha não está vinculada.");
-        }
+            if (!item) {
+                return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada para conciliação.");
+            }
+            if (item.status !== "vinculado") {
+                return errorResponse(res, 400, "VALIDATION_ERROR", "A linha não está vinculada.");
+            }
 
-        const [conciliacao] = await db
-            .select()
-            .from(conciliacoesTable)
-            .where(eq(conciliacoesTable.id, item.conciliacao_id))
-            .limit(1);
-        if (!conciliacao) {
-            return errorResponse(res, 404, "NOT_FOUND", "Conciliação não encontrada.");
-        }
+            const [conciliacao] = await db
+                .select()
+                .from(conciliacoesTable)
+                .where(eq(conciliacoesTable.id, item.conciliacao_id))
+                .limit(1);
+            if (!conciliacao) {
+                return errorResponse(res, 404, "NOT_FOUND", "Conciliação não encontrada.");
+            }
 
-        const vinculos = await db
-            .select()
-            .from(itensConciliacaoLancamentosTable)
-            .where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id));
+            const vinculos = await db
+                .select()
+                .from(itensConciliacaoLancamentosTable)
+                .where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id));
 
-        const residuos = await db
-            .select()
-            .from(lancamentosTable)
-            .where(
-                and(
-                    eq(lancamentosTable.is_residuo_parcial, true),
-                    inArray(
-                        lancamentosTable.lancamento_origem_id,
-                        vinculos.map((v) => v.lancamento_id).length > 0
-                            ? vinculos.map((v) => v.lancamento_id)
-                            : [-1],
+            const residuos = await db
+                .select()
+                .from(lancamentosTable)
+                .where(
+                    and(
+                        eq(lancamentosTable.is_residuo_parcial, true),
+                        inArray(
+                            lancamentosTable.lancamento_origem_id,
+                            vinculos.map((v) => v.lancamento_id).length > 0
+                                ? vinculos.map((v) => v.lancamento_id)
+                                : [-1],
+                        ),
                     ),
-                ),
-            );
-
-        const residuoQuitado = residuos.find(
-            (r) => r.status === "pago" || r.status === "recebido" || r.status === "pago_parcial",
-        );
-        if (residuoQuitado) {
-            return errorResponse(
-                res,
-                409,
-                "CONFLICT",
-                `Não é possível desfazer: o residual #${residuoQuitado.id} já foi quitado. Estorne o residual antes.`,
-            );
-        }
-
-        await db.transaction(async (tx) => {
-            for (const v of vinculos) {
-                const [lanc] = await tx
-                    .select()
-                    .from(lancamentosTable)
-                    .where(eq(lancamentosTable.id, v.lancamento_id))
-                    .limit(1);
-                if (!lanc) continue;
-
-                const quitadoNovo = Math.max(
-                    0,
-                    toCents(lanc.valor_quitado) - toCents(v.valor_vinculado),
                 );
-                const jurosNovo = Math.max(0, toCents(lanc.juros) - toCents(v.juros_multa));
-                const descontoNovo = Math.max(0, toCents(lanc.desconto) - toCents(v.desconto));
 
-                let novoStatus: "pendente" | "atrasado" | "pago_parcial" | "pago" | "recebido" =
-                    "pendente";
-                if (quitadoNovo > 0 && quitadoNovo < toCents(lanc.valor)) {
-                    novoStatus = "pago_parcial";
-                } else if (quitadoNovo >= toCents(lanc.valor) && toCents(lanc.valor) > 0) {
-                    novoStatus = lanc.tipo === "CR" ? "recebido" : "pago";
-                } else if (lanc.vencimento) {
-                    const hoje = new Date().toISOString().slice(0, 10);
-                    if (lanc.vencimento < hoje) novoStatus = "atrasado";
+            const residuoQuitado = residuos.find(
+                (r) => r.status === "pago" || r.status === "recebido" || r.status === "pago_parcial",
+            );
+            if (residuoQuitado) {
+                return errorResponse(
+                    res,
+                    409,
+                    "CONFLICT",
+                    `Não é possível desfazer: o residual #${residuoQuitado.id} já foi quitado. Estorne o residual antes.`,
+                );
+            }
+
+            await db.transaction(async (tx) => {
+                for (const v of vinculos) {
+                    const [lanc] = await tx
+                        .select()
+                        .from(lancamentosTable)
+                        .where(eq(lancamentosTable.id, v.lancamento_id))
+                        .limit(1);
+                    if (!lanc) continue;
+
+                    const quitadoNovo = Math.max(
+                        0,
+                        toCents(lanc.valor_quitado) - toCents(v.valor_vinculado),
+                    );
+                    const jurosNovo = Math.max(0, toCents(lanc.juros) - toCents(v.juros_multa));
+                    const descontoNovo = Math.max(0, toCents(lanc.desconto) - toCents(v.desconto));
+
+                    let novoStatus: "pendente" | "atrasado" | "pago_parcial" | "pago" | "recebido" =
+                        "pendente";
+                    if (quitadoNovo > 0 && quitadoNovo < toCents(lanc.valor)) {
+                        novoStatus = "pago_parcial";
+                    } else if (quitadoNovo >= toCents(lanc.valor) && toCents(lanc.valor) > 0) {
+                        novoStatus = lanc.tipo === "CR" ? "recebido" : "pago";
+                    } else if (lanc.vencimento) {
+                        const hoje = new Date().toISOString().slice(0, 10);
+                        if (lanc.vencimento < hoje) novoStatus = "atrasado";
+                    }
+
+                    await tx
+                        .update(lancamentosTable)
+                        .set({
+                            status: novoStatus,
+                            valor_quitado: quitadoNovo > 0 ? centsToDecimalString(quitadoNovo) : null,
+                            data_quitacao: quitadoNovo > 0 ? lanc.data_quitacao : null,
+                            juros: centsToDecimalString(jurosNovo),
+                            desconto: centsToDecimalString(descontoNovo),
+                            updated_at: new Date(),
+                        })
+                        .where(eq(lancamentosTable.id, lanc.id));
+                }
+
+                if (residuos.length > 0) {
+                    await tx.delete(lancamentosTable).where(
+                        inArray(
+                            lancamentosTable.id,
+                            residuos.map((r) => r.id),
+                        ),
+                    );
                 }
 
                 await tx
-                    .update(lancamentosTable)
+                    .delete(itensConciliacaoLancamentosTable)
+                    .where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id));
+
+                await tx
+                    .update(itensConciliacaoTable)
                     .set({
-                        status: novoStatus,
-                        valor_quitado: quitadoNovo > 0 ? centsToDecimalString(quitadoNovo) : null,
-                        data_quitacao: quitadoNovo > 0 ? lanc.data_quitacao : null,
-                        juros: centsToDecimalString(jurosNovo),
-                        desconto: centsToDecimalString(descontoNovo),
+                        status: "pendente",
+                        valor_vinculado_total: "0.00",
+                        valor_saldo: item.valor_extrato,
+                        data_conciliacao: null,
                         updated_at: new Date(),
                     })
-                    .where(eq(lancamentosTable.id, lanc.id));
-            }
+                    .where(eq(itensConciliacaoTable.id, item.id));
 
-            if (residuos.length > 0) {
-                await tx.delete(lancamentosTable).where(
-                    inArray(
-                        lancamentosTable.id,
-                        residuos.map((r) => r.id),
-                    ),
-                );
-            }
+                await tx.insert(historicoConciliacaoTable).values({
+                    conciliacao_id: item.conciliacao_id,
+                    item_conciliacao_id: item.id,
+                    usuario_id: req.user?.id,
+                    acao: "desfazer_vinculo",
+                    detalhes: JSON.stringify({linha_id: linhaId, vinculos_removidos: vinculos.length}),
+                });
 
-            await tx
-                .delete(itensConciliacaoLancamentosTable)
-                .where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id));
-
-            await tx
-                .update(itensConciliacaoTable)
-                .set({
-                    status: "pendente",
-                    valor_vinculado_total: "0.00",
-                    valor_saldo: item.valor_extrato,
-                    data_conciliacao: null,
-                    updated_at: new Date(),
-                })
-                .where(eq(itensConciliacaoTable.id, item.id));
-
-            await tx.insert(historicoConciliacaoTable).values({
-                conciliacao_id: item.conciliacao_id,
-                item_conciliacao_id: item.id,
-                usuario_id: req.user?.id,
-                acao: "desfazer_vinculo",
-                detalhes: JSON.stringify({linha_id: linhaId, vinculos_removidos: vinculos.length}),
+                await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
             });
 
-            await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
-        });
-
-        return successResponse(res, {linha_id: linhaId, status: "pendente"});
-    } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao desfazer vínculos da linha.", String(e));
-    }
-});
+            return successResponse(res, {linha_id: linhaId, status: "pendente"});
+        } catch (e) {
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao desfazer vínculos da linha.", String(e));
+        }
+    });
 
 /** DEF-09: reverter linha ignorada (nunca exige motivo - RN-H5). */
-router.post("/conciliacoes/linhas/:linha_id/reverter-ignorar", async (req, res) => {
-    try {
-        const linhaId = Number(req.params.linha_id);
-        const [item] = await db
-            .select()
-            .from(itensConciliacaoTable)
-            .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
-            .limit(1);
+router.post(
+    "/conciliacoes/linhas/:linha_id/reverter-ignorar",
+    withPermission(PERM.CONCILIACAO_DESFAZER),
+    async (req, res) => {
+        try {
+            const linhaId = Number(req.params.linha_id);
+            const [item] = await db
+                .select()
+                .from(itensConciliacaoTable)
+                .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
+                .limit(1);
 
-        if (!item) {
-            return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada para conciliação.");
-        }
-        if (item.status !== "ignorado") {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "A linha não está ignorada.");
-        }
+            if (!item) {
+                return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada para conciliação.");
+            }
+            if (item.status !== "ignorado") {
+                return errorResponse(res, 400, "VALIDATION_ERROR", "A linha não está ignorada.");
+            }
 
-        const [conciliacao] = await db
-            .select()
-            .from(conciliacoesTable)
-            .where(eq(conciliacoesTable.id, item.conciliacao_id))
-            .limit(1);
-        if (!conciliacao) {
-            return errorResponse(res, 404, "NOT_FOUND", "Conciliação não encontrada.");
-        }
+            const [conciliacao] = await db
+                .select()
+                .from(conciliacoesTable)
+                .where(eq(conciliacoesTable.id, item.conciliacao_id))
+                .limit(1);
+            if (!conciliacao) {
+                return errorResponse(res, 404, "NOT_FOUND", "Conciliação não encontrada.");
+            }
 
-        await db.transaction(async (tx) => {
-            await tx
-                .update(itensConciliacaoTable)
-                .set({
-                    status: "pendente",
-                    motivo_ignorar: null,
-                    motivo_ignorar_codigo: null,
-                    data_conciliacao: null,
-                    updated_at: new Date(),
-                })
-                .where(eq(itensConciliacaoTable.id, item.id));
+            await db.transaction(async (tx) => {
+                await tx
+                    .update(itensConciliacaoTable)
+                    .set({
+                        status: "pendente",
+                        motivo_ignorar: null,
+                        motivo_ignorar_codigo: null,
+                        data_conciliacao: null,
+                        updated_at: new Date(),
+                    })
+                    .where(eq(itensConciliacaoTable.id, item.id));
 
-            await tx.insert(historicoConciliacaoTable).values({
-                conciliacao_id: item.conciliacao_id,
-                item_conciliacao_id: item.id,
-                usuario_id: req.user?.id,
-                acao: "desfazer_vinculo",
-                detalhes: JSON.stringify({linha_id: linhaId, acao: "reverter_ignorar"}),
+                await tx.insert(historicoConciliacaoTable).values({
+                    conciliacao_id: item.conciliacao_id,
+                    item_conciliacao_id: item.id,
+                    usuario_id: req.user?.id,
+                    acao: "desfazer_vinculo",
+                    detalhes: JSON.stringify({linha_id: linhaId, acao: "reverter_ignorar"}),
+                });
+
+                await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
             });
 
-            await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
-        });
-
-        return successResponse(res, {linha_id: linhaId, status: "pendente"});
-    } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao reverter ignorar da linha.", String(e));
-    }
-});
+            return successResponse(res, {linha_id: linhaId, status: "pendente"});
+        } catch (e) {
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao reverter ignorar da linha.", String(e));
+        }
+    });
 
 export default router;

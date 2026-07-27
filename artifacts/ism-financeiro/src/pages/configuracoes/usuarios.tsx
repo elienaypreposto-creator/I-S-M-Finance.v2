@@ -141,8 +141,12 @@ const permissoesGranulares = [
         grupo: "Conciliação Bancária",
         itens: [
             {nome: "Conciliação Bancária", codigo: "financeiro:conciliacao:acessar"},
-            {nome: "Conciliação Bancária - Conciliar Transações", codigo: "financeiro:conciliacao:conciliar"},
-            {nome: "Conciliação Bancária - Importar Arquivo", codigo: "financeiro:conciliacao:importar"},
+            {nome: "Conciliação - Importar Extrato", codigo: "financeiro:conciliacao:importar"},
+            {nome: "Conciliação - Vincular", codigo: "financeiro:conciliacao:vincular"},
+            {nome: "Conciliação - Ignorar", codigo: "financeiro:conciliacao:ignorar"},
+            {nome: "Conciliação - Desfazer / Reverter", codigo: "financeiro:conciliacao:desfazer"},
+            {nome: "Conciliação - Concluir / Finalizar", codigo: "financeiro:conciliacao:concluir"},
+            {nome: "Conciliação - Configurar / Jobs", codigo: "financeiro:conciliacao:configurar"},
         ],
     },
     {
@@ -189,6 +193,8 @@ const permissoesGranulares = [
         itens: [
             {nome: "Cadastro de Movimentação Financeira", codigo: "financeiro:lancamentos:criar"},
             {nome: "Consulta de Movimentação Financeira", codigo: "financeiro:lancamentos:listar"},
+            {nome: "Edição de Movimentação Financeira", codigo: "financeiro:lancamentos:editar"},
+            {nome: "Alterar valor de lançamento", codigo: "financeiro:lancamentos:alterar_valor"},
             {nome: "Exclusão de Movimentação Financeira", codigo: "financeiro:lancamentos:deletar"},
         ],
     },
@@ -213,9 +219,14 @@ const perfisBase: Record<string, string[]> = {
         "dashboard:ver", "relatorios:extrato", "relatorios:fluxo-caixa-mensal", "relatorios:dre",
         "financeiro:contas-pagar:criar", "financeiro:contas-pagar:listar", "financeiro:contas-pagar:baixar",
         "financeiro:contas-receber:criar", "financeiro:contas-receber:listar", "financeiro:contas-receber:baixar",
-        "financeiro:conciliacao:acessar", "financeiro:conciliacao:conciliar",
+        "financeiro:conciliacao:acessar",
+        "financeiro:conciliacao:importar",
+        "financeiro:conciliacao:vincular",
+        "financeiro:conciliacao:ignorar",
+        "financeiro:conciliacao:desfazer",
+        "financeiro:conciliacao:concluir",
         "configuracoes:contas-bancarias:listar", "financeiro:parceiros:listar", "configuracoes:plano-contas:listar",
-        "financeiro:lancamentos:criar", "financeiro:lancamentos:listar",
+        "financeiro:lancamentos:criar", "financeiro:lancamentos:listar", "financeiro:lancamentos:editar",
         "financeiro:metas:criar", "financeiro:metas:listar",
     ],
     Gestor: [
@@ -673,7 +684,7 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
                             </div>
                         </div>
 
-                        {/* Nota informativa sobre credenciais de acesso — apenas na criação */}
+                        {/* Nota informativa sobre credenciais de acesso - apenas na criação */}
                         {!isEdit && (
                             <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-2">
                                 <div className="flex items-center gap-2">
