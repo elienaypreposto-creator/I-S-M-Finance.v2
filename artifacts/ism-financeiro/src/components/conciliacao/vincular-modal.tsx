@@ -13,7 +13,7 @@ import {
     type VincularFormValues,
 } from "@/validations/conciliacao-vincular.schema";
 import {formatValorBrInput, brMoneyDisplayToApiString} from "@/validations/lancamentos.schema";
-import {Loader2, X, Link2, AlertCircle, CheckCircle2, Pencil} from "lucide-react";
+import {Loader2, X, Link2, AlertCircle, CheckCircle2, Pencil, Search} from "lucide-react";
 import {useAuth} from "@/hooks/use-auth";
 import {PERM} from "@/lib/permissoes";
 import {EditarLancamentoConciliacaoModal} from "@/components/conciliacao/editar-lancamento-modal";
@@ -26,6 +26,8 @@ export type LancamentoCompativel = {
     valor: string | number;
     status: string;
     parceiro_id: number | null;
+    /** Nome do parceiro - usado na busca livre (RN-D4) e exibido no card. */
+    parceiro_nome?: string | null;
     plano_conta_id: number | null;
 };
 
@@ -43,6 +45,10 @@ type VincularPayload = {
     gerar_parcial: boolean;
     residuo_lancamento_id?: number;
 };
+
+const DIAS_JANELA_INICIAL = 14;
+const DIAS_JANELA_INCREMENTO = 14;
+const DIAS_JANELA_MAXIMA = 90;
 
 function centsToBrDisplay(cents: number): string {
     const abs = Math.abs(cents);
@@ -62,6 +68,9 @@ function VincularFormBody({
                               lancamentos,
                               onClose,
                               onSuccess,
+                              onBuscarMais,
+                              buscandoMais,
+                              podeBuscarMais,
                           }: {
     extratoId: string;
     linhaId: number;
@@ -69,6 +78,9 @@ function VincularFormBody({
     lancamentos: LancamentoCompativel[];
     onClose: () => void;
     onSuccess: () => void;
+    onBuscarMais: () => void;
+    buscandoMais: boolean;
+    podeBuscarMais: boolean;
 }) {
     const {toast} = useToast();
     const queryClient = useQueryClient();
@@ -100,7 +112,8 @@ function VincularFormBody({
                 desconto: "",
                 juros_multa: "",
             })),
-        [lancamentos],
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [],
     );
 
     const form = useForm<VincularFormValues>({
@@ -113,7 +126,7 @@ function VincularFormBody({
         mode: "onChange",
     });
 
-    const {fields} = useFieldArray({control: form.control, name: "itens"});
+    const {fields, append} = useFieldArray({control: form.control, name: "itens"});
 
     const {
         handleSubmit,
@@ -121,6 +134,24 @@ function VincularFormBody({
         setValue,
         formState: {errors},
     } = form;
+
+    // RN-D4: quando "buscar mais lançamentos" traz itens novos, adiciona sem
+    // resetar o formulário (preserva seleções e valores já digitados).
+    useEffect(() => {
+        const idsNoForm = new Set(fields.map((f) => f.lancamento_id));
+        const novos = lancamentos.filter((l) => !idsNoForm.has(l.id));
+        if (novos.length > 0) {
+            append(
+                novos.map((l) => ({
+                    lancamento_id: l.id,
+                    selecionado: false,
+                    desconto: "",
+                    juros_multa: "",
+                })),
+            );
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [lancamentos]);
 
     const watchedItens = useWatch({control, name: "itens"}) ?? [];
     const gerarParcial = useWatch({control, name: "gerar_parcial"}) ?? false;
@@ -149,6 +180,7 @@ function VincularFormBody({
         (deltaCents === 0 || (deltaCents > 0 && coberturaCents === 0));
 
     // Auto-preenche Juros/Multa quando há sobra e exatamente 1 lançamento selecionado
+    // - o usuário não precisa fazer a conta na mão (RN-G2).
     useEffect(() => {
         if (deltaCents == null || selectedItens.length === 0) return;
 
@@ -300,6 +332,11 @@ function VincularFormBody({
                                                         title={l.descricao ?? ""}>
                                                         {l.descricao ?? "—"}
                                                     </p>
+                                                    {l.parceiro_nome && (
+                                                        <p className="text-[11px] text-muted-foreground truncate">
+                                                            {l.parceiro_nome}
+                                                        </p>
+                                                    )}
                                                     <p className="text-sm font-bold text-primary mt-0.5">
                                                         {formatCurrency(Number(l.valor))}
                                                     </p>
@@ -429,6 +466,9 @@ function VincularFormBody({
                             Falta {formatCurrency(toMoney(Math.abs(deltaCents ?? 0)))} para atingir o valor do
                             extrato
                         </p>
+                        {/* RN-G3: rótulo exato "Gerar movimentação residual" - só aparece
+                            quando a soma dos lançamentos selecionados é menor que a
+                            referência (extrato). */}
                         <Controller
                             name="gerar_parcial"
                             control={control}
@@ -446,7 +486,8 @@ function VincularFormBody({
                                         <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
                                             Cria lançamento pendente
                                             de {formatCurrency(toMoney(Math.abs(deltaCents ?? 0)))}{" "}
-                                            (pagamento parcial), com vencimento da origem.
+                                            (pagamento parcial), com vencimento da origem — editável depois,
+                                            no card do lançamento.
                                         </p>
                                     </div>
                                 </label>
@@ -496,6 +537,24 @@ function VincularFormBody({
                         </p>
                     </div>
                 ) : null}
+
+                {/* RN-D4: busca mais lançamentos enquanto o valor não bate; some assim que bater */}
+                {!valoresBatendo && podeBuscarMais && (
+                    <div className="flex justify-center">
+                        <button
+                            type="button"
+                            onClick={onBuscarMais}
+                            disabled={buscandoMais}
+                            className="text-[11px] font-semibold text-primary hover:text-primary/80 underline underline-offset-2 disabled:opacity-40 disabled:no-underline flex items-center gap-1.5">
+                            {buscandoMais ? (
+                                <Loader2 className="w-3 h-3 animate-spin"/>
+                            ) : (
+                                <Search className="w-3 h-3"/>
+                            )}
+                            Buscar mais lançamentos compatíveis
+                        </button>
+                    </div>
+                )}
             </div>
 
             <div className="flex gap-3 p-5 border-t border-white/5 shrink-0">
@@ -546,18 +605,50 @@ export function VincularModal({
                                   valorExtratoAbs,
                                   onSuccess,
                               }: VincularModalProps) {
-    const {data: lancamentos = [], isLoading} = useQuery<LancamentoCompativel[]>({
-        queryKey: ["conciliacao-buscar-lancamentos", linhaId],
-        queryFn: () =>
-            fetchApiData<LancamentoCompativel[]>(
-                `/conciliacoes/buscar-lancamentos?linha_id=${linhaId}&dias_janela=14`,
-            ),
+    const [diasJanela, setDiasJanela] = useState(DIAS_JANELA_INICIAL);
+    // RN-D4: campos de busca manual — descrição/parceiro (texto livre) e valor,
+    // além da janela de datas. "buscaAtiva"/"valorAtivo" só mudam ao clicar em
+    // Buscar, para não disparar uma requisição a cada tecla digitada.
+    const [buscaTexto, setBuscaTexto] = useState("");
+    const [buscaAtiva, setBuscaAtiva] = useState("");
+    const [valorTexto, setValorTexto] = useState("");
+    const [valorAtivo, setValorAtivo] = useState("");
+
+    // Reseta a janela/busca sempre que uma linha diferente é aberta.
+    useEffect(() => {
+        setDiasJanela(DIAS_JANELA_INICIAL);
+        setBuscaTexto("");
+        setBuscaAtiva("");
+        setValorTexto("");
+        setValorAtivo("");
+    }, [linhaId]);
+
+    const {data: lancamentos = [], isLoading, isFetching} = useQuery<LancamentoCompativel[]>({
+        queryKey: ["conciliacao-buscar-lancamentos", linhaId, diasJanela, buscaAtiva, valorAtivo],
+        queryFn: () => {
+            const params = new URLSearchParams({
+                linha_id: String(linhaId),
+                dias_janela: String(diasJanela),
+            });
+            if (buscaAtiva) params.set("busca", buscaAtiva);
+            if (valorAtivo) params.set("valor", valorAtivo);
+            return fetchApiData<LancamentoCompativel[]>(`/conciliacoes/buscar-lancamentos?${params.toString()}`);
+        },
         enabled: open && linhaId > 0,
     });
 
     if (!open) return null;
 
-    const formMountKey = `${linhaId}-${lancamentos.map((x) => x.id).join(",")}`;
+    const podeBuscarMais = diasJanela < DIAS_JANELA_MAXIMA;
+    const handleBuscarMais = () => {
+        setDiasJanela((d) => Math.min(DIAS_JANELA_MAXIMA, d + DIAS_JANELA_INCREMENTO));
+    };
+
+    const handleAplicarBusca = () => {
+        setBuscaAtiva(buscaTexto.trim());
+        const valorNormalizado = brMoneyDisplayToApiString(valorTexto) || "";
+        setValorAtivo(valorNormalizado && valorNormalizado !== "0.00" ? valorNormalizado : "");
+    };
 
     return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 backdrop-blur-md p-4">
@@ -583,6 +674,63 @@ export function VincularModal({
                     </button>
                 </div>
 
+                {/* RN-D4: janela de busca configurável + busca por descrição/parceiro/valor,
+                    em vez de depender só da proximidade de data. */}
+                <div className="px-5 pt-4 pb-2 border-b border-white/5 shrink-0 space-y-2">
+                    <div className="flex flex-wrap items-end gap-2">
+                        <div className="flex flex-col gap-1">
+                            <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                Janela de busca
+                            </span>
+                            <select
+                                value={diasJanela}
+                                onChange={(e) => setDiasJanela(Number(e.target.value))}
+                                className="bg-[#1a1c23] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-primary/50">
+                                <option value={14}>± 14 dias</option>
+                                <option value={30}>± 30 dias</option>
+                                <option value={60}>± 60 dias</option>
+                                <option value={90}>± 90 dias</option>
+                            </select>
+                        </div>
+                        <div className="flex flex-col gap-1 flex-1 min-w-[160px]">
+                            <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                Descrição ou parceiro
+                            </span>
+                            <input
+                                type="text"
+                                value={buscaTexto}
+                                onChange={(e) => setBuscaTexto(e.target.value)}
+                                onKeyDown={(e) => e.key === "Enter" && handleAplicarBusca()}
+                                placeholder="Ex.: aluguel, fornecedor…"
+                                className="bg-[#1a1c23] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-primary/50"
+                            />
+                        </div>
+                        <div className="flex flex-col gap-1 w-32">
+                            <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                Valor
+                            </span>
+                            <input
+                                type="text"
+                                inputMode="numeric"
+                                value={valorTexto}
+                                onChange={(e) => setValorTexto(formatValorBrInput(e.target.value))}
+                                onKeyDown={(e) => e.key === "Enter" && handleAplicarBusca()}
+                                placeholder="0,00"
+                                className="bg-[#1a1c23] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-primary/50"
+                            />
+                        </div>
+                        <button
+                            type="button"
+                            onClick={handleAplicarBusca}
+                            disabled={isFetching}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/90 hover:bg-primary text-primary-foreground text-xs font-semibold disabled:opacity-50">
+                            {isFetching ? <Loader2 className="w-3.5 h-3.5 animate-spin"/> :
+                                <Search className="w-3.5 h-3.5"/>}
+                            Buscar
+                        </button>
+                    </div>
+                </div>
+
                 {isLoading ? (
                     <div className="py-16 flex flex-col items-center gap-2 text-muted-foreground">
                         <Loader2 className="w-8 h-8 animate-spin text-primary"/>
@@ -590,9 +738,23 @@ export function VincularModal({
                     </div>
                 ) : lancamentos.length === 0 ? (
                     <div className="py-12 px-5 text-center text-xs text-muted-foreground">
-                        Nenhum lançamento compatível encontrado na janela de datas. Ajuste os cadastros ou
-                        importe lançamentos.
-                        <div className="mt-4">
+                        Nenhum lançamento compatível encontrado. Amplie a janela de datas ou busque por
+                        descrição, parceiro ou valor.
+                        <div className="mt-4 flex items-center justify-center gap-3">
+                            {podeBuscarMais && (
+                                <button
+                                    type="button"
+                                    onClick={handleBuscarMais}
+                                    disabled={isFetching}
+                                    className="px-4 py-2 rounded-xl border border-white/10 text-sm text-primary hover:bg-white/5 flex items-center gap-2 disabled:opacity-50">
+                                    {isFetching ? (
+                                        <Loader2 className="w-4 h-4 animate-spin"/>
+                                    ) : (
+                                        <Search className="w-4 h-4"/>
+                                    )}
+                                    Ampliar janela de busca
+                                </button>
+                            )}
                             <button
                                 type="button"
                                 onClick={onClose}
@@ -603,13 +765,16 @@ export function VincularModal({
                     </div>
                 ) : (
                     <VincularFormBody
-                        key={formMountKey}
+                        key={String(linhaId)}
                         extratoId={extratoId}
                         linhaId={linhaId}
                         valorExtratoAbs={valorExtratoAbs}
                         lancamentos={lancamentos}
                         onClose={onClose}
                         onSuccess={onSuccess}
+                        onBuscarMais={handleBuscarMais}
+                        buscandoMais={isFetching}
+                        podeBuscarMais={podeBuscarMais}
                     />
                 )}
             </div>
