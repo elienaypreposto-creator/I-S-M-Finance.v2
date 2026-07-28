@@ -2,7 +2,7 @@ import {pool} from "./src/index";
 
 async function grantAdmin() {
     const args = process.argv.slice(2);
-    const emails = args.length > 0 ? args : ["vinicosta37@gmail.com"];
+    const emails = args.length > 0 ? args : ["vinicosta37@gmail.com", "ismteste@gmail.com"];
 
 
     const permissoesBackend = [
@@ -25,6 +25,7 @@ async function grantAdmin() {
     const permissoesUI = [
         "dashboard:ver", "relatorios:dre", "relatorios:fluxo-caixa-diario", "relatorios:fluxo-caixa-mensal",
         "relatorios:economico", "relatorios:financeiro", "relatorios:vencimento", "relatorios:extrato", "relatorios:metas",
+        "relatorios:conciliacao",
         "financeiro:contas-pagar:criar", "financeiro:contas-pagar:listar", "financeiro:contas-pagar:baixar", "financeiro:contas-pagar:cancelar", "financeiro:importar",
         "financeiro:contas-receber:criar", "financeiro:contas-receber:listar", "financeiro:contas-receber:baixar", "financeiro:contas-receber:cancelar", "financeiro:contas-receber:exportar",
         "financeiro:conciliacao:acessar", "financeiro:conciliacao:importar",

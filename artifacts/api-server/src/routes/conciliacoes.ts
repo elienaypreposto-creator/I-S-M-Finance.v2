@@ -83,6 +83,20 @@ function hojeIsoLocal(): string {
     return `${y}-${m}-${day}`;
 }
 
+/** Normaliza date Drizzle / Date / string para YYYY-MM-DD (relatórios filtram por data_quitacao). */
+function toDateIso(value: unknown): string | null {
+    if (value == null || value === "") return null;
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        const y = value.getFullYear();
+        const m = String(value.getMonth() + 1).padStart(2, "0");
+        const day = String(value.getDate()).padStart(2, "0");
+        return `${y}-${m}-${day}`;
+    }
+    const raw = String(value).trim();
+    const iso = raw.slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : null;
+}
+
 const vincularBodySchema = z.object({
     lancamentos: z
         .array(
@@ -1299,6 +1313,13 @@ router.post(
                     })),
                 );
 
+                // FEAT-10 / Fases 5–7: metas, saldo e relatório filtram por data_quitacao.
+                // Sem essa data o lançamento fica "pago" mas some dos relatórios (R$ 0,00).
+                const dataQuitacao =
+                    toDateIso(linhaExtrato.data_movimento) ??
+                    toDateIso(linhaExtrato.data_compensacao) ??
+                    hojeIsoLocal();
+
                 for (const vinculo of decision.itens) {
                     const lancamento = lancamentoById.get(vinculo.lancamento_id)!;
                     const quitadoAnteriorCents = toCents(lancamento.valor_quitado);
@@ -1319,7 +1340,7 @@ router.post(
                         .update(lancamentosTable)
                         .set({
                             status: statusQuitacao,
-                            data_quitacao: linhaExtrato.data_movimento,
+                            data_quitacao: dataQuitacao,
                             valor_quitado: centsToDecimalString(quitadoAcumuladoCents),
                             desconto: sql`${lancamentosTable.desconto}
                             +

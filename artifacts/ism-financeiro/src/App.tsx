@@ -28,6 +28,7 @@ import ContabilFiscal from "./pages/relatorios/contabil-fiscal";
 import DreGerencial from "./pages/relatorios/dre-FINANCEIRO-ISM";
 import FluxoCaixa from "./pages/relatorios/fluxo-caixa-FINANCEIRO-ISM";
 import MetasRelatorio from "./pages/relatorios/metas-relatorio";
+import RelatorioConciliacao from "./pages/relatorios/relatorio-conciliacao";
 
 // Configurações
 import Usuarios from "./pages/configuracoes/usuarios";
@@ -174,6 +175,7 @@ function Router() {
             <PrivateRoute path="/relatorios/dre" component={DreGerencial}/>
             <PrivateRoute path="/relatorios/fluxo-caixa" component={FluxoCaixa}/>
             <PrivateRoute path="/relatorios/metas" component={MetasRelatorio}/>
+            <PrivateRoute path="/relatorios/conciliacao" component={RelatorioConciliacao}/>
 
             {/* Configurações */}
             <PrivateRoute path="/configuracoes/usuarios" component={Usuarios}/>
