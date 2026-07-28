@@ -12,6 +12,7 @@ type LoginResponse = {
         accessToken: string;
         refreshToken: string;
         user: AuthUser;
+        permissoes?: string[];
         primeiroAcesso?: never;
     }
         | {
@@ -55,13 +56,13 @@ export default function Login() {
                 return;
             }
 
-            const {accessToken, refreshToken, user} = res.data;
+            const {accessToken, refreshToken, user, permissoes} = res.data;
 
             if (!accessToken || !refreshToken || !user) {
                 throw new Error("Resposta do servidor inválida.");
             }
 
-            login(accessToken, refreshToken, user);
+            login(accessToken, refreshToken, user, Array.isArray(permissoes) ? permissoes : []);
             toast({title: "Sucesso", description: "Login realizado com sucesso!"});
             setTimeout(() => setLocation("/"), 100);
         } catch (err: unknown) {

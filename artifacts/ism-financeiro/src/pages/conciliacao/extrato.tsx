@@ -1,4 +1,4 @@
-import {useMemo, useState} from "react";
+import {useState} from "react";
 import {useLocation} from "wouter";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
@@ -6,7 +6,11 @@ import {fetchApiData} from "@/lib/api-config";
 import {formatCurrency, formatDate, cn} from "@/lib/utils";
 import {VincularModal} from "@/components/conciliacao/vincular-modal";
 import {IgnorarLinhaModal, type MotivoIgnorarPayload} from "@/components/conciliacao/ignorar-linha-modal";
+import {EditarLancamentoConciliacaoModal} from "@/components/conciliacao/editar-lancamento-modal";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
+import {RequiresPermission} from "@/components/auth/requires-permission";
+import {useAuth} from "@/hooks/use-auth";
+import {PERM} from "@/lib/permissoes";
 import {
     ArrowLeft,
     Loader2,
@@ -15,25 +19,16 @@ import {
     Link2,
     Ban,
     CheckCircle2,
+    Flag,
     Scale,
     TrendingUp,
     TrendingDown,
     AlertTriangle,
     RotateCcw,
     Unlink,
-    Save,
-    Plus,
-    X,
-    Search,
-    Copy,
-    Trash2,
     Pencil,
-    ChevronLeft,
-    ChevronRight,
-    Repeat,
 } from "lucide-react";
 import {invalidateRelated} from "@/App";
-import {formatValorBrInput, brMoneyDisplayToApiString} from "@/validations/lancamentos.schema";
 
 type ExtratoDetalheExtrato = {
     id: number;
@@ -69,11 +64,6 @@ type VinculacaoDetalhe = {
     desconto: string | number;
     acrescimo?: string | number;
     juros_multa?: string | number;
-    // Data de vencimento do residual (pagamento parcial). Nasce igual ao
-    // vencimento da linha de origem, mas é editável pelo usuário no card
-    // (ver CardLancamento). Backend precisa aceitar este campo no payload
-    // de /conciliacoes/linhas/:id/vincular — confirmar contrato.
-    vencimento?: string | null;
 };
 
 export type LinhaDetalhe = {
@@ -142,25 +132,6 @@ function statusLinhaBadge(status: string) {
     }
 }
 
-/**
- * RN-D2: cor semântica por natureza do movimento — crédito/entrada = verde,
- * débito/saída = vermelho. Usado no badge de tipo, na régua da linha, no
- * valor e nos cards de lançamento vinculado (nunca laranja/turquesa).
- */
-function corNaturezaBadge(isCredito: boolean) {
-    return isCredito
-        ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/25"
-        : "bg-red-500/15 text-red-300 border-red-500/25";
-}
-
-function corNaturezaTexto(isCredito: boolean) {
-    return isCredito ? "text-emerald-300" : "text-red-300";
-}
-
-function corNaturezaRegua(isCredito: boolean) {
-    return isCredito ? "border-l-emerald-500/70" : "border-l-red-500/70";
-}
-
 /** Painel de conciliação: saldo do sistema × saldo do extrato × diferença (Card 42). */
 function PainelDiagnostico({diagnostico}: { diagnostico: DiagnosticoSaldo }) {
     if (!diagnostico) return null;
@@ -182,7 +153,7 @@ function PainelDiagnostico({diagnostico}: { diagnostico: DiagnosticoSaldo }) {
             ? "text-emerald-300"
             : bate === false
                 ? diferenca !== null && diferenca > 0
-                    ? "text-amber-300"
+                    ? "text-orange-300"
                     : "text-sky-300"
                 : "text-muted-foreground";
 
@@ -267,390 +238,23 @@ function PainelDiagnostico({diagnostico}: { diagnostico: DiagnosticoSaldo }) {
     );
 }
 
-/**
- * RN-D3 — `[+]` verde: cria um lançamento que não existia, pré-preenchido
- * com data/valor/natureza/descrição da linha. Ao salvar, a linha já nasce
- * conciliada, sem passo extra de vincular. Oferece também o atalho
- * "cadastrar regra de repetição a partir desta linha".
- */
-function NovoLancamentoModal({
-                                  linha,
-                                  onClose,
-                                  onCriado,
-                              }: {
-    linha: LinhaDetalhe;
-    onClose: () => void;
-    onCriado: (lancamentoId: number) => void;
-}) {
-    const {toast} = useToast();
-    const [, setLocation] = useLocation();
-    const [descricao, setDescricao] = useState(linha.descricao ?? "");
-    const isCredito = linha.tipo_movimento === "credito";
-
-    const criarMutation = useMutation({
-        mutationFn: () =>
-            fetchApiData<{ lancamento: { id: number } }>(`/conciliacoes/linhas/${linha.linha_id}/criar-lancamento`, {
-                method: "POST",
-                body: JSON.stringify({descricao: descricao.trim() || undefined}),
-            }),
-        onSuccess: (resp) => {
-            toast({title: "Lançamento criado", description: "A linha já foi conciliada, sem passos extras."});
-            onCriado(resp.lancamento.id);
-        },
-        onError: (e: unknown) =>
-            toast({
-                variant: "destructive",
-                title: "Erro ao criar lançamento",
-                description: e instanceof Error ? e.message : String(e),
-            }),
-    });
-
-    function irParaCadastroDeRegra() {
-        try {
-            sessionStorage.setItem("regra_conciliacao_texto_sugerido", descricao || linha.descricao || "");
-        } catch {
-            /* sessionStorage indisponível — segue sem pré-preenchimento */
-        }
-        onClose();
-        setLocation("/cadastros/regras-conciliacao");
-    }
-
-    return (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
-            <div className="bg-[#121417] border border-white/10 rounded-2xl w-full max-w-md shadow-2xl">
-                <div className="flex items-center justify-between p-5 border-b border-white/5">
-                    <h2 className="text-base font-bold text-white flex items-center gap-2">
-                        <Plus className="w-4 h-4 text-emerald-400"/>
-                        Novo lançamento a partir da linha
-                    </h2>
-                    <button type="button" onClick={onClose} className="p-1.5 hover:bg-white/5 rounded-lg">
-                        <X className="w-4 h-4"/>
-                    </button>
-                </div>
-
-                <div className="p-5 space-y-4">
-                    <div className="rounded-xl bg-black/30 border border-white/10 p-3 space-y-1">
-                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Dados da linha (não
-                            editáveis)</p>
-                        <div className="flex items-center justify-between text-sm">
-                            <span className="text-white/80">{linha.data_movimento ? formatDate(linha.data_movimento) : "—"}</span>
-                            <span className={cn("font-black", corNaturezaTexto(isCredito))}>
-                                {formatCurrency(Math.abs(Number(linha.valor)))}
-                            </span>
-                        </div>
-                        <span
-                            className={cn("inline-block text-[10px] font-black px-2 py-0.5 rounded border uppercase", corNaturezaBadge(isCredito))}>
-                            {linha.tipo_movimento}
-                        </span>
-                    </div>
-
-                    <div>
-                        <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                            Descrição do lançamento
-                        </label>
-                        <input
-                            value={descricao}
-                            onChange={(e) => setDescricao(e.target.value)}
-                            placeholder="Ex: Antecipação de lucro do sócio"
-                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-primary/50"
-                        />
-                    </div>
-
-                    <button
-                        type="button"
-                        onClick={irParaCadastroDeRegra}
-                        className="w-full flex items-center justify-center gap-2 text-xs text-primary hover:text-primary/80 border border-primary/20 hover:border-primary/40 bg-primary/5 rounded-xl px-3 py-2.5 transition-colors">
-                        <Repeat className="w-3.5 h-3.5"/>
-                        Cadastrar regra de repetição a partir desta linha
-                    </button>
-
-                    <div className="flex gap-3 pt-1">
-                        <button
-                            type="button"
-                            onClick={onClose}
-                            className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">
-                            Cancelar
-                        </button>
-                        <button
-                            type="button"
-                            disabled={criarMutation.isPending}
-                            onClick={() => criarMutation.mutate()}
-                            className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-bold disabled:opacity-50 flex items-center justify-center gap-2">
-                            {criarMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin"/> :
-                                <Plus className="w-4 h-4"/>}
-                            Criar e conciliar
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
-}
-
-/** Converte data ISO/"YYYY-MM-DD" (ou undefined) para o formato aceito pelo input[type=date]. */
-function toDateInputValue(value: string | null | undefined): string {
-    if (!value) return "";
-    // Já vem como YYYY-MM-DD
-    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return "";
-    return d.toISOString().slice(0, 10);
-}
-
-/**
- * Card de lançamento (coluna direita do protótipo): ícones 📄 detalhar ·
- * 📋 duplicar · 🗑 remover vínculo (RN-I7), e Desconto / Juros-Multa / Data
- * (residual) editáveis inline (✏) por card (RN-G7) — sem modal separado.
- */
-function CardLancamento({
-                             v,
-                             extratoId,
-                             linhaId,
-                             recemCriado,
-                             onRemoverVinculo,
-                         }: {
-    v: VinculacaoDetalhe;
-    extratoId: string;
-    linhaId: number;
-    recemCriado: boolean;
-    onRemoverVinculo: () => void;
-}) {
-    const {toast} = useToast();
-    const [, setLocation] = useLocation();
-    const queryClient = useQueryClient();
-    const [editando, setEditando] = useState<null | "desconto" | "juros_multa" | "data">(null);
-    const [valorEdicao, setValorEdicao] = useState("");
-
-    const jurosOuAcrescimo = v.juros_multa ?? v.acrescimo ?? 0;
-    const isCredito = v.tipo === "CR";
-    const isResidual = v.status === "pendente";
-
-    // RN-G7: edição inline, reaproveitando o mesmo endpoint de /vincular já
-    // existente (reenvia o vínculo com o campo atualizado). O campo
-    // "vencimento" só é relevante para o residual e precisa de suporte no
-    // backend (não confirmado) — segue o mesmo padrão dos demais campos.
-    const atualizarValorMutation = useMutation({
-        mutationFn: (payload: { campo: "desconto" | "juros_multa" | "data"; valor: string }) =>
-            fetchApiData(`/conciliacoes/linhas/${linhaId}/vincular`, {
-                method: "POST",
-                body: JSON.stringify({
-                    lancamentos: [
-                        {
-                            lancamento_id: v.lancamento_id,
-                            desconto:
-                                payload.campo === "desconto"
-                                    ? brMoneyDisplayToApiString(payload.valor) || "0.00"
-                                    : String(v.desconto ?? "0.00"),
-                            juros_multa:
-                                payload.campo === "juros_multa"
-                                    ? brMoneyDisplayToApiString(payload.valor) || "0.00"
-                                    : String(jurosOuAcrescimo || "0.00"),
-                            ...(isResidual
-                                ? {
-                                      vencimento:
-                                          payload.campo === "data" ? payload.valor : toDateInputValue(v.vencimento) || undefined,
-                                  }
-                                : {}),
-                        },
-                    ],
-                    gerar_parcial: false,
-                }),
-            }),
-        onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
-            setEditando(null);
-        },
-        onError: (e: unknown) =>
-            toast({
-                variant: "destructive",
-                title: "Não foi possível atualizar",
-                description: e instanceof Error ? e.message : String(e),
-            }),
-    });
-
-    function iniciarEdicao(campo: "desconto" | "juros_multa") {
-        const atual = campo === "desconto" ? v.desconto : jurosOuAcrescimo;
-        setValorEdicao(formatValorBrInput(String(Number(atual) || 0).replace(".", ",")));
-        setEditando(campo);
-    }
-
-    function iniciarEdicaoData() {
-        setValorEdicao(toDateInputValue(v.vencimento));
-        setEditando("data");
-    }
-
-    return (
-        <div className="rounded-lg bg-black/30 border border-white/10 px-3 py-2.5 space-y-1.5">
-            <div className="flex items-center justify-between gap-2">
-                {isResidual ? (
-                    <label className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-200 min-w-0">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-amber-300 shrink-0"/>
-                        Gerar movimentação residual
-                    </label>
-                ) : (
-                    <span className="text-white/90 font-medium text-[12px] truncate min-w-0" title={v.descricao ?? ""}>
-                        {v.descricao ?? "—"}
-                    </span>
-                )}
-                <div className="flex items-center gap-0.5 shrink-0">
-                    {/* RN-I7: detalhar · duplicar · remover vínculo */}
-                    <button
-                        type="button"
-                        title="Detalhar lançamento"
-                        onClick={() => setLocation(`/lancamentos?id=${v.lancamento_id}`)}
-                        className="p-1 rounded hover:bg-white/10 text-muted-foreground hover:text-white">
-                        <FileText className="w-3.5 h-3.5"/>
-                    </button>
-                    <button
-                        type="button"
-                        title="Duplicar lançamento"
-                        onClick={() =>
-                            toast({title: "Em breve", description: "Duplicar lançamento ainda não está disponível."})
-                        }
-                        className="p-1 rounded hover:bg-white/10 text-muted-foreground hover:text-white">
-                        <Copy className="w-3.5 h-3.5"/>
-                    </button>
-                    <button
-                        type="button"
-                        title="Remover vínculo"
-                        onClick={onRemoverVinculo}
-                        className="p-1 rounded hover:bg-red-500/20 text-muted-foreground hover:text-red-300">
-                        <Trash2 className="w-3.5 h-3.5"/>
-                    </button>
-                </div>
-            </div>
-
-            {recemCriado && (
-                <p className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded border bg-sky-500/15 text-sky-300 border-sky-500/30">
-                    <AlertCircle className="w-3 h-3"/>
-                    Essa movimentação será criada
-                </p>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
-                <div>
-                    <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider">Desconto</span>
-                    {editando === "desconto" ? (
-                        <div className="flex items-center gap-1 mt-0.5">
-                            <input
-                                autoFocus
-                                type="text"
-                                inputMode="numeric"
-                                value={valorEdicao}
-                                onChange={(e) => setValorEdicao(formatValorBrInput(e.target.value))}
-                                onKeyDown={(e) => e.key === "Enter" && atualizarValorMutation.mutate({campo: "desconto", valor: valorEdicao})}
-                                className="w-full bg-[#1a1c23] border border-primary/40 rounded px-1.5 py-1 text-xs text-white outline-none"
-                            />
-                            <button
-                                type="button"
-                                onClick={() => atualizarValorMutation.mutate({campo: "desconto", valor: valorEdicao})}
-                                title="Confirmar"
-                                className="p-1 rounded hover:bg-primary/20 text-primary shrink-0">
-                                <CheckCircle2 className="w-3.5 h-3.5"/>
-                            </button>
-                        </div>
-                    ) : (
-                        <button
-                            type="button"
-                            onClick={() => iniciarEdicao("desconto")}
-                            className="flex items-center gap-1 text-xs text-white/90 mt-0.5 group">
-                            {formatCurrency(Number(v.desconto) || 0)}
-                            <Pencil className="w-3 h-3 text-muted-foreground group-hover:text-primary"/>
-                        </button>
-                    )}
-                </div>
-                <div>
-                    <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider">Juros/Multa</span>
-                    {editando === "juros_multa" ? (
-                        <div className="flex items-center gap-1 mt-0.5">
-                            <input
-                                autoFocus
-                                type="text"
-                                inputMode="numeric"
-                                value={valorEdicao}
-                                onChange={(e) => setValorEdicao(formatValorBrInput(e.target.value))}
-                                onKeyDown={(e) => e.key === "Enter" && atualizarValorMutation.mutate({campo: "juros_multa", valor: valorEdicao})}
-                                className="w-full bg-[#1a1c23] border border-primary/40 rounded px-1.5 py-1 text-xs text-white outline-none"
-                            />
-                            <button
-                                type="button"
-                                onClick={() => atualizarValorMutation.mutate({campo: "juros_multa", valor: valorEdicao})}
-                                title="Confirmar"
-                                className="p-1 rounded hover:bg-primary/20 text-primary shrink-0">
-                                <CheckCircle2 className="w-3.5 h-3.5"/>
-                            </button>
-                        </div>
-                    ) : (
-                        <button
-                            type="button"
-                            onClick={() => iniciarEdicao("juros_multa")}
-                            className="flex items-center gap-1 text-xs text-white/90 mt-0.5 group">
-                            {formatCurrency(Number(jurosOuAcrescimo) || 0)}
-                            <Pencil className="w-3 h-3 text-muted-foreground group-hover:text-primary"/>
-                        </button>
-                    )}
-                </div>
-            </div>
-
-            <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-0.5">
-                {/* Vencimento do residual: nasce com a data da linha de origem,
-                    mas é editável pelo usuário (card exige "data editável"). */}
-                {isResidual ? (
-                    editando === "data" ? (
-                        <div className="flex items-center gap-1">
-                            <input
-                                autoFocus
-                                type="date"
-                                value={valorEdicao}
-                                onChange={(e) => setValorEdicao(e.target.value)}
-                                onKeyDown={(e) => e.key === "Enter" && atualizarValorMutation.mutate({campo: "data", valor: valorEdicao})}
-                                className="bg-[#1a1c23] border border-primary/40 rounded px-1.5 py-1 text-[11px] text-white outline-none"
-                            />
-                            <button
-                                type="button"
-                                onClick={() => atualizarValorMutation.mutate({campo: "data", valor: valorEdicao})}
-                                title="Confirmar"
-                                className="p-1 rounded hover:bg-primary/20 text-primary shrink-0">
-                                <CheckCircle2 className="w-3.5 h-3.5"/>
-                            </button>
-                        </div>
-                    ) : (
-                        <button
-                            type="button"
-                            onClick={iniciarEdicaoData}
-                            className="flex items-center gap-1 group">
-                            {v.vencimento ? formatDate(v.vencimento) : "vencimento da origem"}
-                            <Pencil className="w-3 h-3 text-muted-foreground group-hover:text-primary"/>
-                        </button>
-                    )
-                ) : (
-                    <span>—</span>
-                )}
-                <span className={cn("font-bold", corNaturezaTexto(isCredito))}>
-                    {formatCurrency(Number(v.valor_vinculado))}
-                </span>
-            </div>
-        </div>
-    );
-}
-
-const LINHAS_POR_PAGINA = 6;
-
 export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: string }) {
     const [, setLocation] = useLocation();
     const queryClient = useQueryClient();
     const {toast} = useToast();
+    const {hasPermission} = useAuth();
+
+    const canVincular = hasPermission(PERM.CONCILIACAO_VINCULAR);
+    const canIgnorar = hasPermission(PERM.CONCILIACAO_IGNORAR);
+    const canDesfazer = hasPermission(PERM.CONCILIACAO_DESFAZER);
+    const canEditarLancamento = hasPermission(PERM.LANCAMENTOS_EDITAR);
 
     const [vincularLinha, setVincularLinha] = useState<{ id: number; valorAbs: string | number } | null>(null);
     const [ignorarLinhaId, setIgnorarLinhaId] = useState<number | null>(null);
     const [reverterLinhaId, setReverterLinhaId] = useState<number | null>(null);
     const [desfazerLinhaId, setDesfazerLinhaId] = useState<number | null>(null);
     const [finalizarOpen, setFinalizarOpen] = useState(false);
-    // RN-D3 — [+] verde: criar lançamento a partir da linha.
-    const [novoLancamentoLinha, setNovoLancamentoLinha] = useState<LinhaDetalhe | null>(null);
-    const [recemCriadosIds, setRecemCriadosIds] = useState<Set<number>>(new Set());
-    // RN-D5 — navegação ‹ › entre as linhas, sem sair da tela.
-    const [pagina, setPagina] = useState(0);
+    const [editarLancamentoId, setEditarLancamentoId] = useState<number | null>(null);
 
     const {data, isLoading, isError, refetch} = useQuery({
         queryKey: ["conciliacao-extrato", extratoId],
@@ -733,11 +337,11 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
             setFinalizarOpen(false);
             invalidateRelated(queryClient, "conciliacao");
             void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
-            toast({title: "Extrato concluído", description: "Todas as linhas foram tratadas (vinculadas ou ignoradas)."});
+            toast({title: "Extrato finalizado", description: "Conciliação concluída com sucesso."});
         },
         onError: (e: unknown) => {
-            const msg = e instanceof Error ? e.message : "Não foi possível concluir.";
-            toast({variant: "destructive", title: "Erro ao concluir", description: msg});
+            const msg = e instanceof Error ? e.message : "Não foi possível finalizar.";
+            toast({variant: "destructive", title: "Erro ao finalizar", description: msg});
         },
     });
 
@@ -745,24 +349,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     const conc = data?.conciliacao;
     const linhas = data?.linhas ?? [];
     const diagnostico = data?.diagnostico ?? null;
-
-    // RN-I1/RN-I2: só é possível concluir quando não há mais linhas pendentes.
-    // RN-I3: conciliados !== total é esperado sempre que houver linhas ignoradas —
-    // por isso o gate usa apenas resumo_pendentes, nunca uma comparação com o total.
     const podeFinalizar = (conc?.resumo_pendentes ?? 1) === 0;
-
-    // RN-I4: rótulo dinâmico — cliente rejeitou explicitamente o verbo antigo.
-    // "Salvar" enquanto há pendências (cada ação já foi persistida individualmente);
-    // "Concluir" quando todas as linhas estão tratadas (vinculadas ou ignoradas).
-    const rotuloBotaoFinal = podeFinalizar ? "Concluir" : "Salvar";
-
-    // RN-D5: navegação ‹ › entre as linhas, sem sair da tela.
-    const totalPaginas = Math.max(1, Math.ceil(linhas.length / LINHAS_POR_PAGINA));
-    const paginaAtual = Math.min(pagina, totalPaginas - 1);
-    const linhasDaPagina = useMemo(
-        () => linhas.slice(paginaAtual * LINHAS_POR_PAGINA, paginaAtual * LINHAS_POR_PAGINA + LINHAS_POR_PAGINA),
-        [linhas, paginaAtual],
-    );
 
     return (
         <div className="flex flex-col gap-4 h-full max-w-6xl mx-auto py-2">
@@ -782,19 +369,6 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                     valorExtratoAbs={vincularLinha.valorAbs}
                     onClose={() => setVincularLinha(null)}
                     onSuccess={() => setVincularLinha(null)}
-                />
-            )}
-
-            {novoLancamentoLinha && (
-                <NovoLancamentoModal
-                    linha={novoLancamentoLinha}
-                    onClose={() => setNovoLancamentoLinha(null)}
-                    onCriado={(lancamentoId) => {
-                        setRecemCriadosIds((prev) => new Set(prev).add(lancamentoId));
-                        setNovoLancamentoLinha(null);
-                        invalidateRelated(queryClient, "conciliacao");
-                        void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
-                    }}
                 />
             )}
 
@@ -837,20 +411,24 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                 }}
             />
 
-            {/*
-              RN-I4: título/rótulo do diálogo de conclusão NUNCA usam "Conciliar"/"Finalizar" —
-              o cliente rejeitou explicitamente essas palavras. A descrição cita o status
-              resultante ("conciliado") porque é o mesmo valor que a badge da tela mostra.
-            */}
             <ConfirmDialog
                 open={finalizarOpen}
-                title="Concluir extrato?"
-                description="Não pode haver linhas pendentes. O extrato ficará marcado como conciliado."
-                confirmLabel="Concluir"
+                title="Finalizar conciliação?"
+                description="Não pode haver linhas pendentes. Após concluir, o extrato será marcado como conciliado."
+                confirmLabel="Finalizar"
                 variant="default"
                 icon={CheckCircle2}
                 onCancel={() => setFinalizarOpen(false)}
                 onConfirm={() => finalizarMutation.mutate()}
+            />
+
+            <EditarLancamentoConciliacaoModal
+                open={editarLancamentoId != null}
+                lancamentoId={editarLancamentoId}
+                onClose={() => setEditarLancamentoId(null)}
+                onSaved={() => {
+                    void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
+                }}
             />
 
             {isLoading ? (
@@ -919,41 +497,33 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                             </div>
                         </div>
 
-                        {/* RN-I3: invariante sempre visível — vinculados + ignorados + pendentes = total */}
-                        <p className="text-[10px] text-muted-foreground text-right -mt-2">
-                            {conc.resumo_conciliados} vinculados + {conc.resumo_ignorados} ignorados + {conc.resumo_pendentes} pendentes = {conc.resumo_conciliados + conc.resumo_ignorados + conc.resumo_pendentes} de {conc.resumo_total} linhas
-                        </p>
-
                         <div className="flex flex-wrap gap-3 pt-2 border-t border-white/5">
                             <div className="text-xs text-muted-foreground flex items-center gap-4">
                 <span>
-                  Créditos: <strong className="text-emerald-400">{formatCurrency(Number(extrato.total_creditos))}</strong>
+                  Créditos: <strong className="text-teal-400">{formatCurrency(Number(extrato.total_creditos))}</strong>
                 </span>
                                 <span>
-                  Débitos: <strong className="text-red-300">{formatCurrency(Number(extrato.total_debitos))}</strong>
+                  Débitos: <strong className="text-orange-300">{formatCurrency(Number(extrato.total_debitos))}</strong>
                 </span>
                                 <span>
                   Linhas no arquivo: <strong className="text-white">{extrato.total_linhas}</strong>
                 </span>
                             </div>
                             <div className="flex-1"/>
-                            <button
-                                type="button"
-                                disabled={!podeFinalizar || finalizarMutation.isPending || extrato.status === "conciliado"}
-                                onClick={() => {
-                                    if (!podeFinalizar) return;
-                                    setFinalizarOpen(true);
-                                }}
-                                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-success hover:bg-success/90 text-white text-xs font-bold disabled:opacity-40 disabled:pointer-events-none shadow-lg shadow-success/20">
-                                {finalizarMutation.isPending ? (
-                                    <Loader2 className="w-4 h-4 animate-spin"/>
-                                ) : podeFinalizar ? (
-                                    <CheckCircle2 className="w-4 h-4"/>
-                                ) : (
-                                    <Save className="w-4 h-4"/>
-                                )}
-                                {rotuloBotaoFinal}
-                            </button>
+                            <RequiresPermission permission={PERM.CONCILIACAO_CONCLUIR}>
+                                <button
+                                    type="button"
+                                    disabled={!podeFinalizar || finalizarMutation.isPending || extrato.status === "conciliado"}
+                                    onClick={() => {
+                                        if (!podeFinalizar) return;
+                                        setFinalizarOpen(true);
+                                    }}
+                                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-success hover:bg-success/90 text-white text-xs font-bold disabled:opacity-40 disabled:pointer-events-none shadow-lg shadow-success/20">
+                                    {finalizarMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin"/> :
+                                        <CheckCircle2 className="w-4 h-4"/>}
+                                    Finalizar conciliação
+                                </button>
+                            </RequiresPermission>
                         </div>
                     </div>
 
@@ -968,183 +538,169 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                 financeiro</p>
                         </div>
 
-                        {/*
-                          RN-D1: layout de duas colunas — esquerda a linha do extrato, direita
-                          o(s) lançamento(s) — com o conector central de estado (RN-D4) entre elas,
-                          reproduzindo o protótipo (grid de 3 colunas com bordas visíveis).
-                        */}
-                        <div className="divide-y divide-white/5 overflow-y-auto max-h-[calc(100vh-24rem)]">
-                            {linhasDaPagina.map((linha) => {
+                        <div className="divide-y divide-white/5 overflow-y-auto max-h-[calc(100vh-22rem)]">
+                            {linhas.map((linha) => {
+                                const valorAbs = Math.abs(Number(linha.valor));
                                 const isPendente = linha.status === "pendente";
                                 const isVinculado = linha.status === "vinculado";
                                 const isIgnorado = linha.status === "ignorado";
-                                const isCredito = linha.tipo_movimento === "credito";
-                                const valorAbs = Math.abs(Number(linha.valor));
 
                                 return (
                                     <div
                                         key={linha.linha_id}
                                         className={cn(
-                                            "grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_40px_minmax(0,1fr)] divide-y xl:divide-y-0 xl:divide-x divide-white/5",
+                                            "p-4 hover:bg-white/[0.02] transition-colors",
                                             isIgnorado && "opacity-45 grayscale-[0.35] bg-white/[0.015]",
                                         )}
                                     >
-                                        {/* ── COLUNA ESQUERDA: linha do extrato (RN-D2 régua semântica) ── */}
-                                        <div
-                                            className={cn(
-                                                "border-l-4 p-4 space-y-2 min-w-0",
-                                                corNaturezaRegua(isCredito),
-                                            )}>
-                                            <div className="flex items-start justify-between gap-2">
-                                                <div className="min-w-0">
+                                        <div className="flex flex-col xl:flex-row xl:items-stretch gap-4">
+                                            <div className="flex-1 min-w-0 space-y-2">
+                                                <div className="flex flex-wrap items-center gap-2">
                           <span
                               className={cn(
                                   "text-[10px] font-black px-2 py-0.5 rounded border uppercase",
-                                  corNaturezaBadge(isCredito),
+                                  linha.tipo_movimento === "credito"
+                                      ? "bg-teal-500/15 text-teal-300 border-teal-500/25"
+                                      : "bg-orange-500/15 text-orange-300 border-orange-500/25",
                               )}>
                             {linha.tipo_movimento}
                           </span>
-                                                    <p className="text-sm text-white font-medium leading-snug mt-2">{linha.descricao ?? "—"}</p>
-                                                </div>
-                                                {/* RN-D3: [+] verde — cria lançamento pré-preenchido a partir da linha */}
-                                                {isPendente && (
-                                                    <button
-                                                        type="button"
-                                                        title="Criar lançamento a partir desta linha"
-                                                        onClick={() => setNovoLancamentoLinha(linha)}
-                                                        className="w-6 h-6 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 flex items-center justify-center shrink-0">
-                                                        <Plus className="w-3.5 h-3.5"/>
-                                                    </button>
-                                                )}
-                                            </div>
-
-                                            <div className="flex items-center gap-3">
-                                                {linha.data_movimento && (
                                                     <span
-                                                        className="text-xs text-muted-foreground">{formatDate(linha.data_movimento)}</span>
+                                                        className={cn("text-[10px] font-bold px-2 py-0.5 rounded border", statusLinhaBadge(linha.status))}>
+                            {linha.status}
+                          </span>
+                                                    {linha.data_movimento && (
+                                                        <span
+                                                            className="text-[10px] text-muted-foreground">{formatDate(linha.data_movimento)}</span>
+                                                    )}
+                                                    {linha.documento && (
+                                                        <span
+                                                            className="text-[10px] text-muted-foreground font-mono">Doc. {linha.documento}</span>
+                                                    )}
+                                                </div>
+                                                <p className="text-sm text-white font-medium leading-snug">{linha.descricao ?? "—"}</p>
+                                                <p className="text-base font-black text-primary">{formatCurrency(Number(linha.valor))}</p>
+                                                {!isPendente && (
+                                                    <p className="text-[11px] text-muted-foreground">
+                                                        Vinculado: {formatCurrency(Number(linha.valor_vinculado_total))} ·
+                                                        Saldo linha:{" "}
+                                                        {formatCurrency(Number(linha.valor_saldo))}
+                                                    </p>
                                                 )}
-                                                <span className={cn("text-base font-black", corNaturezaTexto(isCredito))}>
-                          {formatCurrency(valorAbs)}
-                        </span>
+                                                {linha.saldo_pos_linha != null && (
+                                                    <p className="text-[11px] text-muted-foreground">
+                                                        Saldo pós-linha: {formatCurrency(Number(linha.saldo_pos_linha))}
+                                                    </p>
+                                                )}
                                             </div>
 
-                                            {linha.documento && (
-                                                <p className="text-[10px] text-muted-foreground font-mono">Doc.
-                                                    {" "}{linha.documento}</p>
-                                            )}
-                                            {linha.saldo_pos_linha != null && (
-                                                <p className="text-[11px] text-muted-foreground">
-                                                    Saldo pós-linha: {formatCurrency(Number(linha.saldo_pos_linha))}
-                                                </p>
-                                            )}
-
-                                            {/* [⊘ Ignorar] ⇄ [↺ Reverter] (RN-H1/RN-H2, mantidos como já existiam) */}
-                                            <div className="flex gap-2 pt-1">
+                                            <div
+                                                className="flex flex-col sm:flex-row xl:flex-col gap-2 shrink-0 xl:w-56">
                                                 {isPendente && (
-                                                    <button
-                                                        type="button"
-                                                        disabled={ignorarMutation.isPending}
-                                                        onClick={() => setIgnorarLinhaId(linha.linha_id)}
-                                                        className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-[11px] font-semibold text-white/90">
-                                                        <Ban className="w-3 h-3"/>
-                                                        Ignorar
-                                                    </button>
+                                                    <>
+                                                        {canVincular && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setVincularLinha({
+                                                                    id: linha.linha_id,
+                                                                    valorAbs
+                                                                })}
+                                                                className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-primary/90 hover:bg-primary text-primary-foreground text-xs font-bold shadow-md shadow-primary/20">
+                                                                <Link2 className="w-3.5 h-3.5"/>
+                                                                Vincular
+                                                            </button>
+                                                        )}
+                                                        {canIgnorar && (
+                                                            <button
+                                                                type="button"
+                                                                disabled={ignorarMutation.isPending}
+                                                                onClick={() => setIgnorarLinhaId(linha.linha_id)}
+                                                                className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-xs font-semibold text-white/90">
+                                                                <Ban className="w-3.5 h-3.5"/>
+                                                                Ignorar
+                                                            </button>
+                                                        )}
+                                                    </>
                                                 )}
-                                                {isIgnorado && (
+                                                {isIgnorado && canDesfazer && (
                                                     <button
                                                         type="button"
                                                         disabled={reverterIgnorarMutation.isPending}
                                                         onClick={() => setReverterLinhaId(linha.linha_id)}
-                                                        className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-[11px] font-semibold text-amber-200">
-                                                        <RotateCcw className="w-3 h-3"/>
+                                                        className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-xs font-semibold text-amber-200">
+                                                        <RotateCcw className="w-3.5 h-3.5"/>
                                                         Reverter
                                                     </button>
                                                 )}
+                                                {isVinculado && canDesfazer && (
+                                                    <button
+                                                        type="button"
+                                                        disabled={desfazerVinculosMutation.isPending}
+                                                        onClick={() => setDesfazerLinhaId(linha.linha_id)}
+                                                        className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-xs font-semibold text-red-200">
+                                                        <Unlink className="w-3.5 h-3.5"/>
+                                                        Desfazer vínculos
+                                                    </button>
+                                                )}
                                             </div>
-                                        </div>
-
-                                        {/* ── COLUNA CENTRAL: conector (RN-D4) ── */}
-                                        <div className="flex items-center justify-center py-2 xl:py-4">
-                                            {!isIgnorado && (
-                                                <div
-                                                    className={cn(
-                                                        "w-8 h-8 rounded-full flex items-center justify-center border shrink-0",
-                                                        isVinculado
-                                                            ? "bg-white/5 border-white/15 text-muted-foreground"
-                                                            : "bg-amber-500/15 border-amber-500/40 text-amber-300",
-                                                    )}
-                                                    title={isVinculado ? "Os valores batem" : "Os valores divergem"}>
-                                                    {isVinculado ? (
-                                                        <Link2 className="w-4 h-4"/>
-                                                    ) : (
-                                                        <span className="text-sm font-black">≠</span>
-                                                    )}
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        {/* ── COLUNA DIREITA: lançamento(s) ── */}
-                                        <div className="p-4 min-w-0 space-y-2">
-                                            {/* [🔍 Vincular]: visível enquanto o valor não bate; some no valor exato */}
-                                            {isPendente && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setVincularLinha({id: linha.linha_id, valorAbs})}
-                                                    className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-primary/90 hover:bg-primary text-primary-foreground text-xs font-bold shadow-md shadow-primary/20">
-                                                    <Search className="w-3.5 h-3.5"/>
-                                                    Vincular
-                                                </button>
-                                            )}
 
                                             {isVinculado && linha.vinculacoes.length > 0 && (
-                                                <div className="space-y-2">
-                                                    {linha.vinculacoes.map((v) => (
-                                                        <CardLancamento
-                                                            key={v.lancamento_id}
-                                                            v={v}
-                                                            extratoId={extratoId}
-                                                            linhaId={linha.linha_id}
-                                                            recemCriado={recemCriadosIds.has(v.lancamento_id)}
-                                                            onRemoverVinculo={() => setDesfazerLinhaId(linha.linha_id)}
-                                                        />
-                                                    ))}
+                                                <div
+                                                    className="xl:flex-1 xl:min-w-[280px] rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 space-y-2">
+                                                    <p className="text-[10px] font-black text-emerald-400/90 uppercase tracking-wider flex items-center gap-1">
+                                                        <Flag className="w-3 h-3"/>
+                                                        Lançamentos vinculados
+                                                    </p>
+                                                    <ul className="space-y-2">
+                                                        {linha.vinculacoes.map((v) => (
+                                                            <li
+                                                                key={v.lancamento_id}
+                                                                className="text-[11px] rounded-lg bg-black/30 border border-white/10 px-2 py-2">
+                                                                <div
+                                                                    className="flex items-center justify-between gap-2">
+                                  <span className="text-white/90 font-medium truncate" title={v.descricao ?? ""}>
+                                    #{v.lancamento_id} · {v.descricao ?? "—"}
+                                  </span>
+                                                                    <span
+                                                                        className={cn(
+                                                                            "text-[9px] font-bold px-1 rounded shrink-0",
+                                                                            v.tipo === "CR" ? "text-teal-300" : "text-orange-300",
+                                                                        )}>
+                                    {v.tipo}
+                                  </span>
+                                                                </div>
+                                                                <div
+                                                                    className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-muted-foreground">
+                                                                    <span>Vinc.: {formatCurrency(Number(v.valor_vinculado))}</span>
+                                                                    {(Number(v.desconto) > 0 || Number(v.juros_multa ?? v.acrescimo) > 0) && (
+                                                                        <span>
+                                      Desc./Juros/Multa: {formatCurrency(Number(v.desconto))} /{" "}
+                                                                            {formatCurrency(Number(v.juros_multa ?? v.acrescimo))}
+                                    </span>
+                                                                    )}
+                                                                    <span
+                                                                        className="uppercase text-[9px]">{v.status}</span>
+                                                                </div>
+                                                                {canEditarLancamento && (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setEditarLancamentoId(v.lancamento_id)}
+                                                                        className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-emerald-300/80 hover:text-emerald-200"
+                                                                    >
+                                                                        <Pencil className="w-3 h-3"/>
+                                                                        Editar lançamento
+                                                                    </button>
+                                                                )}
+                                                            </li>
+                                                        ))}
+                                                    </ul>
                                                 </div>
-                                            )}
-
-                                            {isIgnorado && (
-                                                <p className="text-[11px] text-muted-foreground italic py-2">
-                                                    Linha ignorada — sem lançamento vinculado.
-                                                </p>
                                             )}
                                         </div>
                                     </div>
                                 );
                             })}
                         </div>
-
-                        {/* RN-D5: navegação ‹ › entre as linhas, sem sair da tela */}
-                        {linhas.length > LINHAS_POR_PAGINA && (
-                            <div
-                                className="flex items-center justify-center gap-4 py-3 border-t border-white/5 bg-black/20">
-                                <button
-                                    type="button"
-                                    disabled={paginaAtual === 0}
-                                    onClick={() => setPagina((p) => Math.max(0, p - 1))}
-                                    className="p-1.5 rounded-lg border border-white/10 text-white disabled:opacity-30 hover:bg-white/5">
-                                    <ChevronLeft className="w-4 h-4"/>
-                                </button>
-                                <span className="text-xs text-muted-foreground">
-                                    {paginaAtual + 1} / {totalPaginas}
-                                </span>
-                                <button
-                                    type="button"
-                                    disabled={paginaAtual >= totalPaginas - 1}
-                                    onClick={() => setPagina((p) => Math.min(totalPaginas - 1, p + 1))}
-                                    className="p-1.5 rounded-lg border border-white/10 text-white disabled:opacity-30 hover:bg-white/5">
-                                    <ChevronRight className="w-4 h-4"/>
-                                </button>
-                            </div>
-                        )}
                     </div>
                 </>
             )}
