@@ -115,6 +115,7 @@ const permissoesGranulares = [
             {nome: "Relatório por Vencimento", codigo: "relatorios:vencimento"},
             {nome: "Extrato Financeiro", codigo: "relatorios:extrato"},
             {nome: "Análise de Metas", codigo: "relatorios:metas"},
+            {nome: "Relatório de Conciliação", codigo: "relatorios:conciliacao"},
         ],
     },
     {

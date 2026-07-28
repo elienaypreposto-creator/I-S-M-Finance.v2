@@ -4,6 +4,7 @@ import {
     centsToDecimalString,
     diferencaConciliacaoCents,
     fromCents,
+    realizadoSemJurosCents,
     sumCents,
     toCents,
 } from "./money.js";
@@ -80,5 +81,33 @@ describe("tabela-verdade §3.3", () => {
         assert.equal(delta, 144795);
         assert.ok(delta > 0);
         assert.equal(centsToDecimalString(delta), "1447.95");
+    });
+});
+
+/**
+ * Card 62 / RN-G5 / FEAT-10 — juros fora do resultado da meta.
+ * valor_quitado embute juros; realizado operacional = quitado − juros.
+ */
+describe("realizadoSemJurosCents — Card 62 / RN-G5", () => {
+    it("6838 + juros 1162 (quitado 8000) → realizado 6838, juros 1162", () => {
+        const quitado = toCents(8000);
+        const juros = toCents(1162);
+        const realizado = realizadoSemJurosCents(quitado, juros);
+        assert.equal(realizado, toCents(6838));
+        assert.equal(fromCents(realizado), 6838);
+        assert.notEqual(realizado, quitado);
+    });
+
+    it("previsto 10000 / realizado 8000 (sem juros) → 80%", () => {
+        const projetado = toCents(10000);
+        const realizado = realizadoSemJurosCents(toCents(8000), toCents(0));
+        const pct = Math.round((fromCents(realizado) / fromCents(projetado)) * 10000) / 100;
+        assert.equal(pct, 80);
+    });
+
+    it("parcela 100k + juros 10k ≠ 110k no resultado", () => {
+        const realizado = realizadoSemJurosCents(toCents(110000), toCents(10000));
+        assert.equal(realizado, toCents(100000));
+        assert.equal(fromCents(realizado), 100000);
     });
 });

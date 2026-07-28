@@ -50,3 +50,15 @@ export function diferencaConciliacaoCents(
 ): number {
     return somaExtratoCents - somaLancamentosCents;
 }
+
+/**
+ * Realizado operacional da meta (RN-G5 / Card 62 / FEAT-10):
+ * `valor_quitado` pode embutir juros (ex.: 6838 + 1162 = 8000).
+ * Resultado = quitado − juros (nunca conta juros como despesa/receita da meta).
+ */
+export function realizadoSemJurosCents(
+    quitadoCents: number,
+    jurosCents: number,
+): number {
+    return Math.max(0, quitadoCents - jurosCents);
+}
