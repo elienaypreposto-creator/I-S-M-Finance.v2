@@ -1,9 +1,10 @@
-import {pgTable, serial, text, integer, numeric, date, timestamp, index, uniqueIndex} from "drizzle-orm/pg-core";
+import {pgTable, serial, text, integer, numeric, date, timestamp, index, uniqueIndex, boolean} from "drizzle-orm/pg-core";
 import {createInsertSchema} from "drizzle-zod";
 import {z} from "zod/v4";
 import {contasBancariasTable} from "./contas-bancarias";
 import {lancamentosTable} from "./lancamentos";
 import {usuariosTable} from "./usuarios";
+import {regrasConciliacaoTable} from "./regras-conciliacao";
 import {
     acaoHistoricoConciliacaoEnum,
     statusConciliacaoEnum,
@@ -72,6 +73,8 @@ export const conciliacoesTable = pgTable("conciliacoes", {
     resumo_ignorados: integer("resumo_ignorados").default(0).notNull(),
     resumo_pendentes: integer("resumo_pendentes").default(0).notNull(),
     resumo_total: integer("resumo_total").default(0).notNull(),
+    /** Card 48/FEAT-03: contador "N linhas classificadas automaticamente". */
+    resumo_classificadas_automaticamente: integer("resumo_classificadas_automaticamente").default(0).notNull(),
     data_conciliacao: date("data_conciliacao"),
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
@@ -94,6 +97,10 @@ export const itensConciliacaoTable = pgTable("itens_conciliacao", {
     motivo_ignorar: text("motivo_ignorar"),
     motivo_ignorar_codigo: text("motivo_ignorar_codigo"),
     data_conciliacao: date("data_conciliacao"),
+    /** Card 48/FEAT-03: regra que classificou esta linha (null = classificação manual). */
+    regra_id: integer("regra_id").references(() => regrasConciliacaoTable.id),
+    /** true quando regra_id classificou a linha automaticamente na importação - sugestão revisável. */
+    classificacao_automatica: boolean("classificacao_automatica").default(false).notNull(),
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [

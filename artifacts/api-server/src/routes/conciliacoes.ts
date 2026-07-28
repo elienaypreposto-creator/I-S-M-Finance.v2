@@ -2,7 +2,7 @@ import {createHash} from "crypto";
 import {Router} from "express";
 import {z} from "zod";
 import multer from "multer";
-import {and, count, desc, eq, gte, inArray, isNull, lt, lte, or, sql} from "drizzle-orm";
+import {and, count, desc, eq, gte, ilike, inArray, isNull, lt, lte, or, sql} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {
     conciliacoesTable,
@@ -16,6 +16,8 @@ import {
     MOTIVOS_IGNORAR_PREDEFINIDOS,
     PARAM_MOTIVO_IGNORAR_OBRIGATORIO,
     parametrosSistemaTable,
+    parceirosTable,
+    regrasConciliacaoTable,
 } from "@workspace/db/schema";
 import {validateBody} from "../middlewares/validate";
 import {errorResponse, successResponse} from "../utils/response";
@@ -26,7 +28,9 @@ import {centsToDecimalString, fromCents, sumCents, toCents} from "../utils/money
 import {decidirVincular, statusAposQuitacao} from "../utils/conciliacao-vincular";
 import {hashLinhaExtrato} from "../utils/extrato-hash";
 import {contasBancariasService} from "../domains/financial/contas-bancarias/contas-bancarias.service";
+import {regrasConciliacaoService} from "../domains/financial/regras-conciliacao/regras-conciliacao.service";
 import {promoverLancamentosAtrasados} from "../jobs/promover-atrasados";
+import type {RegraConciliacao} from "@workspace/db/schema";
 
 const router = Router();
 const upload = multer({storage: multer.memoryStorage()});
@@ -99,10 +103,44 @@ const vincularBodySchema = z.object({
     residuo_lancamento_id: z.coerce.number().int().positive().optional(),
 });
 
+/**
+ * Edição inline de um vínculo já existente (desconto / juros-multa / data do
+ * residual), usada pelo card de lançamento na tela de detalhe do extrato
+ * (RN-G7). Diferente de POST /vincular: aqui a linha JÁ está vinculada -
+ * essa é a rota certa para reajustar valores sem passar pelas guardas de
+ * "já vinculada" do endpoint de vinculação inicial. Todos os campos são
+ * opcionais - o card envia só o que o usuário editou.
+ */
+const atualizarVinculoBodySchema = z.object({
+    desconto: z.coerce.number().min(0).optional(),
+    juros_multa: z.coerce.number().min(0).optional(),
+    /** Só tem efeito quando o lançamento vinculado é um residual parcial. */
+    vencimento: z.string().trim().min(1).optional(),
+});
+
 /** DEF-04: digitação manual de saldo_pos_linha quando o arquivo não trouxer. */
 const saldoManualBodySchema = z.object({
     saldo_pos_linha: z.union([z.string(), z.number()]),
 });
+
+/**
+ * RN-D3: criação de lançamento a partir do botão [+] na linha do extrato
+ * (ex.: antecipação de lucro do sócio, nunca provisionada). O valor é sempre
+ * o mesmo da linha - o endpoint recusa valor divergente, já que o lançamento
+ * nasce quitado 1:1 com ela (sem passo extra de vincular).
+ */
+const criarLancamentoBodySchema = z.object({
+    tipo: z.enum(["CP", "CR"]),
+    vencimento: z.string().trim().min(1),
+    valor: z.coerce.number().positive(),
+    descricao: z.string().trim().min(1).nullable().optional(),
+    parceiro_id: z.coerce.number().int().positive().nullable().optional(),
+    plano_conta_id: z.coerce.number().int().positive().nullable().optional(),
+    departamento_id: z.coerce.number().int().positive().nullable().optional(),
+    centro_custo_id: z.coerce.number().int().positive().nullable().optional(),
+    forma_pagamento: z.enum(["PIX", "TED", "Boleto"]).nullable().optional(),
+});
+type CriarLancamentoBody = z.infer<typeof criarLancamentoBodySchema>;
 
 type ImportarBody = z.infer<typeof importarBodySchema>;
 type VincularBody = z.infer<typeof vincularBodySchema>;
@@ -256,10 +294,25 @@ const atualizarResumoConciliacao = async (
         .where(eq(itensConciliacaoTable.conciliacao_id, conciliacaoId))
         .groupBy(itensConciliacaoTable.status);
 
+    // Card 48/FEAT-03: contador "N linhas classificadas automaticamente" -
+    // conta separadamente de status, pois uma linha classificada pela regra
+    // pode estar vinculada (criar_lancamento_automatico=true) e ainda assim
+    // precisa aparecer no contador de auto-classificação.
+    const [classificadasRow] = await tx
+        .select({total: count()})
+        .from(itensConciliacaoTable)
+        .where(
+            and(
+                eq(itensConciliacaoTable.conciliacao_id, conciliacaoId),
+                eq(itensConciliacaoTable.classificacao_automatica, true),
+            ),
+        );
+
     const conciliados = Number(statusRows.find((r) => r.status === "vinculado")?.total ?? 0);
     const ignorados = Number(statusRows.find((r) => r.status === "ignorado")?.total ?? 0);
     const pendentes = Number(statusRows.find((r) => r.status === "pendente")?.total ?? 0);
     const total = conciliados + ignorados + pendentes;
+    const classificadasAutomaticamente = Number(classificadasRow?.total ?? 0);
 
     const statusConciliacao = pendentes === 0 ? "conciliado" : "pendente";
     const statusExtrato = pendentes === 0 ? "conciliado" : (conciliados + ignorados > 0 ? "parcial" : "pendente");
@@ -271,6 +324,7 @@ const atualizarResumoConciliacao = async (
             resumo_ignorados: ignorados,
             resumo_pendentes: pendentes,
             resumo_total: total,
+            resumo_classificadas_automaticamente: classificadasAutomaticamente,
             status: statusConciliacao,
             updated_at: new Date(),
         })
@@ -284,6 +338,134 @@ const atualizarResumoConciliacao = async (
         })
         .where(eq(extratosTable.id, extratoId));
 };
+
+/** Card 48/FEAT-03: casa o texto da linha do extrato contra uma regra. */
+function textoCasaComRegra(regra: RegraConciliacao, descricao: string | null): boolean {
+    const desc = descricao ?? "";
+    if (regra.tipo_match === "regex") {
+        // Regex já é validada no cadastro (schemas.ts), mas uma regra alterada
+        // direto no banco não pode derrubar a importação - falha = não casa.
+        try {
+            return new RegExp(regra.texto_gatilho, "i").test(desc);
+        } catch {
+            return false;
+        }
+    }
+    const descLower = desc.toLowerCase();
+    const gatilhoLower = regra.texto_gatilho.toLowerCase();
+    if (regra.tipo_match === "inicia") return descLower.startsWith(gatilhoLower);
+    return descLower.includes(gatilhoLower); // "contem"
+}
+
+/**
+ * Card 48/FEAT-03 - motor de aplicação das regras de conciliação, chamado na
+ * importação (dentro da mesma transação, para não deixar itens "pela metade"
+ * se algo falhar).
+ *
+ * - Casa por NATUREZA (entrada/saída) - regras de entrada e saída nunca se
+ *   misturam (RN-C4), mesmo que o texto_gatilho seja igual.
+ * - Entre as regras ativas que casam, vale a de maior `prioridade`; em
+ *   empate, a mais recente (`created_at`) - critério assumido, ajustar se o
+ *   cliente definir outro.
+ * - Regra inativa nunca é considerada (RN-C3: já filtrado em
+ *   regrasConciliacaoService.listarAtivasParaMatch).
+ * - Ao casar, grava `regra_id` + `classificacao_automatica=true` no item. Se
+ *   `criar_lancamento_automatico`, cria o lançamento já quitado e vinculado
+ *   (`origem='conciliacao'`), deixando a linha "vinculado" - sugestão
+ *   revisável e desfazível por linha até a conclusão (RN-C5), via o mesmo
+ *   DELETE /conciliacoes/linhas/:id/vinculos usado para vínculos manuais.
+ */
+async function aplicarRegrasConciliacao(
+    tx: typeof db,
+    params: {
+        conciliacaoId: number;
+        contaId: number;
+        usuarioId?: number;
+        itens: Array<{
+            itemId: number;
+            valorCents: number;
+            tipoMovimento: "credito" | "debito";
+            descricao: string | null;
+            dataMovimento: string | null;
+        }>;
+    },
+): Promise<void> {
+    const regrasAtivas = await regrasConciliacaoService.listarAtivasParaMatch(params.contaId);
+    if (regrasAtivas.length === 0) return;
+
+    for (const item of params.itens) {
+        const natureza = item.tipoMovimento === "credito" ? "entrada" : "saida";
+        const regra = regrasAtivas.find((r) => r.natureza === natureza && textoCasaComRegra(r, item.descricao));
+        if (!regra) continue;
+
+        await tx
+            .update(itensConciliacaoTable)
+            .set({regra_id: regra.id, classificacao_automatica: true, updated_at: new Date()})
+            .where(eq(itensConciliacaoTable.id, item.itemId));
+
+        // Regra apenas classifica (sem criar lançamento) - fica marcada como
+        // sugestão de classificação, mas a linha continua pendente.
+        if (!regra.criar_lancamento_automatico) continue;
+
+        const tipoLancamento = natureza === "entrada" ? "CR" : "CP";
+        const statusQuitacao = statusAposQuitacao({
+            tipoExtrato: item.tipoMovimento,
+            valorLancamentoCents: item.valorCents,
+            valorQuitadoAcumuladoCents: item.valorCents,
+        });
+
+        const [novoLancamento] = await tx
+            .insert(lancamentosTable)
+            .values({
+                tipo: tipoLancamento,
+                vencimento: item.dataMovimento ?? new Date().toISOString().slice(0, 10),
+                conta_id: params.contaId,
+                parceiro_id: regra.parceiro_id,
+                descricao: item.descricao,
+                valor: centsToDecimalString(item.valorCents),
+                status: statusQuitacao,
+                origem: "conciliacao",
+                plano_conta_id: regra.plano_conta_id,
+                departamento_id: regra.departamento_id,
+                centro_custo_id: regra.centro_custo_id,
+                forma_pagamento: regra.forma_pagamento,
+                data_quitacao: item.dataMovimento,
+                valor_quitado: centsToDecimalString(item.valorCents),
+                criado_por: params.usuarioId,
+            })
+            .returning();
+
+        await tx.insert(itensConciliacaoLancamentosTable).values({
+            item_conciliacao_id: item.itemId,
+            lancamento_id: novoLancamento.id,
+            valor_vinculado: centsToDecimalString(item.valorCents),
+            desconto: "0.00",
+            juros_multa: "0.00",
+        });
+
+        await tx
+            .update(itensConciliacaoTable)
+            .set({
+                status: "vinculado",
+                valor_vinculado_total: centsToDecimalString(item.valorCents),
+                valor_saldo: "0.00",
+                updated_at: new Date(),
+            })
+            .where(eq(itensConciliacaoTable.id, item.itemId));
+
+        await tx.insert(historicoConciliacaoTable).values({
+            conciliacao_id: params.conciliacaoId,
+            item_conciliacao_id: item.itemId,
+            usuario_id: params.usuarioId,
+            acao: "vincular",
+            detalhes: JSON.stringify({
+                acao: "classificacao_automatica",
+                regra_id: regra.id,
+                lancamento_id: novoLancamento.id,
+            }),
+        });
+    }
+}
 
 router.get("/conciliacoes", async (req, res) => {
     try {
@@ -820,19 +1002,47 @@ router.post(
                     data_movimento: extratoLinhasTable.data_movimento,
                 });
 
-            await tx.insert(itensConciliacaoTable).values(
-                linhasInseridas.map((l) => ({
-                    conciliacao_id: conciliacao.id,
-                    extrato_linha_id: l.id,
-                    valor_extrato: l.valor,
-                    valor_vinculado_total: "0.00",
-                    valor_saldo: l.valor,
-                    status: "pendente" as const,
-                    tipo_extrato: l.tipo_movimento,
-                    descricao: l.descricao,
-                    data: l.data_movimento,
-                })),
-            );
+            const itensInseridos = await tx
+                .insert(itensConciliacaoTable)
+                .values(
+                    linhasInseridas.map((l) => ({
+                        conciliacao_id: conciliacao.id,
+                        extrato_linha_id: l.id,
+                        valor_extrato: l.valor,
+                        valor_vinculado_total: "0.00",
+                        valor_saldo: l.valor,
+                        status: "pendente" as const,
+                        tipo_extrato: l.tipo_movimento,
+                        descricao: l.descricao,
+                        data: l.data_movimento,
+                    })),
+                )
+                .returning({id: itensConciliacaoTable.id, extrato_linha_id: itensConciliacaoTable.extrato_linha_id});
+
+            // Card 48/FEAT-03: motor de regras roda logo após a importação, na
+            // mesma transação - classifica automaticamente linhas repetitivas
+            // (ex.: tarifa bancária) e, se a regra tiver
+            // criar_lancamento_automatico, já cria o lançamento quitado/vinculado.
+            const linhaById = new Map(linhasInseridas.map((l) => [l.id, l]));
+            await aplicarRegrasConciliacao(tx, {
+                conciliacaoId: conciliacao.id,
+                contaId: conta_id,
+                usuarioId: req.user?.id,
+                itens: itensInseridos.map((item) => {
+                    const linha = linhaById.get(item.extrato_linha_id)!;
+                    return {
+                        itemId: item.id,
+                        valorCents: toCents(linha.valor),
+                        tipoMovimento: linha.tipo_movimento,
+                        descricao: linha.descricao,
+                        dataMovimento: linha.data_movimento,
+                    };
+                }),
+            });
+
+            // Recalcula o resumo (resumo_conciliados/resumo_classificadas_automaticamente)
+            // após o motor de regras, já que ele pode ter vinculado linhas sozinho.
+            await atualizarResumoConciliacao(tx, conciliacao.id, extrato.id);
 
             return {conciliacao, extrato};
         });
@@ -860,6 +1070,16 @@ router.post(
     },
 );
 
+/**
+ * RN-D4: busca lançamentos compatíveis para vincular a uma linha de extrato.
+ *
+ * - dias_janela é configurável pelo cliente (default 7); quando há busca por
+ *   texto (descrição/parceiro) ou por valor, a janela de datas é ignorada -
+ *   o usuário está procurando um lançamento específico, não navegando por
+ *   proximidade temporal (ex.: lançamento pago com 20 dias de atraso).
+ * - Resultados são ordenados por proximidade de valor (idêntico primeiro) e,
+ *   em caso de empate, por proximidade de data em relação à linha do extrato.
+ */
 router.get("/conciliacoes/buscar-lancamentos", async (req, res) => {
     try {
         const linhaId = Number(req.query.linha_id);
@@ -868,11 +1088,16 @@ router.get("/conciliacoes/buscar-lancamentos", async (req, res) => {
         }
 
         const diasJanela = Number(req.query.dias_janela ?? 7);
+        const busca = typeof req.query.busca === "string" ? req.query.busca.trim() : "";
+        const valorBusca =
+            typeof req.query.valor === "string" && req.query.valor !== "" ? toCents(req.query.valor) : null;
+
         const [linha] = await db
             .select({
                 id: extratoLinhasTable.id,
                 tipo_movimento: extratoLinhasTable.tipo_movimento,
                 data_movimento: extratoLinhasTable.data_movimento,
+                valor: extratoLinhasTable.valor,
             })
             .from(extratoLinhasTable)
             .where(eq(extratoLinhasTable.id, linhaId))
@@ -883,13 +1108,44 @@ router.get("/conciliacoes/buscar-lancamentos", async (req, res) => {
         }
 
         const tipoCompatvel = linha.tipo_movimento === "debito" ? "CP" : "CR";
-        const dataRef = linha.data_movimento ? new Date(linha.data_movimento) : new Date();
-        const dataInicio = new Date(dataRef);
-        dataInicio.setDate(dataInicio.getDate() - diasJanela);
-        const dataFim = new Date(dataRef);
-        dataFim.setDate(dataFim.getDate() + diasJanela);
+        const valorLinhaCents = toCents(linha.valor);
 
-        const lancamentos = await db
+        // Busca por texto ou valor ignora a janela de datas: o usuário está
+        // procurando um lançamento específico, não navegando por proximidade.
+        const usaFiltroLivre = Boolean(busca) || valorBusca !== null;
+
+        const condicoes = [
+            eq(lancamentosTable.tipo, tipoCompatvel),
+            or(eq(lancamentosTable.status, "pendente"), eq(lancamentosTable.status, "atrasado")),
+        ];
+
+        if (!usaFiltroLivre) {
+            const dataRef = linha.data_movimento ? new Date(linha.data_movimento) : new Date();
+            const dataInicio = new Date(dataRef);
+            dataInicio.setDate(dataInicio.getDate() - diasJanela);
+            const dataFim = new Date(dataRef);
+            dataFim.setDate(dataFim.getDate() + diasJanela);
+            condicoes.push(gte(lancamentosTable.vencimento, dataInicio.toISOString().split("T")[0]));
+            condicoes.push(lte(lancamentosTable.vencimento, dataFim.toISOString().split("T")[0]));
+        }
+
+        if (busca) {
+            condicoes.push(
+                or(ilike(lancamentosTable.descricao, `%${busca}%`), ilike(parceirosTable.nome, `%${busca}%`)),
+            );
+        }
+
+        if (valorBusca !== null) {
+            // Tolerância de 1 centavo para absorver arredondamento na digitação.
+            condicoes.push(
+                and(
+                    gte(lancamentosTable.valor, centsToDecimalString(valorBusca - 1)),
+                    lte(lancamentosTable.valor, centsToDecimalString(valorBusca + 1)),
+                ),
+            );
+        }
+
+        const candidatos = await db
             .select({
                 id: lancamentosTable.id,
                 tipo: lancamentosTable.tipo,
@@ -898,22 +1154,30 @@ router.get("/conciliacoes/buscar-lancamentos", async (req, res) => {
                 valor: lancamentosTable.valor,
                 status: lancamentosTable.status,
                 parceiro_id: lancamentosTable.parceiro_id,
+                parceiro_nome: parceirosTable.nome,
                 plano_conta_id: lancamentosTable.plano_conta_id,
             })
             .from(lancamentosTable)
-            .where(
-                and(
-                    eq(lancamentosTable.tipo, tipoCompatvel),
-                    or(eq(lancamentosTable.status, "pendente"), eq(lancamentosTable.status, "atrasado")),
-                    gte(lancamentosTable.vencimento, dataInicio.toISOString().split("T")[0]),
-                    lte(lancamentosTable.vencimento, dataFim.toISOString().split("T")[0]),
-                ),
-            )
-            .orderBy(desc(lancamentosTable.vencimento));
+            .leftJoin(parceirosTable, eq(parceirosTable.id, lancamentosTable.parceiro_id))
+            .where(and(...condicoes))
+            .limit(100);
+
+        // Ordena por proximidade de valor (idêntico primeiro) e, em empate,
+        // por proximidade de data em relação à linha do extrato (RN-D4).
+        const dataRefTime = linha.data_movimento ? new Date(linha.data_movimento).getTime() : Date.now();
+        const ordenados = [...candidatos].sort((a, b) => {
+            const diffValorA = Math.abs(toCents(a.valor) - valorLinhaCents);
+            const diffValorB = Math.abs(toCents(b.valor) - valorLinhaCents);
+            if (diffValorA !== diffValorB) return diffValorA - diffValorB;
+
+            const diffDataA = Math.abs(new Date(a.vencimento).getTime() - dataRefTime);
+            const diffDataB = Math.abs(new Date(b.vencimento).getTime() - dataRefTime);
+            return diffDataA - diffDataB;
+        });
 
         return successResponse(
             res,
-            lancamentos.map((l) => ({...l, valor: toDecimal(l.valor)})),
+            ordenados.map((l) => ({...l, valor: toDecimal(l.valor)})),
             {linha_id: linha.id, tipo_movimento: linha.tipo_movimento, dias_janela: diasJanela},
         );
     } catch (e) {
@@ -972,6 +1236,8 @@ router.get("/conciliacoes/:extrato_id", async (req, res) => {
                 item_status: itensConciliacaoTable.status,
                 valor_vinculado_total: itensConciliacaoTable.valor_vinculado_total,
                 valor_saldo: itensConciliacaoTable.valor_saldo,
+                regra_id: itensConciliacaoTable.regra_id,
+                classificacao_automatica: itensConciliacaoTable.classificacao_automatica,
             })
             .from(extratoLinhasTable)
             .innerJoin(itensConciliacaoTable, eq(itensConciliacaoTable.extrato_linha_id, extratoLinhasTable.id))
@@ -982,6 +1248,9 @@ router.get("/conciliacoes/:extrato_id", async (req, res) => {
         const vinculos = itemIds.length > 0
             ? await db
                 .select({
+                    // PK do vínculo em si - necessário para PATCH /conciliacoes/vinculos/:id
+                    // (edição inline de desconto/juros/data no card do lançamento).
+                    id: itensConciliacaoLancamentosTable.id,
                     item_conciliacao_id: itensConciliacaoLancamentosTable.item_conciliacao_id,
                     lancamento_id: itensConciliacaoLancamentosTable.lancamento_id,
                     valor_vinculado: itensConciliacaoLancamentosTable.valor_vinculado,
@@ -990,6 +1259,9 @@ router.get("/conciliacoes/:extrato_id", async (req, res) => {
                     lancamento_descricao: lancamentosTable.descricao,
                     lancamento_tipo: lancamentosTable.tipo,
                     lancamento_status: lancamentosTable.status,
+                    // Vencimento do lançamento vinculado - usado pelo card para exibir/editar
+                    // a data do residual parcial.
+                    lancamento_vencimento: lancamentosTable.vencimento,
                 })
                 .from(itensConciliacaoLancamentosTable)
                 .innerJoin(lancamentosTable, eq(lancamentosTable.id, itensConciliacaoLancamentosTable.lancamento_id))
@@ -1007,9 +1279,12 @@ router.get("/conciliacoes/:extrato_id", async (req, res) => {
             valor_vinculado_total: toDecimal(linha.valor_vinculado_total),
             valor_saldo: toDecimal(linha.valor_saldo),
             saldo_pos_linha: linha.saldo_pos_linha != null ? toDecimal(linha.saldo_pos_linha) : null,
+            regra_id: linha.regra_id,
+            classificacao_automatica: linha.classificacao_automatica,
             vinculacoes: vinculos
                 .filter((v) => v.item_conciliacao_id === linha.item_id)
                 .map((v) => ({
+                    vinculo_id: v.id,
                     lancamento_id: v.lancamento_id,
                     descricao: v.lancamento_descricao,
                     tipo: v.lancamento_tipo,
@@ -1019,6 +1294,7 @@ router.get("/conciliacoes/:extrato_id", async (req, res) => {
                     juros_multa: toDecimal(v.juros_multa),
                     /** @deprecated alias - usar juros_multa */
                     acrescimo: toDecimal(v.juros_multa),
+                    vencimento: v.lancamento_vencimento,
                 })),
         }));
 
@@ -1044,6 +1320,7 @@ router.get("/conciliacoes/:extrato_id", async (req, res) => {
                 resumo_ignorados: conciliacao.resumo_ignorados,
                 resumo_pendentes: conciliacao.resumo_pendentes,
                 resumo_total: conciliacao.resumo_total,
+                resumo_classificadas_automaticamente: conciliacao.resumo_classificadas_automaticamente,
             },
             linhas: linhasDetalhadas,
             diagnostico,
@@ -1362,6 +1639,227 @@ router.post(
             return successResponse(res, resultado);
         } catch (e) {
             return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao vincular lançamentos da linha.", String(e));
+        }
+    },
+);
+
+/**
+ * RN-G7 (fix): edição inline de desconto/juros-multa/data de um vínculo já
+ * existente. Não reaproveita mais POST /vincular (que trava com CONFLICT
+ * "já vinculada" - impossível na prática, já que a edição só aparece na UI
+ * justamente quando a linha já está vinculada). Aqui ajustamos só o delta
+ * necessário no lançamento (desconto/juros acumulados), sem recriar o vínculo.
+ */
+router.patch(
+    "/conciliacoes/vinculos/:vinculo_id",
+    validateBody(atualizarVinculoBodySchema),
+    async (req, res) => {
+        try {
+            const vinculoId = Number(req.params.vinculo_id);
+            const body = req.body as z.infer<typeof atualizarVinculoBodySchema>;
+
+            const [vinculo] = await db
+                .select()
+                .from(itensConciliacaoLancamentosTable)
+                .where(eq(itensConciliacaoLancamentosTable.id, vinculoId))
+                .limit(1);
+
+            if (!vinculo) {
+                return errorResponse(res, 404, "NOT_FOUND", "Vínculo não encontrado.");
+            }
+
+            const [lancamento] = await db
+                .select()
+                .from(lancamentosTable)
+                .where(eq(lancamentosTable.id, vinculo.lancamento_id))
+                .limit(1);
+
+            if (!lancamento) {
+                return errorResponse(res, 404, "NOT_FOUND", "Lançamento vinculado não encontrado.");
+            }
+
+            const descontoAnteriorCents = toCents(vinculo.desconto);
+            const jurosAnteriorCents = toCents(vinculo.juros_multa);
+            const novoDescontoCents = body.desconto !== undefined ? toCents(body.desconto) : descontoAnteriorCents;
+            const novoJurosCents = body.juros_multa !== undefined ? toCents(body.juros_multa) : jurosAnteriorCents;
+
+            const deltaDescontoCents = novoDescontoCents - descontoAnteriorCents;
+            const deltaJurosCents = novoJurosCents - jurosAnteriorCents;
+
+            // Vencimento só é editável quando o lançamento vinculado é um
+            // residual parcial (a linha do extrato em si não tem vencimento
+            // editável por aqui).
+            const podeEditarVencimento = Boolean(lancamento.is_residuo_parcial);
+            if (body.vencimento !== undefined && !podeEditarVencimento) {
+                return errorResponse(
+                    res,
+                    400,
+                    "VALIDATION_ERROR",
+                    "Vencimento só pode ser editado para lançamentos residuais (pagamento parcial).",
+                );
+            }
+
+            await db.transaction(async (tx) => {
+                await tx
+                    .update(itensConciliacaoLancamentosTable)
+                    .set({
+                        desconto: centsToDecimalString(novoDescontoCents),
+                        juros_multa: centsToDecimalString(novoJurosCents),
+                    })
+                    .where(eq(itensConciliacaoLancamentosTable.id, vinculoId));
+
+                if (deltaDescontoCents !== 0 || deltaJurosCents !== 0) {
+                    await tx
+                        .update(lancamentosTable)
+                        .set({
+                            desconto: centsToDecimalString(toCents(lancamento.desconto) + deltaDescontoCents),
+                            juros: centsToDecimalString(toCents(lancamento.juros) + deltaJurosCents),
+                            updated_at: new Date(),
+                        })
+                        .where(eq(lancamentosTable.id, lancamento.id));
+                }
+
+                if (body.vencimento !== undefined && podeEditarVencimento) {
+                    await tx
+                        .update(lancamentosTable)
+                        .set({vencimento: body.vencimento, updated_at: new Date()})
+                        .where(eq(lancamentosTable.id, lancamento.id));
+                }
+            });
+
+            return successResponse(res, {
+                vinculo_id: vinculoId,
+                desconto: fromCents(novoDescontoCents),
+                juros_multa: fromCents(novoJurosCents),
+                vencimento: body.vencimento ?? lancamento.vencimento,
+            });
+        } catch (e) {
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao atualizar vínculo.", String(e));
+        }
+    },
+);
+
+/**
+ * RN-D3: botão [+] na linha do extrato - cria o lançamento correspondente
+ * (pré-preenchido no front com data/valor/natureza/descrição da linha) e já
+ * o deixa vinculado e quitado por ela, sem passo extra de vincular.
+ */
+router.post(
+    "/conciliacoes/linhas/:linha_id/criar-lancamento",
+    validateBody(criarLancamentoBodySchema),
+    async (req, res) => {
+        try {
+            const linhaId = Number(req.params.linha_id);
+            const body = req.body as CriarLancamentoBody;
+
+            const [item] = await db
+                .select()
+                .from(itensConciliacaoTable)
+                .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
+                .limit(1);
+            if (!item) {
+                return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada para conciliação.");
+            }
+            if (item.status !== "pendente") {
+                return errorResponse(res, 400, "VALIDATION_ERROR", "Esta linha já foi tratada (vinculada ou ignorada).");
+            }
+
+            const [linhaExtrato] = await db
+                .select()
+                .from(extratoLinhasTable)
+                .where(eq(extratoLinhasTable.id, linhaId))
+                .limit(1);
+            if (!linhaExtrato) {
+                return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada.");
+            }
+
+            const [conciliacao] = await db
+                .select()
+                .from(conciliacoesTable)
+                .where(eq(conciliacoesTable.id, item.conciliacao_id))
+                .limit(1);
+            if (!conciliacao) {
+                return errorResponse(res, 404, "NOT_FOUND", "Conciliação não encontrada.");
+            }
+
+            const valorCents = toCents(body.valor);
+            const valorExtratoCents = toCents(item.valor_extrato);
+            if (valorCents !== valorExtratoCents) {
+                return errorResponse(
+                    res,
+                    400,
+                    "VALIDATION_ERROR",
+                    "O valor do lançamento deve ser igual ao valor da linha do extrato.",
+                );
+            }
+
+            const statusQuitacao = statusAposQuitacao({
+                tipoExtrato: item.tipo_extrato,
+                valorLancamentoCents: valorCents,
+                valorQuitadoAcumuladoCents: valorCents,
+            });
+
+            const resultado = await db.transaction(async (tx) => {
+                const [novoLancamento] = await tx
+                    .insert(lancamentosTable)
+                    .values({
+                        tipo: body.tipo,
+                        vencimento: body.vencimento,
+                        conta_id: linhaExtrato.conta_id,
+                        parceiro_id: body.parceiro_id ?? null,
+                        descricao: body.descricao ?? linhaExtrato.descricao ?? null,
+                        valor: centsToDecimalString(valorCents),
+                        status: statusQuitacao,
+                        origem: "conciliacao",
+                        plano_conta_id: body.plano_conta_id ?? null,
+                        departamento_id: body.departamento_id ?? null,
+                        centro_custo_id: body.centro_custo_id ?? null,
+                        forma_pagamento: body.forma_pagamento ?? null,
+                        data_quitacao: linhaExtrato.data_movimento,
+                        valor_quitado: centsToDecimalString(valorCents),
+                        criado_por: req.user?.id,
+                    })
+                    .returning();
+
+                await tx.insert(itensConciliacaoLancamentosTable).values({
+                    item_conciliacao_id: item.id,
+                    lancamento_id: novoLancamento.id,
+                    valor_vinculado: centsToDecimalString(valorCents),
+                    desconto: "0.00",
+                    juros_multa: "0.00",
+                });
+
+                await tx
+                    .update(itensConciliacaoTable)
+                    .set({
+                        status: "vinculado",
+                        valor_vinculado_total: centsToDecimalString(valorCents),
+                        valor_saldo: "0.00",
+                        data_conciliacao: hojeIsoLocal(),
+                        updated_at: new Date(),
+                    })
+                    .where(eq(itensConciliacaoTable.id, item.id));
+
+                await tx.insert(historicoConciliacaoTable).values({
+                    conciliacao_id: item.conciliacao_id,
+                    item_conciliacao_id: item.id,
+                    usuario_id: req.user?.id,
+                    acao: "vincular",
+                    detalhes: JSON.stringify({
+                        linha_id: linhaId,
+                        acao: "criar_lancamento",
+                        lancamento_id: novoLancamento.id,
+                    }),
+                });
+
+                await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
+
+                return novoLancamento;
+            });
+
+            return successResponse(res, {linha_id: linhaId, status: "vinculado", lancamento: resultado}, null, 201);
+        } catch (e) {
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao criar lançamento a partir da linha.", String(e));
         }
     },
 );

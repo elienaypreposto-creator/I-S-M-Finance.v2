@@ -12,3 +12,4 @@ export * from "./tokens-api";
 export * from "./departamentos";
 export * from "./logs";
 export * from "./parametros-sistema";
+export * from "./regras-conciliacao";
