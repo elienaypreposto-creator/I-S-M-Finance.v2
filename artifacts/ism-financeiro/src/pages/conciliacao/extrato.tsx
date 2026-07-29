@@ -378,6 +378,14 @@ function NovoLancamentoModal({
                         />
                     </div>
 
+                    <button
+                        type="button"
+                        onClick={irParaCadastroDeRegra}
+                        className="w-full flex items-center justify-center gap-2 text-xs text-primary hover:text-primary/80 border border-primary/20 hover:border-primary/40 bg-primary/5 rounded-xl px-3 py-2.5 transition-colors">
+                        <Repeat className="w-3.5 h-3.5"/>
+                        Cadastrar regra de repetição a partir desta linha
+                    </button>
+
                     <div className="flex gap-3 pt-1">
                         <button
                             type="button"
@@ -436,45 +444,6 @@ function CardLancamento({
     // quitado) - é o único vínculo cuja data de vencimento faz sentido editar
     // aqui (RN-G3). Os demais lançamentos já foram quitados por esta linha.
     const isResidual = v.status === "pendente";
-
-    const duplicarMutation = useMutation({
-        mutationFn: async () => {
-            const original = await fetchApiData<Record<string, unknown>>(`/lancamentos/${v.lancamento_id}`);
-            return fetchApiData("/lancamentos", {
-                method: "POST",
-                body: JSON.stringify({
-                    tipo: original.tipo,
-                    vencimento: original.vencimento,
-                    competencia: original.competencia ?? null,
-                    conta_id: original.conta_id ?? null,
-                    parceiro_id: original.parceiro_id ?? null,
-                    descricao: original.descricao ?? null,
-                    valor: original.valor,
-                    plano_conta_id: original.plano_conta_id ?? null,
-                    departamento_id: original.departamento_id ?? null,
-                    centro_custo_id: original.centro_custo_id ?? null,
-                    forma_pagamento: original.forma_pagamento ?? null,
-                    dados_pagamento: original.dados_pagamento ?? null,
-                    // Cópia nasce solta (pendente, sem vínculo) - o usuário decide
-                    // depois se ela conciliará com outra linha do extrato.
-                    status: "pendente",
-                }),
-            });
-        },
-        onSuccess: () => {
-            invalidateRelated(queryClient, "lancamentos");
-            toast({
-                title: "Lançamento duplicado",
-                description: "Uma cópia pendente foi criada, sem vínculo com esta linha.",
-            });
-        },
-        onError: (e: unknown) =>
-            toast({
-                variant: "destructive",
-                title: "Não foi possível duplicar",
-                description: e instanceof Error ? e.message : String(e),
-            }),
-    });
 
     const atualizarValorMutation = useMutation({
         mutationFn: (payload: { campo: "desconto" | "juros_multa" | "data"; valor: string }) => {
@@ -545,14 +514,11 @@ function CardLancamento({
                     <button
                         type="button"
                         title="Duplicar lançamento"
-                        disabled={duplicarMutation.isPending}
-                        onClick={() => duplicarMutation.mutate()}
-                        className="p-1 rounded hover:bg-white/10 text-muted-foreground hover:text-white disabled:opacity-40">
-                        {duplicarMutation.isPending ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin"/>
-                        ) : (
-                            <Copy className="w-3.5 h-3.5"/>
-                        )}
+                        onClick={() =>
+                            toast({title: "Em breve", description: "Duplicar lançamento ainda não está disponível."})
+                        }
+                        className="p-1 rounded hover:bg-white/10 text-muted-foreground hover:text-white">
+                        <Copy className="w-3.5 h-3.5"/>
                     </button>
                     {canDesfazer && (
                         <button
@@ -885,9 +851,9 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
 
             <ConfirmDialog
                 open={finalizarOpen}
-                title="Concluir conciliação?"
-                description="Todas as linhas já estão tratadas (vinculadas ou ignoradas). Após concluir, o extrato será marcado como conciliado."
-                confirmLabel="Concluir"
+                title="Finalizar conciliação?"
+                description="Não pode haver linhas pendentes. Após concluir, o extrato será marcado como conciliado."
+                confirmLabel="Finalizar"
                 variant="default"
                 icon={CheckCircle2}
                 onCancel={() => setFinalizarOpen(false)}
@@ -993,10 +959,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                     className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-success hover:bg-success/90 text-white text-xs font-bold disabled:opacity-40 disabled:pointer-events-none shadow-lg shadow-success/20">
                                     {finalizarMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin"/> :
                                         <CheckCircle2 className="w-4 h-4"/>}
-                                    {/* RN-I1/I2: rótulo dinâmico - "Salvar" enquanto houver pendências
-                                        (cada vínculo/ignorar já grava na hora - RN-I4), "Concluir" quando
-                                        pendentes = 0. A palavra "Conciliar" nunca aparece isoladamente. */}
-                                    {podeFinalizar ? "Concluir" : "Salvar"}
+                                    Finalizar conciliação
                                 </button>
                             </RequiresPermission>
                         </div>
@@ -1058,16 +1021,15 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                 </div>
                                                 <div className="flex items-center gap-1.5 shrink-0">
                                                     {/* RN-D3: [+] verde - cria lançamento pré-preenchido a partir da linha */}
-                                                  {isPendente && canVincular && (
-                                                 <button
-                                                type="button"
-                                                onClick={() => setVincularLinha({id: linha.linha_id, valorAbs})}
-                                               className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-primary/40 bg-primary/10 hover:bg-primary/20 text-primary text-[11px] font-semibold transition-colors">
-                                               <Search className="w-3 h-3"/>
-                                                Vincular
-                                                </button>
-                                                 )}
-                                                    
+                                                    {isPendente && canVincular && (
+                                                        <button
+                                                            type="button"
+                                                            title="Criar lançamento a partir desta linha"
+                                                            onClick={() => setNovoLancamentoLinha(linha)}
+                                                            className="w-6 h-6 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 flex items-center justify-center shrink-0">
+                                                            <Plus className="w-3.5 h-3.5"/>
+                                                        </button>
+                                                    )}
                                                     {/* [⊘ Ignorar] ⇄ [↺ Reverter] - ao lado do [+], como no protótipo */}
                                                     {isPendente && canIgnorar && (
                                                         <button
