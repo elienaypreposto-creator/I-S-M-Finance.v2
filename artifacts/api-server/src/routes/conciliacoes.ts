@@ -1392,7 +1392,7 @@ router.post(
                             tipo: origem.tipo,
                             vencimento: origem.vencimento,
                             competencia: origem.competencia,
-                            conta_id: origem.conta_id,
+                            conta_id: origem.conta_id ?? conciliacao.conta_id,
                             parceiro_id: origem.parceiro_id,
                             descricao: `${origem.descricao ?? "Lançamento"} (pagamento parcial)`,
                             valor: centsToDecimalString(decision.residual.valorCents),
@@ -1451,6 +1451,8 @@ router.post(
                         .set({
                             status: statusQuitacao,
                             data_quitacao: dataQuitacao,
+                            /** FEAT-10: associa o título à conta do extrato (cadastro pode ter conta_id NULL). */
+                            conta_id: conciliacao.conta_id,
                             valor_quitado: centsToDecimalString(quitadoAcumuladoCents),
                             desconto: sql`${lancamentosTable.desconto}
                             +
