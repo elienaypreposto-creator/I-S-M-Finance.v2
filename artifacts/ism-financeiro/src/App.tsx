@@ -20,7 +20,6 @@ import PlanoContas from "./pages/cadastros/plano-contas-FINANCEIRO-ISM";
 import ContasBancarias from "./pages/cadastros/contas-bancarias-FINANCEIRO-ISM";
 import Metas from "./pages/cadastros/metas";
 import Departamentos from "./pages/cadastros/departamentos";
-import RegrasConciliacao from "./pages/cadastros/regras-conciliacao";
 
 // Relatórios
 import FechamentoMensal from "./pages/relatorios/fechamento-mensal";
@@ -167,7 +166,7 @@ function Router() {
             <PrivateRoute path="/cadastros/contas-bancarias" component={ContasBancarias}/>
             <PrivateRoute path="/cadastros/metas" component={Metas}/>
             <PrivateRoute path="/cadastros/departamentos" component={Departamentos}/>
-            <PrivateRoute path="/cadastros/regras-conciliacao" component={RegrasConciliacao}/>
+            
 
             {/* Relatórios */}
             <PrivateRoute path="/relatorios/fechamento-mensal" component={FechamentoMensal}/>

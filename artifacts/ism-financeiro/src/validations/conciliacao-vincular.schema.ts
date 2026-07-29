@@ -129,18 +129,31 @@ export function buildVincularFormSchema(
             }
 
             if (deltaCents < 0) {
-                // FALTA -> residual opcional. NÃO é erro de “ultrapasse”.
-                if (data.gerar_parcial && selected.length >= 2) {
-                    const origemOk =
-                        data.residuo_lancamento_id != null &&
-                        selected.some((i) => i.lancamento_id === data.residuo_lancamento_id);
-                    if (!origemOk) {
+                // FALTA. Com 2+ lançamentos (Modo A), o restante só pode ficar em
+                // aberto se o usuário optar explicitamente por gerar a movimentação
+                // residual - senão o vínculo fecharia sem que o total bata (RN-E2).
+                // Com 1 lançamento (Modo B), a falta é pagamento parcial legítimo
+                // (mais linhas de extrato vêm depois) e não exige residual.
+                if (selected.length >= 2) {
+                    if (!data.gerar_parcial) {
                         ctx.addIssue({
                             code: "custom",
                             message:
-                                "Selecione de qual lançamento nasce a movimentação residual.",
-                            path: ["residuo_lancamento_id"],
+                                "Falta valor para fechar com o extrato. Marque \"Gerar movimentação residual\" ou ajuste os lançamentos selecionados.",
+                            path: ["itens"],
                         });
+                    } else {
+                        const origemOk =
+                            data.residuo_lancamento_id != null &&
+                            selected.some((i) => i.lancamento_id === data.residuo_lancamento_id);
+                        if (!origemOk) {
+                            ctx.addIssue({
+                                code: "custom",
+                                message:
+                                    "Selecione de qual lançamento nasce a movimentação residual.",
+                                path: ["residuo_lancamento_id"],
+                            });
+                        }
                     }
                 }
             }

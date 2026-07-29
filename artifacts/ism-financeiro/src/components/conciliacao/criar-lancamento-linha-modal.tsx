@@ -159,8 +159,8 @@ export function CriarLancamentoLinhaModal({open, onClose, onSuccess, extratoId, 
                             <div
                                 className={`px-3 py-2 rounded-xl text-sm font-black border ${
                                     tipo === "CR"
-                                        ? "bg-teal-500/15 text-teal-300 border-teal-500/25"
-                                        : "bg-orange-500/15 text-orange-300 border-orange-500/25"
+                                        ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/25"
+                                        : "bg-red-500/15 text-red-300 border-red-500/25"
                                 }`}>
                                 {tipo === "CR" ? "Entrada (CR)" : "Saída (CP)"}
                             </div>

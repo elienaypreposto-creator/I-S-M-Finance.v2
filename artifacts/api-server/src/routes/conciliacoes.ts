@@ -942,6 +942,13 @@ router.get("/conciliacoes/buscar-lancamentos", async (req, res) => {
         const busca = typeof req.query.busca === "string" ? req.query.busca.trim() : "";
         const valorBusca =
             typeof req.query.valor === "string" && req.query.valor !== "" ? toCents(req.query.valor) : null;
+        // RN-D4: vencimento como critério próprio de busca (ex.: lançamento
+        // pago com atraso, fora de qualquer janela razoável) - não apenas
+        // como limite do range da janela.
+        const vencimentoBusca =
+            typeof req.query.vencimento === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.vencimento)
+                ? req.query.vencimento
+                : null;
 
         const [linha] = await db
             .select({
@@ -961,9 +968,10 @@ router.get("/conciliacoes/buscar-lancamentos", async (req, res) => {
         const tipoCompatvel = linha.tipo_movimento === "debito" ? "CP" : "CR";
         const valorLinhaCents = toCents(linha.valor);
 
-        // Busca por texto ou valor ignora a janela de datas: o usuário está
-        // procurando um lançamento específico, não navegando por proximidade.
-        const usaFiltroLivre = Boolean(busca) || valorBusca !== null;
+        // Busca por texto, valor ou vencimento ignora a janela de datas: o
+        // usuário está procurando um lançamento específico, não navegando
+        // por proximidade.
+        const usaFiltroLivre = Boolean(busca) || valorBusca !== null || vencimentoBusca !== null;
 
         const condicoes = [
             eq(lancamentosTable.tipo, tipoCompatvel),
@@ -978,6 +986,10 @@ router.get("/conciliacoes/buscar-lancamentos", async (req, res) => {
             dataFim.setDate(dataFim.getDate() + diasJanela);
             condicoes.push(gte(lancamentosTable.vencimento, dataInicio.toISOString().split("T")[0]));
             condicoes.push(lte(lancamentosTable.vencimento, dataFim.toISOString().split("T")[0]));
+        }
+
+        if (vencimentoBusca) {
+            condicoes.push(eq(lancamentosTable.vencimento, vencimentoBusca));
         }
 
         if (busca) {

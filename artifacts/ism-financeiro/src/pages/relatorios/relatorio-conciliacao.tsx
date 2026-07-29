@@ -249,10 +249,10 @@ export default function RelatorioConciliacao() {
                         </div>
                         <div className="glass-panel rounded-2xl p-4 border border-white/10">
                             <p className="text-[10px] uppercase text-muted-foreground font-bold">Movimentações</p>
-                            <p className="text-sm text-teal-300 mt-1">
+                            <p className="text-sm text-emerald-300 mt-1">
                                 + {formatCurrency(data.movimentacoes.creditos_quitados)}
                             </p>
-                            <p className="text-sm text-orange-300">
+                            <p className="text-sm text-red-300">
                                 − {formatCurrency(data.movimentacoes.debitos_quitados)}
                             </p>
                             <p className="text-[10px] text-amber-300/80 mt-1">

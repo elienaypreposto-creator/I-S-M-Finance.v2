@@ -49,6 +49,8 @@ type VincularPayload = {
 const DIAS_JANELA_INICIAL = 14;
 const DIAS_JANELA_INCREMENTO = 14;
 const DIAS_JANELA_MAXIMA = 90;
+const BUSCA_MIN_CHARS = 3;
+const BUSCA_DEBOUNCE_MS = 400;
 
 function centsToBrDisplay(cents: number): string {
     const abs = Math.abs(cents);
@@ -463,8 +465,8 @@ function VincularFormBody({
                 ) : showResidual ? (
                     <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2 space-y-2">
                         <p className="text-sm font-semibold text-red-200 text-center">
-                            Falta {formatCurrency(toMoney(Math.abs(deltaCents ?? 0)))} para atingir o valor do
-                            extrato
+                            Falta {formatCurrency(toMoney(Math.abs(deltaCents ?? 0)))} para atingir o valor
+                            do{selectedItens.length > 1 ? "s lançamentos selecionados" : " lançamento"}
                         </p>
                         {/* RN-G3: rótulo exato "Gerar movimentação residual" - só aparece
                             quando a soma dos lançamentos selecionados é menor que a
@@ -570,7 +572,11 @@ function VincularFormBody({
                         disabled={
                             vincularMutation.isPending ||
                             lancamentos.length === 0 ||
-                            selectedItens.length === 0
+                            selectedItens.length === 0 ||
+                            // RN-E2: com 2+ lançamentos e falta, só libera com o residual
+                            // marcado (Modo B - 1 lançamento - continua liberado: é
+                            // pagamento parcial legítimo, mais linhas virão depois).
+                            (showResidual && selectedItens.length >= 2 && !gerarParcial)
                         }
                         className="flex-1 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
                         {vincularMutation.isPending ? (
@@ -606,13 +612,17 @@ export function VincularModal({
                                   onSuccess,
                               }: VincularModalProps) {
     const [diasJanela, setDiasJanela] = useState(DIAS_JANELA_INICIAL);
-    // RN-D4: campos de busca manual — descrição/parceiro (texto livre) e valor,
-    // além da janela de datas. "buscaAtiva"/"valorAtivo" só mudam ao clicar em
-    // Buscar, para não disparar uma requisição a cada tecla digitada.
+    // RN-D4: campos de busca manual — descrição/parceiro (texto livre), valor
+    // e vencimento, além da janela de datas. "buscaAtiva"/"valorAtivo"/
+    // "vencimentoAtivo" só mudam ao clicar em Buscar (valor/vencimento) ou
+    // automaticamente com debounce a partir de 3 letras (descrição/parceiro),
+    // para não disparar uma requisição a cada tecla digitada.
     const [buscaTexto, setBuscaTexto] = useState("");
     const [buscaAtiva, setBuscaAtiva] = useState("");
     const [valorTexto, setValorTexto] = useState("");
     const [valorAtivo, setValorAtivo] = useState("");
+    const [vencimentoTexto, setVencimentoTexto] = useState("");
+    const [vencimentoAtivo, setVencimentoAtivo] = useState("");
 
     // Reseta a janela/busca sempre que uma linha diferente é aberta.
     useEffect(() => {
@@ -621,10 +631,30 @@ export function VincularModal({
         setBuscaAtiva("");
         setValorTexto("");
         setValorAtivo("");
+        setVencimentoTexto("");
+        setVencimentoAtivo("");
     }, [linhaId]);
 
+    // Busca automática por descrição/parceiro a partir de 3 letras, com
+    // debounce para evitar disparar uma requisição a cada tecla.
+    useEffect(() => {
+        const trimmed = buscaTexto.trim();
+
+        if (trimmed.length < BUSCA_MIN_CHARS) {
+            if (buscaAtiva !== "") setBuscaAtiva("");
+            return;
+        }
+
+        const timeoutId = setTimeout(() => {
+            setBuscaAtiva(trimmed);
+        }, BUSCA_DEBOUNCE_MS);
+
+        return () => clearTimeout(timeoutId);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [buscaTexto]);
+
     const {data: lancamentos = [], isLoading, isFetching} = useQuery<LancamentoCompativel[]>({
-        queryKey: ["conciliacao-buscar-lancamentos", linhaId, diasJanela, buscaAtiva, valorAtivo],
+        queryKey: ["conciliacao-buscar-lancamentos", linhaId, diasJanela, buscaAtiva, valorAtivo, vencimentoAtivo],
         queryFn: () => {
             const params = new URLSearchParams({
                 linha_id: String(linhaId),
@@ -632,6 +662,7 @@ export function VincularModal({
             });
             if (buscaAtiva) params.set("busca", buscaAtiva);
             if (valorAtivo) params.set("valor", valorAtivo);
+            if (vencimentoAtivo) params.set("vencimento", vencimentoAtivo);
             return fetchApiData<LancamentoCompativel[]>(`/conciliacoes/buscar-lancamentos?${params.toString()}`);
         },
         enabled: open && linhaId > 0,
@@ -648,6 +679,7 @@ export function VincularModal({
         setBuscaAtiva(buscaTexto.trim());
         const valorNormalizado = brMoneyDisplayToApiString(valorTexto) || "";
         setValorAtivo(valorNormalizado && valorNormalizado !== "0.00" ? valorNormalizado : "");
+        setVencimentoAtivo(vencimentoTexto);
     };
 
     return (
@@ -700,7 +732,6 @@ export function VincularModal({
                                 type="text"
                                 value={buscaTexto}
                                 onChange={(e) => setBuscaTexto(e.target.value)}
-                                onKeyDown={(e) => e.key === "Enter" && handleAplicarBusca()}
                                 placeholder="Ex.: aluguel, fornecedor…"
                                 className="bg-[#1a1c23] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-primary/50"
                             />
@@ -716,6 +747,18 @@ export function VincularModal({
                                 onChange={(e) => setValorTexto(formatValorBrInput(e.target.value))}
                                 onKeyDown={(e) => e.key === "Enter" && handleAplicarBusca()}
                                 placeholder="0,00"
+                                className="bg-[#1a1c23] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-primary/50"
+                            />
+                        </div>
+                        <div className="flex flex-col gap-1 w-36">
+                            <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                Vencimento
+                            </span>
+                            <input
+                                type="date"
+                                value={vencimentoTexto}
+                                onChange={(e) => setVencimentoTexto(e.target.value)}
+                                onKeyDown={(e) => e.key === "Enter" && handleAplicarBusca()}
                                 className="bg-[#1a1c23] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-primary/50"
                             />
                         </div>
@@ -739,7 +782,7 @@ export function VincularModal({
                 ) : lancamentos.length === 0 ? (
                     <div className="py-12 px-5 text-center text-xs text-muted-foreground">
                         Nenhum lançamento compatível encontrado. Amplie a janela de datas ou busque por
-                        descrição, parceiro ou valor.
+                        descrição, parceiro, valor ou vencimento.
                         <div className="mt-4 flex items-center justify-center gap-3">
                             {podeBuscarMais && (
                                 <button

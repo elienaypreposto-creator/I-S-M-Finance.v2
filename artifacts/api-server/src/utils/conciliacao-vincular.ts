@@ -315,16 +315,17 @@ export function decidirVincular(input: VincularDecisionInput): VincularDecision 
 
             residual = {origemLancamentoId: origemId, valorCents: faltaCents};
         } else {
-            origemId = lancamentos[0]!.lancamento_id;
-            if (baseLiquidaCents(lancamentos[0]!) < faltaCents) {
-                return {
-                    ok: false,
-                    status: 400,
-                    code: "VALIDATION_ERROR",
-                    message:
-                        "A falta excede o primeiro lançamento. Escolha gerar movimentação residual com origem explícita.",
-                };
-            }
+            // RN-E2: com 2+ lançamentos, a soma tem que fechar com o extrato.
+            // Sem "gerar movimentação residual" explícito, não fecha o vínculo
+            // com o restante em aberto - diferente do Modo B (1 lançamento),
+            // onde a falta é pagamento parcial legítimo.
+            return {
+                ok: false,
+                status: 400,
+                code: "VALIDATION_ERROR",
+                message:
+                    "Falta valor para fechar com o extrato. Marque \"Gerar movimentação residual\" (com a origem) ou ajuste os lançamentos selecionados.",
+            };
         }
 
         const itens: VincularLancamentoDecision[] = lancamentos.map((l) => {
