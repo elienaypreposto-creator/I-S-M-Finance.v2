@@ -66,7 +66,8 @@ type RelatorioConciliacao = {
 };
 
 function lastDayOfMonth(ano: number, mes: number): string {
-    return new Date(ano, mes, 0).toISOString().split("T")[0];
+    const last = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+    return `${ano}-${String(mes).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
 }
 
 export default function RelatorioConciliacao() {

@@ -1,8 +1,9 @@
-import {and, count, eq, gte, lte, sql} from "drizzle-orm";
+import {and, count, eq, lte, sql} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {contasBancariasTable, extratosTable, lancamentosTable} from "@workspace/db/schema";
 import {AppError} from "../../../utils/app-error";
 import {centsToDecimalString, fromCents, toCents} from "../../../utils/money";
+import {sqlLancamentosDaConta} from "../../../utils/lancamentos-conta";
 import type {CreateContaBancariaBody, UpdateContaBancariaBody} from "./schemas";
 
 async function calcularSaldoCents(contaId: number, dataRef?: string): Promise<{
@@ -23,8 +24,16 @@ async function calcularSaldoCents(contaId: number, dataRef?: string): Promise<{
 
     const saldoInicialCents = toCents(conta.saldo_inicial);
     const conditions = [
-        eq(lancamentosTable.conta_id, contaId),
-        gte(lancamentosTable.data_quitacao, conta.data_inicio),
+        sqlLancamentosDaConta(contaId),
+        sql`(
+                ${lancamentosTable.data_quitacao} >= ${conta.data_inicio}
+                OR ${lancamentosTable.id} IN (
+                SELECT icl.lancamento_id
+                FROM itens_conciliacao_lancamentos icl
+                INNER JOIN itens_conciliacao ic ON ic.id = icl.item_conciliacao_id
+                INNER JOIN conciliacoes c ON c.id = ic.conciliacao_id
+                WHERE c.conta_id = ${contaId}
+                ))`,
         sql`${lancamentosTable.status}
         IN ('pago', 'recebido', 'pago_parcial')`,
     ];
