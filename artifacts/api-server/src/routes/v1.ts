@@ -12,12 +12,46 @@ import {
 } from "@workspace/db/schema";
 import {v1AuthMiddleware} from "../middlewares/v1Auth";
 import {errorResponse, successResponse} from "../utils/response";
+import {fromCents, valorEfetivoCents} from "../utils/money";
 
 const router = Router();
 
 const DEFAULT_LIMIT = 10000;
 const parseLimit = (value: unknown) => Math.min(Number(value ?? DEFAULT_LIMIT) || DEFAULT_LIMIT, 50000);
 const parseOffset = (value: unknown) => Number(value ?? 0) || 0;
+
+function mapLancamentoV1(i: {
+    valor: unknown;
+    valor_quitado: unknown;
+    juros: unknown;
+    multa: unknown;
+    desconto: unknown;
+    acrescimo: unknown;
+    [key: string]: unknown;
+}) {
+    const juros = Number(i.juros ?? 0);
+    const multa = Number(i.multa ?? 0);
+    const desconto = Number(i.desconto ?? 0);
+    return {
+        ...i,
+        valor: Number(i.valor ?? 0),
+        valor_quitado: Number(i.valor_quitado ?? 0),
+        juros,
+        multa,
+        desconto,
+        /** DEF-05: valor + juros + multa − desconto */
+        valor_efetivo: fromCents(
+            valorEfetivoCents({
+                valor: i.valor,
+                juros: i.juros,
+                multa: i.multa,
+                desconto: i.desconto,
+            }),
+        ),
+        /** @deprecated use `juros` (canônico DEF-05). Espelha juros para clientes legados. */
+        acrescimo: juros,
+    };
+}
 
 router.use(v1AuthMiddleware);
 
@@ -87,15 +121,7 @@ router.get("/contasPagar", async (req, res) => {
 
         return successResponse(
             res,
-            items.map((i) => ({
-                ...i,
-                valor: Number(i.valor ?? 0),
-                valor_quitado: Number(i.valor_quitado ?? 0),
-                juros: Number(i.juros ?? 0),
-                multa: Number(i.multa ?? 0),
-                desconto: Number(i.desconto ?? 0),
-                acrescimo: Number(i.acrescimo ?? 0),
-            })),
+            items.map(mapLancamentoV1),
             {limit, offset, nextOffset: offset + items.length},
         );
     } catch (e) {
@@ -153,15 +179,7 @@ router.get("/contasReceber", async (req, res) => {
 
         return successResponse(
             res,
-            items.map((i) => ({
-                ...i,
-                valor: Number(i.valor ?? 0),
-                valor_quitado: Number(i.valor_quitado ?? 0),
-                juros: Number(i.juros ?? 0),
-                multa: Number(i.multa ?? 0),
-                desconto: Number(i.desconto ?? 0),
-                acrescimo: Number(i.acrescimo ?? 0),
-            })),
+            items.map(mapLancamentoV1),
             {limit, offset, nextOffset: offset + items.length},
         );
     } catch (e) {

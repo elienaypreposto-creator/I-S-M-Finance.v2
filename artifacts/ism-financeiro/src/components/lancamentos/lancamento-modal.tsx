@@ -1106,6 +1106,7 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
                                                 ? <option value="recebido">Recebido (Liquidado)</option>
                                                 : <option value="pago">Pago (Liquidado)</option>
                                             }
+                                            <option value="pago_parcial">Pago parcial</option>
                                             <option value="atrasado">Atrasado</option>
                                             <option value="cancelado">Cancelado</option>
                                         </select>

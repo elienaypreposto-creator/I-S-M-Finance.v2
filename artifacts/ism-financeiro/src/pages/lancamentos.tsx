@@ -1083,6 +1083,7 @@ function LancamentoModal({
                                         ) : (
                                             <option value="pago">Pago (Liquidado)</option>
                                         )}
+                                        <option value="pago_parcial">Pago parcial</option>
                                         <option value="atrasado">Atrasado</option>
                                         <option value="cancelado">Cancelado</option>
                                     </select>
@@ -1376,6 +1377,7 @@ export default function Lancamentos() {
                             <option value="pendente">Pendente</option>
                             <option value="pago">Pago</option>
                             <option value="recebido">Recebido</option>
+                            <option value="pago_parcial">Pago parcial</option>
                             <option value="atrasado">Atrasado</option>
                             <option value="cancelado">Cancelado</option>
                         </select>

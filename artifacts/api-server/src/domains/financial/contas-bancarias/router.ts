@@ -5,6 +5,7 @@ import {asyncHandler} from "../../../utils/async-handler";
 import {AppError} from "../../../utils/app-error";
 import {successResponse} from "../../../utils/response";
 import {contasBancariasService} from "./contas-bancarias.service";
+import {PERM} from "../../../constants/permissoes";
 import {
     type CreateContaBancariaBody,
     type UpdateContaBancariaBody,
@@ -26,6 +27,7 @@ router.get(
 /** DEF-03: saldo posicional ?data=YYYY-MM-DD */
 router.get(
     "/contas-bancarias/:id/saldo",
+    withPermission(PERM.CONCILIACAO_ACESSAR),
     asyncHandler(async (req, res) => {
         const {id} = contaBancariaIdParamSchema.parse(req.params);
         const data = String(req.query.data ?? "");

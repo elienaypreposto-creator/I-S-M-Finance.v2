@@ -35,8 +35,8 @@ function toCents(money: string | number): number | null {
 
 /**
  * Δ = Σ(extrato) − Σ(lançamentos líquidos) - mesma regra do backend (DEF-01).
- * >0 excedente -> Juros/Multa (não exige residual; não é erro).
- * <0 falta -> oferece movimentação residual (checkbox).
+ * >0 gap: falta cobrir o extrato (mais títulos ou Juros/Multa explícito).
+ * <0 falta nos títulos -> residual (checkbox).
  * =0 exato.
  */
 export function buildVincularFormSchema(
@@ -107,25 +107,27 @@ export function buildVincularFormSchema(
             const deltaCents = extratoCents - somaBasesCents;
 
             if (deltaCents > 0) {
-                // EXCEDENTE -> Juros/Multa. Não exige residual. Não bloqueia.
+                // Card 39: gap sem juros explícitos = "Falta cobrir o extrato".
                 if (selected.length > 1 && somaJurosCents !== deltaCents) {
+                    const faltaBr = (deltaCents / 100).toLocaleString("pt-BR", {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                    });
                     if (somaJurosCents === 0) {
                         ctx.addIssue({
                             code: "custom",
-                            message:
-                                "Há excedente em relação aos lançamentos. Aloque o valor em Juros/Multa.",
+                            message: `Falta R$ ${faltaBr} para cobrir o valor do extrato. Selecione mais lançamentos ou aloque em Juros/Multa.`,
                             path: ["itens"],
                         });
                     } else {
                         ctx.addIssue({
                             code: "custom",
                             message:
-                                "A soma de Juros/Multa deve ser igual ao excedente entre extrato e lançamentos.",
+                                "A soma de Juros/Multa deve ser igual ao valor que falta para cobrir o extrato.",
                             path: ["itens"],
                         });
                     }
                 }
-                // 1 lançamento: backend auto-preenche juros se campo vazio
             }
 
             if (deltaCents < 0) {

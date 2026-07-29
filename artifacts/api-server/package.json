@@ -9,7 +9,7 @@
     "build": "tsx ./build.ts --no-typecheck || echo 'Build finished with warnings'",
     "build:direct": "tsx ./build.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test src/utils/money.test.ts src/utils/conciliacao-vincular.test.ts src/utils/extrato-hash.test.ts"
+    "test": "tsx --test src/utils/money.test.ts src/utils/conciliacao-vincular.test.ts src/utils/extrato-hash.test.ts src/utils/regras-match.test.ts"
   },
   "dependencies": {
     "@workspace/api-zod": "workspace:*",

@@ -3,6 +3,7 @@ import {withPermission} from "../../../middlewares/withPermission";
 import {validateBody} from "../../../middlewares/validate";
 import {asyncHandler} from "../../../utils/async-handler";
 import {successResponse} from "../../../utils/response";
+import {PERM} from "../../../constants/permissoes";
 import {regrasConciliacaoService} from "./regras-conciliacao.service";
 import {
     type CreateRegraConciliacaoBody,
@@ -17,6 +18,8 @@ const router = Router();
 
 router.get(
     "/regras-conciliacao",
+    // Leitura alinhada ao acesso ao módulo; mutações usam códigos granulares.
+    withPermission(PERM.CONCILIACAO_ACESSAR),
     asyncHandler(async (req, res) => {
         const query = listRegrasConciliacaoQuerySchema.parse(req.query);
         const items = await regrasConciliacaoService.list(query);
@@ -26,7 +29,7 @@ router.get(
 
 router.post(
     "/regras-conciliacao",
-    withPermission("financeiro:regras-conciliacao:criar"),
+    withPermission(PERM.REGRAS_CONCILIACAO_CRIAR),
     validateBody(createRegraConciliacaoBodySchema),
     asyncHandler(async (req, res) => {
         const item = await regrasConciliacaoService.create(req.body as CreateRegraConciliacaoBody);
@@ -36,7 +39,7 @@ router.post(
 
 router.put(
     "/regras-conciliacao/:id",
-    withPermission("financeiro:regras-conciliacao:editar"),
+    withPermission(PERM.REGRAS_CONCILIACAO_EDITAR),
     validateBody(updateRegraConciliacaoBodySchema),
     asyncHandler(async (req, res) => {
         const {id} = regraConciliacaoIdParamSchema.parse(req.params);
@@ -47,7 +50,7 @@ router.put(
 
 router.delete(
     "/regras-conciliacao/:id",
-    withPermission("financeiro:regras-conciliacao:deletar"),
+    withPermission(PERM.REGRAS_CONCILIACAO_DELETAR),
     asyncHandler(async (req, res) => {
         const {id} = regraConciliacaoIdParamSchema.parse(req.params);
         const result = await regrasConciliacaoService.remove(id);

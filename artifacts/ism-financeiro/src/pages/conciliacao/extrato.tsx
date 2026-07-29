@@ -34,6 +34,7 @@ import {
     ChevronLeft,
     ChevronRight,
     Repeat,
+    Sparkles,
 } from "lucide-react";
 import {invalidateRelated} from "@/App";
 import {formatValorBrInput, brMoneyDisplayToApiString} from "@/validations/lancamentos.schema";
@@ -61,6 +62,7 @@ type ConciliacaoResumo = {
     resumo_ignorados: number;
     resumo_pendentes: number;
     resumo_total: number;
+    resumo_classificadas_automaticamente?: number;
 };
 
 type VinculacaoDetalhe = {
@@ -70,12 +72,13 @@ type VinculacaoDetalhe = {
     descricao: string | null;
     tipo: string;
     status: string;
+    /** Flag do título residual (DEF-08) — não inferir por status pendente. */
+    is_residuo_parcial?: boolean;
     valor_vinculado: string | number;
     desconto: string | number;
     acrescimo?: string | number;
     juros_multa?: string | number;
-    /** Vencimento do lançamento vinculado - só é relevante (e editável) quando
-     *  o vínculo é um residual parcial (RN-G3). */
+    /** Vencimento do residual = origem (imutável — Decisão nº 3). */
     vencimento?: string | null;
 };
 
@@ -91,6 +94,11 @@ export type LinhaDetalhe = {
     valor_saldo: string | number;
     saldo_pos_linha: string | number | null;
     vinculacoes: VinculacaoDetalhe[];
+    /** Card 48 / FEAT-03 */
+    regra_id?: number | null;
+    classificacao_automatica?: boolean;
+    regra_texto_gatilho?: string | null;
+    regra_criar_lancamento?: boolean | null;
 };
 
 type DiagnosticoSaldoInicial = {
@@ -162,15 +170,6 @@ function corNaturezaTexto(isCredito: boolean) {
 
 function corNaturezaRegua(isCredito: boolean) {
     return isCredito ? "border-l-emerald-500/70" : "border-l-red-500/70";
-}
-
-/** Converte data ISO/"YYYY-MM-DD" (ou undefined) para o formato aceito pelo input[type=date]. */
-function toDateInputValue(value: string | null | undefined): string {
-    if (!value) return "";
-    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return "";
-    return d.toISOString().slice(0, 10);
 }
 
 /** Painel de conciliação: saldo do sistema × saldo do extrato × diferença (Card 42). */
@@ -286,11 +285,11 @@ function PainelDiagnostico({diagnostico}: { diagnostico: DiagnosticoSaldo }) {
  * Payload alinhado ao schema real do backend (tipo/vencimento/valor obrigatórios).
  */
 function NovoLancamentoModal({
-                                  linha,
-                                  extratoId,
-                                  onClose,
-                                  onCriado,
-                              }: {
+                                 linha,
+                                 extratoId,
+                                 onClose,
+                                 onCriado,
+                             }: {
     linha: LinhaDetalhe;
     extratoId: string;
     onClose: () => void;
@@ -355,7 +354,8 @@ function NovoLancamentoModal({
                         <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Dados da linha (não
                             editáveis)</p>
                         <div className="flex items-center justify-between text-sm">
-                            <span className="text-white/80">{linha.data_movimento ? formatDate(linha.data_movimento) : "—"}</span>
+                            <span
+                                className="text-white/80">{linha.data_movimento ? formatDate(linha.data_movimento) : "—"}</span>
                             <span className={cn("font-black", corNaturezaTexto(isCredito))}>
                                 {formatCurrency(Math.abs(Number(linha.valor)))}
                             </span>
@@ -367,7 +367,8 @@ function NovoLancamentoModal({
                     </div>
 
                     <div>
-                        <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                        <label
+                            className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
                             Descrição do lançamento
                         </label>
                         <input
@@ -410,21 +411,18 @@ function NovoLancamentoModal({
 }
 
 /**
- * Card de lançamento (coluna direita do protótipo): ícones 📄 detalhar
- * (reaproveita o "Editar lançamento" já existente) · 📋 duplicar · 🗑 remover
- * vínculo (RN-I7), e Desconto / Juros-Multa editáveis inline (✏) por card
- * (RN-G7). Para o residual parcial, a data de vencimento também é editável
- * inline (RN-G3) - usa o mesmo endpoint PATCH /conciliacoes/vinculos/:id.
+ * Card de lançamento (coluna direita): Desconto / Juros-Multa editáveis (RN-G7).
+ * Residual parcial: vencimento = origem, **não editável** (Decisão nº 3).
  */
 function CardLancamento({
-                             v,
-                             extratoId,
-                             linhaId,
-                             canEditarLancamento,
-                             canDesfazer,
-                             onEditarLancamento,
-                             onRemoverVinculo,
-                         }: {
+                            v,
+                            extratoId,
+                            linhaId,
+                            canEditarLancamento,
+                            canDesfazer,
+                            onEditarLancamento,
+                            onRemoverVinculo,
+                        }: {
     v: VinculacaoDetalhe;
     extratoId: string;
     linhaId: number;
@@ -435,25 +433,19 @@ function CardLancamento({
 }) {
     const {toast} = useToast();
     const queryClient = useQueryClient();
-    const [editando, setEditando] = useState<null | "desconto" | "juros_multa" | "data">(null);
+    const [editando, setEditando] = useState<null | "desconto" | "juros_multa">(null);
     const [valorEdicao, setValorEdicao] = useState("");
 
     const jurosOuAcrescimo = v.juros_multa ?? v.acrescimo ?? 0;
     const isCredito = v.tipo === "CR";
-    // Heurística: o residual parcial nasce com status "pendente" (ainda não
-    // quitado) - é o único vínculo cuja data de vencimento faz sentido editar
-    // aqui (RN-G3). Os demais lançamentos já foram quitados por esta linha.
-    const isResidual = v.status === "pendente";
+    const isResidual = Boolean(v.is_residuo_parcial);
 
     const atualizarValorMutation = useMutation({
-        mutationFn: (payload: { campo: "desconto" | "juros_multa" | "data"; valor: string }) => {
+        mutationFn: (payload: { campo: "desconto" | "juros_multa"; valor: string }) => {
             if (!v.vinculo_id) {
                 throw new Error("Sem vinculo_id - backend precisa expor esse campo em GET /conciliacoes/:id.");
             }
-            const body =
-                payload.campo === "data"
-                    ? {vencimento: payload.valor}
-                    : {[payload.campo]: brMoneyDisplayToApiString(payload.valor) || "0.00"};
+            const body = {[payload.campo]: brMoneyDisplayToApiString(payload.valor) || "0.00"};
             return fetchApiData(`/conciliacoes/vinculos/${v.vinculo_id}`, {
                 method: "PATCH",
                 body: JSON.stringify(body),
@@ -476,12 +468,6 @@ function CardLancamento({
         const atual = campo === "desconto" ? v.desconto : jurosOuAcrescimo;
         setValorEdicao(formatValorBrInput(String(Number(atual) || 0).replace(".", ",")));
         setEditando(campo);
-    }
-
-    function iniciarEdicaoData() {
-        if (!canEditarLancamento) return;
-        setValorEdicao(toDateInputValue(v.vencimento));
-        setEditando("data");
     }
 
     return (
@@ -538,7 +524,8 @@ function CardLancamento({
 
             <div className="grid grid-cols-2 gap-3">
                 <div>
-                    <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider">Desconto</span>
+                    <span
+                        className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider">Desconto</span>
                     {editando === "desconto" ? (
                         <div className="flex items-center gap-1 mt-0.5">
                             <input
@@ -547,7 +534,10 @@ function CardLancamento({
                                 inputMode="numeric"
                                 value={valorEdicao}
                                 onChange={(e) => setValorEdicao(formatValorBrInput(e.target.value))}
-                                onKeyDown={(e) => e.key === "Enter" && atualizarValorMutation.mutate({campo: "desconto", valor: valorEdicao})}
+                                onKeyDown={(e) => e.key === "Enter" && atualizarValorMutation.mutate({
+                                    campo: "desconto",
+                                    valor: valorEdicao
+                                })}
                                 className="w-full bg-[#1a1c23] border border-primary/40 rounded px-1.5 py-1 text-xs text-white outline-none"
                             />
                             <button
@@ -572,7 +562,8 @@ function CardLancamento({
                     )}
                 </div>
                 <div>
-                    <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider">Juros/Multa</span>
+                    <span
+                        className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider">Juros/Multa</span>
                     {editando === "juros_multa" ? (
                         <div className="flex items-center gap-1 mt-0.5">
                             <input
@@ -581,12 +572,18 @@ function CardLancamento({
                                 inputMode="numeric"
                                 value={valorEdicao}
                                 onChange={(e) => setValorEdicao(formatValorBrInput(e.target.value))}
-                                onKeyDown={(e) => e.key === "Enter" && atualizarValorMutation.mutate({campo: "juros_multa", valor: valorEdicao})}
+                                onKeyDown={(e) => e.key === "Enter" && atualizarValorMutation.mutate({
+                                    campo: "juros_multa",
+                                    valor: valorEdicao
+                                })}
                                 className="w-full bg-[#1a1c23] border border-primary/40 rounded px-1.5 py-1 text-xs text-white outline-none"
                             />
                             <button
                                 type="button"
-                                onClick={() => atualizarValorMutation.mutate({campo: "juros_multa", valor: valorEdicao})}
+                                onClick={() => atualizarValorMutation.mutate({
+                                    campo: "juros_multa",
+                                    valor: valorEdicao
+                                })}
                                 title="Confirmar"
                                 className="p-1 rounded hover:bg-primary/20 text-primary shrink-0">
                                 <CheckCircle2 className="w-3.5 h-3.5"/>
@@ -608,40 +605,11 @@ function CardLancamento({
             </div>
 
             <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-0.5">
-                {/* RN-G3: vencimento do residual - nasce com a data da linha de
-                    origem, mas é editável pelo usuário. Para os demais vínculos
-                    (não-residuais), mostra apenas o status. */}
+                {/* Decisão nº 3: vencimento do residual = origem, somente leitura. */}
                 {isResidual ? (
-                    editando === "data" ? (
-                        <div className="flex items-center gap-1">
-                            <input
-                                autoFocus
-                                type="date"
-                                value={valorEdicao}
-                                onChange={(e) => setValorEdicao(e.target.value)}
-                                onKeyDown={(e) => e.key === "Enter" && atualizarValorMutation.mutate({campo: "data", valor: valorEdicao})}
-                                className="bg-[#1a1c23] border border-primary/40 rounded px-1.5 py-1 text-[11px] text-white outline-none"
-                            />
-                            <button
-                                type="button"
-                                onClick={() => atualizarValorMutation.mutate({campo: "data", valor: valorEdicao})}
-                                title="Confirmar"
-                                className="p-1 rounded hover:bg-primary/20 text-primary shrink-0">
-                                <CheckCircle2 className="w-3.5 h-3.5"/>
-                            </button>
-                        </div>
-                    ) : (
-                        <button
-                            type="button"
-                            disabled={!canEditarLancamento}
-                            onClick={iniciarEdicaoData}
-                            className="flex items-center gap-1 group disabled:opacity-60">
-                            {v.vencimento ? formatDate(v.vencimento) : "vencimento da origem"}
-                            {canEditarLancamento && (
-                                <Pencil className="w-3 h-3 text-muted-foreground group-hover:text-primary"/>
-                            )}
-                        </button>
-                    )
+                    <span title="Vencimento herdado da origem (não editável)">
+                        {v.vencimento ? formatDate(v.vencimento) : "vencimento da origem"}
+                    </span>
                 ) : (
                     <span className="uppercase text-[9px]">{v.status}</span>
                 )}
@@ -771,6 +739,8 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     const linhas = data?.linhas ?? [];
     const diagnostico = data?.diagnostico ?? null;
     const podeFinalizar = (conc?.resumo_pendentes ?? 1) === 0;
+    /** FEAT-05 / Card 57: rótulo dinâmico Salvar / Concluir (nunca "Finalizar/Conciliar"). */
+    const rotuloAcaoConciliacao = podeFinalizar ? "Concluir" : "Salvar";
 
     // RN-D5: navegação ‹ › entre as linhas, sem sair da tela.
     const totalPaginas = Math.max(1, Math.ceil(linhas.length / LINHAS_POR_PAGINA));
@@ -851,9 +821,9 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
 
             <ConfirmDialog
                 open={finalizarOpen}
-                title="Finalizar conciliação?"
+                title="Concluir conciliação?"
                 description="Não pode haver linhas pendentes. Após concluir, o extrato será marcado como conciliado."
-                confirmLabel="Finalizar"
+                confirmLabel="Concluir"
                 variant="default"
                 icon={CheckCircle2}
                 onCancel={() => setFinalizarOpen(false)}
@@ -914,7 +884,8 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                     em {formatDate(extrato.created_at)}</p>
                             </div>
 
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 w-full lg:w-auto lg:min-w-[420px]">
+                            <div
+                                className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3 w-full lg:w-auto lg:min-w-[420px]">
                                 <div className="rounded-xl bg-black/30 border border-white/10 p-3 text-center">
                                     <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Total</p>
                                     <p className="text-lg font-black text-white mt-1">{conc.resumo_total}</p>
@@ -932,13 +903,22 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                     <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Ignorados</p>
                                     <p className="text-lg font-black text-white/80 mt-1">{conc.resumo_ignorados}</p>
                                 </div>
+                                {(conc.resumo_classificadas_automaticamente ?? 0) > 0 && (
+                                    <div className="rounded-xl bg-sky-500/10 border border-sky-500/20 p-3 text-center">
+                                        <p className="text-[10px] font-bold text-sky-300/90 uppercase tracking-wider">Auto</p>
+                                        <p className="text-lg font-black text-sky-200 mt-1">
+                                            {conc.resumo_classificadas_automaticamente}
+                                        </p>
+                                    </div>
+                                )}
                             </div>
                         </div>
 
                         <div className="flex flex-wrap gap-3 pt-2 border-t border-white/5">
                             <div className="text-xs text-muted-foreground flex items-center gap-4">
                 <span>
-                  Créditos: <strong className="text-emerald-400">{formatCurrency(Number(extrato.total_creditos))}</strong>
+                  Créditos: <strong
+                    className="text-emerald-400">{formatCurrency(Number(extrato.total_creditos))}</strong>
                 </span>
                                 <span>
                   Débitos: <strong className="text-red-300">{formatCurrency(Number(extrato.total_debitos))}</strong>
@@ -959,7 +939,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                     className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-success hover:bg-success/90 text-white text-xs font-bold disabled:opacity-40 disabled:pointer-events-none shadow-lg shadow-success/20">
                                     {finalizarMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin"/> :
                                         <CheckCircle2 className="w-4 h-4"/>}
-                                    Finalizar conciliação
+                                    {rotuloAcaoConciliacao}
                                 </button>
                             </RequiresPermission>
                         </div>
@@ -1056,7 +1036,22 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
 
                                             <p className="text-sm text-white font-medium leading-snug">{linha.descricao ?? "—"}</p>
 
-                                            <span className={cn("inline-block text-base font-black border-b-2 pb-0.5", corNaturezaTexto(isCredito), corNaturezaRegua(isCredito))}>
+                                            {linha.classificacao_automatica && (
+                                                <p className="text-[11px] text-sky-300/90 bg-sky-500/10 border border-sky-500/25 rounded-lg px-2 py-1 inline-flex items-center gap-1.5">
+                                                    <Sparkles className="w-3 h-3 shrink-0"/>
+                                                    {linha.status === "pendente" && linha.regra_criar_lancamento
+                                                        ? "Essa movimentação será criada"
+                                                        : linha.status === "pendente"
+                                                            ? "Classificação sugerida pela regra — revise"
+                                                            : "Classificada automaticamente pela regra"}
+                                                    {linha.regra_texto_gatilho
+                                                        ? ` (“${linha.regra_texto_gatilho}”)`
+                                                        : ""}
+                                                </p>
+                                            )}
+
+                                            <span
+                                                className={cn("inline-block text-base font-black border-b-2 pb-0.5", corNaturezaTexto(isCredito), corNaturezaRegua(isCredito))}>
                           {formatCurrency(valorAbs)}
                         </span>
 
