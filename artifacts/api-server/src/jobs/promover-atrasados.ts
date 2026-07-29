@@ -1,16 +1,15 @@
 import {and, eq, lt} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {lancamentosTable} from "@workspace/db/schema";
+import {hojeIsoLocal} from "../utils/date-civil";
 
 /**
  * FEAT-08: promove lançamentos pendentes com vencimento < hoje para atrasado.
  * Idempotente - seguro rodar várias vezes ao dia.
+ * "hoje" = dia civil America/Sao_Paulo (não fuso do host).
  */
 export async function promoverLancamentosAtrasados(hojeIso?: string): Promise<{ atualizados: number }> {
-    const d = new Date();
-    const hoje =
-        hojeIso ??
-        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const hoje = hojeIso ?? hojeIsoLocal();
 
     const result = await db
         .update(lancamentosTable)

@@ -14,6 +14,8 @@ import {errorResponse, successResponse} from "../utils/response";
 import {fromCents, realizadoSemJurosCents, toCents} from "../utils/money";
 import {sqlLancamentosDaConta} from "../utils/lancamentos-conta";
 import {contasBancariasService} from "../domains/financial/contas-bancarias/contas-bancarias.service";
+import {withPermission} from "../middlewares/withPermission";
+import {PERM} from "../constants/permissoes";
 
 const router = Router();
 
@@ -42,7 +44,7 @@ const extractYearEq = (col: SQLWrapper, ano: number) =>
 // GET /relatorios/fechamento-mensal
 // ---------------------------------------------------------------------------
 
-router.get("/relatorios/fechamento-mensal", async (req, res) => {
+router.get("/relatorios/fechamento-mensal", withPermission(PERM.RELATORIOS_FECHAMENTO), async (req, res) => {
     try {
         const mes = parseInt(req.query.mes as string);
         const ano = parseInt(req.query.ano as string);
@@ -87,20 +89,29 @@ router.get("/relatorios/fechamento-mensal", async (req, res) => {
         }
 
         const metas = await db
-            .select()
+            .select({
+                valor_projetado: metasTable.valor_projetado,
+                tipo_plano: planoContasTable.tipo,
+            })
             .from(metasTable)
+            .leftJoin(planoContasTable, eq(metasTable.plano_conta_id, planoContasTable.id))
             .where(and(eq(metasTable.ano, ano), eq(metasTable.mes, mes)));
-        const planejadoReceberCents = metas.reduce(
-            (acc, m) => acc + toCents(m.valor_projetado),
-            0,
-        );
+
+        let planejadoReceberCents = 0;
+        let planejadoGastarCents = 0;
+        for (const m of metas) {
+            const v = toCents(m.valor_projetado);
+            const tipo = (m.tipo_plano ?? "").toLowerCase();
+            if (tipo === "receita") planejadoReceberCents += v;
+            else planejadoGastarCents += v;
+        }
 
         return successResponse(res, {
             mes,
             ano,
             planejado_receber: fromCents(planejadoReceberCents),
             realizado_receber: fromCents(realizadoReceberCents),
-            planejado_gastar: fromCents(planejadoReceberCents),
+            planejado_gastar: fromCents(planejadoGastarCents),
             realizado_gastar: fromCents(realizadoGastarCents),
             /** Juros do período — fora do resultado operacional. */
             juros: fromCents(jurosCents),
@@ -118,7 +129,7 @@ router.get("/relatorios/fechamento-mensal", async (req, res) => {
 // Regime de caixa -> data_quitacao, apenas status pago/recebido.
 // ---------------------------------------------------------------------------
 
-router.get("/relatorios/dre", async (req, res) => {
+router.get("/relatorios/dre", withPermission(PERM.RELATORIOS_DRE), async (req, res) => {
     try {
         const ano = parseInt(req.query.ano as string) || new Date().getFullYear();
         const regime = (req.query.regime as string) === "caixa" ? "caixa" : "competencia";
@@ -169,23 +180,23 @@ router.get("/relatorios/dre", async (req, res) => {
 
         for (const row of rows) {
             const m = Number(row.mes);
-            const valor = toNumber(row.total);
+            const valorCents = toCents(row.total);
             const categoria = (row.categoria ?? "").toLowerCase();
-            if (row.tipo === "CR") receitaBruta.set(m, (receitaBruta.get(m) ?? 0) + valor);
-            else if (categoria.includes("imposto")) impostos.set(m, (impostos.get(m) ?? 0) + valor);
-            else if (categoria.includes("custo")) custos.set(m, (custos.get(m) ?? 0) + valor);
-            else despesas.set(m, (despesas.get(m) ?? 0) + valor);
+            if (row.tipo === "CR") receitaBruta.set(m, (receitaBruta.get(m) ?? 0) + valorCents);
+            else if (categoria.includes("imposto")) impostos.set(m, (impostos.get(m) ?? 0) + valorCents);
+            else if (categoria.includes("custo")) custos.set(m, (custos.get(m) ?? 0) + valorCents);
+            else despesas.set(m, (despesas.get(m) ?? 0) + valorCents);
         }
 
         const montarLinha = (codigo: string, descricao: string, formula: (m: number) => number) => {
             const valores: Record<string, number> = {};
-            let total = 0;
+            let totalCents = 0;
             for (let m = 1; m <= 12; m++) {
-                const v = Number(formula(m).toFixed(2));
-                valores[monthKey(m)] = v;
-                total += v;
+                const cents = formula(m);
+                valores[monthKey(m)] = fromCents(cents);
+                totalCents += cents;
             }
-            return {codigo, descricao, valores, total: Number(total.toFixed(2))};
+            return {codigo, descricao, valores, total: fromCents(totalCents)};
         };
 
         const rb = (m: number) => receitaBruta.get(m) ?? 0;
@@ -216,7 +227,7 @@ router.get("/relatorios/dre", async (req, res) => {
 // (com fallback para valor quando valor_quitado for nulo).
 // ---------------------------------------------------------------------------
 
-router.get("/relatorios/fluxo-caixa", async (req, res) => {
+router.get("/relatorios/fluxo-caixa", withPermission(PERM.RELATORIOS_FLUXO_CAIXA), async (req, res) => {
     try {
         const ano = parseInt(req.query.ano as string) || new Date().getFullYear();
         const meses = Array.from({length: 12}, (_, i) => i + 1);
@@ -253,31 +264,31 @@ router.get("/relatorios/fluxo-caixa", async (req, res) => {
 
         for (const row of rows) {
             const mes = Number(row.mes);
-            const valor = toNumber(row.total);
+            const valorCents = toCents(row.total);
             const categoria = row.categoria ?? "Sem Categoria";
             const ehTransferencia = Boolean(row.transferencia_grupo_id);
 
             if (ehTransferencia) {
-                if (row.tipo === "CR") transferenciasCredito.set(mes, (transferenciasCredito.get(mes) ?? 0) + valor);
-                else transferenciasDebito.set(mes, (transferenciasDebito.get(mes) ?? 0) + valor);
+                if (row.tipo === "CR") transferenciasCredito.set(mes, (transferenciasCredito.get(mes) ?? 0) + valorCents);
+                else transferenciasDebito.set(mes, (transferenciasDebito.get(mes) ?? 0) + valorCents);
                 continue;
             }
 
             const target = row.tipo === "CR" ? entradasPorCategoria : saidasPorCategoria;
             if (!target.has(categoria)) target.set(categoria, new Map());
             const mMap = target.get(categoria)!;
-            mMap.set(mes, (mMap.get(mes) ?? 0) + valor);
+            mMap.set(mes, (mMap.get(mes) ?? 0) + valorCents);
         }
 
         const linhaCategoria = (codigo: string, descricao: string, source: Map<number, number>, sinal = 1) => {
             const valores: Record<string, number> = {};
-            let total = 0;
+            let totalCents = 0;
             for (const m of meses) {
-                const value = Number(((source.get(m) ?? 0) * sinal).toFixed(2));
-                valores[monthKey(m)] = value;
-                total += value;
+                const cents = (source.get(m) ?? 0) * sinal;
+                valores[monthKey(m)] = fromCents(cents);
+                totalCents += cents;
             }
-            return {codigo, descricao, valores, total: Number(total.toFixed(2))};
+            return {codigo, descricao, valores, total: fromCents(totalCents)};
         };
 
         const entradas = Array.from(entradasPorCategoria.entries()).map(([cat, map], i) =>
@@ -313,7 +324,7 @@ router.get("/relatorios/fluxo-caixa", async (req, res) => {
 // Juros ficam em campo separado e NÃO entram no valor_realizado.
 // ---------------------------------------------------------------------------
 
-router.get("/relatorios/metas", async (req, res) => {
+router.get("/relatorios/metas", withPermission(PERM.RELATORIOS_METAS), async (req, res) => {
     try {
         const ano = parseInt(req.query.ano as string) || new Date().getFullYear();
 
@@ -417,7 +428,7 @@ router.get("/relatorios/metas", async (req, res) => {
 // GET /relatorios/contabil-fiscal
 // ---------------------------------------------------------------------------
 
-router.get("/relatorios/contabil-fiscal", async (req, res) => {
+router.get("/relatorios/contabil-fiscal", withPermission(PERM.RELATORIOS_CONTABIL), async (req, res) => {
     try {
         const {data_inicio, data_fim, conta_id, tipo = "ambos"} = req.query;
 
@@ -425,7 +436,7 @@ router.get("/relatorios/contabil-fiscal", async (req, res) => {
             STATUS_QUITADO_SQL,
             data_inicio ? gte(lancamentosTable.data_quitacao, String(data_inicio)) : undefined,
             data_fim ? lte(lancamentosTable.data_quitacao, String(data_fim)) : undefined,
-            conta_id ? eq(lancamentosTable.conta_id, parseInt(String(conta_id))) : undefined,
+            conta_id ? sqlLancamentosDaConta(parseInt(String(conta_id))) : undefined,
             tipo !== "ambos" ? eq(lancamentosTable.tipo, String(tipo)) : undefined,
         ].filter(Boolean) as ReturnType<typeof eq>[];
 
@@ -467,7 +478,7 @@ router.get("/relatorios/contabil-fiscal", async (req, res) => {
 // quitadas (sem juros no resultado), extratos do período e confronto sistema × banco.
 // ---------------------------------------------------------------------------
 
-router.get("/relatorios/conciliacao", async (req, res) => {
+router.get("/relatorios/conciliacao", withPermission(PERM.RELATORIOS_CONCILIACAO), async (req, res) => {
     try {
         const contaId = parseInt(String(req.query.conta_id ?? ""), 10);
         let dataInicio = typeof req.query.data_inicio === "string" ? req.query.data_inicio : undefined;
@@ -536,13 +547,26 @@ router.get("/relatorios/conciliacao", async (req, res) => {
 
         let creditosCents = 0;
         let debitosCents = 0;
-        let jurosCents = 0;
+        let jurosCreditoCents = 0;
+        let jurosDebitoCents = 0;
         for (const m of movs) {
-            const q = toCents(m.valor_quitado ?? m.valor ?? 0);
-            jurosCents += toCents(m.juros ?? 0);
-            if (m.tipo === "CR") creditosCents += q;
-            else debitosCents += q;
+            const quitado = toCents(m.valor_quitado ?? m.valor ?? 0);
+            const juros = toCents(m.juros ?? 0);
+            // RN-G5 / Card 62: totais operacionais sem juros embutidos no quitado.
+            const parcela = realizadoSemJurosCents(quitado, juros);
+            if (m.tipo === "CR") {
+                creditosCents += parcela;
+                jurosCreditoCents += juros;
+            } else {
+                debitosCents += parcela;
+                jurosDebitoCents += juros;
+            }
         }
+
+        // Identidade caixa: abertura + créditos − débitos + juros_CR − juros_CP = fechamento
+        // (créditos/débitos já sem juros; juros separados por natureza).
+        const jurosNetCents = jurosCreditoCents - jurosDebitoCents;
+        const liquidoCaixaCents = creditosCents - debitosCents + jurosNetCents;
 
         const extratosPeriodo = await db
             .select({
@@ -576,7 +600,7 @@ router.get("/relatorios/conciliacao", async (req, res) => {
             const ref = e.periodo_fim ?? dataFim;
             const saldoSistema = await contasBancariasService.saldoNaData(contaId, ref);
             const bancoCents = e.saldo_final_banco != null ? toCents(e.saldo_final_banco) : null;
-            const sistemaCents = toCents(saldoSistema.saldo);
+            const sistemaCents = toCents(saldoSistema.saldo_decimal);
             const diferencaCents = bancoCents != null ? sistemaCents - bancoCents : null;
             extratosDetalhe.push({
                 ...e,
@@ -588,7 +612,8 @@ router.get("/relatorios/conciliacao", async (req, res) => {
         }
 
         const ultimoComBanco = [...extratosDetalhe].reverse().find((e) => e.saldo_banco != null);
-        const saldoFinalSistemaCents = toCents(saldoFechamento.saldo);
+        const saldoInicialSistemaCents = toCents(saldoAbertura.saldo_decimal);
+        const saldoFinalSistemaCents = toCents(saldoFechamento.saldo_decimal);
         const saldoBancoCents = ultimoComBanco ? toCents(ultimoComBanco.saldo_banco!) : null;
         const diferencaFinalCents =
             saldoBancoCents != null ? saldoFinalSistemaCents - saldoBancoCents : null;
@@ -604,14 +629,25 @@ router.get("/relatorios/conciliacao", async (req, res) => {
         return successResponse(res, {
             conta,
             periodo: {inicio: dataInicio, fim: dataFim},
-            saldo_inicial_sistema: fromCents(toCents(saldoAbertura.saldo)),
+            saldo_inicial_sistema: fromCents(saldoInicialSistemaCents),
             saldo_final_sistema: fromCents(saldoFinalSistemaCents),
             movimentacoes: {
                 creditos_quitados: fromCents(creditosCents),
                 debitos_quitados: fromCents(debitosCents),
-                /** Juros fora do resultado (RN-G5 / FEAT-10). */
-                juros: fromCents(jurosCents),
+                /** Juros CR (entrada no caixa) — fora do resultado operacional da meta. */
+                juros_credito: fromCents(jurosCreditoCents),
+                /** Juros CP (saída no caixa). */
+                juros_debito: fromCents(jurosDebitoCents),
+                /** Total absoluto (compat UI). */
+                juros: fromCents(jurosCreditoCents + jurosDebitoCents),
+                /** Operacional sem juros: créditos − débitos. */
                 liquido: fromCents(creditosCents - debitosCents),
+                /**
+                 * Identidade caixa:
+                 * saldo_inicial + liquido_caixa ≈ saldo_final
+                 * (créditos − débitos + juros_CR − juros_CP).
+                 */
+                liquido_caixa: fromCents(liquidoCaixaCents),
             },
             confronto: {
                 saldo_sistema: fromCents(saldoFinalSistemaCents),

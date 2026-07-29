@@ -39,11 +39,13 @@ import {
 } from "@/components/ui/sidebar";
 import {Collapsible, CollapsibleContent, CollapsibleTrigger} from "@/components/ui/collapsible";
 import {cn} from "@/lib/utils";
+import {useAuth} from "@/hooks/use-auth";
+import {PERM} from "@/lib/permissoes";
 
 const navItems = [
     {title: "Home", url: "/", icon: Home},
     {title: "Tarefas", url: "/kanban", icon: Columns},
-    {title: "Conciliação", url: "/conciliacao", icon: RefreshCw},
+    {title: "Conciliação", url: "/conciliacao", icon: RefreshCw, permission: PERM.CONCILIACAO_ACESSAR},
     {title: "Lançamentos", url: "/lancamentos", icon: FileText},
 ];
 
@@ -53,7 +55,7 @@ const cadastrosItems = [
     {title: "Plano de Contas", url: "/cadastros/plano-contas", icon: Briefcase},
     {title: "Metas Financeiras", url: "/cadastros/metas", icon: Target},
     {title: "Departamentos", url: "/cadastros/departamentos", icon: Building2},
-  
+
 ];
 
 const relatoriosItems = [
@@ -62,7 +64,12 @@ const relatoriosItems = [
     {title: "DRE Gerencial", url: "/relatorios/dre", icon: BarChart3},
     {title: "Fluxo de Caixa", url: "/relatorios/fluxo-caixa", icon: LineChart},
     {title: "Relatório de Metas", url: "/relatorios/metas", icon: Target},
-    {title: "Conciliação Bancária", url: "/relatorios/conciliacao", icon: Scale},
+    {
+        title: "Conciliação Bancária",
+        url: "/relatorios/conciliacao",
+        icon: Scale,
+        permission: PERM.RELATORIOS_CONCILIACAO,
+    },
 ];
 
 const configItems = [
@@ -71,17 +78,32 @@ const configItems = [
     {title: "Tokens de API", url: "/configuracoes/tokens-api", icon: Key},
 ];
 
+type NavItem = {
+    title: string;
+    url: string;
+    icon: React.ElementType;
+    permission?: string;
+};
+
 type MenuSection = {
     title: string;
     icon: React.ElementType;
-    items: typeof cadastrosItems;
+    items: NavItem[];
 };
 
 export function AppSidebar() {
     const [location] = useLocation();
     const {state} = useSidebar();
+    const {hasPermission} = useAuth();
     const isCollapsed = state === "collapsed";
     const [expandedSections, setExpandedSections] = useState<string[]>(["Cadastros", "Relatórios", "Configurações"]);
+
+    const visibleNav = navItems.filter(
+        (item) => !("permission" in item && item.permission) || hasPermission((item as NavItem).permission!),
+    );
+    const visibleRelatorios = relatoriosItems.filter(
+        (item) => !item.permission || hasPermission(item.permission),
+    );
 
     useEffect(() => {
         if (!isCollapsed) {
@@ -180,7 +202,7 @@ export function AppSidebar() {
                 <SidebarGroup>
                     <SidebarGroupContent>
                         <SidebarMenu className="space-y-1">
-                            {navItems.map((item) => (
+                            {visibleNav.map((item) => (
                                 <SidebarMenuItem key={item.title}>
                                     <SidebarMenuButton
                                         asChild
@@ -208,7 +230,7 @@ export function AppSidebar() {
                             {renderCollapsibleSection({
                                 title: "Relatórios",
                                 icon: BarChart3,
-                                items: relatoriosItems
+                                items: visibleRelatorios
                             }, true)}
                             {renderCollapsibleSection({
                                 title: "Configurações",

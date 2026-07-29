@@ -32,7 +32,10 @@ type RelatorioConciliacao = {
         creditos_quitados: number;
         debitos_quitados: number;
         juros: number;
+        juros_credito?: number;
+        juros_debito?: number;
         liquido: number;
+        liquido_caixa?: number;
     };
     confronto: {
         saldo_sistema: number;
@@ -257,8 +260,15 @@ export default function RelatorioConciliacao() {
                                 − {formatCurrency(data.movimentacoes.debitos_quitados)}
                             </p>
                             <p className="text-[10px] text-amber-300/80 mt-1">
-                                Juros (fora): {formatCurrency(data.movimentacoes.juros)}
+                                Juros CR: {formatCurrency(data.movimentacoes.juros_credito ?? 0)}
+                                {" · "}
+                                Juros CP: {formatCurrency(data.movimentacoes.juros_debito ?? 0)}
                             </p>
+                            {data.movimentacoes.liquido_caixa != null && (
+                                <p className="text-[10px] text-muted-foreground mt-0.5">
+                                    Líquido caixa: {formatCurrency(data.movimentacoes.liquido_caixa)}
+                                </p>
+                            )}
                         </div>
                         <div className="glass-panel rounded-2xl p-4 border border-white/10">
                             <p className="text-[10px] uppercase text-muted-foreground font-bold">Saldo final sistema</p>

@@ -28,6 +28,7 @@ type ImportarExtratoResponse = {
     extrato: { id: number; arquivo_nome?: string | null };
     conciliacao: { id: number };
     linhas_ignoradas_duplicadas?: number;
+    linhas_classificadas_automaticamente?: number;
 };
 
 type ImportExtratoModalProps = {
@@ -38,7 +39,12 @@ type ImportExtratoModalProps = {
 
 const importExtratoSchema = z.object({
     contaId: z.string().min(1, "Selecione a conta bancária."),
-    arquivo: z.custom<File>((val) => val instanceof File, "Selecione um arquivo CSV ou OFX."),
+    arquivo: z
+        .custom<File>((val) => val instanceof File, "Selecione um arquivo OFX.")
+        .refine(
+            (f) => f.name.split(".").pop()?.toLowerCase() === "ofx",
+            "Apenas arquivos OFX são aceitos.",
+        ),
 });
 
 type ImportExtratoForm = z.infer<typeof importExtratoSchema>;
@@ -109,11 +115,15 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
         onSuccess: (data) => {
             void queryClient.invalidateQueries({queryKey: ["conciliacoes"]});
             const dup = data.linhas_ignoradas_duplicadas ?? 0;
+            const auto = data.linhas_classificadas_automaticamente ?? 0;
+            const parts: string[] = [];
+            if (auto > 0) parts.push(`${auto} classificada(s) automaticamente`);
+            if (dup > 0) parts.push(`${dup} duplicata(s) ignorada(s)`);
             toast({
                 title: "Importação concluída",
                 description:
-                    dup > 0
-                        ? `Importadas linhas novas; ${dup} duplicata(s) ignorada(s).`
+                    parts.length > 0
+                        ? parts.join(" · ")
                         : "O extrato foi processado e está disponível na lista.",
             });
             reset();
@@ -152,7 +162,7 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
                 <div className="flex items-center justify-between p-5 border-b border-white/5">
                     <div>
                         <h2 className="text-lg font-bold text-white">Importar extrato</h2>
-                        <p className="text-xs text-muted-foreground mt-0.5">Envie CSV ou OFX da conta selecionada</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">Envie OFX da conta selecionada</p>
                     </div>
                     <button
                         type="button"
@@ -180,7 +190,7 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
                         </div>
 
                         <div>
-                            <label className={labelCls}>Arquivo (CSV / OFX) *</label>
+                            <label className={labelCls}>Arquivo OFX *</label>
                             <label
                                 className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 bg-black/30 px-4 py-8 cursor-pointer hover:border-primary/40 transition-colors">
                                 <FileSpreadsheet className="w-8 h-8 text-muted-foreground"/>
@@ -189,7 +199,7 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
                 </span>
                                 <input
                                     type="file"
-                                    accept=".csv,.CSV,.ofx,.OFX,text/csv,application/x-ofx,application/vnd.intu.qfx"
+                                    accept=".ofx,.OFX,application/x-ofx,application/vnd.intu.qfx"
                                     className="sr-only"
                                     disabled={pending}
                                     onChange={(e) => {

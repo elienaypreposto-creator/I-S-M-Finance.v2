@@ -8,9 +8,9 @@
  * PUT    /usuarios/:id/permissoes - Substituição de permissões
  *
  * Validações no POST /usuarios:
- *   - Parceiro com flag "Cliente" ou "Fornecedor" ativa → 422 com mensagem clara
- *   - Parceiro já vinculado a um usuário → 422 com mensagem clara
- *   - Perfil base obrigatório → validado no schema Zod
+ *   - Parceiro com flag "Cliente" ou "Fornecedor" ativa -> 422 com mensagem clara
+ *   - Parceiro já vinculado a um usuário -> 422 com mensagem clara
+ *   - Perfil base obrigatório -> validado no schema Zod
  */
 
 import {Router} from "express";
