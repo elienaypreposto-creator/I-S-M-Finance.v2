@@ -378,14 +378,6 @@ function NovoLancamentoModal({
                         />
                     </div>
 
-                    <button
-                        type="button"
-                        onClick={irParaCadastroDeRegra}
-                        className="w-full flex items-center justify-center gap-2 text-xs text-primary hover:text-primary/80 border border-primary/20 hover:border-primary/40 bg-primary/5 rounded-xl px-3 py-2.5 transition-colors">
-                        <Repeat className="w-3.5 h-3.5"/>
-                        Cadastrar regra de repetição a partir desta linha
-                    </button>
-
                     <div className="flex gap-3 pt-1">
                         <button
                             type="button"
