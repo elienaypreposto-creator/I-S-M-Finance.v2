@@ -103,7 +103,7 @@ const TIPO_ICONS: Record<string, React.ComponentType<{ className?: string }>> = 
     "Conta Poupança": PiggyBank,
 };
 
-// Ordem de exibição no Passo 1 (Corrente → Poupança → Movimento)
+// Ordem de exibição no Passo 1 (Corrente -> Poupança -> Movimento)
 const ACCOUNT_TYPES = (
     ["Conta Corrente", "Conta Poupança", "Conta Movimento"] as const
 ).map((value) => ({
@@ -655,7 +655,7 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
         setValue("tipo", newTipo, {shouldValidate: false});
     };
 
-    // ── Avançar passo 1 → 2 ──
+    // ── Avançar passo 1 -> 2 ──
     const handleStep1Continue = () => {
         if (!step1Valid) {
             toast({
@@ -668,7 +668,7 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
         setActiveStep(2);
     };
 
-    // ── Avançar passo 2 → 3 ──
+    // ── Avançar passo 2 -> 3 ──
     const handleStep2Continue = async () => {
         const fields = getStep2RequiredFields();
         const ok = await trigger(fields);

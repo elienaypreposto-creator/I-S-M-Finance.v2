@@ -37,6 +37,8 @@ import Login from "./pages/auth/login";
 import PrimeiroAcesso from "./pages/auth/primeiro-acesso";
 import DefinirSenha from "./pages/auth/definir-senha";
 import {authStorage} from "./lib/api-config";
+import {useAuth} from "./hooks/use-auth";
+import {PERM} from "./lib/permissoes";
 
 // ─── QueryClient com tratativa global de erros
 const queryClient = new QueryClient({
@@ -87,7 +89,7 @@ const queryClient = new QueryClient({
 // @example
 // // Em qualquer mutation de lançamento:
 // onSuccess: () => invalidateRelated(queryClient, "lancamentos")
-// // → invalida ["lancamentos"] exato + tudo que comece com "dashboard" ou "relatorio" + ["conciliacoes-list"]
+// // -> invalida ["lancamentos"] exato + tudo que comece com "dashboard" ou "relatorio" + ["conciliacoes-list"]
 const QUERY_DEPENDENCIES: Record<string, string[]> = {
     "lancamentos": ["dashboard", "relatorio", "conciliacoes-list"],
     "kanban-cards": ["dashboard"],
@@ -128,12 +130,48 @@ export function invalidateRelated(qc: QueryClient, key: string) {
 // Exportar queryClient para uso externo (ex: kanban.tsx, lancamentos.tsx)
 export {queryClient};
 
-// ─── Rota privada
-function PrivateRoute({component: Component, path}: { component: any; path: string }) {
+// Rota privada (JWT + permissão opcional FEAT-09)
+function PrivateRoute({
+                          component: Component,
+                          path,
+                          permission,
+                      }: {
+    component: any;
+    path: string;
+    permission?: string;
+}) {
     const token = authStorage.getToken();
+    const {hasPermission, loading} = useAuth();
 
     if (!token) {
         return <Redirect to="/login"/>;
+    }
+
+    if (permission) {
+        if (loading) {
+            return (
+                <Route path={path}>
+                    {() => (
+                        <AppLayout>
+                            <div className="p-8 text-sm text-muted-foreground">Carregando permissões…</div>
+                        </AppLayout>
+                    )}
+                </Route>
+            );
+        }
+        if (!hasPermission(permission)) {
+            return (
+                <Route path={path}>
+                    {() => (
+                        <AppLayout>
+                            <div className="p-8 text-sm text-destructive">
+                                Sem permissão para acessar este módulo.
+                            </div>
+                        </AppLayout>
+                    )}
+                </Route>
+            );
+        }
     }
 
     return (
@@ -157,8 +195,12 @@ function Router() {
 
             <PrivateRoute path="/kanban" component={Kanban}/>
             <PrivateRoute path="/lancamentos" component={Lancamentos}/>
-            <PrivateRoute path="/conciliacao" component={ConciliacaoList}/>
-            <PrivateRoute path="/conciliacao/extrato/:extratoId" component={ConciliacaoExtratoDetalhe}/>
+            <PrivateRoute path="/conciliacao" component={ConciliacaoList} permission={PERM.CONCILIACAO_ACESSAR}/>
+            <PrivateRoute
+                path="/conciliacao/extrato/:extratoId"
+                component={ConciliacaoExtratoDetalhe}
+                permission={PERM.CONCILIACAO_ACESSAR}
+            />
 
             {/* Cadastros */}
             <PrivateRoute path="/cadastros/parceiros" component={Parceiros}/>
@@ -166,7 +208,7 @@ function Router() {
             <PrivateRoute path="/cadastros/contas-bancarias" component={ContasBancarias}/>
             <PrivateRoute path="/cadastros/metas" component={Metas}/>
             <PrivateRoute path="/cadastros/departamentos" component={Departamentos}/>
-            
+
 
             {/* Relatórios */}
             <PrivateRoute path="/relatorios/fechamento-mensal" component={FechamentoMensal}/>
@@ -174,7 +216,11 @@ function Router() {
             <PrivateRoute path="/relatorios/dre" component={DreGerencial}/>
             <PrivateRoute path="/relatorios/fluxo-caixa" component={FluxoCaixa}/>
             <PrivateRoute path="/relatorios/metas" component={MetasRelatorio}/>
-            <PrivateRoute path="/relatorios/conciliacao" component={RelatorioConciliacao}/>
+            <PrivateRoute
+                path="/relatorios/conciliacao"
+                component={RelatorioConciliacao}
+                permission={PERM.RELATORIOS_CONCILIACAO}
+            />
 
             {/* Configurações */}
             <PrivateRoute path="/configuracoes/usuarios" component={Usuarios}/>

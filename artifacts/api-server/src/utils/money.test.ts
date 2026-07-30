@@ -7,6 +7,7 @@ import {
     realizadoSemJurosCents,
     sumCents,
     toCents,
+    valorEfetivoCents,
 } from "./money.js";
 
 describe("money.ts — DEF-06 centavos inteiros", () => {
@@ -44,24 +45,24 @@ describe("money.ts — DEF-06 centavos inteiros", () => {
 /**
  * Tabela-verdade §3.3 + sintomas DEF-01.
  * Diferença unificada: Σ(extrato) − Σ(lançamentos).
- * >0 EXCEDENTE → juros/multa; <0 FALTA → residual; =0 EXATO.
+ * >0 EXCEDENTE -> juros/multa; <0 FALTA -> residual; =0 EXATO.
  */
 describe("tabela-verdade §3.3", () => {
-    it("caso 1: extrato 8.000 × lançamento 10.000 → falta 2.000 (residual)", () => {
+    it("caso 1: extrato 8.000 × lançamento 10.000 -> falta 2.000 (residual)", () => {
         const delta = diferencaConciliacaoCents(toCents(8000), toCents(10000));
         assert.equal(delta, -200000);
         assert.ok(delta < 0);
         assert.equal(centsToDecimalString(-delta), "2000.00");
     });
 
-    it("caso 2: extrato 8.000 × lançamento 6.838 → excedente 1.162 (juros)", () => {
+    it("caso 2: extrato 8.000 × lançamento 6.838 -> excedente 1.162 (juros)", () => {
         const delta = diferencaConciliacaoCents(toCents(8000), toCents(6838));
         assert.equal(delta, 116200);
         assert.ok(delta > 0);
         assert.equal(centsToDecimalString(delta), "1162.00");
     });
 
-    it("caso 3 Modo B: lançamento 4.000 × 5 linhas × 1.000 → excedente 1.000 (juros)", () => {
+    it("caso 3 Modo B: lançamento 4.000 × 5 linhas × 1.000 -> excedente 1.000 (juros)", () => {
         const somaExtrato = sumCents([1000, 1000, 1000, 1000, 1000].map(toCents));
         const delta = diferencaConciliacaoCents(somaExtrato, toCents(4000));
         assert.equal(delta, 100000);
@@ -69,13 +70,13 @@ describe("tabela-verdade §3.3", () => {
         assert.equal(centsToDecimalString(delta), "1000.00");
     });
 
-    it("caso 4: extrato 8.000 × lançamento 10.000 → residual 2.000 (obs. pagamento parcial)", () => {
+    it("caso 4: extrato 8.000 × lançamento 10.000 -> residual 2.000 (obs. pagamento parcial)", () => {
         const delta = diferencaConciliacaoCents(toCents(8000), toCents(10000));
         assert.equal(delta, -200000);
         assert.ok(delta < 0);
     });
 
-    it("caso 5: extrato 8.000 × 3 lançamentos = 6.552,05 → Δ=+1.447,95 (excedente / gap de cobertura)", () => {
+    it("caso 5: extrato 8.000 × 3 lançamentos = 6.552,05 -> Δ=+1.447,95 (gap; UI/API: Falta cobrir extrato)", () => {
         const somaLancamentos = toCents("6552.05");
         const delta = diferencaConciliacaoCents(toCents(8000), somaLancamentos);
         assert.equal(delta, 144795);
@@ -89,7 +90,7 @@ describe("tabela-verdade §3.3", () => {
  * valor_quitado embute juros; realizado operacional = quitado − juros.
  */
 describe("realizadoSemJurosCents — Card 62 / RN-G5", () => {
-    it("6838 + juros 1162 (quitado 8000) → realizado 6838, juros 1162", () => {
+    it("6838 + juros 1162 (quitado 8000) -> realizado 6838, juros 1162", () => {
         const quitado = toCents(8000);
         const juros = toCents(1162);
         const realizado = realizadoSemJurosCents(quitado, juros);
@@ -98,7 +99,7 @@ describe("realizadoSemJurosCents — Card 62 / RN-G5", () => {
         assert.notEqual(realizado, quitado);
     });
 
-    it("previsto 10000 / realizado 8000 (sem juros) → 80%", () => {
+    it("previsto 10000 / realizado 8000 (sem juros) -> 80%", () => {
         const projetado = toCents(10000);
         const realizado = realizadoSemJurosCents(toCents(8000), toCents(0));
         const pct = Math.round((fromCents(realizado) / fromCents(projetado)) * 10000) / 100;
@@ -109,5 +110,18 @@ describe("realizadoSemJurosCents — Card 62 / RN-G5", () => {
         const realizado = realizadoSemJurosCents(toCents(110000), toCents(10000));
         assert.equal(realizado, toCents(100000));
         assert.equal(fromCents(realizado), 100000);
+    });
+});
+
+describe("valorEfetivoCents — DEF-05", () => {
+    it("valor + juros + multa − desconto", () => {
+        const efetivo = valorEfetivoCents({
+            valor: 1000,
+            juros: 50,
+            multa: 10,
+            desconto: 20,
+        });
+        assert.equal(efetivo, toCents(1040));
+        assert.equal(fromCents(efetivo), 1040);
     });
 });

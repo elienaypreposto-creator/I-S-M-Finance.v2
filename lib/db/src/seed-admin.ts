@@ -39,6 +39,11 @@ const PERMISSOES_ADMIN: string[] = [
     "financeiro:conciliacao:concluir",
     "financeiro:conciliacao:configurar",
 
+    "financeiro:regras-conciliacao:listar",
+    "financeiro:regras-conciliacao:criar",
+    "financeiro:regras-conciliacao:editar",
+    "financeiro:regras-conciliacao:deletar",
+
     "configuracoes:contas-bancarias:criar",
     "configuracoes:contas-bancarias:editar",
     "configuracoes:contas-bancarias:deletar",

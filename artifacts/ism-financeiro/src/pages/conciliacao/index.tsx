@@ -389,7 +389,7 @@ export default function ConciliacaoList() {
                         ) : items.length === 0 ? (
                             <tr>
                                 <td colSpan={7} className="py-16 text-center text-muted-foreground text-xs">
-                                    Nenhum extrato neste período. Ajuste o mês/conta ou importe um OFX/CSV.
+                                    Nenhum extrato neste período. Ajuste o mês/conta ou importe um OFX.
                                 </td>
                             </tr>
                         ) : (

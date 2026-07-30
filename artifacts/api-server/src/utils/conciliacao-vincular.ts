@@ -7,7 +7,8 @@
  * Modo B (1 lançamento ← N extratos, vínculo a vínculo):
  *   Δ = (quitado_acumulado + linha_atual) − valor_título
  *
- * >0 EXCEDENTE -> juros; <0 FALTA -> residual opcional; =0 EXATO.
+ * >0 gap (sem juros explícitos, N>1) -> "Falta cobrir extrato"; juros só com alocação explícita
+ *      (ou 1:1 inequívoco no endpoint); <0 FALTA -> residual opcional; =0 EXATO.
  * Residual NÃO é oferecido quando o título já está em quitação multi-linha
  * (quitadoAnterior > 0) - evita fantasma no meio do Modo B.
  */
@@ -235,16 +236,20 @@ export function decidirVincular(input: VincularDecisionInput): VincularDecision 
 
     if (deltaCents > 0) {
         const somaJurosPayload = sumCents(lancamentos.map((l) => l.jurosMultaCents));
+        const faltaCobrirExtrato = (deltaCents / 100).toLocaleString("pt-BR", {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        });
 
         if (somaJurosPayload === deltaCents) {
-            // ok
         } else if (somaJurosPayload === 0) {
+            // Card 39 / DEF-01 caso 5: enquanto títulos não cobrem o extrato, a mensagem
+            // é "Falta R$ X…" (selecionar mais títulos). Juros só com alocação explícita.
             return {
                 ok: false,
                 status: 400,
                 code: "VALIDATION_ERROR",
-                message:
-                    "Há excedente em relação aos lançamentos. Aloque o valor em Juros/Multa nos lançamentos selecionados.",
+                message: `Falta R$ ${faltaCobrirExtrato} para cobrir o valor do extrato. Selecione mais lançamentos ou aloque o valor em Juros/Multa.`,
             };
         } else {
             return {
@@ -252,7 +257,7 @@ export function decidirVincular(input: VincularDecisionInput): VincularDecision 
                 status: 400,
                 code: "VALIDATION_ERROR",
                 message:
-                    "A soma de Juros/Multa deve ser igual ao excedente entre extrato e lançamentos.",
+                    "A soma de Juros/Multa deve ser igual ao valor que falta para cobrir o extrato.",
             };
         }
 
@@ -385,9 +390,17 @@ export function statusAposQuitacao(args: {
     tipoExtrato: "credito" | "debito";
     valorLancamentoCents: number;
     valorQuitadoAcumuladoCents: number;
+    /** Desconto acumulado no titulo (DEF-08: threshold = valor - desconto). */
+    descontoAcumuladoCents?: number;
 }): "pago" | "recebido" | "pago_parcial" {
-    const {tipoExtrato, valorLancamentoCents, valorQuitadoAcumuladoCents} = args;
-    if (valorQuitadoAcumuladoCents < valorLancamentoCents) {
+    const {
+        tipoExtrato,
+        valorLancamentoCents,
+        valorQuitadoAcumuladoCents,
+        descontoAcumuladoCents = 0,
+    } = args;
+    const baseLiquidaCents = Math.max(0, valorLancamentoCents - descontoAcumuladoCents);
+    if (valorQuitadoAcumuladoCents < baseLiquidaCents) {
         return "pago_parcial";
     }
     return tipoExtrato === "credito" ? "recebido" : "pago";

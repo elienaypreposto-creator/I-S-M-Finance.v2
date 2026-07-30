@@ -4,7 +4,7 @@ import {centsToDecimalString, toCents} from "./money.js";
 import {decidirVincular, statusAposQuitacao} from "./conciliacao-vincular.js";
 
 describe("decidirVincular — T1–T7 (auditoria)", () => {
-    it("T1: extrato 8000 × lançamento 10000 + gerar_parcial → residual 2000, pago_parcial", () => {
+    it("T1: extrato 8000 × lançamento 10000 + gerar_parcial -> residual 2000, pago_parcial", () => {
         const d = decidirVincular({
             extratoCents: toCents(8000),
             lancamentos: [
@@ -32,7 +32,7 @@ describe("decidirVincular — T1–T7 (auditoria)", () => {
         );
     });
 
-    it("T1b: mesma falta sem flag → sem residual, ainda pago_parcial", () => {
+    it("T1b: mesma falta sem flag -> sem residual, ainda pago_parcial", () => {
         const d = decidirVincular({
             extratoCents: toCents(8000),
             lancamentos: [
@@ -46,7 +46,7 @@ describe("decidirVincular — T1–T7 (auditoria)", () => {
         assert.equal(d.itens[0]!.valorQuitadoNesteVinculoCents, 800000);
     });
 
-    it("T2: extrato 8000 × lançamento 6838 → excedente juros 1162, zero residual", () => {
+    it("T2: extrato 8000 × lançamento 6838 -> excedente juros 1162, zero residual", () => {
         const d = decidirVincular({
             extratoCents: toCents(8000),
             lancamentos: [
@@ -134,7 +134,7 @@ describe("decidirVincular — T1–T7 (auditoria)", () => {
         assert.equal(d.itens[0]!.valorQuitadoNesteVinculoCents, 100000);
     });
 
-    it("T3c: Modo B 5º vínculo → Δ=+1000 juros, nunca residual mesmo com flag", () => {
+    it("T3c: Modo B 5º vínculo -> Δ=+1000 juros, nunca residual mesmo com flag", () => {
         const d = decidirVincular({
             extratoCents: toCents(1000),
             lancamentos: [
@@ -170,8 +170,8 @@ describe("decidirVincular — T1–T7 (auditoria)", () => {
         assert.equal(d.residual!.valorCents, 200000);
     });
 
-    it("T5: gap 1447.95 com 3 lançamentos = 6552.05 — não residual automático sem flag", () => {
-        // 6552.05 < 8000 → excedente do extrato (lançamentos não cobrem) = +1447.95 → juros path
+    it("T5: gap 1447.95 com 3 lançamentos = 6552.05 — Falta cobrir extrato (Card 39)", () => {
+        // 6552.05 < 8000 -> ainda faltam títulos (ou juros explícitos). Mensagem = Falta R$ 1.447,95.
         const d = decidirVincular({
             extratoCents: toCents(8000),
             lancamentos: [
@@ -181,13 +181,13 @@ describe("decidirVincular — T1–T7 (auditoria)", () => {
             ],
             gerarParcial: false,
         });
-        // Soma bases = 6552.05; Δ = 8000 - 6552.05 = +1447.95 → excedente exige alocação juros (N>1)
         assert.equal(d.ok, false);
         if (d.ok) return;
-        assert.match(d.message, /Juros\/Multa/);
+        assert.match(d.message, /Falta R\$ 1\.447,95/);
+        assert.match(d.message, /cobrir o valor do extrato/i);
     });
 
-    it("T5b: com juros alocados cobrindo o gap → exato/excedente resolvido, sem residual", () => {
+    it("T5b: com juros alocados cobrindo o gap -> exato/excedente resolvido, sem residual", () => {
         const d = decidirVincular({
             extratoCents: toCents(8000),
             lancamentos: [
@@ -252,5 +252,31 @@ describe("decidirVincular — T1–T7 (auditoria)", () => {
         assert.equal(d.ok, true);
         if (!d.ok) return;
         assert.equal(d.ramo, "falta");
+    });
+});
+
+describe("statusAposQuitacao — desconto (DEF-08)", () => {
+    it("título 1000 com desconto 100 quitado a 900 -> pago (não pago_parcial eterno)", () => {
+        assert.equal(
+            statusAposQuitacao({
+                tipoExtrato: "debito",
+                valorLancamentoCents: toCents(1000),
+                valorQuitadoAcumuladoCents: toCents(900),
+                descontoAcumuladoCents: toCents(100),
+            }),
+            "pago",
+        );
+    });
+
+    it("título 1000 com desconto 100 quitado a 800 -> pago_parcial", () => {
+        assert.equal(
+            statusAposQuitacao({
+                tipoExtrato: "debito",
+                valorLancamentoCents: toCents(1000),
+                valorQuitadoAcumuladoCents: toCents(800),
+                descontoAcumuladoCents: toCents(100),
+            }),
+            "pago_parcial",
+        );
     });
 });

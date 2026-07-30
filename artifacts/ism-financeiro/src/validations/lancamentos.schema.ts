@@ -6,6 +6,7 @@ export const lancamentoStatusEnum = z.enum([
     "recebido",
     "atrasado",
     "cancelado",
+    "pago_parcial",
 ]);
 
 
@@ -287,7 +288,7 @@ export type LancamentoEditItem = {
 function normalizeStatusForForm(tipo: string, status: string): z.infer<typeof lancamentoStatusEnum> {
     const s = status as z.infer<typeof lancamentoStatusEnum>;
     const allowed: z.infer<typeof lancamentoStatusEnum>[] = [
-        "pendente", "pago", "recebido", "atrasado", "cancelado",
+        "pendente", "pago", "recebido", "atrasado", "cancelado", "pago_parcial",
     ];
     if (allowed.includes(s)) {
         if (tipo === "CR" && s === "pago") return "recebido";

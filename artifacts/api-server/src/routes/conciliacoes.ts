@@ -17,16 +17,19 @@ import {
     PARAM_MOTIVO_IGNORAR_OBRIGATORIO,
     parametrosSistemaTable,
     parceirosTable,
+    regrasConciliacaoTable,
 } from "@workspace/db/schema";
 import {validateBody} from "../middlewares/validate";
 import {errorResponse, successResponse} from "../utils/response";
 import {parseOFX} from "../utils/ofx-parser";
-import {parseCSV} from "../utils/csv-parser";
 import type {OFXParseResult} from "../utils/ofx-parser";
 import {centsToDecimalString, fromCents, sumCents, toCents} from "../utils/money";
 import {decidirVincular, statusAposQuitacao} from "../utils/conciliacao-vincular";
 import {hashLinhaExtrato} from "../utils/extrato-hash";
+import {encontrarRegraParaLinha, type RegraParaMatch} from "../utils/regras-match";
+import {hojeIsoLocal} from "../utils/date-civil";
 import {contasBancariasService} from "../domains/financial/contas-bancarias/contas-bancarias.service";
+import {regrasConciliacaoService} from "../domains/financial/regras-conciliacao/regras-conciliacao.service";
 import {promoverLancamentosAtrasados} from "../jobs/promover-atrasados";
 import {withPermission} from "../middlewares/withPermission";
 import {PERM} from "../constants/permissoes";
@@ -76,22 +79,12 @@ function boundsDoMes(ano: number, mes: number): { inicio: string; fim: string } 
     return {inicio, fim};
 }
 
-function hojeIsoLocal(): string {
-    const d = new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
-}
-
-/** Normaliza date Drizzle / Date / string para YYYY-MM-DD (relatórios filtram por data_quitacao). */
+/** Normaliza date Drizzle / Date / string para YYYY-MM-DD civil (sem getters locais). */
 function toDateIso(value: unknown): string | null {
     if (value == null || value === "") return null;
     if (value instanceof Date && !Number.isNaN(value.getTime())) {
-        const y = value.getFullYear();
-        const m = String(value.getMonth() + 1).padStart(2, "0");
-        const day = String(value.getDate()).padStart(2, "0");
-        return `${y}-${m}-${day}`;
+        // Instant -> dia civil UTC (evita America/Sao_Paulo deslocar YYYY-MM-DD).
+        return value.toISOString().slice(0, 10);
     }
     const raw = String(value).trim();
     const iso = raw.slice(0, 10);
@@ -117,18 +110,14 @@ const vincularBodySchema = z.object({
 });
 
 /**
- * RN-G7: edição inline de um vínculo já existente (desconto / juros-multa /
- * data do residual), usada pelo card de lançamento na tela de detalhe do
- * extrato. Diferente de POST /vincular: aqui a linha JÁ está vinculada -
- * essa é a rota certa para reajustar valores sem esbarrar nas guardas de
- * "já vinculada" do endpoint de vinculação inicial. Todos os campos são
- * opcionais - o card envia só o que o usuário editou.
+ * RN-G7: edição inline de desconto / juros-multa de um vínculo já existente.
+ * Vencimento do residual NÃO é editável (Decisão nº 3 — igual à origem).
  */
 const atualizarVinculoBodySchema = z.object({
     desconto: z.coerce.number().min(0).optional(),
     juros_multa: z.coerce.number().min(0).optional(),
-    /** Só tem efeito quando o lançamento vinculado é um residual parcial. */
-    vencimento: z.string().trim().min(1).optional(),
+}).refine((b) => b.desconto !== undefined || b.juros_multa !== undefined, {
+    message: "Informe desconto e/ou juros_multa.",
 });
 
 /** DEF-04: digitação manual de saldo_pos_linha quando o arquivo não trouxer. */
@@ -336,7 +325,7 @@ const atualizarResumoConciliacao = async (
         .where(eq(extratosTable.id, extratoId));
 };
 
-router.get("/conciliacoes", async (req, res) => {
+router.get("/conciliacoes", withPermission(PERM.CONCILIACAO_ACESSAR), async (req, res) => {
     try {
         const page = parseInt(req.query.page as string) || 1;
         const limit = parseInt(req.query.limit as string) || 20;
@@ -421,11 +410,12 @@ router.get("/conciliacoes", async (req, res) => {
 });
 
 /** FEAT-07: pendências por mês (informativo). Deve ficar ANTES de /:extrato_id. */
-router.get("/conciliacoes/pendencias-mes", async (req, res) => {
+router.get("/conciliacoes/pendencias-mes", withPermission(PERM.CONCILIACAO_ACESSAR), async (req, res) => {
     try {
-        const agora = new Date();
-        const mesRef = req.query.mes ? parseInt(req.query.mes as string, 10) : agora.getMonth() + 1;
-        const anoRef = req.query.ano ? parseInt(req.query.ano as string, 10) : agora.getFullYear();
+        const hojeCivil = hojeIsoLocal(); // YYYY-MM-DD America/Sao_Paulo
+        const [anoCivil, mesCivil] = hojeCivil.split("-").map(Number);
+        const mesRef = req.query.mes ? parseInt(req.query.mes as string, 10) : mesCivil!;
+        const anoRef = req.query.ano ? parseInt(req.query.ano as string, 10) : anoCivil!;
 
         // Inclui mês de referência e meses anteriores com pendência (últimos 6)
         const mesesAlvo: { mes: number; ano: number; inicio: string; fim: string }[] = [];
@@ -558,7 +548,7 @@ router.get("/conciliacoes/pendencias-mes", async (req, res) => {
 });
 
 /** FEAT-06: parâmetro motivo_ignorar_obrigatorio */
-router.get("/conciliacoes/parametros", async (_req, res) => {
+router.get("/conciliacoes/parametros", withPermission(PERM.CONCILIACAO_ACESSAR), async (_req, res) => {
     try {
         const obrigatorio = await getMotivoIgnorarObrigatorio();
         return successResponse(res, {
@@ -597,7 +587,7 @@ router.put(
         }
     });
 
-/** FEAT-08: dispara promoção pendente → atrasado (também roda no job periódico). */
+/** FEAT-08: dispara promoção pendente -> atrasado (também roda no job periódico). */
 router.post(
     "/conciliacoes/jobs/promover-atrasados",
     withPermission(PERM.CONCILIACAO_CONFIGURAR),
@@ -634,27 +624,27 @@ async function parseExtratoUpload(req: {
     | { error: { status: number; code: string; message: string; detail?: string } }
 > {
     if (!req.file) {
-        return {error: {status: 400, code: "VALIDATION_ERROR", message: "Campo obrigatório: arquivo (OFX ou CSV)."}};
+        return {error: {status: 400, code: "VALIDATION_ERROR", message: "Campo obrigatório: arquivo OFX."}};
     }
     const ext = req.file.originalname.split(".").pop()?.toLowerCase() ?? "";
-    if (ext !== "ofx" && ext !== "csv") {
+    if (ext !== "ofx") {
         return {
             error: {
                 status: 400,
                 code: "VALIDATION_ERROR",
-                message: "Formato de arquivo não suportado. Envie OFX ou CSV.",
+                message: "Formato não suportado. Envie apenas arquivo OFX.",
             },
         };
     }
     try {
-        const parsed = ext === "csv" ? parseCSV(req.file.buffer) : parseOFX(req.file.buffer);
+        const parsed = parseOFX(req.file.buffer);
         return {parsed};
     } catch (parseErr) {
         return {
             error: {
                 status: 422,
                 code: "PARSE_ERROR",
-                message: "Arquivo inválido ou malformado.",
+                message: "Arquivo OFX inválido ou malformado.",
                 detail: String(parseErr),
             },
         };
@@ -823,6 +813,20 @@ router.post(
         const periodo_inicio = datas[0]!;
         const periodo_fim = datas[datas.length - 1]!;
 
+        const regrasDb = await regrasConciliacaoService.listarAtivasParaMatch(conta_id);
+        const regras: RegraParaMatch[] = regrasDb.map((r) => ({
+            id: r.id,
+            texto_gatilho: r.texto_gatilho,
+            tipo_match: r.tipo_match,
+            natureza: r.natureza,
+            criar_lancamento_automatico: r.criar_lancamento_automatico,
+            plano_conta_id: r.plano_conta_id,
+            parceiro_id: r.parceiro_id,
+            departamento_id: r.departamento_id,
+            centro_custo_id: r.centro_custo_id,
+            forma_pagamento: r.forma_pagamento,
+        }));
+
         const resultado = await db.transaction(async (tx) => {
             const [extrato] = await tx
                 .insert(extratosTable)
@@ -854,6 +858,7 @@ router.post(
                     resumo_ignorados: 0,
                     resumo_pendentes: paraImportar.length,
                     resumo_total: paraImportar.length,
+                    resumo_classificadas_automaticamente: 0,
                 })
                 .returning();
 
@@ -880,21 +885,128 @@ router.post(
                     data_movimento: extratoLinhasTable.data_movimento,
                 });
 
-            await tx.insert(itensConciliacaoTable).values(
-                linhasInseridas.map((l) => ({
-                    conciliacao_id: conciliacao.id,
-                    extrato_linha_id: l.id,
-                    valor_extrato: l.valor,
-                    valor_vinculado_total: "0.00",
-                    valor_saldo: l.valor,
-                    status: "pendente" as const,
-                    tipo_extrato: l.tipo_movimento,
+            // Card 48 / FEAT-03: match por texto_gatilho antes de gravar itens.
+            const matchPorLinhaId = new Map<number, RegraParaMatch>();
+            for (const l of linhasInseridas) {
+                const regra = encontrarRegraParaLinha(regras, {
+                    tipo_movimento: l.tipo_movimento,
                     descricao: l.descricao,
-                    data: l.data_movimento,
-                })),
-            );
+                });
+                if (regra) matchPorLinhaId.set(l.id, regra);
+            }
 
-            return {conciliacao, extrato};
+            const itensInseridos = await tx
+                .insert(itensConciliacaoTable)
+                .values(
+                    linhasInseridas.map((l) => {
+                        const regra = matchPorLinhaId.get(l.id);
+                        return {
+                            conciliacao_id: conciliacao.id,
+                            extrato_linha_id: l.id,
+                            valor_extrato: l.valor,
+                            valor_vinculado_total: "0.00",
+                            valor_saldo: l.valor,
+                            status: "pendente" as const,
+                            tipo_extrato: l.tipo_movimento,
+                            descricao: l.descricao,
+                            data: l.data_movimento,
+                            regra_id: regra?.id ?? null,
+                            classificacao_automatica: Boolean(regra),
+                        };
+                    }),
+                )
+                .returning({
+                    id: itensConciliacaoTable.id,
+                    extrato_linha_id: itensConciliacaoTable.extrato_linha_id,
+                    valor_extrato: itensConciliacaoTable.valor_extrato,
+                    tipo_extrato: itensConciliacaoTable.tipo_extrato,
+                });
+
+            let classificadas = 0;
+            for (const item of itensInseridos) {
+                const regra = matchPorLinhaId.get(item.extrato_linha_id);
+                if (!regra) continue;
+                classificadas += 1;
+
+                if (!regra.criar_lancamento_automatico) continue;
+
+                const linha = linhasInseridas.find((l) => l.id === item.extrato_linha_id);
+                if (!linha) continue;
+
+                const valorCents = toCents(item.valor_extrato);
+                const statusQuitacao = statusAposQuitacao({
+                    tipoExtrato: item.tipo_extrato,
+                    valorLancamentoCents: valorCents,
+                    valorQuitadoAcumuladoCents: valorCents,
+                });
+                const tipoLancamento = item.tipo_extrato === "credito" ? "CR" : "CP";
+                const dataQuitacao = toDateIso(linha.data_movimento) ?? hojeIsoLocal();
+
+                const [novoLancamento] = await tx
+                    .insert(lancamentosTable)
+                    .values({
+                        tipo: tipoLancamento,
+                        vencimento: dataQuitacao,
+                        conta_id,
+                        parceiro_id: regra.parceiro_id,
+                        descricao: linha.descricao,
+                        valor: centsToDecimalString(valorCents),
+                        status: statusQuitacao,
+                        origem: "conciliacao",
+                        plano_conta_id: regra.plano_conta_id,
+                        departamento_id: regra.departamento_id,
+                        centro_custo_id: regra.centro_custo_id,
+                        forma_pagamento: regra.forma_pagamento,
+                        data_quitacao: dataQuitacao,
+                        valor_quitado: centsToDecimalString(valorCents),
+                        criado_por: req.user?.id,
+                    })
+                    .returning({id: lancamentosTable.id});
+
+                await tx.insert(itensConciliacaoLancamentosTable).values({
+                    item_conciliacao_id: item.id,
+                    lancamento_id: novoLancamento.id,
+                    valor_vinculado: centsToDecimalString(valorCents),
+                    desconto: "0.00",
+                    juros_multa: "0.00",
+                });
+
+                await tx
+                    .update(itensConciliacaoTable)
+                    .set({
+                        status: "vinculado",
+                        valor_vinculado_total: centsToDecimalString(valorCents),
+                        valor_saldo: "0.00",
+                        data_conciliacao: hojeIsoLocal(),
+                        updated_at: new Date(),
+                    })
+                    .where(eq(itensConciliacaoTable.id, item.id));
+
+                await tx.insert(historicoConciliacaoTable).values({
+                    conciliacao_id: conciliacao.id,
+                    item_conciliacao_id: item.id,
+                    usuario_id: req.user?.id,
+                    acao: "vincular",
+                    detalhes: JSON.stringify({
+                        linha_id: linha.id,
+                        acao: "classificacao_automatica",
+                        regra_id: regra.id,
+                        lancamento_id: novoLancamento.id,
+                    }),
+                });
+            }
+
+            await tx
+                .update(conciliacoesTable)
+                .set({
+                    resumo_classificadas_automaticamente: classificadas,
+                    updated_at: new Date(),
+                })
+                .where(eq(conciliacoesTable.id, conciliacao.id));
+
+            await atualizarResumoConciliacao(tx, conciliacao.id, extrato.id);
+
+            return {conciliacao, extrato, classificadas};
         });
 
         return successResponse(
@@ -908,6 +1020,7 @@ router.post(
                 conta_nome: conta.nome,
                 total_linhas: paraImportar.length,
                 linhas_ignoradas_duplicadas: enriched.length - paraImportar.length,
+                linhas_classificadas_automaticamente: resultado.classificadas,
                 total_creditos: fromCents(totalCreditosCents),
                 total_debitos: fromCents(totalDebitosCents),
                 periodo_inicio,
@@ -931,7 +1044,7 @@ router.post(
  * - Resultados são ordenados por proximidade de valor (idêntico primeiro) e,
  *   em caso de empate, por proximidade de data em relação à linha do extrato.
  */
-router.get("/conciliacoes/buscar-lancamentos", async (req, res) => {
+router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_ACESSAR), async (req, res) => {
     try {
         const linhaId = Number(req.query.linha_id);
         if (!linhaId) {
@@ -973,19 +1086,26 @@ router.get("/conciliacoes/buscar-lancamentos", async (req, res) => {
         // por proximidade.
         const usaFiltroLivre = Boolean(busca) || valorBusca !== null || vencimentoBusca !== null;
 
+        // DEF-04/08 / Modo B: após quitação exata (pago/recebido) a 5ª linha
+        // (juros) ainda precisa achar o título — tabela-verdade §3.3 caso 3.
         const condicoes = [
             eq(lancamentosTable.tipo, tipoCompatvel),
-            or(eq(lancamentosTable.status, "pendente"), eq(lancamentosTable.status, "atrasado")),
+            or(
+                eq(lancamentosTable.status, "pendente"),
+                eq(lancamentosTable.status, "atrasado"),
+                eq(lancamentosTable.status, "pago_parcial"),
+                eq(lancamentosTable.status, "pago"),
+                eq(lancamentosTable.status, "recebido"),
+            ),
         ];
 
         if (!usaFiltroLivre) {
-            const dataRef = linha.data_movimento ? new Date(linha.data_movimento) : new Date();
-            const dataInicio = new Date(dataRef);
-            dataInicio.setDate(dataInicio.getDate() - diasJanela);
-            const dataFim = new Date(dataRef);
-            dataFim.setDate(dataFim.getDate() + diasJanela);
-            condicoes.push(gte(lancamentosTable.vencimento, dataInicio.toISOString().split("T")[0]));
-            condicoes.push(lte(lancamentosTable.vencimento, dataFim.toISOString().split("T")[0]));
+            const dataRefIso =
+                toDateIso(linha.data_movimento) ?? hojeIsoLocal();
+            const dataInicio = addDaysToISO(dataRefIso, -diasJanela);
+            const dataFim = addDaysToISO(dataRefIso, diasJanela);
+            condicoes.push(gte(lancamentosTable.vencimento, dataInicio));
+            condicoes.push(lte(lancamentosTable.vencimento, dataFim));
         }
 
         if (vencimentoBusca) {
@@ -1015,6 +1135,7 @@ router.get("/conciliacoes/buscar-lancamentos", async (req, res) => {
                 vencimento: lancamentosTable.vencimento,
                 descricao: lancamentosTable.descricao,
                 valor: lancamentosTable.valor,
+                valor_quitado: lancamentosTable.valor_quitado,
                 status: lancamentosTable.status,
                 parceiro_id: lancamentosTable.parceiro_id,
                 parceiro_nome: parceirosTable.nome,
@@ -1040,7 +1161,11 @@ router.get("/conciliacoes/buscar-lancamentos", async (req, res) => {
 
         return successResponse(
             res,
-            ordenados.map((l) => ({...l, valor: toDecimal(l.valor)})),
+            ordenados.map((l) => ({
+                ...l,
+                valor: toDecimal(l.valor),
+                valor_quitado: l.valor_quitado != null ? toDecimal(l.valor_quitado) : null,
+            })),
             {linha_id: linha.id, tipo_movimento: linha.tipo_movimento, dias_janela: diasJanela},
         );
     } catch (e) {
@@ -1048,7 +1173,7 @@ router.get("/conciliacoes/buscar-lancamentos", async (req, res) => {
     }
 });
 
-router.get("/conciliacoes/:extrato_id", async (req, res) => {
+router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR), async (req, res) => {
     try {
         const extratoId = Number(req.params.extrato_id);
         const [extrato] = await db
@@ -1099,9 +1224,14 @@ router.get("/conciliacoes/:extrato_id", async (req, res) => {
                 item_status: itensConciliacaoTable.status,
                 valor_vinculado_total: itensConciliacaoTable.valor_vinculado_total,
                 valor_saldo: itensConciliacaoTable.valor_saldo,
+                regra_id: itensConciliacaoTable.regra_id,
+                classificacao_automatica: itensConciliacaoTable.classificacao_automatica,
+                regra_texto_gatilho: regrasConciliacaoTable.texto_gatilho,
+                regra_criar_lancamento: regrasConciliacaoTable.criar_lancamento_automatico,
             })
             .from(extratoLinhasTable)
             .innerJoin(itensConciliacaoTable, eq(itensConciliacaoTable.extrato_linha_id, extratoLinhasTable.id))
+            .leftJoin(regrasConciliacaoTable, eq(regrasConciliacaoTable.id, itensConciliacaoTable.regra_id))
             .where(eq(extratoLinhasTable.extrato_id, extratoId))
             .orderBy(desc(extratoLinhasTable.data_movimento));
 
@@ -1123,6 +1253,7 @@ router.get("/conciliacoes/:extrato_id", async (req, res) => {
                     // Vencimento do lançamento vinculado - usado pelo card para exibir/editar
                     // a data do residual parcial (RN-G3).
                     lancamento_vencimento: lancamentosTable.vencimento,
+                    is_residuo_parcial: lancamentosTable.is_residuo_parcial,
                 })
                 .from(itensConciliacaoLancamentosTable)
                 .innerJoin(lancamentosTable, eq(lancamentosTable.id, itensConciliacaoLancamentosTable.lancamento_id))
@@ -1140,6 +1271,11 @@ router.get("/conciliacoes/:extrato_id", async (req, res) => {
             valor_vinculado_total: toDecimal(linha.valor_vinculado_total),
             valor_saldo: toDecimal(linha.valor_saldo),
             saldo_pos_linha: linha.saldo_pos_linha != null ? toDecimal(linha.saldo_pos_linha) : null,
+            regra_id: linha.regra_id,
+            classificacao_automatica: Boolean(linha.classificacao_automatica),
+            regra_texto_gatilho: linha.regra_texto_gatilho,
+            /** true = regra criaria/criou lançamento; false = só classificação sugerida. */
+            regra_criar_lancamento: linha.regra_criar_lancamento,
             vinculacoes: vinculos
                 .filter((v) => v.item_conciliacao_id === linha.item_id)
                 .map((v) => ({
@@ -1148,6 +1284,7 @@ router.get("/conciliacoes/:extrato_id", async (req, res) => {
                     descricao: v.lancamento_descricao,
                     tipo: v.lancamento_tipo,
                     status: v.lancamento_status,
+                    is_residuo_parcial: Boolean(v.is_residuo_parcial),
                     valor_vinculado: toDecimal(v.valor_vinculado),
                     desconto: toDecimal(v.desconto),
                     juros_multa: toDecimal(v.juros_multa),
@@ -1179,6 +1316,7 @@ router.get("/conciliacoes/:extrato_id", async (req, res) => {
                 resumo_ignorados: conciliacao.resumo_ignorados,
                 resumo_pendentes: conciliacao.resumo_pendentes,
                 resumo_total: conciliacao.resumo_total,
+                resumo_classificadas_automaticamente: conciliacao.resumo_classificadas_automaticamente,
             },
             linhas: linhasDetalhadas,
             diagnostico,
@@ -1392,7 +1530,7 @@ router.post(
                             tipo: origem.tipo,
                             vencimento: origem.vencimento,
                             competencia: origem.competencia,
-                            conta_id: origem.conta_id,
+                            conta_id: origem.conta_id ?? conciliacao.conta_id,
                             parceiro_id: origem.parceiro_id,
                             descricao: `${origem.descricao ?? "Lançamento"} (pagamento parcial)`,
                             valor: centsToDecimalString(decision.residual.valorCents),
@@ -1440,10 +1578,14 @@ router.post(
                     const jurosAnteriorCents = toCents(lancamento.juros);
                     const jurosNovoCents = jurosAnteriorCents + vinculo.jurosMultaCents;
 
+                    const descontoAcumuladoCents =
+                        toCents(lancamento.desconto) + vinculo.descontoCents;
+
                     const statusQuitacao = statusAposQuitacao({
                         tipoExtrato: item.tipo_extrato,
                         valorLancamentoCents,
                         valorQuitadoAcumuladoCents: quitadoAcumuladoCents,
+                        descontoAcumuladoCents,
                     });
 
                     await tx
@@ -1451,10 +1593,10 @@ router.post(
                         .set({
                             status: statusQuitacao,
                             data_quitacao: dataQuitacao,
+                            /** FEAT-10: associa o título à conta do extrato (cadastro pode ter conta_id NULL). */
+                            conta_id: conciliacao.conta_id,
                             valor_quitado: centsToDecimalString(quitadoAcumuladoCents),
-                            desconto: sql`${lancamentosTable.desconto}
-                            +
-                            ${centsToDecimalString(vinculo.descontoCents)}`,
+                            desconto: centsToDecimalString(descontoAcumuladoCents),
                             juros: centsToDecimalString(jurosNovoCents),
                             updated_at: new Date(),
                         })
@@ -1637,12 +1779,9 @@ router.post(
 );
 
 /**
- * RN-G7: edição inline de desconto/juros-multa/data de um vínculo já
- * existente, usada pelo card de lançamento na tela de detalhe do extrato.
- * Não reaproveita POST /vincular (que travaria com CONFLICT "já vinculada" -
- * a edição só existe justamente quando a linha já está vinculada). Aqui
- * ajustamos apenas o delta necessário no lançamento (desconto/juros
- * acumulados), sem recriar o vínculo.
+ * RN-G7: edição inline de desconto/juros-multa de vínculo já existente.
+ * Recalcula status do título (threshold = valor − desconto). Vencimento do
+ * residual é imutável (Decisão nº 3).
  */
 router.patch(
     "/conciliacoes/vinculos/:vinculo_id",
@@ -1673,26 +1812,54 @@ router.patch(
                 return errorResponse(res, 404, "NOT_FOUND", "Lançamento vinculado não encontrado.");
             }
 
+            const [item] = await db
+                .select()
+                .from(itensConciliacaoTable)
+                .where(eq(itensConciliacaoTable.id, vinculo.item_conciliacao_id))
+                .limit(1);
+
             const descontoAnteriorCents = toCents(vinculo.desconto);
             const jurosAnteriorCents = toCents(vinculo.juros_multa);
-            const novoDescontoCents = body.desconto !== undefined ? toCents(body.desconto) : descontoAnteriorCents;
-            const novoJurosCents = body.juros_multa !== undefined ? toCents(body.juros_multa) : jurosAnteriorCents;
+            const novoDescontoCents =
+                body.desconto !== undefined ? toCents(body.desconto) : descontoAnteriorCents;
+            const novoJurosCents =
+                body.juros_multa !== undefined ? toCents(body.juros_multa) : jurosAnteriorCents;
 
-            const deltaDescontoCents = novoDescontoCents - descontoAnteriorCents;
-            const deltaJurosCents = novoJurosCents - jurosAnteriorCents;
-
-            // Vencimento só é editável quando o lançamento vinculado é um
-            // residual parcial (RN-G3) - a linha do extrato em si não tem
-            // vencimento editável por aqui.
-            const podeEditarVencimento = Boolean(lancamento.is_residuo_parcial);
-            if (body.vencimento !== undefined && !podeEditarVencimento) {
+            const valorTituloCents = toCents(lancamento.valor);
+            if (novoDescontoCents > valorTituloCents) {
                 return errorResponse(
                     res,
                     400,
                     "VALIDATION_ERROR",
-                    "Vencimento só pode ser editado para lançamentos residuais (pagamento parcial).",
+                    "Desconto não pode exceder o valor do lançamento.",
                 );
             }
+
+            const quitadoAtualCents = toCents(lancamento.valor_quitado);
+            const deltaJurosCents = novoJurosCents - jurosAnteriorCents;
+            const jurosLancamentoNovoCents = Math.max(0, toCents(lancamento.juros) + deltaJurosCents);
+            if (jurosLancamentoNovoCents > quitadoAtualCents && quitadoAtualCents > 0) {
+                return errorResponse(
+                    res,
+                    400,
+                    "VALIDATION_ERROR",
+                    "Juros/Multa não pode exceder o valor quitado do título.",
+                );
+            }
+
+            const deltaDescontoCents = novoDescontoCents - descontoAnteriorCents;
+            const descontoLancamentoNovoCents = Math.max(
+                0,
+                toCents(lancamento.desconto) + deltaDescontoCents,
+            );
+
+            const tipoExtrato = item?.tipo_extrato === "credito" ? "credito" : "debito";
+            const statusQuitacao = statusAposQuitacao({
+                tipoExtrato,
+                valorLancamentoCents: valorTituloCents,
+                valorQuitadoAcumuladoCents: quitadoAtualCents,
+                descontoAcumuladoCents: descontoLancamentoNovoCents,
+            });
 
             await db.transaction(async (tx) => {
                 await tx
@@ -1703,30 +1870,24 @@ router.patch(
                     })
                     .where(eq(itensConciliacaoLancamentosTable.id, vinculoId));
 
-                if (deltaDescontoCents !== 0 || deltaJurosCents !== 0) {
-                    await tx
-                        .update(lancamentosTable)
-                        .set({
-                            desconto: centsToDecimalString(toCents(lancamento.desconto) + deltaDescontoCents),
-                            juros: centsToDecimalString(toCents(lancamento.juros) + deltaJurosCents),
-                            updated_at: new Date(),
-                        })
-                        .where(eq(lancamentosTable.id, lancamento.id));
-                }
-
-                if (body.vencimento !== undefined && podeEditarVencimento) {
-                    await tx
-                        .update(lancamentosTable)
-                        .set({vencimento: body.vencimento, updated_at: new Date()})
-                        .where(eq(lancamentosTable.id, lancamento.id));
-                }
+                await tx
+                    .update(lancamentosTable)
+                    .set({
+                        desconto: centsToDecimalString(descontoLancamentoNovoCents),
+                        juros: centsToDecimalString(jurosLancamentoNovoCents),
+                        status: statusQuitacao,
+                        updated_at: new Date(),
+                    })
+                    .where(eq(lancamentosTable.id, lancamento.id));
             });
 
             return successResponse(res, {
                 vinculo_id: vinculoId,
                 desconto: fromCents(novoDescontoCents),
                 juros_multa: fromCents(novoJurosCents),
-                vencimento: body.vencimento ?? lancamento.vencimento,
+                status: statusQuitacao,
+                valor_quitado: fromCents(quitadoAtualCents),
+                vencimento: lancamento.vencimento,
             });
         } catch (e) {
             return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao atualizar vínculo.", String(e));
@@ -1932,15 +2093,19 @@ router.delete(
                     const jurosNovo = Math.max(0, toCents(lanc.juros) - toCents(v.juros_multa));
                     const descontoNovo = Math.max(0, toCents(lanc.desconto) - toCents(v.desconto));
 
+                    const valorCents = toCents(lanc.valor);
+                    const baseLiquidaCents = Math.max(0, valorCents - descontoNovo);
+
                     let novoStatus: "pendente" | "atrasado" | "pago_parcial" | "pago" | "recebido" =
                         "pendente";
-                    if (quitadoNovo > 0 && quitadoNovo < toCents(lanc.valor)) {
+                    if (quitadoNovo > 0 && quitadoNovo < baseLiquidaCents) {
                         novoStatus = "pago_parcial";
-                    } else if (quitadoNovo >= toCents(lanc.valor) && toCents(lanc.valor) > 0) {
+                    } else if (quitadoNovo >= baseLiquidaCents && baseLiquidaCents > 0) {
                         novoStatus = lanc.tipo === "CR" ? "recebido" : "pago";
                     } else if (lanc.vencimento) {
-                        const hoje = new Date().toISOString().slice(0, 10);
-                        if (lanc.vencimento < hoje) novoStatus = "atrasado";
+                        const hoje = hojeIsoLocal();
+                        const vencIso = toDateIso(lanc.vencimento) ?? String(lanc.vencimento).slice(0, 10);
+                        if (vencIso < hoje) novoStatus = "atrasado";
                     }
 
                     await tx

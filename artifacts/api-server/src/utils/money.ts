@@ -62,3 +62,22 @@ export function realizadoSemJurosCents(
 ): number {
     return Math.max(0, quitadoCents - jurosCents);
 }
+
+/**
+ * DEF-05 — valor efetivo do título em centavos:
+ *   valor + juros + multa − desconto
+ * (juros canônico em `lancamentos.juros`; `acrescimo` é legado).
+ */
+export function valorEfetivoCents(params: {
+    valor: unknown;
+    juros?: unknown;
+    multa?: unknown;
+    desconto?: unknown;
+}): number {
+    return (
+        toCents(params.valor) +
+        toCents(params.juros) +
+        toCents(params.multa) -
+        toCents(params.desconto)
+    );
+}

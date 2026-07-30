@@ -8,6 +8,7 @@ export const lancamentoStatusEnum = z.enum([
     "recebido",
     "atrasado",
     "cancelado",
+    "pago_parcial",
 ]);
 
 const dadosPagamentoPixSchema = z.object({

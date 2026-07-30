@@ -17,6 +17,7 @@ import {Loader2, X, Link2, AlertCircle, CheckCircle2, Pencil, Search} from "luci
 import {useAuth} from "@/hooks/use-auth";
 import {PERM} from "@/lib/permissoes";
 import {EditarLancamentoConciliacaoModal} from "@/components/conciliacao/editar-lancamento-modal";
+import {StatusBadge} from "@/components/shared/status-badge";
 
 export type LancamentoCompativel = {
     id: number;
@@ -323,9 +324,7 @@ function VincularFormBody({
                                                         <span className="text-[10px] text-muted-foreground">
                               {formatDate(l.vencimento)}
                             </span>
-                                                        <span className="text-[10px] text-muted-foreground uppercase">
-                              {l.status}
-                            </span>
+                                                        <StatusBadge status={l.status} className="text-[10px] py-0"/>
                                                     </div>
                                                     <p
                                                         className="text-sm text-white font-medium mt-1 truncate"
@@ -486,8 +485,7 @@ function VincularFormBody({
                                         <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
                                             Cria lançamento pendente
                                             de {formatCurrency(toMoney(Math.abs(deltaCents ?? 0)))}{" "}
-                                            (pagamento parcial), com vencimento da origem — editável depois,
-                                            no card do lançamento.
+                                            (pagamento parcial), com vencimento da origem — não editável.
                                         </p>
                                     </div>
                                 </label>
@@ -530,10 +528,11 @@ function VincularFormBody({
                 ) : showExcedente ? (
                     <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2">
                         <p className="text-sm font-semibold text-amber-200 text-center">
-                            Sobra / Excedente de {formatCurrency(toMoney(deltaCents ?? 0))}
                             {selectedItens.length === 1
-                                ? " — preenchido em Juros/Multa"
-                                : " — aloque em Juros/Multa"}
+                                ? `Sobra de ${formatCurrency(toMoney(deltaCents ?? 0))} — preenchida em Juros/Multa`
+                                : coberturaCents === 0
+                                    ? `Gap de ${formatCurrency(toMoney(deltaCents ?? 0))} coberto em Juros/Multa`
+                                    : `Falta ${formatCurrency(toMoney(deltaCents ?? 0))} para cobrir o extrato — selecione mais lançamentos ou aloque em Juros/Multa`}
                         </p>
                     </div>
                 ) : null}
