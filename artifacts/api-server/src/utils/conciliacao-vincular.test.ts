@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
 import {centsToDecimalString, toCents} from "./money.js";
-import {decidirVincular, statusAposQuitacao} from "./conciliacao-vincular.js";
+import {
+    decidirVincular,
+    statusAbertoPorVencimento,
+    statusAposDesfazerVinculo,
+    statusAposQuitacao,
+} from "./conciliacao-vincular.js";
 
-describe("decidirVincular — T1–T7 (auditoria)", () => {
+describe("decidirVincular - T1–T7 (auditoria)", () => {
     it("T1: extrato 8000 × lançamento 10000 + gerar_parcial -> residual 2000, pago_parcial", () => {
         const d = decidirVincular({
             extratoCents: toCents(8000),
@@ -46,13 +51,18 @@ describe("decidirVincular — T1–T7 (auditoria)", () => {
         assert.equal(d.itens[0]!.valorQuitadoNesteVinculoCents, 800000);
     });
 
-    it("T2: extrato 8000 × lançamento 6838 -> excedente juros 1162, zero residual", () => {
+    it("T2: extrato 8000 × lançamento 6838 + juros explícitos 1162 -> excedente resolvido", () => {
         const d = decidirVincular({
             extratoCents: toCents(8000),
             lancamentos: [
-                {lancamento_id: 1, valorCents: toCents(6838), descontoCents: 0, jurosMultaCents: 0},
+                {
+                    lancamento_id: 1,
+                    valorCents: toCents(6838),
+                    descontoCents: 0,
+                    jurosMultaCents: toCents(1162),
+                },
             ],
-            gerarParcial: true, // flag irrelevante — não cria residual
+            gerarParcial: true,
         });
         assert.equal(d.ok, true);
         if (!d.ok) return;
@@ -62,9 +72,27 @@ describe("decidirVincular — T1–T7 (auditoria)", () => {
         assert.equal(d.itens[0]!.jurosMultaCents, 116200);
         assert.equal(centsToDecimalString(d.itens[0]!.jurosMultaCents), "1162.00");
         assert.equal(d.itens[0]!.valorQuitadoNesteVinculoCents, 800000);
+        assert.equal(d.valorSaldoCents, 0);
     });
 
-    it("T3: Modo B — 5×1000 sobre 4000 acumula quitado e no 5º gera juros 1000", () => {
+    it("T2b: extrato 8000 × lançamento 6838 sem juros -> cobertura parcial (saldo 1162)", () => {
+        const d = decidirVincular({
+            extratoCents: toCents(8000),
+            lancamentos: [
+                {lancamento_id: 1, valorCents: toCents(6838), descontoCents: 0, jurosMultaCents: 0},
+            ],
+            gerarParcial: false,
+        });
+        assert.equal(d.ok, true);
+        if (!d.ok) return;
+        assert.equal(d.ramo, "falta");
+        assert.equal(d.valorSaldoCents, 116200);
+        assert.equal(d.itens[0]!.valorVinculadoCents, toCents(6838));
+        assert.equal(d.itens[0]!.jurosMultaCents, 0);
+        assert.equal(d.residual, null);
+    });
+
+    it("T3: Modo B - 5×1000 sobre 4000 acumula quitado e no 5º gera juros 1000", () => {
         const valorTitulo = toCents(4000);
         let acumulado = 0;
         let jurosTotal = 0;
@@ -170,8 +198,8 @@ describe("decidirVincular — T1–T7 (auditoria)", () => {
         assert.equal(d.residual!.valorCents, 200000);
     });
 
-    it("T5: gap 1447.95 com 3 lançamentos = 6552.05 — Falta cobrir extrato (Card 39)", () => {
-        // 6552.05 < 8000 -> ainda faltam títulos (ou juros explícitos). Mensagem = Falta R$ 1.447,95.
+    it("T5: gap 1447.95 com 3 lançamentos = 6552.05 - cobertura parcial (Modo A incremental)", () => {
+        // Sem juros explícitos: vincula os títulos e deixa saldo aberto na linha.
         const d = decidirVincular({
             extratoCents: toCents(8000),
             lancamentos: [
@@ -181,10 +209,15 @@ describe("decidirVincular — T1–T7 (auditoria)", () => {
             ],
             gerarParcial: false,
         });
-        assert.equal(d.ok, false);
-        if (d.ok) return;
-        assert.match(d.message, /Falta R\$ 1\.447,95/);
-        assert.match(d.message, /cobrir o valor do extrato/i);
+        assert.equal(d.ok, true);
+        if (!d.ok) return;
+        assert.equal(d.ramo, "falta");
+        assert.equal(d.valorSaldoCents, 144795);
+        assert.equal(d.residual, null);
+        assert.equal(
+            d.itens.reduce((s, i) => s + i.valorVinculadoCents, 0),
+            toCents("6552.05"),
+        );
     });
 
     it("T5b: com juros alocados cobrindo o gap -> exato/excedente resolvido, sem residual", () => {
@@ -241,7 +274,7 @@ describe("decidirVincular — T1–T7 (auditoria)", () => {
         assert.equal(comId.itens.find((i) => i.lancamento_id === 2)!.valorQuitadoNesteVinculoCents, 300000);
     });
 
-    it("T7: ultrapasse (lançamentos > extrato) NÃO é erro — é falta/residual", () => {
+    it("T7: ultrapasse (lançamentos > extrato) NÃO é erro - é falta/residual", () => {
         const d = decidirVincular({
             extratoCents: toCents(8000),
             lancamentos: [
@@ -255,7 +288,7 @@ describe("decidirVincular — T1–T7 (auditoria)", () => {
     });
 });
 
-describe("statusAposQuitacao — desconto (DEF-08)", () => {
+describe("statusAposQuitacao - desconto (DEF-08)", () => {
     it("título 1000 com desconto 100 quitado a 900 -> pago (não pago_parcial eterno)", () => {
         assert.equal(
             statusAposQuitacao({
@@ -277,6 +310,52 @@ describe("statusAposQuitacao — desconto (DEF-08)", () => {
                 descontoAcumuladoCents: toCents(100),
             }),
             "pago_parcial",
+        );
+    });
+});
+
+describe("ciclo de vida - status adiado até finalizar", () => {
+    it("statusAbertoPorVencimento: vencido -> atrasado", () => {
+        assert.equal(statusAbertoPorVencimento("2020-01-01", "2026-07-22"), "atrasado");
+        assert.equal(statusAbertoPorVencimento("2099-01-01", "2026-07-22"), "pendente");
+    });
+
+    it("desfazer no ciclo adiado não promove pago_parcial", () => {
+        assert.equal(
+            statusAposDesfazerVinculo({
+                statusAtual: "pendente",
+                tipoExtrato: "debito",
+                valorLancamentoCents: toCents(1000),
+                valorQuitadoAcumuladoCents: toCents(400),
+                hojeIso: "2026-07-22",
+                vencimento: "2099-01-01",
+            }),
+            "pendente",
+        );
+    });
+
+    it("desfazer com status já quitado reavalia pago_parcial/pago", () => {
+        assert.equal(
+            statusAposDesfazerVinculo({
+                statusAtual: "pago_parcial",
+                tipoExtrato: "debito",
+                valorLancamentoCents: toCents(1000),
+                valorQuitadoAcumuladoCents: toCents(400),
+                hojeIso: "2026-07-22",
+                vencimento: "2099-01-01",
+            }),
+            "pago_parcial",
+        );
+        assert.equal(
+            statusAposDesfazerVinculo({
+                statusAtual: "pago",
+                tipoExtrato: "debito",
+                valorLancamentoCents: toCents(1000),
+                valorQuitadoAcumuladoCents: 0,
+                hojeIso: "2026-07-22",
+                vencimento: "2099-01-01",
+            }),
+            "pendente",
         );
     });
 });

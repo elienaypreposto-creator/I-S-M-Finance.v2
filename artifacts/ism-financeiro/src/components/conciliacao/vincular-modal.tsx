@@ -180,8 +180,11 @@ function VincularFormBody({
         deltaCents != null &&
         (deltaCents === 0 || (deltaCents > 0 && coberturaCents === 0));
 
-    // Auto-preenche Juros/Multa quando há sobra e exatamente 1 lançamento selecionado
-    // - o usuário não precisa fazer a conta na mão (RN-G2).
+    // Auto-preenche Juros/Multa somente quando o usuário marca alocarSobraJuros
+    // e há exatamente 1 lançamento (RN-G2 / 1:1 com taxas). Sem a flag, deixa
+    // cobertura parcial (Modo A incremental).
+    const [alocarSobraJuros, setAlocarSobraJuros] = useState(false);
+
     useEffect(() => {
         if (deltaCents == null || selectedItens.length === 0) return;
 
@@ -196,7 +199,7 @@ function VincularFormBody({
             }
         });
 
-        if (deltaCents > 0 && selectedItens.length === 1) {
+        if (deltaCents > 0 && selectedItens.length === 1 && alocarSobraJuros) {
             const only = selectedItens[0]!;
             if (jurosManualRef.current.has(only.lancamento_id)) return;
 
@@ -212,20 +215,21 @@ function VincularFormBody({
                     shouldValidate: true,
                 });
             }
+            return;
         }
 
-        // Sem excedente: zera juros auto se não foram editados à mão
-        if (deltaCents <= 0 && selectedItens.length === 1) {
+        // Sem alocar sobra: zera juros auto se não foram editados à mão
+        if (selectedItens.length === 1) {
             const only = selectedItens[0]!;
             if (jurosManualRef.current.has(only.lancamento_id)) return;
             const idx = watchedItens.findIndex((i) => i.lancamento_id === only.lancamento_id);
             if (idx < 0) return;
             const currentApi = brMoneyDisplayToApiString(watchedItens[idx]?.juros_multa ?? "") || "0.00";
-            if (currentApi !== "0.00") {
+            if ((!alocarSobraJuros || deltaCents <= 0) && currentApi !== "0.00") {
                 setValue(`itens.${idx}.juros_multa`, "", {shouldDirty: true, shouldValidate: true});
             }
         }
-    }, [deltaCents, selectedItens, watchedItens, setValue]);
+    }, [deltaCents, selectedItens, watchedItens, setValue, alocarSobraJuros]);
 
     // Desliga gerar_parcial quando não há mais falta
     useEffect(() => {
@@ -526,14 +530,31 @@ function VincularFormBody({
                         )}
                     </div>
                 ) : showExcedente ? (
-                    <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2">
+                    <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2 space-y-2">
                         <p className="text-sm font-semibold text-amber-200 text-center">
-                            {selectedItens.length === 1
-                                ? `Sobra de ${formatCurrency(toMoney(deltaCents ?? 0))} — preenchida em Juros/Multa`
-                                : coberturaCents === 0
-                                    ? `Gap de ${formatCurrency(toMoney(deltaCents ?? 0))} coberto em Juros/Multa`
-                                    : `Falta ${formatCurrency(toMoney(deltaCents ?? 0))} para cobrir o extrato — selecione mais lançamentos ou aloque em Juros/Multa`}
+                            {coberturaCents === 0
+                                ? `Gap de ${formatCurrency(toMoney(deltaCents ?? 0))} coberto em Juros/Multa`
+                                : `Falta ${formatCurrency(toMoney(deltaCents ?? 0))} para cobrir o extrato — você pode vincular agora e completar depois`}
                         </p>
+                        {selectedItens.length === 1 && coberturaCents !== 0 && (
+                            <label className="flex items-start gap-3 cursor-pointer group">
+                                <Checkbox
+                                    checked={alocarSobraJuros}
+                                    onCheckedChange={(c) => setAlocarSobraJuros(c === true)}
+                                    className="mt-0.5"
+                                />
+                                <div>
+                                    <span
+                                        className="text-sm font-medium text-white group-hover:text-primary/90 transition-colors">
+                                        Alocar sobra em Juros/Multa
+                                    </span>
+                                    <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+                                        Fecha a linha agora tratando a diferença como juros (1:1 com taxas).
+                                        Desmarcado = cobertura parcial (Modo A incremental).
+                                    </p>
+                                </div>
+                            </label>
+                        )}
                     </div>
                 ) : null}
 
@@ -605,7 +626,7 @@ export function VincularModal({
                                   onSuccess,
                               }: VincularModalProps) {
     const [diasJanela, setDiasJanela] = useState(DIAS_JANELA_INICIAL);
-    // RN-D4: campos de busca manual — descrição/parceiro (texto livre) e valor,
+    // RN-D4: campos de busca manual - descrição/parceiro (texto livre) e valor,
     // além da janela de datas. "buscaAtiva"/"valorAtivo" só mudam ao clicar em
     // Buscar, para não disparar uma requisição a cada tecla digitada.
     const [buscaTexto, setBuscaTexto] = useState("");

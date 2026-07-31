@@ -2,7 +2,7 @@ import {createHash} from "crypto";
 import {Router} from "express";
 import {z} from "zod";
 import multer from "multer";
-import {and, count, desc, eq, gte, ilike, inArray, isNull, lt, lte, or, sql} from "drizzle-orm";
+import {and, count, desc, eq, gte, ilike, inArray, isNull, lt, lte, notInArray, or, sql} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {
     conciliacoesTable,
@@ -24,7 +24,12 @@ import {errorResponse, successResponse} from "../utils/response";
 import {parseOFX} from "../utils/ofx-parser";
 import type {OFXParseResult} from "../utils/ofx-parser";
 import {centsToDecimalString, fromCents, sumCents, toCents} from "../utils/money";
-import {decidirVincular, statusAposQuitacao} from "../utils/conciliacao-vincular";
+import {
+    decidirVincular,
+    statusAbertoPorVencimento,
+    statusAposDesfazerVinculo,
+    statusAposQuitacao,
+} from "../utils/conciliacao-vincular";
 import {hashLinhaExtrato} from "../utils/extrato-hash";
 import {encontrarRegraParaLinha, type RegraParaMatch} from "../utils/regras-match";
 import {hojeIsoLocal} from "../utils/date-civil";
@@ -111,7 +116,7 @@ const vincularBodySchema = z.object({
 
 /**
  * RN-G7: edição inline de desconto / juros-multa de um vínculo já existente.
- * Vencimento do residual NÃO é editável (Decisão nº 3 — igual à origem).
+ * Vencimento do residual NÃO é editável (Decisão nº 3 - igual à origem).
  */
 const atualizarVinculoBodySchema = z.object({
     desconto: z.coerce.number().min(0).optional(),
@@ -934,30 +939,26 @@ router.post(
                 if (!linha) continue;
 
                 const valorCents = toCents(item.valor_extrato);
-                const statusQuitacao = statusAposQuitacao({
-                    tipoExtrato: item.tipo_extrato,
-                    valorLancamentoCents: valorCents,
-                    valorQuitadoAcumuladoCents: valorCents,
-                });
                 const tipoLancamento = item.tipo_extrato === "credito" ? "CR" : "CP";
-                const dataQuitacao = toDateIso(linha.data_movimento) ?? hojeIsoLocal();
+                const dataMovimento = toDateIso(linha.data_movimento) ?? hojeIsoLocal();
+                // Status pago/recebido só na finalização da conciliação.
+                const statusAberto = statusAbertoPorVencimento(dataMovimento, hojeIsoLocal());
 
                 const [novoLancamento] = await tx
                     .insert(lancamentosTable)
                     .values({
                         tipo: tipoLancamento,
-                        vencimento: dataQuitacao,
+                        vencimento: dataMovimento,
                         conta_id,
                         parceiro_id: regra.parceiro_id,
                         descricao: linha.descricao,
                         valor: centsToDecimalString(valorCents),
-                        status: statusQuitacao,
+                        status: statusAberto,
                         origem: "conciliacao",
                         plano_conta_id: regra.plano_conta_id,
                         departamento_id: regra.departamento_id,
                         centro_custo_id: regra.centro_custo_id,
                         forma_pagamento: regra.forma_pagamento,
-                        data_quitacao: dataQuitacao,
                         valor_quitado: centsToDecimalString(valorCents),
                         criado_por: req.user?.id,
                     })
@@ -1087,7 +1088,7 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
         const usaFiltroLivre = Boolean(busca) || valorBusca !== null || vencimentoBusca !== null;
 
         // DEF-04/08 / Modo B: após quitação exata (pago/recebido) a 5ª linha
-        // (juros) ainda precisa achar o título — tabela-verdade §3.3 caso 3.
+        // (juros) ainda precisa achar o título - tabela-verdade §3.3 caso 3.
         const condicoes = [
             eq(lancamentosTable.tipo, tipoCompatvel),
             or(
@@ -1126,6 +1127,27 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
                     lte(lancamentosTable.valor, centsToDecimalString(valorBusca + 1)),
                 ),
             );
+        }
+
+        // Incremental Modo A: não sugerir títulos já vinculados a esta linha.
+        const [itemLinha] = await db
+            .select({id: itensConciliacaoTable.id})
+            .from(itensConciliacaoTable)
+            .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
+            .limit(1);
+        if (itemLinha) {
+            const jaNaLinha = await db
+                .select({lancamento_id: itensConciliacaoLancamentosTable.lancamento_id})
+                .from(itensConciliacaoLancamentosTable)
+                .where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, itemLinha.id));
+            if (jaNaLinha.length > 0) {
+                condicoes.push(
+                    notInArray(
+                        lancamentosTable.id,
+                        jaNaLinha.map((r) => r.lancamento_id),
+                    ),
+                );
+            }
         }
 
         const candidatos = await db
@@ -1446,17 +1468,53 @@ router.post(
             if (!item) {
                 return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada para conciliação.");
             }
-            if (item.status === "vinculado") {
-                return errorResponse(res, 409, "CONFLICT", "Esta linha já está vinculada.");
+            if (item.status === "ignorado") {
+                return errorResponse(
+                    res,
+                    400,
+                    "VALIDATION_ERROR",
+                    "Reverta o ignorar antes de vincular.",
+                );
             }
 
             const vinculosExistentes = await db
-                .select({id: itensConciliacaoLancamentosTable.id})
+                .select({
+                    id: itensConciliacaoLancamentosTable.id,
+                    lancamento_id: itensConciliacaoLancamentosTable.lancamento_id,
+                    valor_vinculado: itensConciliacaoLancamentosTable.valor_vinculado,
+                })
                 .from(itensConciliacaoLancamentosTable)
                 .where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id));
-            if (vinculosExistentes.length > 0) {
-                return errorResponse(res, 409, "CONFLICT", "Esta linha já possui vínculos registrados.");
+
+            const jaVinculadoIds = new Set(vinculosExistentes.map((v) => v.lancamento_id));
+            const idsNovos = lancamentosPayload.map((l) => l.lancamento_id);
+            const duplicados = idsNovos.filter((id) => jaVinculadoIds.has(id));
+            if (duplicados.length > 0) {
+                return errorResponse(
+                    res,
+                    409,
+                    "CONFLICT",
+                    `Lançamento(s) já vinculado(s) a esta linha: ${duplicados.join(", ")}.`,
+                );
             }
+
+            const extratoTotalCents = toCents(item.valor_extrato);
+            const jaVinculadoCents = sumCents(vinculosExistentes.map((v) => toCents(v.valor_vinculado)));
+            const saldoAbertoCents = Math.max(0, extratoTotalCents - jaVinculadoCents);
+
+            // Incremental: só permite acumular se ainda há saldo a cobrir no extrato.
+            if (vinculosExistentes.length > 0 && saldoAbertoCents <= 0) {
+                return errorResponse(
+                    res,
+                    409,
+                    "CONFLICT",
+                    "Esta linha já está totalmente vinculada (valores batem).",
+                );
+            }
+
+            // Base da decisão = saldo restante (incremental) ou valor cheio (1º vínculo).
+            const extratoParaDecisaoCents =
+                vinculosExistentes.length > 0 ? saldoAbertoCents : extratoTotalCents;
 
             const [linhaExtrato] = await db
                 .select()
@@ -1476,7 +1534,7 @@ router.post(
                 return errorResponse(res, 404, "NOT_FOUND", "Conciliação não encontrada.");
             }
 
-            const idsLancamentos = lancamentosPayload.map((l) => l.lancamento_id);
+            const idsLancamentos = idsNovos;
             const lancamentos = await db
                 .select()
                 .from(lancamentosTable)
@@ -1486,11 +1544,10 @@ router.post(
                 return errorResponse(res, 400, "VALIDATION_ERROR", "Um ou mais lançamentos informados são inválidos.");
             }
 
-            const valorExtratoCents = toCents(item.valor_extrato);
             const payloadMap = new Map(lancamentosPayload.map((l) => [l.lancamento_id, l]));
 
             const decision = decidirVincular({
-                extratoCents: valorExtratoCents,
+                extratoCents: extratoParaDecisaoCents,
                 lancamentos: lancamentos.map((lancamento) => {
                     const p = payloadMap.get(lancamento.id);
                     const jurosMulta = p?.juros_multa ?? p?.acrescimo ?? 0;
@@ -1511,9 +1568,10 @@ router.post(
             }
 
             const lancamentoById = new Map(lancamentos.map((l) => [l.id, l]));
-            const totalConciliadoCents = sumCents(
-                decision.itens.map((i) => i.valorVinculadoCents),
-            );
+            const novoVinculoCents = sumCents(decision.itens.map((i) => i.valorVinculadoCents));
+            const totalConciliadoCents = jaVinculadoCents + novoVinculoCents;
+            // Saldo restante absoluto na linha após este acúmulo.
+            const valorSaldoFinalCents = Math.max(0, extratoTotalCents - totalConciliadoCents);
 
             const resultado = await db.transaction(async (tx) => {
                 let novoResiduo: unknown = null;
@@ -1561,19 +1619,13 @@ router.post(
                     })),
                 );
 
-                // FEAT-10 / Fases 5–7: metas, saldo e relatório filtram por data_quitacao.
-                // Sem essa data o lançamento fica "pago" mas some dos relatórios (R$ 0,00).
-                const dataQuitacao =
-                    toDateIso(linhaExtrato.data_movimento) ??
-                    toDateIso(linhaExtrato.data_compensacao) ??
-                    hojeIsoLocal();
-
+                // Acumula quitação financeira; status pago/recebido/pago_parcial
+                // só é aplicado em POST .../finalizar (ciclo de vida adiado).
                 for (const vinculo of decision.itens) {
                     const lancamento = lancamentoById.get(vinculo.lancamento_id)!;
                     const quitadoAnteriorCents = toCents(lancamento.valor_quitado);
                     const quitadoAcumuladoCents =
                         quitadoAnteriorCents + vinculo.valorQuitadoNesteVinculoCents;
-                    const valorLancamentoCents = toCents(lancamento.valor);
 
                     const jurosAnteriorCents = toCents(lancamento.juros);
                     const jurosNovoCents = jurosAnteriorCents + vinculo.jurosMultaCents;
@@ -1581,18 +1633,9 @@ router.post(
                     const descontoAcumuladoCents =
                         toCents(lancamento.desconto) + vinculo.descontoCents;
 
-                    const statusQuitacao = statusAposQuitacao({
-                        tipoExtrato: item.tipo_extrato,
-                        valorLancamentoCents,
-                        valorQuitadoAcumuladoCents: quitadoAcumuladoCents,
-                        descontoAcumuladoCents,
-                    });
-
                     await tx
                         .update(lancamentosTable)
                         .set({
-                            status: statusQuitacao,
-                            data_quitacao: dataQuitacao,
                             /** FEAT-10: associa o título à conta do extrato (cadastro pode ter conta_id NULL). */
                             conta_id: conciliacao.conta_id,
                             valor_quitado: centsToDecimalString(quitadoAcumuladoCents),
@@ -1608,7 +1651,7 @@ router.post(
                     .set({
                         status: "vinculado",
                         valor_vinculado_total: centsToDecimalString(totalConciliadoCents),
-                        valor_saldo: centsToDecimalString(decision.valorSaldoCents),
+                        valor_saldo: centsToDecimalString(valorSaldoFinalCents),
                         data_conciliacao: hojeIsoLocal(),
                         updated_at: new Date(),
                     })
@@ -1624,11 +1667,13 @@ router.post(
                         lancamentos: lancamentosPayload,
                         gerar_parcial: gerarParcial,
                         residuo_lancamento_id: residuoLancamentoId ?? null,
-                        valor_extrato: fromCents(valorExtratoCents),
+                        valor_extrato: fromCents(extratoTotalCents),
+                        ja_vinculado: fromCents(jaVinculadoCents),
+                        incremental: vinculosExistentes.length > 0,
                         total_conciliado: fromCents(totalConciliadoCents),
                         delta: fromCents(decision.deltaCents),
                         ramo: decision.ramo,
-                        valor_saldo: fromCents(decision.valorSaldoCents),
+                        valor_saldo: fromCents(valorSaldoFinalCents),
                     }),
                 });
 
@@ -1640,7 +1685,7 @@ router.post(
                     ramo: decision.ramo,
                     delta: fromCents(decision.deltaCents),
                     total_conciliado: fromCents(totalConciliadoCents),
-                    valor_saldo: fromCents(decision.valorSaldoCents),
+                    valor_saldo: fromCents(valorSaldoFinalCents),
                     residuo: novoResiduo,
                 };
             });
@@ -1655,7 +1700,7 @@ router.post(
 /**
  * RN-D3: botão [+] na linha do extrato - cria o lançamento correspondente
  * (pré-preenchido no front com data/valor/natureza/descrição da linha) e já
- * o deixa vinculado e quitado por ela, sem passo extra de vincular.
+ * o deixa vinculado. Status pago/recebido só na finalização da conciliação.
  */
 router.post(
     "/conciliacoes/linhas/:linha_id/criar-lancamento",
@@ -1707,11 +1752,7 @@ router.post(
                 );
             }
 
-            const statusQuitacao = statusAposQuitacao({
-                tipoExtrato: item.tipo_extrato,
-                valorLancamentoCents: valorCents,
-                valorQuitadoAcumuladoCents: valorCents,
-            });
+            const statusAberto = statusAbertoPorVencimento(body.vencimento, hojeIsoLocal());
 
             const resultado = await db.transaction(async (tx) => {
                 const [novoLancamento] = await tx
@@ -1723,13 +1764,12 @@ router.post(
                         parceiro_id: body.parceiro_id ?? null,
                         descricao: body.descricao ?? linhaExtrato.descricao ?? null,
                         valor: centsToDecimalString(valorCents),
-                        status: statusQuitacao,
+                        status: statusAberto,
                         origem: "conciliacao",
                         plano_conta_id: body.plano_conta_id ?? null,
                         departamento_id: body.departamento_id ?? null,
                         centro_custo_id: body.centro_custo_id ?? null,
                         forma_pagamento: body.forma_pagamento ?? null,
-                        data_quitacao: linhaExtrato.data_movimento,
                         valor_quitado: centsToDecimalString(valorCents),
                         criado_por: req.user?.id,
                     })
@@ -1853,14 +1893,6 @@ router.patch(
                 toCents(lancamento.desconto) + deltaDescontoCents,
             );
 
-            const tipoExtrato = item?.tipo_extrato === "credito" ? "credito" : "debito";
-            const statusQuitacao = statusAposQuitacao({
-                tipoExtrato,
-                valorLancamentoCents: valorTituloCents,
-                valorQuitadoAcumuladoCents: quitadoAtualCents,
-                descontoAcumuladoCents: descontoLancamentoNovoCents,
-            });
-
             await db.transaction(async (tx) => {
                 await tx
                     .update(itensConciliacaoLancamentosTable)
@@ -1875,7 +1907,6 @@ router.patch(
                     .set({
                         desconto: centsToDecimalString(descontoLancamentoNovoCents),
                         juros: centsToDecimalString(jurosLancamentoNovoCents),
-                        status: statusQuitacao,
                         updated_at: new Date(),
                     })
                     .where(eq(lancamentosTable.id, lancamento.id));
@@ -1885,7 +1916,7 @@ router.patch(
                 vinculo_id: vinculoId,
                 desconto: fromCents(novoDescontoCents),
                 juros_multa: fromCents(novoJurosCents),
-                status: statusQuitacao,
+                status: lancamento.status,
                 valor_quitado: fromCents(quitadoAtualCents),
                 vencimento: lancamento.vencimento,
             });
@@ -1998,11 +2029,103 @@ router.post(
                         ),
                     );
 
+                // Promove status dos lançamentos vinculados (adiado no vincular).
+                const vinculosFinalizar = await tx
+                    .select({
+                        lancamento_id: itensConciliacaoLancamentosTable.lancamento_id,
+                        data_movimento: extratoLinhasTable.data_movimento,
+                        data_compensacao: extratoLinhasTable.data_compensacao,
+                        tipo: lancamentosTable.tipo,
+                        valor: lancamentosTable.valor,
+                        valor_quitado: lancamentosTable.valor_quitado,
+                        desconto: lancamentosTable.desconto,
+                        data_quitacao: lancamentosTable.data_quitacao,
+                    })
+                    .from(itensConciliacaoLancamentosTable)
+                    .innerJoin(
+                        itensConciliacaoTable,
+                        eq(
+                            itensConciliacaoLancamentosTable.item_conciliacao_id,
+                            itensConciliacaoTable.id,
+                        ),
+                    )
+                    .innerJoin(
+                        extratoLinhasTable,
+                        eq(itensConciliacaoTable.extrato_linha_id, extratoLinhasTable.id),
+                    )
+                    .innerJoin(
+                        lancamentosTable,
+                        eq(itensConciliacaoLancamentosTable.lancamento_id, lancamentosTable.id),
+                    )
+                    .where(
+                        and(
+                            eq(itensConciliacaoTable.conciliacao_id, conciliacao.id),
+                            eq(itensConciliacaoTable.status, "vinculado"),
+                        ),
+                    );
+
+                type AggQuitacao = {
+                    tipo: string;
+                    valor: unknown;
+                    valor_quitado: unknown;
+                    desconto: unknown;
+                    data_quitacao: unknown;
+                    data_movimento_candidatas: string[];
+                };
+                const porLancamento = new Map<number, AggQuitacao>();
+
+                for (const row of vinculosFinalizar) {
+                    const existente = porLancamento.get(row.lancamento_id);
+                    const dataLinha =
+                        toDateIso(row.data_movimento) ??
+                        toDateIso(row.data_compensacao) ??
+                        dataConciliacao;
+                    if (!existente) {
+                        porLancamento.set(row.lancamento_id, {
+                            tipo: row.tipo,
+                            valor: row.valor,
+                            valor_quitado: row.valor_quitado,
+                            desconto: row.desconto,
+                            data_quitacao: row.data_quitacao,
+                            data_movimento_candidatas: [dataLinha],
+                        });
+                    } else {
+                        existente.data_movimento_candidatas.push(dataLinha);
+                    }
+                }
+
+                for (const [lancamentoId, agg] of porLancamento) {
+                    const quitadoCents = toCents(agg.valor_quitado);
+                    if (quitadoCents <= 0) continue;
+
+                    const tipoExtrato = agg.tipo === "CR" ? "credito" : "debito";
+                    const novoStatus = statusAposQuitacao({
+                        tipoExtrato,
+                        valorLancamentoCents: toCents(agg.valor),
+                        valorQuitadoAcumuladoCents: quitadoCents,
+                        descontoAcumuladoCents: toCents(agg.desconto),
+                    });
+
+                    const dataQuitacao =
+                        toDateIso(agg.data_quitacao) ??
+                        agg.data_movimento_candidatas.sort()[0] ??
+                        dataConciliacao;
+
+                    await tx
+                        .update(lancamentosTable)
+                        .set({
+                            status: novoStatus,
+                            data_quitacao: dataQuitacao,
+                            updated_at: new Date(),
+                        })
+                        .where(eq(lancamentosTable.id, lancamentoId));
+                }
+
                 await tx.insert(historicoConciliacaoTable).values({
                     conciliacao_id: conciliacao.id,
                     usuario_id: req.user?.id,
                     acao: "salvar",
-                    detalhes: `Extrato ${extratoId} finalizado como conciliado em ${dataConciliacao}.`,
+                    detalhes: `Extrato ${extratoId} finalizado como conciliado em ${dataConciliacao}. Lançamentos atualizados: ${porLancamento.size}.`,
                 });
             });
 
@@ -2093,27 +2216,28 @@ router.delete(
                     const jurosNovo = Math.max(0, toCents(lanc.juros) - toCents(v.juros_multa));
                     const descontoNovo = Math.max(0, toCents(lanc.desconto) - toCents(v.desconto));
 
-                    const valorCents = toCents(lanc.valor);
-                    const baseLiquidaCents = Math.max(0, valorCents - descontoNovo);
-
-                    let novoStatus: "pendente" | "atrasado" | "pago_parcial" | "pago" | "recebido" =
-                        "pendente";
-                    if (quitadoNovo > 0 && quitadoNovo < baseLiquidaCents) {
-                        novoStatus = "pago_parcial";
-                    } else if (quitadoNovo >= baseLiquidaCents && baseLiquidaCents > 0) {
-                        novoStatus = lanc.tipo === "CR" ? "recebido" : "pago";
-                    } else if (lanc.vencimento) {
-                        const hoje = hojeIsoLocal();
-                        const vencIso = toDateIso(lanc.vencimento) ?? String(lanc.vencimento).slice(0, 10);
-                        if (vencIso < hoje) novoStatus = "atrasado";
-                    }
+                    const novoStatus = statusAposDesfazerVinculo({
+                        statusAtual: lanc.status,
+                        tipoExtrato: lanc.tipo === "CR" ? "credito" : "debito",
+                        valorLancamentoCents: toCents(lanc.valor),
+                        valorQuitadoAcumuladoCents: quitadoNovo,
+                        descontoAcumuladoCents: descontoNovo,
+                        vencimento: lanc.vencimento,
+                        hojeIso: hojeIsoLocal(),
+                    });
 
                     await tx
                         .update(lancamentosTable)
                         .set({
                             status: novoStatus,
                             valor_quitado: quitadoNovo > 0 ? centsToDecimalString(quitadoNovo) : null,
-                            data_quitacao: quitadoNovo > 0 ? lanc.data_quitacao : null,
+                            data_quitacao:
+                                quitadoNovo > 0 &&
+                                (novoStatus === "pago" ||
+                                    novoStatus === "recebido" ||
+                                    novoStatus === "pago_parcial")
+                                    ? lanc.data_quitacao
+                                    : null,
                             juros: centsToDecimalString(jurosNovo),
                             desconto: centsToDecimalString(descontoNovo),
                             updated_at: new Date(),

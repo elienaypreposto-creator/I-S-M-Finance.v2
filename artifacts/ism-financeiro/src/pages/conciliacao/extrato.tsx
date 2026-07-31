@@ -72,13 +72,13 @@ type VinculacaoDetalhe = {
     descricao: string | null;
     tipo: string;
     status: string;
-    /** Flag do título residual (DEF-08) — não inferir por status pendente. */
+    /** Flag do título residual (DEF-08) - não inferir por status pendente. */
     is_residuo_parcial?: boolean;
     valor_vinculado: string | number;
     desconto: string | number;
     acrescimo?: string | number;
     juros_multa?: string | number;
-    /** Vencimento do residual = origem (imutável — Decisão nº 3). */
+    /** Vencimento do residual = origem (imutável - Decisão nº 3). */
     vencimento?: string | null;
 };
 
@@ -154,7 +154,7 @@ function statusLinhaBadge(status: string) {
 }
 
 /**
- * RN-D2: cor semântica por natureza — crédito/entrada = VERDE, débito/saída
+ * RN-D2: cor semântica por natureza - crédito/entrada = VERDE, débito/saída
  * = VERMELHO. O código anterior usava teal/orange; o card pede explicitamente
  * vermelho/verde, então padronizei aqui (não em todo o app, só neste módulo).
  */
@@ -279,7 +279,7 @@ function PainelDiagnostico({diagnostico}: { diagnostico: DiagnosticoSaldo }) {
 }
 
 /**
- * RN-D3 — `[+]` verde: cria um lançamento que não existia, pré-preenchido com
+ * RN-D3 - `[+]` verde: cria um lançamento que não existia, pré-preenchido com
  * data/valor/natureza/descrição da linha (ex.: antecipação de lucro do sócio).
  * Ao salvar, a linha já nasce vinculada e quitada - sem passo extra de vincular.
  * Payload alinhado ao schema real do backend (tipo/vencimento/valor obrigatórios).
@@ -959,6 +959,8 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                 const isIgnorado = linha.status === "ignorado";
                                 const isCredito = linha.tipo_movimento === "credito";
                                 const valorAbs = Math.abs(Number(linha.valor));
+                                const saldoAbertoCents = Math.round(Number(linha.valor_saldo ?? 0) * 100);
+                                const coberturaCompleta = !isVinculado || saldoAbertoCents <= 0;
 
                                 return (
                                     <div
@@ -1064,12 +1066,16 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                 <div
                                                     className={cn(
                                                         "w-8 h-8 rounded-full flex items-center justify-center border shrink-0",
-                                                        isVinculado
+                                                        coberturaCompleta && isVinculado
                                                             ? "bg-white/5 border-white/15 text-muted-foreground"
                                                             : "bg-amber-500/15 border-amber-500/40 text-amber-300",
                                                     )}
-                                                    title={isVinculado ? "Os valores batem" : "Os valores divergem"}>
-                                                    {isVinculado ? (
+                                                    title={
+                                                        coberturaCompleta && isVinculado
+                                                            ? "Os valores batem"
+                                                            : "Ainda falta cobrir o valor do extrato"
+                                                    }>
+                                                    {coberturaCompleta && isVinculado ? (
                                                         <Link2 className="w-4 h-4"/>
                                                     ) : (
                                                         <span className="text-sm font-black">≠</span>
@@ -1080,7 +1086,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
 
                                         {/* ── COLUNA DIREITA: lançamento(s) ── */}
                                         <div className="p-4 min-w-0 space-y-2">
-                                            {/* [🔍 Vincular]: visível enquanto o valor não bate; some no valor exato */}
+                                            {/* [🔍 Vincular]: 1º vínculo enquanto pendente */}
                                             {isPendente && canVincular && (
                                                 <button
                                                     type="button"
@@ -1090,6 +1096,39 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                     Vincular
                                                 </button>
                                             )}
+
+                                            {isVinculado &&
+                                                ((canVincular && saldoAbertoCents > 0) || canDesfazer) && (
+                                                    <div className="flex flex-col sm:flex-row gap-2">
+                                                        {canVincular && saldoAbertoCents > 0 && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() =>
+                                                                    setVincularLinha({
+                                                                        id: linha.linha_id,
+                                                                        valorAbs: Number(linha.valor_saldo),
+                                                                    })
+                                                                }
+                                                                className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-primary/40 bg-primary/15 hover:bg-primary/25 text-primary text-xs font-bold">
+                                                                <Link2 className="w-3.5 h-3.5"/>
+                                                                Vincular outro lançamento
+                                                                <span className="font-normal text-muted-foreground">
+                                                                    (falta{" "}
+                                                                    {formatCurrency(Number(linha.valor_saldo))})
+                                                                </span>
+                                                            </button>
+                                                        )}
+                                                        {canDesfazer && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setDesfazerLinhaId(linha.linha_id)}
+                                                                className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-300 text-xs font-bold">
+                                                                <Trash2 className="w-3.5 h-3.5"/>
+                                                                Desfazer
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                )}
 
                                             {isVinculado && linha.vinculacoes.length > 0 && (
                                                 <ul className="space-y-2">
@@ -1119,7 +1158,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                             })}
                         </div>
 
-                        {/* RN-D5: navegação ‹ › entre as linhas, sem sair da tela */}
+                        {/* RN-D5: navegação < > entre as linhas, sem sair da tela */}
                         {linhas.length > LINHAS_POR_PAGINA && (
                             <div
                                 className="flex items-center justify-center gap-4 py-3 border-t border-white/5 bg-black/20">
