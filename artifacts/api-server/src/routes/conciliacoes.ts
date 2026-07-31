@@ -100,7 +100,7 @@ function toDateIso(value: unknown): string | null {
 /**
  * Modo B / quitadoAnterior: soma `valor_vinculado` ainda em rascunho
  * (conciliação ≠ conciliado). O campo `lancamentos.valor_quitado` só reflete
- * o que já foi martelado no finalizar — não usar sozinho na decisão.
+ * o que já foi martelado no finalizar - não usar sozinho na decisão.
  */
 async function quitadoRascunhoPorLancamentoCents(
     lancamentoIds: number[],
@@ -1206,10 +1206,43 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
             .where(and(...condicoes))
             .limit(100);
 
-        // Ordena por proximidade de valor (idêntico primeiro) e, em empate,
-        // por proximidade de data em relação à linha do extrato (RN-D4).
+        const quitadoRascunhoMap = await quitadoRascunhoPorLancamentoCents(
+            candidatos.map((c) => c.id),
+        );
+
+        // Modo B: prioriza títulos já vinculados a outras linhas deste extrato.
+        const [itemCtx] = await db
+            .select({
+                conciliacao_id: itensConciliacaoTable.conciliacao_id,
+            })
+            .from(itensConciliacaoTable)
+            .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
+            .limit(1);
+        const idsEmUsoNoExtrato = new Set<number>();
+        if (itemCtx) {
+            const vinculosExtrato = await db
+                .select({
+                    lancamento_id: itensConciliacaoLancamentosTable.lancamento_id,
+                })
+                .from(itensConciliacaoLancamentosTable)
+                .innerJoin(
+                    itensConciliacaoTable,
+                    eq(
+                        itensConciliacaoLancamentosTable.item_conciliacao_id,
+                        itensConciliacaoTable.id,
+                    ),
+                )
+                .where(eq(itensConciliacaoTable.conciliacao_id, itemCtx.conciliacao_id));
+            for (const v of vinculosExtrato) idsEmUsoNoExtrato.add(v.lancamento_id);
+        }
+
+        // Ordena: Modo B (já no extrato) → proximidade de valor → proximidade de data.
         const dataRefTime = linha.data_movimento ? new Date(linha.data_movimento).getTime() : Date.now();
         const ordenados = [...candidatos].sort((a, b) => {
+            const aModoB = idsEmUsoNoExtrato.has(a.id) ? 0 : 1;
+            const bModoB = idsEmUsoNoExtrato.has(b.id) ? 0 : 1;
+            if (aModoB !== bModoB) return aModoB - bModoB;
+
             const diffValorA = Math.abs(toCents(a.valor) - valorLinhaCents);
             const diffValorB = Math.abs(toCents(b.valor) - valorLinhaCents);
             if (diffValorA !== diffValorB) return diffValorA - diffValorB;
@@ -1221,11 +1254,22 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
 
         return successResponse(
             res,
-            ordenados.map((l) => ({
-                ...l,
-                valor: toDecimal(l.valor),
-                valor_quitado: l.valor_quitado != null ? toDecimal(l.valor_quitado) : null,
-            })),
+            ordenados.map((l) => {
+                const quitadoCommitadoCents = toCents(l.valor_quitado);
+                const quitadoRascunhoCents = quitadoRascunhoMap.get(l.id) ?? 0;
+                const quitadoAcumuladoCents = quitadoCommitadoCents + quitadoRascunhoCents;
+                const valorCents = toCents(l.valor);
+                return {
+                    ...l,
+                    valor: toDecimal(l.valor),
+                    valor_quitado: l.valor_quitado != null ? toDecimal(l.valor_quitado) : null,
+                    /** Commitado + vínculos em rascunho (ciclo adiado). */
+                    quitado_acumulado: fromCents(quitadoAcumuladoCents),
+                    quitado_rascunho: fromCents(quitadoRascunhoCents),
+                    saldo_aberto_titulo: fromCents(Math.max(0, valorCents - quitadoAcumuladoCents)),
+                    em_modo_b_neste_extrato: idsEmUsoNoExtrato.has(l.id),
+                };
+            }),
             {linha_id: linha.id, tipo_movimento: linha.tipo_movimento, dias_janela: diasJanela},
         );
     } catch (e) {
@@ -2328,7 +2372,7 @@ router.delete(
             }
 
             await db.transaction(async (tx) => {
-                // Rascunho: o título ainda não foi martelado — só remove N:N + residual.
+                // Rascunho: o título ainda não foi martelado - só remove N:N + residual.
                 // Se a conciliação já estava conciliada (desfazer pós-commit), reverte o título.
                 const conciliaJaCommitada = conciliacao.status === "conciliado";
 
