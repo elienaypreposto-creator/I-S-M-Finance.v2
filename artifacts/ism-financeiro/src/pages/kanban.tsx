@@ -1,4 +1,5 @@
 import {useState, useMemo, useRef, useEffect} from "react";
+import {createPortal} from "react-dom";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {
     DndContext, DragOverlay,
@@ -591,13 +592,21 @@ export default function Kanban() {
                         </div>
                     </div>
 
-                    <DragOverlay dropAnimation={null}>
-                        {activeCard && (
-                            <div className="w-72 opacity-90 rotate-2 shadow-2xl">
-                                <TaskCard {...activeCard} isDragging/>
-                            </div>
-                        )}
-                    </DragOverlay>
+                    {/* Portal para document.body: o DragOverlay usa position:fixed
+                        internamente para seguir o cursor. Renderizando fora da árvore
+                        DOM de <main>, ele fica imune a qualquer transform/filter que
+                        um ancestral venha a ganhar no futuro (a causa raiz de hoje foi
+                        corrigida no CSS - .animate-in - mas isso evita a régua de novo). */}
+                    {createPortal(
+                        <DragOverlay dropAnimation={null}>
+                            {activeCard && (
+                                <div className="w-72 opacity-90 rotate-2 shadow-2xl">
+                                    <TaskCard {...activeCard} isDragging/>
+                                </div>
+                            )}
+                        </DragOverlay>,
+                        document.body,
+                    )}
                 </DndContext>
             )}
 

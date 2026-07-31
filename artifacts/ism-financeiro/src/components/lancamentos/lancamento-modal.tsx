@@ -31,6 +31,7 @@ import {
     lancamentoModalFormSchema,
     mapModalFormToApiBody,
     pagamentoItemDefault,
+    apiValorToValorBr,
     type LancamentoApiBody,
     type LancamentoEditItem,
     type LancamentoModalFormValues,
@@ -57,6 +58,29 @@ import {NovoParceiroModal, type ParceiroRow} from "@/pages/cadastros/parceiros";
 type PlanoConta = { id: number; tipo: string; categoria: string; subcategoria: string | null };
 type Departamento = { id: number; nome: string };
 type CentroCusto = { id: number; nome: string; departamento_id: number | null };
+
+/**
+ * Dados vindos da linha do extrato bancário (Conciliação) para pré-popular o
+ * formulário na criação de um NOVO lançamento — não é edição de um lançamento
+ * existente, então não usa `LancamentoEditItem` (que dispara o GET
+ * /lancamentos/:id). Usado pelo botão "+" em extrato.tsx (RN-D3).
+ */
+export type LancamentoPrefill = {
+    tipo: "CP" | "CR";
+    vencimento: string; // "YYYY-MM-DD"
+    valor: number;
+    descricao?: string | null;
+};
+
+function buildDefaultValuesFromPrefill(prefill: LancamentoPrefill): LancamentoModalFormValues {
+    return {
+        ...getLancamentoModalDefaultValues(null),
+        tipo: prefill.tipo,
+        vencimento: prefill.vencimento || "",
+        valorBr: apiValorToValorBr(prefill.valor),
+        descricao: prefill.descricao ?? "",
+    };
+}
 
 // Modal de confirmação genérico e reutilizável, seguindo o padrão visual usado
 // em toda a aplicação (ícone no topo, título em negrito, descrição centralizada,
@@ -682,11 +706,20 @@ function PagamentoPIXRow({index, control, setValue, removePagamento, errors}: Pa
 
 type LancamentoModalProps = {
     onClose: () => void;
-    onSaved: () => void;
+    /** Chamado após salvar com sucesso. No modo de criação (sem `editItem`),
+     *  recebe o registro criado (com `id`) — útil para quem abriu o modal em
+     *  contexto de Conciliação vincular a linha do extrato em seguida. No
+     *  modo edição, é chamado sem argumento. */
+    onSaved: (created?: { id: number }) => void;
     editItem?: LancamentoEditItem | null;
+    /** Pré-preenche o formulário para uma NOVA criação (não é edição).
+     *  Ignorado se `editItem` estiver presente. Usado pela tela de
+     *  Conciliação ao criar um lançamento a partir de uma linha do extrato
+     *  (RN-D3, botão "+"). */
+    prefill?: LancamentoPrefill;
 };
 
-export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalProps) {
+export function LancamentoModal({onClose, onSaved, editItem, prefill}: LancamentoModalProps) {
     const {toast} = useToast();
     const queryClient = useQueryClient();
     const [riskLevels, setRiskLevels] = useState(BASE_RISK_LEVELS);
@@ -702,9 +735,15 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
     type ParceiroSubModal = { mode: "create" } | { mode: "edit"; data: ParceiroRow };
     const [parceiroSubModal, setParceiroSubModal] = useState<ParceiroSubModal | null>(null);
 
+    function buildInitialValues(): LancamentoModalFormValues {
+        if (editItem) return getLancamentoModalDefaultValues(editItem);
+        if (prefill) return buildDefaultValuesFromPrefill(prefill);
+        return getLancamentoModalDefaultValues(null);
+    }
+
     const form = useForm<LancamentoModalFormValues>({
         resolver: zodResolver(lancamentoModalFormSchema),
-        defaultValues: getLancamentoModalDefaultValues(editItem),
+        defaultValues: buildInitialValues(),
     });
 
     const {
@@ -765,14 +804,16 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
         }
     }
 
-    // Reset ao abrir / mudar item (usa dados da lista - sem pagamentos ainda)
+    // Reset ao abrir / mudar item (usa dados da lista - sem pagamentos ainda,
+    // ou dados de pré-preenchimento vindos da Conciliação)
     useEffect(() => {
-        reset(getLancamentoModalDefaultValues(editItem));
+        reset(buildInitialValues());
         setNivelRisco(0);
         setRiskLevels(BASE_RISK_LEVELS);
         setShowAddTag(false);
         setShowCancelConfirm(false);
-    }, [editItem, reset]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [editItem, prefill, reset]);
 
     useEffect(() => {
         if (editItemFull) {
@@ -834,16 +875,19 @@ export function LancamentoModal({onClose, onSaved, editItem}: LancamentoModalPro
 
     const mutation = useMutation({
         mutationFn: (body: LancamentoApiBody) => {
-            if (editItem) return fetchApiData(`/lancamentos/${editItem.id}`, {
+            if (editItem) return fetchApiData<{ id: number }>(`/lancamentos/${editItem.id}`, {
                 method: "PUT",
                 body: JSON.stringify(body)
             });
-            return fetchApiData(`/lancamentos`, {method: "POST", body: JSON.stringify(body)});
+            // AJUSTAR se a API embrulhar a resposta (ex.: { lancamento: { id } }):
+            // troque para fetchApiData<{ lancamento: { id: number } }> e ajuste
+            // o onSuccess abaixo (resp.lancamento.id em vez de resp.id).
+            return fetchApiData<{ id: number }>(`/lancamentos`, {method: "POST", body: JSON.stringify(body)});
         },
-        onSuccess: () => {
+        onSuccess: (resp) => {
             void queryClient.invalidateQueries({queryKey: ["lancamentos"]});
             toast({title: "Sucesso", description: editItem ? "Lançamento atualizado." : "Lançamento criado."});
-            onSaved();
+            onSaved(editItem ? undefined : resp);
         },
         onError: (e: unknown) => {
             toast({

@@ -38,6 +38,11 @@ import {
 } from "lucide-react";
 import {invalidateRelated} from "@/App";
 import {formatValorBrInput, brMoneyDisplayToApiString} from "@/validations/lancamentos.schema";
+// AJUSTAR este caminho: aponte para onde você salvou o novo arquivo
+// lancamento-modal.tsx — o mais simples é colocá-lo na MESMA PASTA do seu
+// Lancamentos.tsx (ex.: src/pages/lancamentos/lancamento-modal.tsx) e usar
+// o alias correspondente, ex.: "@/pages/lancamentos/lancamento-modal".
+import { LancamentoModal } from "@/components/lancamentos/lancamento-modal";
 
 type ExtratoDetalheExtrato = {
     id: number;
@@ -72,13 +77,13 @@ type VinculacaoDetalhe = {
     descricao: string | null;
     tipo: string;
     status: string;
-    /** Flag do título residual (DEF-08) - não inferir por status pendente. */
+    /** Flag do título residual (DEF-08) — não inferir por status pendente. */
     is_residuo_parcial?: boolean;
     valor_vinculado: string | number;
     desconto: string | number;
     acrescimo?: string | number;
     juros_multa?: string | number;
-    /** Vencimento do residual = origem (imutável - Decisão nº 3). */
+    /** Vencimento do residual = origem (imutável — Decisão nº 3). */
     vencimento?: string | null;
 };
 
@@ -154,7 +159,7 @@ function statusLinhaBadge(status: string) {
 }
 
 /**
- * RN-D2: cor semântica por natureza - crédito/entrada = VERDE, débito/saída
+ * RN-D2: cor semântica por natureza — crédito/entrada = VERDE, débito/saída
  * = VERMELHO. O código anterior usava teal/orange; o card pede explicitamente
  * vermelho/verde, então padronizei aqui (não em todo o app, só neste módulo).
  */
@@ -279,130 +284,6 @@ function PainelDiagnostico({diagnostico}: { diagnostico: DiagnosticoSaldo }) {
 }
 
 /**
- * RN-D3 - `[+]` verde: cria um lançamento que não existia, pré-preenchido com
- * data/valor/natureza/descrição da linha (ex.: antecipação de lucro do sócio).
- * Ao salvar, a linha já nasce vinculada e quitada - sem passo extra de vincular.
- * Payload alinhado ao schema real do backend (tipo/vencimento/valor obrigatórios).
- */
-function NovoLancamentoModal({
-                                 linha,
-                                 extratoId,
-                                 onClose,
-                                 onCriado,
-                             }: {
-    linha: LinhaDetalhe;
-    extratoId: string;
-    onClose: () => void;
-    onCriado: (lancamentoId: number) => void;
-}) {
-    const {toast} = useToast();
-    const [, setLocation] = useLocation();
-    const queryClient = useQueryClient();
-    const [descricao, setDescricao] = useState(linha.descricao ?? "");
-    const isCredito = linha.tipo_movimento === "credito";
-
-    const criarMutation = useMutation({
-        mutationFn: () =>
-            fetchApiData<{ lancamento: { id: number } }>(`/conciliacoes/linhas/${linha.linha_id}/criar-lancamento`, {
-                method: "POST",
-                body: JSON.stringify({
-                    tipo: isCredito ? "CR" : "CP",
-                    vencimento: linha.data_movimento,
-                    valor: Math.abs(Number(linha.valor)),
-                    descricao: descricao.trim() || linha.descricao || null,
-                }),
-            }),
-        onSuccess: (resp) => {
-            invalidateRelated(queryClient, "conciliacao");
-            void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
-            toast({title: "Lançamento criado", description: "A linha já foi conciliada, sem passos extras."});
-            onCriado(resp.lancamento.id);
-        },
-        onError: (e: unknown) =>
-            toast({
-                variant: "destructive",
-                title: "Erro ao criar lançamento",
-                description: e instanceof Error ? e.message : String(e),
-            }),
-    });
-
-    function irParaCadastroDeRegra() {
-        try {
-            sessionStorage.setItem("regra_conciliacao_texto_sugerido", descricao || linha.descricao || "");
-        } catch {
-            /* sessionStorage indisponível - segue sem pré-preenchimento */
-        }
-        onClose();
-        setLocation("/cadastros/regras-conciliacao");
-    }
-
-    return (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
-            <div className="bg-[#121417] border border-white/10 rounded-2xl w-full max-w-md shadow-2xl">
-                <div className="flex items-center justify-between p-5 border-b border-white/5">
-                    <h2 className="text-base font-bold text-white flex items-center gap-2">
-                        <Plus className="w-4 h-4 text-emerald-400"/>
-                        Novo lançamento a partir da linha
-                    </h2>
-                    <button type="button" onClick={onClose} className="p-1.5 hover:bg-white/5 rounded-lg">
-                        <X className="w-4 h-4"/>
-                    </button>
-                </div>
-
-                <div className="p-5 space-y-4">
-                    <div className="rounded-xl bg-black/30 border border-white/10 p-3 space-y-1">
-                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Dados da linha (não
-                            editáveis)</p>
-                        <div className="flex items-center justify-between text-sm">
-                            <span
-                                className="text-white/80">{linha.data_movimento ? formatDate(linha.data_movimento) : "—"}</span>
-                            <span className={cn("font-black", corNaturezaTexto(isCredito))}>
-                                {formatCurrency(Math.abs(Number(linha.valor)))}
-                            </span>
-                        </div>
-                        <span
-                            className={cn("inline-block text-[10px] font-black px-2 py-0.5 rounded border uppercase", corNaturezaBadge(isCredito))}>
-                            {linha.tipo_movimento} → {isCredito ? "CR" : "CP"}
-                        </span>
-                    </div>
-
-                    <div>
-                        <label
-                            className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                            Descrição do lançamento
-                        </label>
-                        <input
-                            value={descricao}
-                            onChange={(e) => setDescricao(e.target.value)}
-                            placeholder="Ex: Antecipação de lucro do sócio"
-                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-primary/50"
-                        />
-                    </div>
-
-                    <div className="flex gap-3 pt-1">
-                        <button
-                            type="button"
-                            onClick={onClose}
-                            className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">
-                            Cancelar
-                        </button>
-                        <button
-                            type="button"
-                            disabled={criarMutation.isPending}
-                            onClick={() => criarMutation.mutate()}
-                            className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-bold disabled:opacity-50 flex items-center justify-center gap-2">
-                            {criarMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin"/> :
-                                <Plus className="w-4 h-4"/>}
-                            Criar e conciliar
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
-}
-
-/**
  * Card de lançamento (coluna direita): Desconto / Juros-Multa editáveis (RN-G7).
  * Residual parcial: vencimento = origem, **não editável** (Decisão nº 3).
  */
@@ -431,6 +312,45 @@ function CardLancamento({
     const jurosOuAcrescimo = v.juros_multa ?? v.acrescimo ?? 0;
     const isCredito = v.tipo === "CR";
     const isResidual = Boolean(v.is_residuo_parcial);
+
+    const duplicarMutation = useMutation({
+        mutationFn: async () => {
+            const original = await fetchApiData<Record<string, unknown>>(`/lancamentos/${v.lancamento_id}`);
+            return fetchApiData("/lancamentos", {
+                method: "POST",
+                body: JSON.stringify({
+                    tipo: original.tipo,
+                    vencimento: original.vencimento,
+                    competencia: original.competencia ?? null,
+                    conta_id: original.conta_id ?? null,
+                    parceiro_id: original.parceiro_id ?? null,
+                    descricao: original.descricao ?? null,
+                    valor: original.valor,
+                    plano_conta_id: original.plano_conta_id ?? null,
+                    departamento_id: original.departamento_id ?? null,
+                    centro_custo_id: original.centro_custo_id ?? null,
+                    forma_pagamento: original.forma_pagamento ?? null,
+                    dados_pagamento: original.dados_pagamento ?? null,
+                    // Cópia nasce solta (pendente, sem vínculo) - o usuário decide
+                    // depois com qual linha do extrato ela vai conciliar.
+                    status: "pendente",
+                }),
+            });
+        },
+        onSuccess: () => {
+            invalidateRelated(queryClient, "lancamentos");
+            toast({
+                title: "Lançamento duplicado",
+                description: "Uma cópia pendente foi criada, sem vínculo com esta linha.",
+            });
+        },
+        onError: (e: unknown) =>
+            toast({
+                variant: "destructive",
+                title: "Não foi possível duplicar",
+                description: e instanceof Error ? e.message : String(e),
+            }),
+    });
 
     const atualizarValorMutation = useMutation({
         mutationFn: (payload: { campo: "desconto" | "juros_multa"; valor: string }) => {
@@ -492,11 +412,14 @@ function CardLancamento({
                     <button
                         type="button"
                         title="Duplicar lançamento"
-                        onClick={() =>
-                            toast({title: "Em breve", description: "Duplicar lançamento ainda não está disponível."})
-                        }
-                        className="p-1 rounded hover:bg-white/10 text-muted-foreground hover:text-white">
-                        <Copy className="w-3.5 h-3.5"/>
+                        disabled={duplicarMutation.isPending}
+                        onClick={() => duplicarMutation.mutate()}
+                        className="p-1 rounded hover:bg-white/10 text-muted-foreground hover:text-white disabled:opacity-40">
+                        {duplicarMutation.isPending ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin"/>
+                        ) : (
+                            <Copy className="w-3.5 h-3.5"/>
+                        )}
                     </button>
                     {canDesfazer && (
                         <button
@@ -632,7 +555,8 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     const [desfazerLinhaId, setDesfazerLinhaId] = useState<number | null>(null);
     const [finalizarOpen, setFinalizarOpen] = useState(false);
     const [editarLancamentoId, setEditarLancamentoId] = useState<number | null>(null);
-    // RN-D3 - [+] verde: criar lançamento a partir da linha.
+    // RN-D3 - [+] verde: criar lançamento a partir da linha (agora usando o
+    // formulário completo de Novo Lançamento, igual à tela de Lançamentos).
     const [novoLancamentoLinha, setNovoLancamentoLinha] = useState<LinhaDetalhe | null>(null);
     // RN-D5 - navegação ‹ › entre as linhas, sem sair da tela.
     const [pagina, setPagina] = useState(0);
@@ -726,12 +650,41 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
         },
     });
 
+    /**
+     * Chamado depois que o LancamentoModal cria o lançamento a partir da linha
+     * (RN-D3). Vincula automaticamente à linha de origem, sem juros/desconto e
+     * sem gerar residual — igual ao comportamento antigo do botão [+], mas
+     * agora usando o formulário completo de lançamento. Reaproveita o mesmo
+     * endpoint do VincularModal (POST /conciliacoes/linhas/:id/vincular).
+     */
+    const vincularAutoMutation = useMutation({
+        mutationFn: ({linhaId, lancamentoId}: { linhaId: number; lancamentoId: number }) =>
+            fetchApiData(`/conciliacoes/linhas/${linhaId}/vincular`, {
+                method: "POST",
+                body: JSON.stringify({
+                    lancamentos: [{lancamento_id: lancamentoId, desconto: "0.00", juros_multa: "0.00"}],
+                    gerar_parcial: false,
+                }),
+            }),
+        onSuccess: () => {
+            invalidateRelated(queryClient, "conciliacao");
+            void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
+            void queryClient.invalidateQueries({queryKey: ["conciliacoes-pendencias-mes"]});
+            toast({title: "Lançamento criado e vinculado", description: "A linha já foi conciliada."});
+        },
+        onError: (e: unknown) =>
+            toast({
+                variant: "destructive",
+                title: "Lançamento criado, mas não foi possível vincular",
+                description: e instanceof Error
+                    ? `${e.message} — vincule manualmente pelo botão "Vincular".`
+                    : "Vincule manualmente pelo botão \"Vincular\".",
+            }),
+    });
+
     const extrato = data?.extrato;
     const conc = data?.conciliacao;
-    const linhas = useMemo(() => {
-        const list = data?.linhas ?? [];
-        return [...list].sort((a, b) => a.linha_id - b.linha_id);
-    }, [data?.linhas]);
+    const linhas = data?.linhas ?? [];
     const diagnostico = data?.diagnostico ?? null;
     const podeFinalizar = (conc?.resumo_pendentes ?? 1) === 0;
     /** FEAT-05 / Card 57: rótulo dinâmico Salvar / Concluir (nunca "Finalizar/Conciliar"). */
@@ -746,7 +699,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     );
 
     return (
-        <div className="flex flex-col gap-4 h-full min-h-0 max-w-6xl mx-auto py-2">
+        <div className="flex flex-col gap-4 h-full max-w-6xl mx-auto py-2">
             <button
                 type="button"
                 onClick={() => setLocation("/conciliacao")}
@@ -766,12 +719,31 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                 />
             )}
 
+            {/*
+              RN-D3: [+] verde - abre o MESMO formulário completo de "Novo
+              Lançamento" usado na tela de Lançamentos, pré-preenchido com
+              tipo/vencimento/valor/descrição vindos da linha do extrato. Ao
+              salvar, o lançamento é criado e automaticamente vinculado a
+              esta linha (vincularAutoMutation) - sem passo extra manual.
+            */}
             {novoLancamentoLinha && (
-                <NovoLancamentoModal
-                    linha={novoLancamentoLinha}
-                    extratoId={extratoId}
+                <LancamentoModal
+                    prefill={{
+                        tipo: novoLancamentoLinha.tipo_movimento === "credito" ? "CR" : "CP",
+                        vencimento: novoLancamentoLinha.data_movimento ?? "",
+                        valor: Math.abs(Number(novoLancamentoLinha.valor)),
+                        descricao: novoLancamentoLinha.descricao,
+                    } satisfies LancamentoPrefill}
                     onClose={() => setNovoLancamentoLinha(null)}
-                    onCriado={() => setNovoLancamentoLinha(null)}
+                    onSaved={(created) => {
+                        const linhaId = novoLancamentoLinha.linha_id;
+                        setNovoLancamentoLinha(null);
+                        invalidateRelated(queryClient, "lancamentos");
+                        void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
+                        if (created?.id) {
+                            vincularAutoMutation.mutate({linhaId, lancamentoId: created.id});
+                        }
+                    }}
                 />
             )}
 
@@ -944,7 +916,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
 
                     <div
                         className="glass-panel rounded-2xl border border-white/10 overflow-hidden flex flex-col flex-1 min-h-0">
-                        <div className="px-4 py-3 border-b border-white/5 bg-black/20 shrink-0">
+                        <div className="px-4 py-3 border-b border-white/5 bg-black/20">
                             <h2 className="text-sm font-bold text-white uppercase tracking-wide">Movimentações do
                                 extrato</h2>
                             <p className="text-[11px] text-muted-foreground mt-0.5">Linhas importadas e vínculos com o
@@ -954,17 +926,14 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                         {/*
                           RN-D1: duas colunas - esquerda a linha do extrato, direita o(s)
                           lançamento(s) - com o conector central de estado (RN-D4).
-                          Card 64: flex-1 + min-h-0 + overflow-y-auto para scroll vertical real.
                         */}
-                        <div className="divide-y divide-white/5 overflow-y-auto flex-1 min-h-0">
+                        <div className="divide-y divide-white/5 overflow-y-auto max-h-[calc(100vh-24rem)]">
                             {linhasDaPagina.map((linha) => {
                                 const isPendente = linha.status === "pendente";
                                 const isVinculado = linha.status === "vinculado";
                                 const isIgnorado = linha.status === "ignorado";
                                 const isCredito = linha.tipo_movimento === "credito";
                                 const valorAbs = Math.abs(Number(linha.valor));
-                                const saldoAbertoCents = Math.round(Number(linha.valor_saldo ?? 0) * 100);
-                                const coberturaCompleta = !isVinculado || saldoAbertoCents <= 0;
 
                                 return (
                                     <div
@@ -998,7 +967,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                     )}
                                                 </div>
                                                 <div className="flex items-center gap-1.5 shrink-0">
-                                                    {/* RN-D3: [+] verde - cria lançamento pré-preenchido a partir da linha */}
+                                                    {/* RN-D3: [+] verde - abre o formulário completo de Novo Lançamento */}
                                                     {isPendente && canVincular && (
                                                         <button
                                                             type="button"
@@ -1070,16 +1039,12 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                 <div
                                                     className={cn(
                                                         "w-8 h-8 rounded-full flex items-center justify-center border shrink-0",
-                                                        coberturaCompleta && isVinculado
+                                                        isVinculado
                                                             ? "bg-white/5 border-white/15 text-muted-foreground"
                                                             : "bg-amber-500/15 border-amber-500/40 text-amber-300",
                                                     )}
-                                                    title={
-                                                        coberturaCompleta && isVinculado
-                                                            ? "Os valores batem"
-                                                            : "Ainda falta cobrir o valor do extrato"
-                                                    }>
-                                                    {coberturaCompleta && isVinculado ? (
+                                                    title={isVinculado ? "Os valores batem" : "Os valores divergem"}>
+                                                    {isVinculado ? (
                                                         <Link2 className="w-4 h-4"/>
                                                     ) : (
                                                         <span className="text-sm font-black">≠</span>
@@ -1090,7 +1055,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
 
                                         {/* ── COLUNA DIREITA: lançamento(s) ── */}
                                         <div className="p-4 min-w-0 space-y-2">
-                                            {/* [🔍 Vincular]: 1º vínculo enquanto pendente */}
+                                            {/* [🔍 Vincular]: visível enquanto o valor não bate; some no valor exato */}
                                             {isPendente && canVincular && (
                                                 <button
                                                     type="button"
@@ -1100,39 +1065,6 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                     Vincular
                                                 </button>
                                             )}
-
-                                            {isVinculado &&
-                                                ((canVincular && saldoAbertoCents > 0) || canDesfazer) && (
-                                                    <div className="flex flex-col sm:flex-row gap-2">
-                                                        {canVincular && saldoAbertoCents > 0 && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() =>
-                                                                    setVincularLinha({
-                                                                        id: linha.linha_id,
-                                                                        valorAbs: Number(linha.valor_saldo),
-                                                                    })
-                                                                }
-                                                                className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-primary/40 bg-primary/15 hover:bg-primary/25 text-primary text-xs font-bold">
-                                                                <Link2 className="w-3.5 h-3.5"/>
-                                                                Vincular outro lançamento
-                                                                <span className="font-normal text-muted-foreground">
-                                                                    (falta{" "}
-                                                                    {formatCurrency(Number(linha.valor_saldo))})
-                                                                </span>
-                                                            </button>
-                                                        )}
-                                                        {canDesfazer && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => setDesfazerLinhaId(linha.linha_id)}
-                                                                className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-300 text-xs font-bold">
-                                                                <Trash2 className="w-3.5 h-3.5"/>
-                                                                Desfazer
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                )}
 
                                             {isVinculado && linha.vinculacoes.length > 0 && (
                                                 <ul className="space-y-2">
@@ -1162,10 +1094,10 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                             })}
                         </div>
 
-                        {/* RN-D5: navegação < > entre as linhas, sem sair da tela */}
+                        {/* RN-D5: navegação ‹ › entre as linhas, sem sair da tela */}
                         {linhas.length > LINHAS_POR_PAGINA && (
                             <div
-                                className="flex items-center justify-center gap-4 py-3 border-t border-white/5 bg-black/20 shrink-0">
+                                className="flex items-center justify-center gap-4 py-3 border-t border-white/5 bg-black/20">
                                 <button
                                     type="button"
                                     disabled={paginaAtual === 0}
