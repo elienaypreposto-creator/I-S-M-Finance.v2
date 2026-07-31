@@ -6,7 +6,6 @@ import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
 import {formatCurrency, formatDate, cn} from "@/lib/utils";
 import {Checkbox} from "@/components/ui/checkbox";
-import {ScrollArea} from "@/components/ui/scroll-area";
 import {
     buildVincularFormSchema,
     calcDeltaVincularCents,
@@ -289,8 +288,9 @@ function VincularFormBody({
             : undefined;
 
     return (
-        <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col flex-1 min-h-0">
-            <ScrollArea className="flex-1 min-h-[200px] max-h-[45vh] px-5">
+        <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+            {/* Card 64: overflow nativo - Radix ScrollArea com só max-h não cria viewport rolável. */}
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5">
                 <div className="space-y-2 py-4">
                     {fields.map((field, index) => {
                         const l = lancamentos.find((x) => x.id === field.lancamento_id);
@@ -413,7 +413,7 @@ function VincularFormBody({
                         );
                     })}
                 </div>
-            </ScrollArea>
+            </div>
 
             {itensRootError && (
                 <p className="text-[10px] text-destructive px-5 pb-1 flex items-center gap-1">
