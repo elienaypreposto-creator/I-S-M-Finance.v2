@@ -34,14 +34,16 @@ function toCents(money: string | number): number | null {
 }
 
 /**
- * Δ = Σ(extrato) − Σ(lançamentos líquidos) - mesma regra do backend (DEF-01).
- * >0 gap: falta cobrir o extrato (mais títulos ou Juros/Multa explícito).
- * <0 falta nos títulos -> residual (checkbox).
+ * Δ = Σ(extrato) − Σ(bases líquidas restantes) - alinhado ao backend (DEF-01/04).
+ * Modo B (1 lançamento): base restante = valor − desconto − quitado_acumulado (rascunho+commitado).
+ * >0 gap no extrato (juros / cobertura parcial).
+ * <0 falta nos títulos → residual só no Modo A (2+); no Modo B é pagamento parcial.
  * =0 exato.
  */
 export function buildVincularFormSchema(
     valorExtratoAbs: string | number,
     lancamentosValorById: Map<number, string | number>,
+    quitadoAcumuladoById: Map<number, string | number> = new Map(),
 ) {
     const extratoCents = toCents(valorExtratoAbs);
 
@@ -71,40 +73,20 @@ export function buildVincularFormSchema(
                 return;
             }
 
-            let somaBasesCents = 0;
-            let somaJurosCents = 0;
-
-            for (const it of selected) {
-                const base = lancamentosValorById.get(it.lancamento_id);
-
-                if (base === undefined) {
-                    ctx.addIssue({
-                        code: "custom",
-                        message: `Lançamento #${it.lancamento_id} não encontrado. Recarregue a página.`,
-                        path: ["itens"],
-                    });
-                    return;
-                }
-
-                const baseCents = toCents(base);
-                const descCents = toCents(it.desconto);
-                const jurosCents = toCents(it.juros_multa);
-
-                if (baseCents === null || descCents === null || jurosCents === null) {
-                    ctx.addIssue({
-                        code: "custom",
-                        message: "Valor de desconto ou Juros/Multa inválido. Verifique os campos.",
-                        path: ["itens"],
-                    });
-                    return;
-                }
-
-                somaBasesCents += baseCents - descCents;
-                somaJurosCents += jurosCents;
+            const {deltaCents, somaJurosCents} = calcDeltaVincularCents(
+                valorExtratoAbs,
+                selected,
+                lancamentosValorById,
+                quitadoAcumuladoById,
+            );
+            if (deltaCents === null) {
+                ctx.addIssue({
+                    code: "custom",
+                    message: "Valor de desconto ou Juros/Multa inválido. Verifique os campos.",
+                    path: ["itens"],
+                });
+                return;
             }
-
-            // Δ = extrato − Σ(lançamentos líquidos), sem juros (juros absorvem excedente)
-            const deltaCents = extratoCents - somaBasesCents;
 
             if (deltaCents > 0) {
                 // Cobertura parcial (Modo A incremental): juros=0 é OK - deixa saldo.
@@ -156,6 +138,8 @@ export function calcDeltaVincularCents(
     valorExtratoAbs: string | number,
     selected: Array<{ lancamento_id: number; desconto: string; juros_multa: string }>,
     lancamentosValorById: Map<number, string | number>,
+    /** Quitado efetivo (commitado + rascunho). Modo B: reduz a base do título. */
+    quitadoAcumuladoById: Map<number, string | number> = new Map(),
 ): { deltaCents: number | null; somaBasesCents: number; somaJurosCents: number } {
     const extratoCents = toCents(valorExtratoAbs);
     if (extratoCents === null) {
@@ -169,7 +153,10 @@ export function calcDeltaVincularCents(
         const baseCents = toCents(base) ?? 0;
         const descCents = toCents(it.desconto) ?? 0;
         const jurosCents = toCents(it.juros_multa) ?? 0;
-        somaBasesCents += baseCents - descCents;
+        const quitadoCents = toCents(quitadoAcumuladoById.get(it.lancamento_id) ?? 0) ?? 0;
+        // Base líquida ainda em aberto no título (DEF-04 / ciclo adiado).
+        const baseRestanteCents = Math.max(0, baseCents - descCents - quitadoCents);
+        somaBasesCents += baseRestanteCents;
         somaJurosCents += jurosCents;
     }
     return {

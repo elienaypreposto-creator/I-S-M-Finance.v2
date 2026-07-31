@@ -498,7 +498,7 @@ export function statusAposDesfazerVinculo(args: {
 }
 
 /**
- * Martelo financeiro do POST .../finalizar — idempotente com rascunho legado.
+ * Martelo financeiro do POST .../finalizar - idempotente com rascunho legado.
  *
  * Ciclo novo: `valor_quitado` no título NÃO inclui vínculos em aberto.
  * Ciclo antigo: `vincular` já gravava quitado/juros no título (= risco de X+X).
@@ -522,7 +522,7 @@ export function martelarQuitacaoNoFinalizar(args: {
     sumVinculadoRascunhosCents: number;
     sumJurosRascunhosCents: number;
     sumDescontoRascunhosCents: number;
-}): {quitadoCents: number; jurosCents: number; descontoCents: number} {
+}): { quitadoCents: number; jurosCents: number; descontoCents: number } {
     const baseQuitado = Math.max(
         args.valorQuitadoTituloCents - args.sumVinculadoRascunhosCents,
         args.sumVinculadoFinalizadosCents,

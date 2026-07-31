@@ -29,6 +29,11 @@ export type LancamentoCompativel = {
     /** Nome do parceiro - usado na busca livre (RN-D4) e exibido no card. */
     parceiro_nome?: string | null;
     plano_conta_id: number | null;
+    valor_quitado?: string | number | null;
+    quitado_acumulado?: string | number | null;
+    quitado_rascunho?: string | number | null;
+    saldo_aberto_titulo?: string | number | null;
+    em_modo_b_neste_extrato?: boolean;
 };
 
 type VincularModalProps = {
@@ -99,9 +104,17 @@ function VincularFormBody({
         return m;
     }, [lancamentos]);
 
+    const quitadoAcumuladoById = useMemo(() => {
+        const m = new Map<number, string | number>();
+        for (const l of lancamentos) {
+            m.set(l.id, l.quitado_acumulado ?? l.valor_quitado ?? 0);
+        }
+        return m;
+    }, [lancamentos]);
+
     const schema = useMemo(
-        () => buildVincularFormSchema(valorExtratoAbs, lancamentosValorById),
-        [valorExtratoAbs, lancamentosValorById],
+        () => buildVincularFormSchema(valorExtratoAbs, lancamentosValorById, quitadoAcumuladoById),
+        [valorExtratoAbs, lancamentosValorById, quitadoAcumuladoById],
     );
 
     const defaultItens = useMemo(
@@ -162,8 +175,14 @@ function VincularFormBody({
     );
 
     const {deltaCents, somaBasesCents, somaJurosCents} = useMemo(
-        () => calcDeltaVincularCents(valorExtratoAbs, selectedItens, lancamentosValorById),
-        [valorExtratoAbs, selectedItens, lancamentosValorById],
+        () =>
+            calcDeltaVincularCents(
+                valorExtratoAbs,
+                selectedItens,
+                lancamentosValorById,
+                quitadoAcumuladoById,
+            ),
+        [valorExtratoAbs, selectedItens, lancamentosValorById, quitadoAcumuladoById],
     );
 
     const extratoCents =
@@ -172,17 +191,24 @@ function VincularFormBody({
     const totalEfetivoCents = somaBasesCents + somaJurosCents;
     const coberturaCents = extratoCents - totalEfetivoCents;
 
-    const showResidual = deltaCents != null && deltaCents < 0 && selectedItens.length > 0;
+    // Residual só no Modo A (2+ títulos). Modo B (1 título) = pagamento parcial multi-linha.
+    const showModoBParcial =
+        deltaCents != null && deltaCents < 0 && selectedItens.length === 1;
+    const showResidual = deltaCents != null && deltaCents < 0 && selectedItens.length >= 2;
     const showExcedente = deltaCents != null && deltaCents > 0 && selectedItens.length > 0;
     const valoresBatendo =
         selectedItens.length > 0 &&
         deltaCents != null &&
         (deltaCents === 0 || (deltaCents > 0 && coberturaCents === 0));
 
-    // Auto-preenche Juros/Multa somente quando o usuário marca alocarSobraJuros
-    // e há exatamente 1 lançamento (RN-G2 / 1:1 com taxas). Sem a flag, deixa
-    // cobertura parcial (Modo A incremental).
+    // Auto-preenche Juros/Multa: (a) checkbox 1:1 Modo A, ou (b) Modo B
+    // continuação (já há quitado_acumulado) - tabela-verdade §3.3 caso 3.
     const [alocarSobraJuros, setAlocarSobraJuros] = useState(false);
+    const quitadoSelecionado =
+        selectedItens.length === 1
+            ? Number(quitadoAcumuladoById.get(selectedItens[0]!.lancamento_id) ?? 0)
+            : 0;
+    const isModoBContinuacao = selectedItens.length === 1 && quitadoSelecionado > 0;
 
     useEffect(() => {
         if (deltaCents == null || selectedItens.length === 0) return;
@@ -198,7 +224,10 @@ function VincularFormBody({
             }
         });
 
-        if (deltaCents > 0 && selectedItens.length === 1 && alocarSobraJuros) {
+        const deveAlocarJuros =
+            deltaCents > 0 && selectedItens.length === 1 && (alocarSobraJuros || isModoBContinuacao);
+
+        if (deveAlocarJuros) {
             const only = selectedItens[0]!;
             if (jurosManualRef.current.has(only.lancamento_id)) return;
 
@@ -228,9 +257,16 @@ function VincularFormBody({
                 setValue(`itens.${idx}.juros_multa`, "", {shouldDirty: true, shouldValidate: true});
             }
         }
-    }, [deltaCents, selectedItens, watchedItens, setValue, alocarSobraJuros]);
+    }, [
+        deltaCents,
+        selectedItens,
+        watchedItens,
+        setValue,
+        alocarSobraJuros,
+        isModoBContinuacao,
+    ]);
 
-    // Desliga gerar_parcial quando não há mais falta
+    // Desliga gerar_parcial fora do Modo A com falta
     useEffect(() => {
         if (!showResidual && gerarParcial) {
             setValue("gerar_parcial", false, {shouldValidate: true});
@@ -343,6 +379,24 @@ function VincularFormBody({
                                                     <p className="text-sm font-bold text-primary mt-0.5">
                                                         {formatCurrency(Number(l.valor))}
                                                     </p>
+                                                    {Number(l.quitado_acumulado ?? 0) > 0 && (
+                                                        <p className="text-[11px] text-amber-200/90 mt-0.5">
+                                                            Já vinculado:{" "}
+                                                            {formatCurrency(Number(l.quitado_acumulado))}
+                                                            {l.saldo_aberto_titulo != null && (
+                                                                <>
+                                                                    {" "}
+                                                                    · em aberto{" "}
+                                                                    {formatCurrency(
+                                                                        Number(l.saldo_aberto_titulo),
+                                                                    )}
+                                                                </>
+                                                            )}
+                                                            {l.em_modo_b_neste_extrato
+                                                                ? " · Modo B neste extrato"
+                                                                : ""}
+                                                        </p>
+                                                    )}
                                                     {canEditarLancamento && (
                                                         <button
                                                             type="button"
@@ -463,15 +517,24 @@ function VincularFormBody({
                                 : "✓ Excedente alocado em Juros/Multa — valores batem"}
                         </p>
                     </div>
+                ) : showModoBParcial ? (
+                    <div className="rounded-lg bg-sky-500/10 border border-sky-500/30 px-3 py-2 space-y-1">
+                        <p className="text-sm font-semibold text-sky-200 text-center">
+                            Pagamento parcial do título — ainda faltam{" "}
+                            {formatCurrency(toMoney(Math.abs(deltaCents ?? 0)))}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground text-center leading-snug">
+                            Confirme este vínculo e continue nas outras linhas do extrato (Modo B). O status
+                            oficial e o valor quitado no título são aplicados ao concluir a conciliação.
+                        </p>
+                    </div>
                 ) : showResidual ? (
                     <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2 space-y-2">
                         <p className="text-sm font-semibold text-red-200 text-center">
                             Falta {formatCurrency(toMoney(Math.abs(deltaCents ?? 0)))} para atingir o valor do
                             extrato
                         </p>
-                        {/* RN-G3: rótulo exato "Gerar movimentação residual" - só aparece
-                            quando a soma dos lançamentos selecionados é menor que a
-                            referência (extrato). */}
+                        {/* RN-G3: residual só no Modo A (2+ lançamentos). */}
                         <Controller
                             name="gerar_parcial"
                             control={control}
@@ -536,7 +599,7 @@ function VincularFormBody({
                                 ? `Gap de ${formatCurrency(toMoney(deltaCents ?? 0))} coberto em Juros/Multa`
                                 : `Falta ${formatCurrency(toMoney(deltaCents ?? 0))} para cobrir o extrato — você pode vincular agora e completar depois`}
                         </p>
-                        {selectedItens.length === 1 && coberturaCents !== 0 && (
+                        {selectedItens.length === 1 && coberturaCents !== 0 && !isModoBContinuacao && (
                             <label className="flex items-start gap-3 cursor-pointer group">
                                 <Checkbox
                                     checked={alocarSobraJuros}
@@ -554,6 +617,11 @@ function VincularFormBody({
                                     </p>
                                 </div>
                             </label>
+                        )}
+                        {isModoBContinuacao && coberturaCents === 0 && (
+                            <p className="text-[11px] text-amber-200/90 text-center">
+                                Modo B: excedente desta linha será registrado como Juros/Multa no título.
+                            </p>
                         )}
                     </div>
                 ) : null}
