@@ -728,7 +728,10 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
 
     const extrato = data?.extrato;
     const conc = data?.conciliacao;
-    const linhas = data?.linhas ?? [];
+    const linhas = useMemo(() => {
+        const list = data?.linhas ?? [];
+        return [...list].sort((a, b) => a.linha_id - b.linha_id);
+    }, [data?.linhas]);
     const diagnostico = data?.diagnostico ?? null;
     const podeFinalizar = (conc?.resumo_pendentes ?? 1) === 0;
     /** FEAT-05 / Card 57: rótulo dinâmico Salvar / Concluir (nunca "Finalizar/Conciliar"). */
@@ -743,7 +746,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     );
 
     return (
-        <div className="flex flex-col gap-4 h-full max-w-6xl mx-auto py-2">
+        <div className="flex flex-col gap-4 h-full min-h-0 max-w-6xl mx-auto py-2">
             <button
                 type="button"
                 onClick={() => setLocation("/conciliacao")}
@@ -941,7 +944,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
 
                     <div
                         className="glass-panel rounded-2xl border border-white/10 overflow-hidden flex flex-col flex-1 min-h-0">
-                        <div className="px-4 py-3 border-b border-white/5 bg-black/20">
+                        <div className="px-4 py-3 border-b border-white/5 bg-black/20 shrink-0">
                             <h2 className="text-sm font-bold text-white uppercase tracking-wide">Movimentações do
                                 extrato</h2>
                             <p className="text-[11px] text-muted-foreground mt-0.5">Linhas importadas e vínculos com o
@@ -951,8 +954,9 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                         {/*
                           RN-D1: duas colunas - esquerda a linha do extrato, direita o(s)
                           lançamento(s) - com o conector central de estado (RN-D4).
+                          Card 64: flex-1 + min-h-0 + overflow-y-auto para scroll vertical real.
                         */}
-                        <div className="divide-y divide-white/5 overflow-y-auto max-h-[calc(100vh-24rem)]">
+                        <div className="divide-y divide-white/5 overflow-y-auto flex-1 min-h-0">
                             {linhasDaPagina.map((linha) => {
                                 const isPendente = linha.status === "pendente";
                                 const isVinculado = linha.status === "vinculado";
@@ -1161,7 +1165,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                         {/* RN-D5: navegação < > entre as linhas, sem sair da tela */}
                         {linhas.length > LINHAS_POR_PAGINA && (
                             <div
-                                className="flex items-center justify-center gap-4 py-3 border-t border-white/5 bg-black/20">
+                                className="flex items-center justify-center gap-4 py-3 border-t border-white/5 bg-black/20 shrink-0">
                                 <button
                                     type="button"
                                     disabled={paginaAtual === 0}
