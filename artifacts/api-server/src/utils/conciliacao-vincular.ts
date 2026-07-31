@@ -496,3 +496,52 @@ export function statusAposDesfazerVinculo(args: {
 
     return statusAbertoPorVencimento(vencimento, hojeIso);
 }
+
+/**
+ * Martelo financeiro do POST .../finalizar — idempotente com rascunho legado.
+ *
+ * Ciclo novo: `valor_quitado` no título NÃO inclui vínculos em aberto.
+ * Ciclo antigo: `vincular` já gravava quitado/juros no título (= risco de X+X).
+ *
+ * baseCommitada = max(campoTitulo − Σ rascunhos, Σ vínculos já em conciliações conciliadas)
+ * resultado     = baseCommitada + Σ desta conciliação
+ */
+export function martelarQuitacaoNoFinalizar(args: {
+    valorQuitadoTituloCents: number;
+    jurosTituloCents: number;
+    descontoTituloCents: number;
+    /** Σ valor_vinculado desta conciliação (a finalizar). */
+    sumVinculadoDestaCents: number;
+    sumJurosDestaCents: number;
+    sumDescontoDestaCents: number;
+    /** Σ valor_vinculado em conciliações já `conciliado`. */
+    sumVinculadoFinalizadosCents: number;
+    sumJurosFinalizadosCents: number;
+    sumDescontoFinalizadosCents: number;
+    /** Σ valor_vinculado em rascunho (todas as conciliações ≠ conciliado, inclusive esta). */
+    sumVinculadoRascunhosCents: number;
+    sumJurosRascunhosCents: number;
+    sumDescontoRascunhosCents: number;
+}): {quitadoCents: number; jurosCents: number; descontoCents: number} {
+    const baseQuitado = Math.max(
+        args.valorQuitadoTituloCents - args.sumVinculadoRascunhosCents,
+        args.sumVinculadoFinalizadosCents,
+        0,
+    );
+    const baseJuros = Math.max(
+        args.jurosTituloCents - args.sumJurosRascunhosCents,
+        args.sumJurosFinalizadosCents,
+        0,
+    );
+    const baseDesconto = Math.max(
+        args.descontoTituloCents - args.sumDescontoRascunhosCents,
+        args.sumDescontoFinalizadosCents,
+        0,
+    );
+
+    return {
+        quitadoCents: baseQuitado + args.sumVinculadoDestaCents,
+        jurosCents: baseJuros + args.sumJurosDestaCents,
+        descontoCents: baseDesconto + args.sumDescontoDestaCents,
+    };
+}

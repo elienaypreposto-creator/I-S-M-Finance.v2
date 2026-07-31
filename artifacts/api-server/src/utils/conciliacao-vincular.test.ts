@@ -3,6 +3,7 @@ import {describe, it} from "node:test";
 import {centsToDecimalString, toCents} from "./money.js";
 import {
     decidirVincular,
+    martelarQuitacaoNoFinalizar,
     statusAbertoPorVencimento,
     statusAposDesfazerVinculo,
     statusAposQuitacao,
@@ -357,5 +358,101 @@ describe("ciclo de vida - status adiado até finalizar", () => {
             }),
             "pendente",
         );
+    });
+});
+
+describe("martelarQuitacaoNoFinalizar — anti double-count", () => {
+    const z = {
+        sumJurosDestaCents: 0,
+        sumDescontoDestaCents: 0,
+        sumJurosFinalizadosCents: 0,
+        sumDescontoFinalizadosCents: 0,
+        sumJurosRascunhosCents: 0,
+        sumDescontoRascunhosCents: 0,
+        jurosTituloCents: 0,
+        descontoTituloCents: 0,
+    };
+
+    it("ciclo novo: título sem quitado + rascunho X → grava X (não 0)", () => {
+        const x = toCents(5000);
+        const r = martelarQuitacaoNoFinalizar({
+            ...z,
+            valorQuitadoTituloCents: 0,
+            sumVinculadoDestaCents: x,
+            sumVinculadoFinalizadosCents: 0,
+            sumVinculadoRascunhosCents: x,
+        });
+        assert.equal(r.quitadoCents, x);
+    });
+
+    it("legado: título já tem X e auxiliar tem X → resultado X (não 2X)", () => {
+        const x = toCents(8000);
+        const r = martelarQuitacaoNoFinalizar({
+            ...z,
+            valorQuitadoTituloCents: x,
+            sumVinculadoDestaCents: x,
+            sumVinculadoFinalizadosCents: 0,
+            sumVinculadoRascunhosCents: x,
+        });
+        assert.equal(r.quitadoCents, x);
+    });
+
+    it("criar-lancamento/auto legado: mesmo padrão X+X → X", () => {
+        const x = toCents(1234.56);
+        const r = martelarQuitacaoNoFinalizar({
+            ...z,
+            valorQuitadoTituloCents: x,
+            sumVinculadoDestaCents: x,
+            sumVinculadoFinalizadosCents: 0,
+            sumVinculadoRascunhosCents: x,
+        });
+        assert.equal(r.quitadoCents, x);
+    });
+
+    it("pós-finalize anterior + novo rascunho: Y commitado + X rascunho → Y+X", () => {
+        const y = toCents(4000);
+        const x = toCents(1000);
+        const r = martelarQuitacaoNoFinalizar({
+            ...z,
+            valorQuitadoTituloCents: y,
+            sumVinculadoDestaCents: x,
+            sumVinculadoFinalizadosCents: y,
+            sumVinculadoRascunhosCents: x,
+        });
+        assert.equal(r.quitadoCents, y + x);
+    });
+
+    it("Modo B legado 2 extratos abertos: finalize 1º de X1+X2 embutidos → só X1", () => {
+        const x1 = toCents(1000);
+        const x2 = toCents(1000);
+        const r = martelarQuitacaoNoFinalizar({
+            ...z,
+            valorQuitadoTituloCents: x1 + x2,
+            sumVinculadoDestaCents: x1,
+            sumVinculadoFinalizadosCents: 0,
+            sumVinculadoRascunhosCents: x1 + x2,
+        });
+        assert.equal(r.quitadoCents, x1);
+    });
+
+    it("juros legados embutidos não dobram", () => {
+        const quitado = toCents(8000);
+        const juros = toCents(1162);
+        const r = martelarQuitacaoNoFinalizar({
+            valorQuitadoTituloCents: quitado,
+            jurosTituloCents: juros,
+            descontoTituloCents: 0,
+            sumVinculadoDestaCents: quitado,
+            sumJurosDestaCents: juros,
+            sumDescontoDestaCents: 0,
+            sumVinculadoFinalizadosCents: 0,
+            sumJurosFinalizadosCents: 0,
+            sumDescontoFinalizadosCents: 0,
+            sumVinculadoRascunhosCents: quitado,
+            sumJurosRascunhosCents: juros,
+            sumDescontoRascunhosCents: 0,
+        });
+        assert.equal(r.quitadoCents, quitado);
+        assert.equal(r.jurosCents, juros);
     });
 });

@@ -26,6 +26,7 @@ import type {OFXParseResult} from "../utils/ofx-parser";
 import {centsToDecimalString, fromCents, sumCents, toCents} from "../utils/money";
 import {
     decidirVincular,
+    martelarQuitacaoNoFinalizar,
     statusAbertoPorVencimento,
     statusAposDesfazerVinculo,
     statusAposQuitacao,
@@ -2125,12 +2126,100 @@ router.post(
                     }
                 }
 
+                const lancamentoIdsFinalizar = [...porLancamento.keys()];
+                type SomaVinculos = {
+                    vinculadoCents: number;
+                    jurosCents: number;
+                    descontoCents: number;
+                };
+                const somasFinalizados = new Map<number, SomaVinculos>();
+                const somasRascunhos = new Map<number, SomaVinculos>();
+
+                if (lancamentoIdsFinalizar.length > 0) {
+                    const vinculosLedger = await tx
+                        .select({
+                            lancamento_id: itensConciliacaoLancamentosTable.lancamento_id,
+                            valor_vinculado: itensConciliacaoLancamentosTable.valor_vinculado,
+                            juros_multa: itensConciliacaoLancamentosTable.juros_multa,
+                            desconto: itensConciliacaoLancamentosTable.desconto,
+                            conciliacao_id: conciliacoesTable.id,
+                            conciliacao_status: conciliacoesTable.status,
+                        })
+                        .from(itensConciliacaoLancamentosTable)
+                        .innerJoin(
+                            itensConciliacaoTable,
+                            eq(
+                                itensConciliacaoLancamentosTable.item_conciliacao_id,
+                                itensConciliacaoTable.id,
+                            ),
+                        )
+                        .innerJoin(
+                            conciliacoesTable,
+                            eq(itensConciliacaoTable.conciliacao_id, conciliacoesTable.id),
+                        )
+                        .where(
+                            inArray(
+                                itensConciliacaoLancamentosTable.lancamento_id,
+                                lancamentoIdsFinalizar,
+                            ),
+                        );
+
+                    const acc = (map: Map<number, SomaVinculos>, id: number, v: SomaVinculos) => {
+                        const prev = map.get(id) ?? {vinculadoCents: 0, jurosCents: 0, descontoCents: 0};
+                        map.set(id, {
+                            vinculadoCents: prev.vinculadoCents + v.vinculadoCents,
+                            jurosCents: prev.jurosCents + v.jurosCents,
+                            descontoCents: prev.descontoCents + v.descontoCents,
+                        });
+                    };
+
+                    for (const row of vinculosLedger) {
+                        // Esta conciliação entra via sumDesta (porLancamento), não nos mapas.
+                        // (Status já pode estar "conciliado" neste ponto da transaction.)
+                        if (row.conciliacao_id === conciliacao.id) continue;
+
+                        const parcela = {
+                            vinculadoCents: toCents(row.valor_vinculado),
+                            jurosCents: toCents(row.juros_multa),
+                            descontoCents: toCents(row.desconto),
+                        };
+                        if (row.conciliacao_status === "conciliado") {
+                            acc(somasFinalizados, row.lancamento_id, parcela);
+                        } else {
+                            acc(somasRascunhos, row.lancamento_id, parcela);
+                        }
+                    }
+                }
+
                 for (const [lancamentoId, agg] of porLancamento) {
                     if (agg.sumVinculadoCents <= 0) continue;
 
-                    const quitadoCents = toCents(agg.valor_quitado_atual) + agg.sumVinculadoCents;
-                    const jurosCents = toCents(agg.juros_atual) + agg.sumJurosCents;
-                    const descontoCents = toCents(agg.desconto_atual) + agg.sumDescontoCents;
+                    const fin = somasFinalizados.get(lancamentoId) ?? {
+                        vinculadoCents: 0,
+                        jurosCents: 0,
+                        descontoCents: 0,
+                    };
+                    const rascOutros = somasRascunhos.get(lancamentoId) ?? {
+                        vinculadoCents: 0,
+                        jurosCents: 0,
+                        descontoCents: 0,
+                    };
+
+                    // Idempotente: strip inclui esta conciliação (legado já embutiu no título).
+                    const {quitadoCents, jurosCents, descontoCents} = martelarQuitacaoNoFinalizar({
+                        valorQuitadoTituloCents: toCents(agg.valor_quitado_atual),
+                        jurosTituloCents: toCents(agg.juros_atual),
+                        descontoTituloCents: toCents(agg.desconto_atual),
+                        sumVinculadoDestaCents: agg.sumVinculadoCents,
+                        sumJurosDestaCents: agg.sumJurosCents,
+                        sumDescontoDestaCents: agg.sumDescontoCents,
+                        sumVinculadoFinalizadosCents: fin.vinculadoCents,
+                        sumJurosFinalizadosCents: fin.jurosCents,
+                        sumDescontoFinalizadosCents: fin.descontoCents,
+                        sumVinculadoRascunhosCents: rascOutros.vinculadoCents + agg.sumVinculadoCents,
+                        sumJurosRascunhosCents: rascOutros.jurosCents + agg.sumJurosCents,
+                        sumDescontoRascunhosCents: rascOutros.descontoCents + agg.sumDescontoCents,
+                    });
 
                     const tipoExtrato = agg.tipo === "CR" ? "credito" : "debito";
                     const novoStatus = statusAposQuitacao({
