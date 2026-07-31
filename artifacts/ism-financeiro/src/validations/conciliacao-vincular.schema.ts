@@ -107,26 +107,15 @@ export function buildVincularFormSchema(
             const deltaCents = extratoCents - somaBasesCents;
 
             if (deltaCents > 0) {
-                // Card 39: gap sem juros explícitos = "Falta cobrir o extrato".
-                if (selected.length > 1 && somaJurosCents !== deltaCents) {
-                    const faltaBr = (deltaCents / 100).toLocaleString("pt-BR", {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
+                // Cobertura parcial (Modo A incremental): juros=0 é OK - deixa saldo.
+                // Só bloqueia se o usuário preencheu juros parciais que não fecham o gap.
+                if (selected.length > 1 && somaJurosCents > 0 && somaJurosCents !== deltaCents) {
+                    ctx.addIssue({
+                        code: "custom",
+                        message:
+                            "A soma de Juros/Multa deve ser igual ao valor que falta para cobrir o extrato.",
+                        path: ["itens"],
                     });
-                    if (somaJurosCents === 0) {
-                        ctx.addIssue({
-                            code: "custom",
-                            message: `Falta R$ ${faltaBr} para cobrir o valor do extrato. Selecione mais lançamentos ou aloque em Juros/Multa.`,
-                            path: ["itens"],
-                        });
-                    } else {
-                        ctx.addIssue({
-                            code: "custom",
-                            message:
-                                "A soma de Juros/Multa deve ser igual ao valor que falta para cobrir o extrato.",
-                            path: ["itens"],
-                        });
-                    }
                 }
             }
 

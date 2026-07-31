@@ -97,6 +97,29 @@ function decidirModoBUmLancamento(input: VincularDecisionInput): VincularDecisio
         // Excedente acumulado -> juros. A linha inteira entra no quitado.
         let juros = l.jurosMultaCents;
         if (juros === 0) {
+            if (!quitacaoMultiLinha) {
+                // Modo A (1º vínculo): título < extrato sem juros explícitos =
+                // cobertura parcial - quita o título e deixa saldo na linha.
+                return {
+                    ok: true,
+                    deltaCents,
+                    ramo: "falta",
+                    faltaCents: deltaCents,
+                    quitacaoMultiLinha: false,
+                    itens: [
+                        {
+                            lancamento_id: l.lancamento_id,
+                            descontoCents: l.descontoCents,
+                            jurosMultaCents: 0,
+                            valorVinculadoCents: base,
+                            valorQuitadoNesteVinculoCents: base,
+                        },
+                    ],
+                    residual: null,
+                    valorSaldoCents: deltaCents,
+                };
+            }
+            // Modo B (já há quitado): sobra da linha → juros (T3 / caso 3).
             juros = deltaCents;
         } else if (juros !== deltaCents) {
             return {
@@ -236,22 +259,35 @@ export function decidirVincular(input: VincularDecisionInput): VincularDecision 
 
     if (deltaCents > 0) {
         const somaJurosPayload = sumCents(lancamentos.map((l) => l.jurosMultaCents));
-        const faltaCobrirExtrato = (deltaCents / 100).toLocaleString("pt-BR", {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-        });
 
         if (somaJurosPayload === deltaCents) {
-        } else if (somaJurosPayload === 0) {
-            // Card 39 / DEF-01 caso 5: enquanto títulos não cobrem o extrato, a mensagem
-            // é "Falta R$ X…" (selecionar mais títulos). Juros só com alocação explícita.
+            // Juros explícitos cobrindo o gap - OK.
+            const itens: VincularLancamentoDecision[] = lancamentos.map((l) => {
+                const juros = jurosById.get(l.lancamento_id) ?? 0;
+                const base = baseLiquidaCents(l);
+                const valorVinculadoCents = base + juros;
+                return {
+                    lancamento_id: l.lancamento_id,
+                    descontoCents: l.descontoCents,
+                    jurosMultaCents: juros,
+                    valorVinculadoCents,
+                    valorQuitadoNesteVinculoCents: valorVinculadoCents,
+                };
+            });
+
             return {
-                ok: false,
-                status: 400,
-                code: "VALIDATION_ERROR",
-                message: `Falta R$ ${faltaCobrirExtrato} para cobrir o valor do extrato. Selecione mais lançamentos ou aloque o valor em Juros/Multa.`,
+                ok: true,
+                deltaCents,
+                ramo: "excedente_juros",
+                faltaCents: 0,
+                quitacaoMultiLinha: false,
+                itens,
+                residual: null,
+                valorSaldoCents: 0,
             };
-        } else {
+        }
+
+        if (somaJurosPayload !== 0) {
             return {
                 ok: false,
                 status: 400,
@@ -261,28 +297,28 @@ export function decidirVincular(input: VincularDecisionInput): VincularDecision 
             };
         }
 
+        // Modo A incremental: títulos ainda não cobrem o extrato - vincula o que
+        // foi selecionado e deixa saldo aberto (sem forçar juros).
         const itens: VincularLancamentoDecision[] = lancamentos.map((l) => {
-            const juros = jurosById.get(l.lancamento_id) ?? 0;
             const base = baseLiquidaCents(l);
-            const valorVinculadoCents = base + juros;
             return {
                 lancamento_id: l.lancamento_id,
                 descontoCents: l.descontoCents,
-                jurosMultaCents: juros,
-                valorVinculadoCents,
-                valorQuitadoNesteVinculoCents: valorVinculadoCents,
+                jurosMultaCents: 0,
+                valorVinculadoCents: base,
+                valorQuitadoNesteVinculoCents: base,
             };
         });
 
         return {
             ok: true,
             deltaCents,
-            ramo: "excedente_juros",
-            faltaCents: 0,
+            ramo: "falta",
+            faltaCents: deltaCents,
             quitacaoMultiLinha: false,
             itens,
             residual: null,
-            valorSaldoCents: 0,
+            valorSaldoCents: deltaCents,
         };
     }
 
@@ -404,4 +440,59 @@ export function statusAposQuitacao(args: {
         return "pago_parcial";
     }
     return tipoExtrato === "credito" ? "recebido" : "pago";
+}
+
+/** Status operacional enquanto a conciliação ainda não foi concluída. */
+export function statusAbertoPorVencimento(
+    vencimento: string | Date | null | undefined,
+    hojeIso: string,
+): "pendente" | "atrasado" {
+    if (!vencimento) return "pendente";
+    const vencIso =
+        typeof vencimento === "string"
+            ? vencimento.slice(0, 10)
+            : vencimento.toISOString().slice(0, 10);
+    return vencIso < hojeIso ? "atrasado" : "pendente";
+}
+
+const STATUS_QUITACAO = new Set(["pago", "recebido", "pago_parcial"]);
+
+/**
+ * Desfazer vínculo: não promove quitação se o título ainda está no ciclo
+ * adiado (pendente/atrasado). Só reavalia pago/recebido/pago_parcial quando
+ * o status já era de quitação (ex.: conciliação anterior já finalizada).
+ */
+export function statusAposDesfazerVinculo(args: {
+    statusAtual: string;
+    tipoExtrato: "credito" | "debito";
+    valorLancamentoCents: number;
+    valorQuitadoAcumuladoCents: number;
+    descontoAcumuladoCents?: number;
+    vencimento: string | Date | null | undefined;
+    hojeIso: string;
+}): "pendente" | "atrasado" | "pago" | "recebido" | "pago_parcial" {
+    const {
+        statusAtual,
+        tipoExtrato,
+        valorLancamentoCents,
+        valorQuitadoAcumuladoCents,
+        descontoAcumuladoCents = 0,
+        vencimento,
+        hojeIso,
+    } = args;
+
+    if (valorQuitadoAcumuladoCents <= 0) {
+        return statusAbertoPorVencimento(vencimento, hojeIso);
+    }
+
+    if (STATUS_QUITACAO.has(statusAtual)) {
+        return statusAposQuitacao({
+            tipoExtrato,
+            valorLancamentoCents,
+            valorQuitadoAcumuladoCents,
+            descontoAcumuladoCents,
+        });
+    }
+
+    return statusAbertoPorVencimento(vencimento, hojeIso);
 }
