@@ -25,6 +25,11 @@ export type LancamentoCompativel = {
     vencimento: string;
     descricao: string | null;
     valor: string | number;
+    /** Quitado antes deste vínculo - necessário para a fórmula de Modo B (1
+     *  lançamento) quando ele já tem quitação parcial/total anterior. Sem
+     *  isso o front calcula um "excedente" errado para lançamentos que já
+     *  têm status "pago"/"pago_parcial" (ver bug do card DEF-10). */
+    valor_quitado?: string | number | null;
     status: string;
     parceiro_id: number | null;
     /** Nome do parceiro - usado na busca livre (RN-D4) e exibido no card. */
@@ -100,9 +105,23 @@ function VincularFormBody({
         return m;
     }, [lancamentos]);
 
+    // Bug (ver print anexo): um lançamento já "Pago"/"pago_parcial" tem
+    // valor_quitado > 0. Sem considerar isso, o front calcula "quanto falta"
+    // usando o valor de face do lançamento (ex.: R$ 9,00) quando na verdade
+    // o saldo devedor real já é outro - o backend usa a fórmula de Modo B
+    // (quitado_anterior + extrato − base) sempre que 1 único lançamento é
+    // selecionado, e o front precisa espelhar isso ou os dois divergem.
+    const lancamentosQuitadoById = useMemo(() => {
+        const m = new Map<number, string | number>();
+        for (const l of lancamentos) {
+            m.set(l.id, l.valor_quitado ?? 0);
+        }
+        return m;
+    }, [lancamentos]);
+
     const schema = useMemo(
-        () => buildVincularFormSchema(valorExtratoAbs, lancamentosValorById),
-        [valorExtratoAbs, lancamentosValorById],
+        () => buildVincularFormSchema(valorExtratoAbs, lancamentosValorById, lancamentosQuitadoById),
+        [valorExtratoAbs, lancamentosValorById, lancamentosQuitadoById],
     );
 
     const defaultItens = useMemo(
@@ -165,27 +184,23 @@ function VincularFormBody({
         [watchedItens],
     );
 
+    // RN-E1: mesma fórmula usada na validação (buildVincularFormSchema) -
+    // Modo A (2+) ou Modo B (1, considerando valor_quitado anterior).
     const {deltaCents, somaBasesCents, somaJurosCents} = useMemo(
-        () => calcDeltaVincularCents(valorExtratoAbs, selectedItens, lancamentosValorById),
-        [valorExtratoAbs, selectedItens, lancamentosValorById],
+        () => calcDeltaVincularCents(valorExtratoAbs, selectedItens, lancamentosValorById, lancamentosQuitadoById),
+        [valorExtratoAbs, selectedItens, lancamentosValorById, lancamentosQuitadoById],
     );
 
-    const extratoCents =
-        deltaCents != null ? somaBasesCents + deltaCents : Math.round(Math.abs(Number(valorExtratoAbs) || 0) * 100);
+    const extratoCents = Math.round(Math.abs(Number(valorExtratoAbs) || 0) * 100);
 
-    const totalEfetivoCents = somaBasesCents + somaJurosCents;
-    const coberturaCents = extratoCents - totalEfetivoCents;
+    // RN-E1/E2/E6: restante = Δ − Juros/Multa já alocados. Essa é a MESMA
+    // fórmula para Modo A e Modo B, porque o Δ de cada modo já embute a
+    // diferença correta (ver calcDeltaVincularCents) - basta descontar o
+    // que já foi alocado em juros para saber quanto ainda falta fechar.
+    const restanteCents = deltaCents != null ? deltaCents - somaJurosCents : null;
 
-    // ── Valor restante (RN-E1/E2) ────────────────────────────────────────────
-    // Sempre derivado de extratoCents/totalEfetivoCents (ambos em centavos
-    // inteiros), nunca do sinal "cru" de deltaCents - assim o número exibido
-    // é sempre: positivo = falta, negativo = excedente, zero = bate certinho.
-    // Recalcula a cada clique/edição porque vem de useMemo/useWatch, sem
-    // depender de submit.
-    const restanteCents = coberturaCents;
-
-    const showResidual = restanteCents > 0 && selectedItens.length > 0; // falta cobrir o extrato
-    const showExcedente = restanteCents < 0 && selectedItens.length > 0; // passou do valor do extrato
+    const showResidual = restanteCents != null && restanteCents > 0 && selectedItens.length > 0; // falta cobrir o lançamento
+    const showExcedente = restanteCents != null && restanteCents < 0 && selectedItens.length > 0; // passou do valor do lançamento
     const valoresBatendo = selectedItens.length > 0 && restanteCents === 0; // restante zerado
 
     // RN-E5/E6: só libera "Concluir" quando o restante zera - ou quando o
@@ -312,6 +327,7 @@ function VincularFormBody({
                         const l = lancamentos.find((x) => x.id === field.lancamento_id);
                         if (!l) return null;
                         const selected = watchedItens[index]?.selecionado ?? false;
+                        const quitadoAnteriorCents = Math.round(Math.abs(Number(l.valor_quitado ?? 0)) * 100);
                         return (
                             <div
                                 key={field.id}
@@ -359,6 +375,15 @@ function VincularFormBody({
                                                     <p className="text-sm font-bold text-primary mt-0.5">
                                                         {formatCurrency(Number(l.valor))}
                                                     </p>
+                                                    {/* DEF-08/RN-E1: lançamento já com quitação anterior (ex.: status
+                                                        "Pago" buscado só para receber uma linha extra de juros) - mostra
+                                                        isso explicitamente, senão o usuário não entende por que o
+                                                        "Juros/Multa" pedido é maior que o valor de face do lançamento. */}
+                                                    {quitadoAnteriorCents > 0 && (
+                                                        <p className="text-[10px] text-amber-300/90 mt-0.5">
+                                                            Já quitado: {formatCurrency(toMoney(quitadoAnteriorCents))}
+                                                        </p>
+                                                    )}
                                                     {canEditarLancamento && (
                                                         <button
                                                             type="button"
@@ -440,7 +465,9 @@ function VincularFormBody({
 
             {/* Barra de resumo em tempo real - recalcula a cada seleção/edição,
                 sem precisar de submit (RN-E1). Todo o cálculo roda em centavos
-                inteiros (extratoCents / totalEfetivoCents / restanteCents). */}
+                inteiros (extratoCents / somaBasesCents / restanteCents), e usa
+                a MESMA fórmula do backend (Modo A ou Modo B conforme o número
+                de lançamentos selecionados - ver calcDeltaVincularCents). */}
             <div className="shrink-0 border-t border-white/10 bg-black/40 px-5 py-3 space-y-3">
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center">
                     <div className="rounded-lg bg-white/5 px-2 py-2">
@@ -471,7 +498,7 @@ function VincularFormBody({
                     <div
                         className={cn(
                             "rounded-lg px-2 py-2",
-                            selectedItens.length === 0
+                            selectedItens.length === 0 || restanteCents === null
                                 ? "bg-white/5"
                                 : restanteCents === 0
                                     ? "bg-emerald-500/15"
@@ -483,7 +510,7 @@ function VincularFormBody({
                         <p
                             className={cn(
                                 "text-sm font-bold tabular-nums",
-                                selectedItens.length === 0
+                                selectedItens.length === 0 || restanteCents === null
                                     ? "text-white"
                                     : restanteCents === 0
                                         ? "text-emerald-300"
@@ -491,7 +518,9 @@ function VincularFormBody({
                                             ? "text-red-300"
                                             : "text-amber-300",
                             )}>
-                            {selectedItens.length === 0 ? "—" : formatCurrency(toMoney(Math.abs(restanteCents)))}
+                            {selectedItens.length === 0 || restanteCents === null
+                                ? "—"
+                                : formatCurrency(toMoney(Math.abs(restanteCents)))}
                         </p>
                     </div>
                 </div>
@@ -511,7 +540,8 @@ function VincularFormBody({
                 ) : showResidual ? (
                     <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2 space-y-2">
                         <p className="text-sm font-semibold text-red-200 text-center">
-                            Falta {formatCurrency(toMoney(restanteCents))} para atingir o valor do lançamento
+                            Falta {formatCurrency(toMoney(restanteCents ?? 0))} para atingir o valor
+                            do{selectedItens.length > 1 ? "s lançamentos selecionados" : " lançamento"}
                         </p>
                         {/* RN-G3: rótulo exato "Gerar movimentação residual" - só aparece
                             quando a soma dos lançamentos selecionados é menor que a
@@ -532,7 +562,7 @@ function VincularFormBody({
                     </span>
                                         <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
                                             Cria lançamento pendente
-                                            de {formatCurrency(toMoney(restanteCents))}{" "}
+                                            de {formatCurrency(toMoney(restanteCents ?? 0))}{" "}
                                             (pagamento parcial), com vencimento da origem — não editável.
                                         </p>
                                     </div>
@@ -583,11 +613,11 @@ function VincularFormBody({
                         {/* RN-E5: avisa sem bloquear a seleção — o excedente pode
                             legitimamente ser juros (ex.: multa sobre um boleto). */}
                         <p className="text-sm font-semibold text-amber-200 text-center">
-                            {coberturaCents === 0
-                                ? `Gap de ${formatCurrency(toMoney(Math.abs(restanteCents)))} coberto em Juros/Multa`
-                                : `Valor maior que o extrato — excedente de ${formatCurrency(toMoney(Math.abs(restanteCents)))} (pode ser tratado como Juros/Multa)`}
+                            {valoresBatendo
+                                ? "Excedente alocado em Juros/Multa — valores batem"
+                                : `Valor maior que o extrato — excedente de ${formatCurrency(toMoney(Math.abs(restanteCents ?? 0)))} (pode ser tratado como Juros/Multa)`}
                         </p>
-                        {selectedItens.length === 1 && coberturaCents !== 0 && (
+                        {selectedItens.length === 1 && !valoresBatendo && (
                             <label className="flex items-start gap-3 cursor-pointer group">
                                 <Checkbox
                                     checked={alocarSobraJuros}
@@ -606,7 +636,7 @@ function VincularFormBody({
                                 </div>
                             </label>
                         )}
-                        {selectedItens.length > 1 && (
+                        {selectedItens.length > 1 && !valoresBatendo && (
                             <p className="text-[11px] text-muted-foreground text-center">
                                 Ajuste o Desconto/Juros de cada lançamento selecionado até o restante zerar.
                             </p>
@@ -684,13 +714,16 @@ export function VincularModal({
                                   onSuccess,
                               }: VincularModalProps) {
     const [diasJanela, setDiasJanela] = useState(DIAS_JANELA_INICIAL);
-    // RN-D4: campos de busca manual - descrição/parceiro (texto livre) e valor,
-    // além da janela de datas. "buscaAtiva"/"valorAtivo" só mudam ao clicar em
-    // Buscar, para não disparar uma requisição a cada tecla digitada.
+    // RN-D4: campos de busca manual - descrição/parceiro (texto livre), valor
+    // e vencimento, além da janela de datas. "buscaAtiva"/"valorAtivo"/
+    // "vencimentoAtivo" só mudam ao clicar em Buscar, para não disparar uma
+    // requisição a cada tecla digitada.
     const [buscaTexto, setBuscaTexto] = useState("");
     const [buscaAtiva, setBuscaAtiva] = useState("");
     const [valorTexto, setValorTexto] = useState("");
     const [valorAtivo, setValorAtivo] = useState("");
+    const [vencimentoTexto, setVencimentoTexto] = useState("");
+    const [vencimentoAtivo, setVencimentoAtivo] = useState("");
 
     // Reseta a janela/busca sempre que uma linha diferente é aberta.
     useEffect(() => {
@@ -699,10 +732,12 @@ export function VincularModal({
         setBuscaAtiva("");
         setValorTexto("");
         setValorAtivo("");
+        setVencimentoTexto("");
+        setVencimentoAtivo("");
     }, [linhaId]);
 
     const {data: lancamentos = [], isLoading, isFetching} = useQuery<LancamentoCompativel[]>({
-        queryKey: ["conciliacao-buscar-lancamentos", linhaId, diasJanela, buscaAtiva, valorAtivo],
+        queryKey: ["conciliacao-buscar-lancamentos", linhaId, diasJanela, buscaAtiva, valorAtivo, vencimentoAtivo],
         queryFn: () => {
             const params = new URLSearchParams({
                 linha_id: String(linhaId),
@@ -710,6 +745,7 @@ export function VincularModal({
             });
             if (buscaAtiva) params.set("busca", buscaAtiva);
             if (valorAtivo) params.set("valor", valorAtivo);
+            if (vencimentoAtivo) params.set("vencimento", vencimentoAtivo);
             return fetchApiData<LancamentoCompativel[]>(`/conciliacoes/buscar-lancamentos?${params.toString()}`);
         },
         enabled: open && linhaId > 0,
@@ -726,6 +762,7 @@ export function VincularModal({
         setBuscaAtiva(buscaTexto.trim());
         const valorNormalizado = brMoneyDisplayToApiString(valorTexto) || "";
         setValorAtivo(valorNormalizado && valorNormalizado !== "0.00" ? valorNormalizado : "");
+        setVencimentoAtivo(vencimentoTexto);
     };
 
     return (
@@ -752,8 +789,8 @@ export function VincularModal({
                     </button>
                 </div>
 
-                {/* RN-D4: janela de busca configurável + busca por descrição/parceiro/valor,
-                    em vez de depender só da proximidade de data. */}
+                {/* RN-D4: janela de busca configurável + busca por descrição/parceiro/
+                    valor/vencimento, em vez de depender só da proximidade de data. */}
                 <div className="px-5 pt-4 pb-2 border-b border-white/5 shrink-0 space-y-2">
                     <div className="flex flex-wrap items-end gap-2">
                         <div className="flex flex-col gap-1">
@@ -797,6 +834,18 @@ export function VincularModal({
                                 className="bg-[#1a1c23] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-primary/50"
                             />
                         </div>
+                        <div className="flex flex-col gap-1 w-36">
+                            <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                Vencimento
+                            </span>
+                            <input
+                                type="date"
+                                value={vencimentoTexto}
+                                onChange={(e) => setVencimentoTexto(e.target.value)}
+                                onKeyDown={(e) => e.key === "Enter" && handleAplicarBusca()}
+                                className="bg-[#1a1c23] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-primary/50"
+                            />
+                        </div>
                         <button
                             type="button"
                             onClick={handleAplicarBusca}
@@ -817,7 +866,7 @@ export function VincularModal({
                 ) : lancamentos.length === 0 ? (
                     <div className="py-12 px-5 text-center text-xs text-muted-foreground">
                         Nenhum lançamento compatível encontrado. Amplie a janela de datas ou busque por
-                        descrição, parceiro ou valor.
+                        descrição, parceiro, valor ou vencimento.
                         <div className="mt-4 flex items-center justify-center gap-3">
                             {podeBuscarMais && (
                                 <button

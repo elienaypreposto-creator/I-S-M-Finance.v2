@@ -34,16 +34,65 @@ function toCents(money: string | number): number | null {
 }
 
 /**
- * Δ = Σ(extrato) − Σ(bases líquidas restantes) - alinhado ao backend (DEF-01/04).
- * Modo B (1 lançamento): base restante = valor − desconto − quitado_acumulado (rascunho+commitado).
- * >0 gap no extrato (juros / cobertura parcial).
- * <0 falta nos títulos → residual só no Modo A (2+); no Modo B é pagamento parcial.
- * =0 exato.
+ * Δ, espelhando artifacts/api-server/src/utils/conciliacao-vincular.ts:
+ * - 2+ lançamentos (Modo A):  Δ = extrato − Σ(base líquida). O backend NUNCA
+ *   desconta quitado_anterior aqui (baseLiquidaCents = valor − desconto,
+ *   ver linha ~230 do arquivo acima) - só faz isso no Modo B. Descontar
+ *   quitado também no Modo A faria o front pedir menos Juros/Multa do que
+ *   o backend vai exigir quando um dos 2+ selecionados já tiver quitação
+ *   parcial.
+ * - 1 lançamento (Modo B):    Δ = (quitado_anterior + extrato) − base líquida,
+ *   equivalente a Δ = extrato − max(0, base líquida − quitado_anterior).
+ * >0: falta cobrir o valor do lançamento (mais títulos ou Juros/Multa) -
+ *     RN-E2 exige que a soma de Juros/Multa feche esse gap exatamente para
+ *     liberar "Concluir"; não existe "cobertura parcial" aqui.
+ * <0: falta nos títulos -> residual (checkbox), só relevante no Modo A.
+ * =0: exato.
  */
+function calcDeltaCentsInterno(
+    extratoCents: number,
+    selected: Array<{ lancamento_id: number; desconto: string; juros_multa: string }>,
+    lancamentosValorById: Map<number, string | number>,
+    quitadoAcumuladoById?: Map<number, string | number>,
+): { deltaCents: number; somaBasesCents: number; somaJurosCents: number } {
+    let somaBasesCents = 0;
+    let somaJurosCents = 0;
+
+    for (const it of selected) {
+        const base = lancamentosValorById.get(it.lancamento_id);
+        if (base === undefined) continue;
+        const baseCents = toCents(base) ?? 0;
+        const descCents = toCents(it.desconto) ?? 0;
+        const jurosCents = toCents(it.juros_multa) ?? 0;
+        somaBasesCents += baseCents - descCents;
+        somaJurosCents += jurosCents;
+    }
+
+    if (selected.length === 1 && quitadoAcumuladoById) {
+        const quitadoCents = toCents(quitadoAcumuladoById.get(selected[0]!.lancamento_id) ?? 0) ?? 0;
+        // Δ = (quitado_anterior + extrato) − base líquida, algebricamente
+        // igual a extrato − max(0, base líquida − quitado_anterior).
+        const baseRestanteCents = Math.max(0, somaBasesCents - quitadoCents);
+        return {
+            deltaCents: extratoCents - baseRestanteCents,
+            somaBasesCents: baseRestanteCents,
+            somaJurosCents,
+        };
+    }
+
+    return {
+        deltaCents: extratoCents - somaBasesCents,
+        somaBasesCents,
+        somaJurosCents,
+    };
+}
+
 export function buildVincularFormSchema(
     valorExtratoAbs: string | number,
     lancamentosValorById: Map<number, string | number>,
-    quitadoAcumuladoById: Map<number, string | number> = new Map(),
+    /** Quitado antes deste vínculo. Só é aplicado no Modo B (1 lançamento) -
+     *  ver comentário de calcDeltaCentsInterno. */
+    quitadoAcumuladoById?: Map<number, string | number>,
 ) {
     const extratoCents = toCents(valorExtratoAbs);
 
@@ -73,31 +122,60 @@ export function buildVincularFormSchema(
                 return;
             }
 
-            const {deltaCents, somaJurosCents} = calcDeltaVincularCents(
-                valorExtratoAbs,
+            for (const it of selected) {
+                if (!lancamentosValorById.has(it.lancamento_id)) {
+                    ctx.addIssue({
+                        code: "custom",
+                        message: `Lançamento #${it.lancamento_id} não encontrado. Recarregue a página.`,
+                        path: ["itens"],
+                    });
+                    return;
+                }
+                const baseCents = toCents(lancamentosValorById.get(it.lancamento_id)!);
+                const descCents = toCents(it.desconto);
+                const jurosCents = toCents(it.juros_multa);
+                if (baseCents === null || descCents === null || jurosCents === null) {
+                    ctx.addIssue({
+                        code: "custom",
+                        message: "Valor de desconto ou Juros/Multa inválido. Verifique os campos.",
+                        path: ["itens"],
+                    });
+                    return;
+                }
+            }
+
+            const {deltaCents, somaJurosCents} = calcDeltaCentsInterno(
+                extratoCents,
                 selected,
                 lancamentosValorById,
                 quitadoAcumuladoById,
             );
-            if (deltaCents === null) {
-                ctx.addIssue({
-                    code: "custom",
-                    message: "Valor de desconto ou Juros/Multa inválido. Verifique os campos.",
-                    path: ["itens"],
-                });
-                return;
-            }
 
             if (deltaCents > 0) {
-                // Cobertura parcial (Modo A incremental): juros=0 é OK - deixa saldo.
-                // Só bloqueia se o usuário preencheu juros parciais que não fecham o gap.
-                if (selected.length > 1 && somaJurosCents > 0 && somaJurosCents !== deltaCents) {
-                    ctx.addIssue({
-                        code: "custom",
-                        message:
-                            "A soma de Juros/Multa deve ser igual ao valor que falta para cobrir o extrato.",
-                        path: ["itens"],
+                // RN-E2: não existe "cobertura parcial" aceitável aqui - a soma de
+                // Juros/Multa TEM que fechar o gap exatamente (com 1 selecionado
+                // o campo já vem pré-preenchido sozinho no front, então na prática
+                // só erra se o usuário apagar/alterar o valor manualmente).
+                if (somaJurosCents !== deltaCents) {
+                    const faltaBr = (deltaCents / 100).toLocaleString("pt-BR", {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
                     });
+                    const alvo = selected.length > 1 ? "lançamentos selecionados" : "lançamento";
+                    if (somaJurosCents === 0) {
+                        ctx.addIssue({
+                            code: "custom",
+                            message: `Falta R$ ${faltaBr} para atingir o valor do ${alvo}. Selecione mais lançamentos ou complete o campo Juros/Multa.`,
+                            path: ["itens"],
+                        });
+                    } else {
+                        ctx.addIssue({
+                            code: "custom",
+                            message:
+                                `A soma de Juros/Multa deve ser igual ao valor que falta para atingir o valor do ${alvo}.`,
+                            path: ["itens"],
+                        });
+                    }
                 }
             }
 
@@ -133,35 +211,23 @@ export function buildVincularFormSchema(
         });
 }
 
-/** Helpers de UI para barra de resumo / prefill. */
+/** Helper de UI para barra de resumo / prefill - mesma fórmula usada na validação. */
 export function calcDeltaVincularCents(
     valorExtratoAbs: string | number,
     selected: Array<{ lancamento_id: number; desconto: string; juros_multa: string }>,
     lancamentosValorById: Map<number, string | number>,
-    /** Quitado efetivo (commitado + rascunho). Modo B: reduz a base do título. */
-    quitadoAcumuladoById: Map<number, string | number> = new Map(),
+    /** Quitado antes deste vínculo. Só é aplicado no Modo B (1 lançamento). */
+    quitadoAcumuladoById?: Map<number, string | number>,
 ): { deltaCents: number | null; somaBasesCents: number; somaJurosCents: number } {
     const extratoCents = toCents(valorExtratoAbs);
     if (extratoCents === null) {
         return {deltaCents: null, somaBasesCents: 0, somaJurosCents: 0};
     }
-    let somaBasesCents = 0;
-    let somaJurosCents = 0;
-    for (const it of selected) {
-        const base = lancamentosValorById.get(it.lancamento_id);
-        if (base === undefined) continue;
-        const baseCents = toCents(base) ?? 0;
-        const descCents = toCents(it.desconto) ?? 0;
-        const jurosCents = toCents(it.juros_multa) ?? 0;
-        const quitadoCents = toCents(quitadoAcumuladoById.get(it.lancamento_id) ?? 0) ?? 0;
-        // Base líquida ainda em aberto no título (DEF-04 / ciclo adiado).
-        const baseRestanteCents = Math.max(0, baseCents - descCents - quitadoCents);
-        somaBasesCents += baseRestanteCents;
-        somaJurosCents += jurosCents;
-    }
-    return {
-        deltaCents: extratoCents - somaBasesCents,
-        somaBasesCents,
-        somaJurosCents,
-    };
+    const {deltaCents, somaBasesCents, somaJurosCents} = calcDeltaCentsInterno(
+        extratoCents,
+        selected,
+        lancamentosValorById,
+        quitadoAcumuladoById,
+    );
+    return {deltaCents, somaBasesCents, somaJurosCents};
 }
