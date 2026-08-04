@@ -2,8 +2,10 @@ import {pool} from "./src/index";
 
 async function grantAdmin() {
     const args = process.argv.slice(2);
-    const emails = args.length > 0 ? args : ["vinicosta37@gmail.com", "ismteste@gmail.com"];
-
+    const emails =
+        args.length > 0
+            ? args
+            : ["admin@ism.finance", "vinicosta37@gmail.com", "ismteste@gmail.com"];
 
     const permissoesBackend = [
         "admin:usuarios:listar", "admin:usuarios:criar", "admin:usuarios:editar", "admin:usuarios:deletar",
@@ -20,6 +22,16 @@ async function grantAdmin() {
         "financeiro:regras-conciliacao:criar",
         "financeiro:regras-conciliacao:editar",
         "financeiro:regras-conciliacao:deletar",
+        "relatorios:dre",
+        "relatorios:fluxo-caixa-diario",
+        "relatorios:fluxo-caixa-mensal",
+        "relatorios:economico",
+        "relatorios:financeiro",
+        "relatorios:vencimento",
+        "relatorios:extrato",
+        "relatorios:metas",
+        "relatorios:conciliacao",
+        "relatorios:contabil-fiscal",
         "configuracoes:plano-contas:criar", "configuracoes:plano-contas:editar", "configuracoes:plano-contas:deletar",
         "configuracoes:filiais:criar", "configuracoes:filiais:editar", "configuracoes:filiais:deletar",
         "configuracoes:departamentos:criar", "configuracoes:departamentos:editar", "configuracoes:departamentos:deletar",

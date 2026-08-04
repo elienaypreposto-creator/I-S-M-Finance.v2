@@ -6,10 +6,31 @@ import path from "path";
 
 dotenv.config({path: path.resolve(process.cwd(), "../../.env")});
 
+import {syncAdminPermissionsOnBoot} from "@workspace/db";
 import app from "./app";
 import {startPromoverAtrasadosJob} from "./jobs/promover-atrasados";
 
 const port = process.env.PORT || 5000;
+
+/** Sync fail-soft: nunca derruba o boot se o DB estiver lento/indisponível. */
+function runAdminPermissionsSyncOnBoot(): void {
+    void syncAdminPermissionsOnBoot()
+        .then((r) => {
+            console.log(
+                `[boot] admin-permissions: ${r.sincronizados}/${r.emailsAlvo} usuário(s),` +
+                ` ${r.permissoesPorUsuario} permissões` +
+                (r.ausentes.length ? ` (ausentes: ${r.ausentes.join(", ")})` : ""),
+            );
+        })
+        .catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`[boot] admin-permissions: falha ao sincronizar - ${msg}`);
+        });
+}
+
+// Sincroniza permissões dos Super Admins no boot (container, local, cold start).
+// Fail-soft: não bloqueia o listen nem derruba o processo.
+runAdminPermissionsSyncOnBoot();
 
 // Only listen when not in a serverless environment (like Vercel)
 // or when explicitly running in development.
