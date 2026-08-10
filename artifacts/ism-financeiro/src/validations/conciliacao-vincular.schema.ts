@@ -19,35 +19,35 @@ export type VincularFormValues = {
 /**
  * Converte string/number para centavos inteiros.
  * Retorna null se inválido (NaN) para o chamador tratar.
+ * String vazia -> 0 (campos Desconto/Juros vazios na UI).
  */
 function toCents(money: string | number): number | null {
     if (typeof money === "number") {
-        const result = Math.round(money * 100);
-        return isNaN(result) ? null : result;
+        if (!Number.isFinite(money)) return null;
+        return Math.round(money * 100);
     }
     const str = money.toString().trim();
-    if (!str) return null;
+    if (!str) return 0;
     const apiStr = str.includes(",") ? brMoneyDisplayToApiString(str) : str;
     const n = Number(apiStr);
     if (isNaN(n)) return null;
     return Math.round(n * 100);
 }
 
+/** Select com value="" / NaN não pode quebrar z.number() antes do superRefine. */
+const residuoLancamentoIdSchema = z.preprocess((v) => {
+    if (v === "" || v === undefined || v === null) return null;
+    if (typeof v === "number" && Number.isNaN(v)) return null;
+    return v;
+}, z.number().int().positive().nullable().optional());
+
 /**
  * Δ, espelhando artifacts/api-server/src/utils/conciliacao-vincular.ts:
- * - 2+ lançamentos (Modo A):  Δ = extrato − Σ(base líquida). O backend NUNCA
- *   desconta quitado_anterior aqui (baseLiquidaCents = valor − desconto,
- *   ver linha ~230 do arquivo acima) - só faz isso no Modo B. Descontar
- *   quitado também no Modo A faria o front pedir menos Juros/Multa do que
- *   o backend vai exigir quando um dos 2+ selecionados já tiver quitação
- *   parcial.
- * - 1 lançamento (Modo B):    Δ = (quitado_anterior + extrato) − base líquida,
- *   equivalente a Δ = extrato − max(0, base líquida − quitado_anterior).
- * >0: falta cobrir o valor do lançamento (mais títulos ou Juros/Multa) -
- *     RN-E2 exige que a soma de Juros/Multa feche esse gap exatamente para
- *     liberar "Concluir"; não existe "cobertura parcial" aqui.
- * <0: falta nos títulos -> residual (checkbox), só relevante no Modo A.
- * =0: exato.
+ * - 2+ lançamentos (Modo A):  Δ = extrato − Σ(base líquida)
+ * - 1 lançamento (Modo B):    Δ = extrato − max(0, base líquida − quitado_anterior)
+ * >0: gap no extrato -> juros (se informados) OU cobertura parcial (juros=0)
+ * <0: títulos > extrato -> residual (Modo A 2+) ou pagamento parcial (Modo B)
+ * =0: exato
  */
 function calcDeltaCentsInterno(
     extratoCents: number,
@@ -70,8 +70,6 @@ function calcDeltaCentsInterno(
 
     if (selected.length === 1 && quitadoAcumuladoById) {
         const quitadoCents = toCents(quitadoAcumuladoById.get(selected[0]!.lancamento_id) ?? 0) ?? 0;
-        // Δ = (quitado_anterior + extrato) − base líquida, algebricamente
-        // igual a extrato − max(0, base líquida − quitado_anterior).
         const baseRestanteCents = Math.max(0, somaBasesCents - quitadoCents);
         return {
             deltaCents: extratoCents - baseRestanteCents,
@@ -90,8 +88,7 @@ function calcDeltaCentsInterno(
 export function buildVincularFormSchema(
     valorExtratoAbs: string | number,
     lancamentosValorById: Map<number, string | number>,
-    /** Quitado antes deste vínculo. Só é aplicado no Modo B (1 lançamento) -
-     *  ver comentário de calcDeltaCentsInterno. */
+    /** Quitado antes deste vínculo. Só é aplicado no Modo B (1 lançamento). */
     quitadoAcumuladoById?: Map<number, string | number>,
 ) {
     const extratoCents = toCents(valorExtratoAbs);
@@ -99,7 +96,7 @@ export function buildVincularFormSchema(
     return z
         .object({
             gerar_parcial: z.boolean(),
-            residuo_lancamento_id: z.number().int().positive().nullable().optional(),
+            residuo_lancamento_id: residuoLancamentoIdSchema,
             itens: z.array(itemSchema),
         })
         .superRefine((data, ctx) => {
@@ -152,45 +149,27 @@ export function buildVincularFormSchema(
             );
 
             if (deltaCents > 0) {
-                // RN-E2: não existe "cobertura parcial" aceitável aqui - a soma de
-                // Juros/Multa TEM que fechar o gap exatamente (com 1 selecionado
-                // o campo já vem pré-preenchido sozinho no front, então na prática
-                // só erra se o usuário apagar/alterar o valor manualmente).
-                if (somaJurosCents !== deltaCents) {
-                    const faltaBr = (deltaCents / 100).toLocaleString("pt-BR", {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
+                // Alinhado ao backend: juros=0 ⇒ cobertura parcial (incremental OK);
+                // juros parciais que não fecham o gap ⇒ erro; juros === Δ ⇒ OK.
+                if (somaJurosCents > 0 && somaJurosCents !== deltaCents) {
+                    ctx.addIssue({
+                        code: "custom",
+                        message:
+                            "A soma de Juros/Multa deve ser igual ao valor que falta para cobrir o extrato.",
+                        path: ["itens"],
                     });
-                    const alvo = selected.length > 1 ? "lançamentos selecionados" : "lançamento";
-                    if (somaJurosCents === 0) {
-                        ctx.addIssue({
-                            code: "custom",
-                            message: `Falta R$ ${faltaBr} para atingir o valor do ${alvo}. Selecione mais lançamentos ou complete o campo Juros/Multa.`,
-                            path: ["itens"],
-                        });
-                    } else {
-                        ctx.addIssue({
-                            code: "custom",
-                            message:
-                                `A soma de Juros/Multa deve ser igual ao valor que falta para atingir o valor do ${alvo}.`,
-                            path: ["itens"],
-                        });
-                    }
                 }
             }
 
             if (deltaCents < 0) {
-                // FALTA. Com 2+ lançamentos (Modo A), o restante só pode ficar em
-                // aberto se o usuário optar explicitamente por gerar a movimentação
-                // residual - senão o vínculo fecharia sem que o total bata (RN-E2).
-                // Com 1 lançamento (Modo B), a falta é pagamento parcial legítimo
-                // (mais linhas de extrato vêm depois) e não exige residual.
+                // FALTA (títulos > extrato). Modo A (2+): exige residual explícito.
+                // Modo B (1): pagamento parcial multi-linha — não exige residual.
                 if (selected.length >= 2) {
                     if (!data.gerar_parcial) {
                         ctx.addIssue({
                             code: "custom",
                             message:
-                                "Falta valor para fechar com o extrato. Marque \"Gerar movimentação residual\" ou ajuste os lançamentos selecionados.",
+                                'Falta valor para fechar com o extrato. Marque "Gerar movimentação residual" ou ajuste os lançamentos selecionados.',
                             path: ["itens"],
                         });
                     } else {
