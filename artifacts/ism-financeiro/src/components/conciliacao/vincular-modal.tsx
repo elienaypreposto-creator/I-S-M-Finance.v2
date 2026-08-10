@@ -6,7 +6,6 @@ import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
 import {formatCurrency, formatDate, cn} from "@/lib/utils";
 import {Checkbox} from "@/components/ui/checkbox";
-import {ScrollArea} from "@/components/ui/scroll-area";
 import {
     buildVincularFormSchema,
     calcDeltaVincularCents,
@@ -347,9 +346,10 @@ function VincularFormBody({
     return (
         <form
             onSubmit={handleSubmit(onSubmit, (errs) => onInvalid(errs))}
-            className="flex flex-col flex-1 min-h-0"
+            className="flex flex-col flex-1 min-h-0 overflow-hidden"
         >
-            <ScrollArea className="flex-1 min-h-[200px] max-h-[45vh] px-5">
+            {/* Lista: único filho que cresce e rola — precisa de min-h-0 no flex. */}
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5">
                 <div className="space-y-2 py-4">
                     {fields.map((field, index) => {
                         const l = lancamentos.find((x) => x.id === field.lancamento_id);
@@ -482,10 +482,10 @@ function VincularFormBody({
                         );
                     })}
                 </div>
-            </ScrollArea>
+            </div>
 
             {itensRootError && (
-                <p className="text-[10px] text-destructive px-5 pb-1 flex items-center gap-1">
+                <p className="shrink-0 text-[10px] text-destructive px-5 py-1 flex items-center gap-1">
                     <AlertCircle className="w-3 h-3"/>
                     {itensRootError}
                 </p>
@@ -816,7 +816,7 @@ export function VincularModal({
     return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 backdrop-blur-md p-4">
             <div
-                className="bg-[#121417] border border-white/10 rounded-2xl w-full max-w-2xl max-h-[90vh] shadow-2xl flex flex-col">
+                className="bg-[#121417] border border-white/10 rounded-2xl w-full max-w-2xl max-h-[90vh] min-h-0 shadow-2xl flex flex-col overflow-hidden">
                 <div className="flex items-center justify-between p-5 border-b border-white/5 shrink-0">
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-xl bg-primary/15 flex items-center justify-center">
