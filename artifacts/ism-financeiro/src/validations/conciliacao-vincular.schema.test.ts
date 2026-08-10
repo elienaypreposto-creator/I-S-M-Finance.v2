@@ -4,7 +4,10 @@
  */
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
-import {calcDeltaVincularCents} from "./conciliacao-vincular.schema";
+import {
+    buildVincularFormSchema,
+    calcDeltaVincularCents,
+} from "./conciliacao-vincular.schema";
 
 describe("calcDeltaVincularCents - Modo B (quitado_acumulado)", () => {
     const tituloId = 99;
@@ -65,5 +68,60 @@ describe("calcDeltaVincularCents - Modo B (quitado_acumulado)", () => {
             new Map([[tituloId, 1000]]),
         );
         assert.equal(ok, -200_000);
+    });
+});
+
+describe("buildVincularFormSchema — submit silencioso (regressão)", () => {
+    it("gap no extrato com juros=0: cobertura parcial OK (não bloqueia)", () => {
+        const valorById = new Map<number, string | number>([[1, 1000]]);
+        const schema = buildVincularFormSchema(8000, valorById);
+        const parsed = schema.safeParse({
+            gerar_parcial: false,
+            residuo_lancamento_id: null,
+            itens: [
+                {
+                    lancamento_id: 1,
+                    selecionado: true,
+                    desconto: "",
+                    juros_multa: "",
+                },
+            ],
+        });
+        assert.equal(parsed.success, true);
+    });
+
+    it("residuo_lancamento_id vazio string vira null (não quebra z.number)", () => {
+        const valorById = new Map<number, string | number>([
+            [1, 5000],
+            [2, 5000],
+        ]);
+        const schema = buildVincularFormSchema(8000, valorById);
+        const parsed = schema.safeParse({
+            gerar_parcial: true,
+            residuo_lancamento_id: "",
+            itens: [
+                {lancamento_id: 1, selecionado: true, desconto: "", juros_multa: ""},
+                {lancamento_id: 2, selecionado: true, desconto: "", juros_multa: ""},
+            ],
+        });
+        // Δ = 8000−10000 < 0 → residual exige origem válida
+        assert.equal(parsed.success, false);
+        if (!parsed.success) {
+            const paths = parsed.error.issues.map((i) => i.path.join("."));
+            assert.ok(paths.includes("residuo_lancamento_id"));
+        }
+    });
+
+    it("Modo B parcial (1 título > extrato): submit OK sem residual", () => {
+        const valorById = new Map<number, string | number>([[99, 4000]]);
+        const schema = buildVincularFormSchema(1000, valorById, new Map([[99, 0]]));
+        const parsed = schema.safeParse({
+            gerar_parcial: false,
+            residuo_lancamento_id: null,
+            itens: [
+                {lancamento_id: 99, selecionado: true, desconto: "", juros_multa: ""},
+            ],
+        });
+        assert.equal(parsed.success, true);
     });
 });
