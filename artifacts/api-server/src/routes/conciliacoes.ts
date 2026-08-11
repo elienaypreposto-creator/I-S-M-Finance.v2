@@ -428,6 +428,10 @@ router.get("/conciliacoes", withPermission(PERM.CONCILIACAO_ACESSAR), async (req
                 extrato_id: extratosTable.id,
                 conta_id: conciliacoesTable.conta_id,
                 conta_nome: contasBancariasTable.nome,
+                conta_agencia: contasBancariasTable.agencia,
+                conta_digito_agencia: contasBancariasTable.digito_agencia,
+                conta_numero: contasBancariasTable.conta,
+                conta_digito: contasBancariasTable.digito_conta,
                 arquivo_nome: extratosTable.arquivo_nome,
                 periodo_inicio: conciliacoesTable.periodo_inicio,
                 periodo_fim: conciliacoesTable.periodo_fim,
@@ -453,6 +457,75 @@ router.get("/conciliacoes", withPermission(PERM.CONCILIACAO_ACESSAR), async (req
     }
 });
 
+/** Exclui extrato + conciliação ainda não finalizada (lista principal — lixeira). */
+router.delete(
+    "/conciliacoes/:extrato_id",
+    withPermission(PERM.CONCILIACAO_IMPORTAR),
+    async (req, res) => {
+        try {
+            const extratoId = Number(req.params.extrato_id);
+            if (!Number.isFinite(extratoId) || extratoId <= 0) {
+                return errorResponse(res, 400, "VALIDATION_ERROR", "extrato_id inválido.");
+            }
+
+            const [extrato] = await db
+                .select()
+                .from(extratosTable)
+                .where(eq(extratosTable.id, extratoId))
+                .limit(1);
+            if (!extrato) {
+                return errorResponse(res, 404, "NOT_FOUND", "Extrato não encontrado.");
+            }
+            if (extrato.status === "conciliado") {
+                return errorResponse(
+                    res,
+                    409,
+                    "CONFLICT",
+                    "Não é possível excluir um extrato já conciliado.",
+                );
+            }
+
+            const [conciliacao] = await db
+                .select()
+                .from(conciliacoesTable)
+                .where(eq(conciliacoesTable.extrato_id, extratoId))
+                .limit(1);
+
+            await db.transaction(async (tx) => {
+                if (conciliacao) {
+                    const itens = await tx
+                        .select({id: itensConciliacaoTable.id})
+                        .from(itensConciliacaoTable)
+                        .where(eq(itensConciliacaoTable.conciliacao_id, conciliacao.id));
+                    const itemIds = itens.map((i) => i.id);
+
+                    if (itemIds.length > 0) {
+                        await tx
+                            .delete(itensConciliacaoLancamentosTable)
+                            .where(inArray(itensConciliacaoLancamentosTable.item_conciliacao_id, itemIds));
+                    }
+
+                    await tx
+                        .delete(historicoConciliacaoTable)
+                        .where(eq(historicoConciliacaoTable.conciliacao_id, conciliacao.id));
+
+                    await tx
+                        .delete(itensConciliacaoTable)
+                        .where(eq(itensConciliacaoTable.conciliacao_id, conciliacao.id));
+
+                    await tx.delete(conciliacoesTable).where(eq(conciliacoesTable.id, conciliacao.id));
+                }
+
+                await tx.delete(extratoLinhasTable).where(eq(extratoLinhasTable.extrato_id, extratoId));
+                await tx.delete(extratosTable).where(eq(extratosTable.id, extratoId));
+            });
+
+            return successResponse(res, {deleted: true, extrato_id: extratoId});
+        } catch (e) {
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao excluir extrato.", String(e));
+        }
+    },
+);
 /** FEAT-07: pendências por mês (informativo). Deve ficar ANTES de /:extrato_id. */
 router.get("/conciliacoes/pendencias-mes", withPermission(PERM.CONCILIACAO_ACESSAR), async (req, res) => {
     try {
