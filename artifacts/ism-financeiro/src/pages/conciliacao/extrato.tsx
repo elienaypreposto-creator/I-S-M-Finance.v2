@@ -19,10 +19,6 @@ import {
     Link2,
     Ban,
     CheckCircle2,
-    Scale,
-    TrendingUp,
-    TrendingDown,
-    AlertTriangle,
     RotateCcw,
     Unlink,
     Pencil,
@@ -33,8 +29,10 @@ import {
     Trash2,
     ChevronLeft,
     ChevronRight,
-    Repeat,
     Sparkles,
+    RefreshCw,
+    Filter,
+    Download,
 } from "lucide-react";
 import {invalidateRelated} from "@/App";
 import {formatValorBrInput, brMoneyDisplayToApiString} from "@/validations/lancamentos.schema";
@@ -131,6 +129,11 @@ type ExtratoDetalheResponse = {
     extrato: ExtratoDetalheExtrato;
     conciliacao: ConciliacaoResumo;
     linhas: LinhaDetalhe[];
+    // OBS: o diagnóstico de saldo continua vindo nesta resposta, mas deixou
+    // de ser exibido aqui — a exibição foi movida para a tela Home/Dashboard
+    // (ver Dashboard.tsx). Mantido no tipo para não quebrar o contrato com o
+    // backend; se a Home passar a ter um endpoint próprio, este campo pode
+    // ser removido daqui.
     diagnostico: DiagnosticoSaldo;
 };
 
@@ -173,119 +176,10 @@ function corNaturezaTexto(isCredito: boolean) {
     return isCredito ? "text-emerald-300" : "text-red-300";
 }
 
-function corNaturezaRegua(isCredito: boolean) {
-    return isCredito ? "border-l-emerald-500/70" : "border-l-red-500/70";
-}
-
-/** Painel de conciliação: saldo do sistema × saldo do extrato × diferença (Card 42). */
-function PainelDiagnostico({diagnostico}: { diagnostico: DiagnosticoSaldo }) {
-    if (!diagnostico) return null;
-
-    const {
-        data_referencia,
-        saldo_sistema,
-        saldo_banco,
-        diferenca,
-        bate,
-        diagnostico: mensagem,
-        linhas_ignoradas_valor,
-        linhas_ignoradas_explicam,
-        saldo_inicial,
-    } = diagnostico;
-
-    const diferencaColor =
-        bate === true
-            ? "text-emerald-300"
-            : bate === false
-                ? diferenca !== null && diferenca > 0
-                    ? "text-amber-300"
-                    : "text-sky-300"
-                : "text-muted-foreground";
-
-    return (
-        <div className="glass-panel rounded-2xl p-6 border border-white/10 space-y-4">
-            <div className="flex items-center gap-2">
-                <Scale className="w-4 h-4 text-primary"/>
-                <h2 className="text-sm font-bold text-white uppercase tracking-wide">Diagnóstico de saldo</h2>
-                <span className="text-[10px] text-muted-foreground">· comparado em {formatDate(data_referencia)}</span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="rounded-xl bg-black/30 border border-white/10 p-4">
-                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Saldo do
-                        sistema</p>
-                    <p className="text-xl font-black text-white mt-1">{formatCurrency(saldo_sistema)}</p>
-                </div>
-                <div className="rounded-xl bg-black/30 border border-white/10 p-4">
-                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Saldo do
-                        extrato (banco)</p>
-                    <p className="text-xl font-black text-white mt-1">
-                        {saldo_banco !== null ? formatCurrency(saldo_banco) : "—"}
-                    </p>
-                </div>
-                <div
-                    className={cn(
-                        "rounded-xl border p-4",
-                        bate === true
-                            ? "bg-emerald-500/10 border-emerald-500/25"
-                            : bate === false
-                                ? "bg-amber-500/10 border-amber-500/25"
-                                : "bg-black/30 border-white/10",
-                    )}>
-                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
-                        {bate === false && diferenca !== null && diferenca > 0 && <TrendingUp className="w-3 h-3"/>}
-                        {bate === false && diferenca !== null && diferenca < 0 && <TrendingDown className="w-3 h-3"/>}
-                        Diferença
-                    </p>
-                    <p className={cn("text-xl font-black mt-1", diferencaColor)}>
-                        {diferenca !== null ? formatCurrency(diferenca) : "—"}
-                    </p>
-                </div>
-            </div>
-
-            <p className={cn("text-xs", bate === true ? "text-emerald-300" : "text-white/80")}>{mensagem}</p>
-
-            {linhas_ignoradas_explicam && (
-                <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 flex items-start gap-2">
-                    <AlertTriangle className="w-4 h-4 text-amber-300 shrink-0 mt-0.5"/>
-                    <p className="text-xs text-amber-200">
-                        Linhas ignoradas somam <strong>{formatCurrency(linhas_ignoradas_valor)}</strong>, na mesma
-                        direção da diferença encontrada. Isso pode indicar que uma ou mais dessas linhas foram
-                        ignoradas indevidamente — revise antes de finalizar.
-                    </p>
-                </div>
-            )}
-
-            {saldo_inicial && (
-                <div
-                    className={cn(
-                        "rounded-xl border p-3 flex items-start gap-2",
-                        saldo_inicial.bate
-                            ? "border-emerald-500/20 bg-emerald-500/5"
-                            : "border-red-500/25 bg-red-500/10",
-                    )}>
-                    {saldo_inicial.bate ? (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-300 shrink-0 mt-0.5"/>
-                    ) : (
-                        <AlertTriangle className="w-4 h-4 text-red-300 shrink-0 mt-0.5"/>
-                    )}
-                    <p className={cn("text-xs", saldo_inicial.bate ? "text-emerald-200" : "text-red-200")}>
-                        Fechamento de período: o saldo de abertura ({formatDate(saldo_inicial.data_referencia)})
-                        {saldo_inicial.bate ? " bate " : " NÃO bate "}
-                        com o fechamento do extrato anterior (#{saldo_inicial.extrato_anterior_id}). Sistema:{" "}
-                        {formatCurrency(saldo_inicial.saldo_sistema)} · Extrato
-                        anterior: {formatCurrency(saldo_inicial.saldo_extrato_anterior)}
-                        {!saldo_inicial.bate && ` · Diferença: ${formatCurrency(saldo_inicial.diferenca)}`}
-                    </p>
-                </div>
-            )}
-        </div>
-    );
-}
-
 /**
  * Card de lançamento (coluna direita): Desconto / Juros-Multa editáveis (RN-G7).
  * Residual parcial: vencimento = origem, **não editável** (Decisão nº 3).
+ * Padding/gaps reduzidos para acompanhar a densidade do protótipo (imagem 2).
  */
 function CardLancamento({
                             v,
@@ -383,7 +277,7 @@ function CardLancamento({
     }
 
     return (
-        <li className="rounded-lg bg-black/30 border border-white/10 px-3 py-2.5 space-y-1.5">
+        <li className="rounded-lg bg-black/30 border border-white/10 px-2.5 py-2 space-y-1">
             <div className="flex items-center justify-between gap-2">
                 {isResidual ? (
                     <label className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-200 min-w-0">
@@ -433,11 +327,7 @@ function CardLancamento({
                 </div>
             </div>
 
-            {!isResidual && (
-                <p className="hidden">{/* descrição já exibida no header acima para não-residuais */}</p>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-2.5">
                 <div>
                     <span
                         className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider">Desconto</span>
@@ -537,6 +427,9 @@ function CardLancamento({
 }
 
 const LINHAS_POR_PAGINA = 6;
+/** Tolerância em reais para considerar o saldo da linha "zerado" (evita
+ *  ruído de arredondamento de ponto flutuante). */
+const TOLERANCIA_SALDO = 0.005;
 
 export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: string }) {
     const [, setLocation] = useLocation();
@@ -560,6 +453,31 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     const [novoLancamentoLinha, setNovoLancamentoLinha] = useState<LinhaDetalhe | null>(null);
     // RN-D5 - navegação ‹ › entre as linhas, sem sair da tela.
     const [pagina, setPagina] = useState(0);
+
+    // Barra de filtros (Tipo / Status / Pesquisar / Aplicar) - igual ao protótipo.
+    // Os selects e o campo de busca só afetam a lista quando o usuário clica em
+    // "Aplicar" (filtrosAplicados), evitando refiltrar a cada tecla digitada.
+    const [filtroTipo, setFiltroTipo] = useState<"todos" | "credito" | "debito">("todos");
+    const [filtroStatus, setFiltroStatus] = useState<"todos" | "pendente" | "vinculado" | "ignorado">("todos");
+    const [buscaTexto, setBuscaTexto] = useState("");
+    const [filtrosAplicados, setFiltrosAplicados] = useState<{
+        tipo: "todos" | "credito" | "debito";
+        status: "todos" | "pendente" | "vinculado" | "ignorado";
+        busca: string;
+    }>({tipo: "todos", status: "todos", busca: ""});
+
+    function aplicarFiltros() {
+        setFiltrosAplicados({tipo: filtroTipo, status: filtroStatus, busca: buscaTexto.trim()});
+        setPagina(0);
+    }
+
+    function limparFiltros() {
+        setFiltroTipo("todos");
+        setFiltroStatus("todos");
+        setBuscaTexto("");
+        setFiltrosAplicados({tipo: "todos", status: "todos", busca: ""});
+        setPagina(0);
+    }
 
     const {data, isLoading, isError, refetch} = useQuery({
         queryKey: ["conciliacao-extrato", extratoId],
@@ -685,17 +603,29 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     const extrato = data?.extrato;
     const conc = data?.conciliacao;
     const linhas = data?.linhas ?? [];
-    const diagnostico = data?.diagnostico ?? null;
     const podeFinalizar = (conc?.resumo_pendentes ?? 1) === 0;
     /** FEAT-05 / Card 57: rótulo dinâmico Salvar / Concluir (nunca "Finalizar/Conciliar"). */
     const rotuloAcaoConciliacao = podeFinalizar ? "Concluir" : "Salvar";
 
+    // Aplica Tipo / Status / Pesquisar sobre a lista antes de paginar.
+    const linhasFiltradas = useMemo(() => {
+        return linhas.filter((linha) => {
+            if (filtrosAplicados.tipo !== "todos" && linha.tipo_movimento !== filtrosAplicados.tipo) return false;
+            if (filtrosAplicados.status !== "todos" && linha.status !== filtrosAplicados.status) return false;
+            if (filtrosAplicados.busca) {
+                const alvo = (linha.descricao ?? "").toLowerCase();
+                if (!alvo.includes(filtrosAplicados.busca.toLowerCase())) return false;
+            }
+            return true;
+        });
+    }, [linhas, filtrosAplicados]);
+
     // RN-D5: navegação ‹ › entre as linhas, sem sair da tela.
-    const totalPaginas = Math.max(1, Math.ceil(linhas.length / LINHAS_POR_PAGINA));
+    const totalPaginas = Math.max(1, Math.ceil(linhasFiltradas.length / LINHAS_POR_PAGINA));
     const paginaAtual = Math.min(pagina, totalPaginas - 1);
     const linhasDaPagina = useMemo(
-        () => linhas.slice(paginaAtual * LINHAS_POR_PAGINA, paginaAtual * LINHAS_POR_PAGINA + LINHAS_POR_PAGINA),
-        [linhas, paginaAtual],
+        () => linhasFiltradas.slice(paginaAtual * LINHAS_POR_PAGINA, paginaAtual * LINHAS_POR_PAGINA + LINHAS_POR_PAGINA),
+        [linhasFiltradas, paginaAtual],
     );
 
     return (
@@ -822,112 +752,105 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                 </div>
             ) : (
                 <>
-                    <div className="glass-panel rounded-2xl p-6 border border-white/10 space-y-6">
-                        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6">
-                            <div className="space-y-2 min-w-0">
-                                <div className="flex flex-wrap items-center gap-2">
-                                    <FileText className="w-5 h-5 text-primary shrink-0"/>
-                                    <h1 className="text-xl font-bold text-white truncate">{extrato.arquivo_nome ?? `Extrato #${extrato.id}`}</h1>
-                                    <span
-                                        className={cn(
-                                            "text-[10px] font-black uppercase px-2 py-0.5 rounded-md border shrink-0",
-                                            statusExtratoBadge(extrato.status),
-                                        )}>
-                    {extrato.status}
-                  </span>
-                                </div>
-                                <p className="text-sm text-muted-foreground">
-                                    Conta: <span
-                                    className="text-white/90 font-medium">{extrato.conta_nome ?? "—"}</span>
-                                    {extrato.periodo_inicio && extrato.periodo_fim && (
-                                        <>
-                                            {" "}
-                                            ·
-                                            Período {formatDate(extrato.periodo_inicio)} — {formatDate(extrato.periodo_fim)}
-                                        </>
-                                    )}
-                                </p>
-                                <p className="text-xs text-muted-foreground">Importado
-                                    em {formatDate(extrato.created_at)}</p>
-                            </div>
 
-                            <div
-                                className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3 w-full lg:w-auto lg:min-w-[420px]">
-                                <div className="rounded-xl bg-black/30 border border-white/10 p-3 text-center">
-                                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Total</p>
-                                    <p className="text-lg font-black text-white mt-1">{conc.resumo_total}</p>
-                                </div>
-                                <div
-                                    className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-3 text-center">
-                                    <p className="text-[10px] font-bold text-emerald-400/90 uppercase tracking-wider">Vinculados</p>
-                                    <p className="text-lg font-black text-emerald-300 mt-1">{conc.resumo_conciliados}</p>
-                                </div>
-                                <div className="rounded-xl bg-amber-500/10 border border-amber-500/20 p-3 text-center">
-                                    <p className="text-[10px] font-bold text-amber-300/90 uppercase tracking-wider">Pendentes</p>
-                                    <p className="text-lg font-black text-amber-200 mt-1">{conc.resumo_pendentes}</p>
-                                </div>
-                                <div className="rounded-xl bg-white/5 border border-white/10 p-3 text-center">
-                                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Ignorados</p>
-                                    <p className="text-lg font-black text-white/80 mt-1">{conc.resumo_ignorados}</p>
-                                </div>
-                                {(conc.resumo_classificadas_automaticamente ?? 0) > 0 && (
-                                    <div className="rounded-xl bg-sky-500/10 border border-sky-500/20 p-3 text-center">
-                                        <p className="text-[10px] font-bold text-sky-300/90 uppercase tracking-wider">Auto</p>
-                                        <p className="text-lg font-black text-sky-200 mt-1">
-                                            {conc.resumo_classificadas_automaticamente}
-                                        </p>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        <div className="flex flex-wrap gap-3 pt-2 border-t border-white/5">
-                            <div className="text-xs text-muted-foreground flex items-center gap-4">
-                <span>
-                  Créditos: <strong
-                    className="text-emerald-400">{formatCurrency(Number(extrato.total_creditos))}</strong>
-                </span>
-                                <span>
-                  Débitos: <strong className="text-red-300">{formatCurrency(Number(extrato.total_debitos))}</strong>
-                </span>
-                                <span>
-                  Linhas no arquivo: <strong className="text-white">{extrato.total_linhas}</strong>
-                </span>
-                            </div>
-                            <div className="flex-1"/>
-                            <RequiresPermission permission={PERM.CONCILIACAO_CONCLUIR}>
-                                <button
-                                    type="button"
-                                    disabled={!podeFinalizar || finalizarMutation.isPending || extrato.status === "conciliado"}
-                                    onClick={() => {
-                                        if (!podeFinalizar) return;
-                                        setFinalizarOpen(true);
-                                    }}
-                                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-success hover:bg-success/90 text-white text-xs font-bold disabled:opacity-40 disabled:pointer-events-none shadow-lg shadow-success/20">
-                                    {finalizarMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin"/> :
-                                        <CheckCircle2 className="w-4 h-4"/>}
-                                    {rotuloAcaoConciliacao}
-                                </button>
-                            </RequiresPermission>
-                        </div>
-                    </div>
-
-                    <PainelDiagnostico diagnostico={diagnostico}/>
 
                     <div
                         className="glass-panel rounded-2xl border border-white/10 overflow-hidden flex flex-col flex-1 min-h-0">
-                        <div className="px-4 py-3 border-b border-white/5 bg-black/20">
-                            <h2 className="text-sm font-bold text-white uppercase tracking-wide">Movimentações do
-                                extrato</h2>
-                            <p className="text-[11px] text-muted-foreground mt-0.5">Linhas importadas e vínculos com o
-                                financeiro</p>
+                        {/* Barra de filtros: Tipo, Status, Aplicar, Atualizar, Limpar e Pesquisar (igual ao protótipo) */}
+                        <div className="flex flex-wrap items-center gap-2 px-3.5 py-2.5 border-b border-white/5 bg-black/10">
+                            <select
+                                value={filtroTipo}
+                                onChange={(e) => setFiltroTipo(e.target.value as typeof filtroTipo)}
+                                className="bg-black/30 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white/90 outline-none focus:border-primary/40">
+                                <option value="todos">Tipo</option>
+                                <option value="credito">Crédito</option>
+                                <option value="debito">Débito</option>
+                            </select>
+
+                            <select
+                                value={filtroStatus}
+                                onChange={(e) => setFiltroStatus(e.target.value as typeof filtroStatus)}
+                                className="bg-black/30 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white/90 outline-none focus:border-primary/40">
+                                <option value="todos">Status</option>
+                                <option value="pendente">Pendente</option>
+                                <option value="vinculado">Vinculado</option>
+                                <option value="ignorado">Ignorado</option>
+                            </select>
+
+                            <button
+                                type="button"
+                                onClick={aplicarFiltros}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/90 hover:bg-primary text-primary-foreground text-xs font-bold">
+                                <Filter className="w-3.5 h-3.5"/>
+                                Aplicar
+                            </button>
+
+                            <button
+                                type="button"
+                                title="Atualizar"
+                                onClick={() => void refetch()}
+                                className="p-1.5 rounded-lg border border-white/10 text-white/80 hover:bg-white/5 hover:text-white">
+                                <RefreshCw className={cn("w-3.5 h-3.5", isLoading && "animate-spin")}/>
+                            </button>
+
+                            <button
+                                type="button"
+                                title="Limpar filtros"
+                                onClick={limparFiltros}
+                                className="p-1.5 rounded-lg border border-white/10 text-white/80 hover:bg-white/5 hover:text-white">
+                                <X className="w-3.5 h-3.5"/>
+                            </button>
+
+                            <div className="flex-1"/>
+
+                            <div className="relative w-full sm:w-64">
+                                <Search
+                                    className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2"/>
+                                <input
+                                    type="text"
+                                    value={buscaTexto}
+                                    onChange={(e) => setBuscaTexto(e.target.value)}
+                                    onKeyDown={(e) => e.key === "Enter" && aplicarFiltros()}
+                                    placeholder="Pesquisar"
+                                    className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-black/30 border border-white/10 text-xs text-white placeholder:text-muted-foreground outline-none focus:border-primary/40"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Cabeçalho de duas colunas - "Extrato" à esquerda (com o período do
+                            extrato ao lado do título) - "Movimentações não conciliadas" à
+                            direita - ícones e títulos centralizados. */}
+                        <div
+                            className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_36px_minmax(0,1fr)] border-b border-white/5 bg-black/20">
+                            <div className="px-3.5 py-2.5 flex items-center justify-center gap-2 flex-wrap">
+                                <Download className="w-3.5 h-3.5 text-primary shrink-0"/>
+                                <h2 className="text-sm font-bold text-white uppercase tracking-wide">Extrato</h2>
+                                {extrato.periodo_inicio && extrato.periodo_fim && (
+                                    <span className="text-[10px] font-normal normal-case text-muted-foreground">
+                                        · Período {formatDate(extrato.periodo_inicio)} — {formatDate(extrato.periodo_fim)}
+                                    </span>
+                                )}
+                            </div>
+                            <div className="hidden xl:block"/>
+                            <div className="px-3.5 py-2.5 flex items-center justify-center gap-2 border-t xl:border-t-0 border-white/5">
+                                <Unlink className="w-3.5 h-3.5 text-primary shrink-0"/>
+                                <h2 className="text-sm font-bold text-white uppercase tracking-wide">Movimentações
+                                    não conciliadas</h2>
+                            </div>
                         </div>
 
                         {/*
                           RN-D1: duas colunas - esquerda a linha do extrato, direita o(s)
                           lançamento(s) - com o conector central de estado (RN-D4).
+                          Sem barra colorida lateral: a cor semântica agora aparece como
+                          sublinhado sob o título e no valor, igual ao protótipo.
                         */}
-                        <div className="divide-y divide-white/5 overflow-y-auto max-h-[calc(100vh-24rem)]">
+                        {linhasFiltradas.length === 0 ? (
+                            <div className="py-16 text-center text-xs text-muted-foreground">
+                                Nenhuma linha encontrada com os filtros aplicados.
+                            </div>
+                        ) : (
+                        <div className="divide-y divide-white/5 overflow-y-auto max-h-[calc(100vh-28rem)]">
                             {linhasDaPagina.map((linha) => {
                                 const isPendente = linha.status === "pendente";
                                 const isVinculado = linha.status === "vinculado";
@@ -935,27 +858,32 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                 const isCredito = linha.tipo_movimento === "credito";
                                 const valorAbs = Math.abs(Number(linha.valor));
 
+                                // FIX: o status "vinculado" só indica que existe pelo menos 1
+                                // vínculo — não que o valor da linha já foi totalmente coberto.
+                                // Antes disso era ignorado e a UI escondia o botão "Vincular"
+                                // (e o "+") assim que o primeiro lançamento parcial entrava,
+                                // impedindo completar o valor com mais lançamentos.
+                                const saldoAbs = Math.abs(Number(linha.valor_saldo));
+                                const faltaFechar = saldoAbs > TOLERANCIA_SALDO;
+                                const podeVincularMais = !isIgnorado && (isPendente || faltaFechar);
+
                                 return (
                                     <div
                                         key={linha.linha_id}
                                         className={cn(
-                                            "grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_40px_minmax(0,1fr)] divide-y xl:divide-y-0 xl:divide-x divide-white/5",
+                                            "grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_36px_minmax(0,1fr)] divide-y xl:divide-y-0 xl:divide-x divide-white/5",
                                             isIgnorado && "opacity-45 grayscale-[0.35] bg-white/[0.015]",
                                         )}
                                     >
-                                        {/* ── COLUNA ESQUERDA: linha do extrato (RN-D2 régua vermelho/verde) ── */}
-                                        <div
-                                            className={cn(
-                                                "border-l-4 p-4 space-y-2 min-w-0",
-                                                corNaturezaRegua(isCredito),
-                                            )}>
+                                        {/* ── COLUNA ESQUERDA: linha do extrato ── */}
+                                        <div className="p-3 space-y-1.5 min-w-0">
                                             {/* Cabeçalho: badge + data à esquerda, [+] e [⊘ Ignorar]/[↺ Reverter]
                                                 juntos à direita, na mesma linha (layout do protótipo). */}
                                             <div className="flex items-center justify-between gap-2 flex-wrap">
                                                 <div className="flex items-center gap-2 min-w-0">
                           <span
                               className={cn(
-                                  "text-[10px] font-black px-2 py-0.5 rounded border uppercase shrink-0",
+                                  "text-[10px] font-black px-1.5 py-0.5 rounded border uppercase shrink-0",
                                   corNaturezaBadge(isCredito),
                               )}>
                             {linha.tipo_movimento}
@@ -967,8 +895,10 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                     )}
                                                 </div>
                                                 <div className="flex items-center gap-1.5 shrink-0">
-                                                    {/* RN-D3: [+] verde - abre o formulário completo de Novo Lançamento */}
-                                                    {isPendente && canVincular && (
+                                                    {/* RN-D3: [+] verde - abre o formulário completo de Novo Lançamento.
+                                                        Agora fica visível enquanto ainda faltar saldo a fechar, mesmo
+                                                        que já exista algum vínculo parcial na linha. */}
+                                                    {podeVincularMais && canVincular && (
                                                         <button
                                                             type="button"
                                                             title="Criar lançamento a partir desta linha"
@@ -1001,7 +931,22 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                 </div>
                                             </div>
 
-                                            <p className="text-sm text-white font-medium leading-snug">{linha.descricao ?? "—"}</p>
+                                            <p className="text-sm text-white font-medium leading-snug">
+                                                {linha.descricao ?? "—"}
+                                            </p>
+
+                                            <span className={cn("block text-lg font-black", corNaturezaTexto(isCredito))}>
+                          {formatCurrency(valorAbs)}
+                        </span>
+
+                                            {/* Quando já existe vínculo parcial, mostra quanto ainda falta —
+                                                senão o usuário não entende por que o botão "Vincular" voltou
+                                                a aparecer numa linha que já tem lançamento associado. */}
+                                            {isVinculado && faltaFechar && (
+                                                <p className="text-[11px] text-amber-300/90">
+                                                    Falta vincular {formatCurrency(saldoAbs)}
+                                                </p>
+                                            )}
 
                                             {linha.classificacao_automatica && (
                                                 <p className="text-[11px] text-sky-300/90 bg-sky-500/10 border border-sky-500/25 rounded-lg px-2 py-1 inline-flex items-center gap-1.5">
@@ -1017,11 +962,6 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                 </p>
                                             )}
 
-                                            <span
-                                                className={cn("inline-block text-base font-black border-b-2 pb-0.5", corNaturezaTexto(isCredito), corNaturezaRegua(isCredito))}>
-                          {formatCurrency(valorAbs)}
-                        </span>
-
                                             {linha.documento && (
                                                 <p className="text-[10px] text-muted-foreground font-mono">Doc.
                                                     {" "}{linha.documento}</p>
@@ -1034,40 +974,32 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                         </div>
 
                                         {/* ── COLUNA CENTRAL: conector (RN-D4) ── */}
-                                        <div className="flex items-center justify-center py-2 xl:py-4">
+                                        <div className="flex items-center justify-center py-1.5 xl:py-2">
                                             {!isIgnorado && (
                                                 <div
                                                     className={cn(
-                                                        "w-8 h-8 rounded-full flex items-center justify-center border shrink-0",
-                                                        isVinculado
+                                                        "w-7 h-7 rounded-full flex items-center justify-center border shrink-0",
+                                                        !faltaFechar
                                                             ? "bg-white/5 border-white/15 text-muted-foreground"
                                                             : "bg-amber-500/15 border-amber-500/40 text-amber-300",
                                                     )}
-                                                    title={isVinculado ? "Os valores batem" : "Os valores divergem"}>
-                                                    {isVinculado ? (
-                                                        <Link2 className="w-4 h-4"/>
+                                                    title={!faltaFechar ? "Os valores batem" : "Os valores divergem"}>
+                                                    {!faltaFechar ? (
+                                                        <Link2 className="w-3.5 h-3.5"/>
                                                     ) : (
-                                                        <span className="text-sm font-black">≠</span>
+                                                        <span className="text-xs font-black">≠</span>
                                                     )}
                                                 </div>
                                             )}
                                         </div>
 
                                         {/* ── COLUNA DIREITA: lançamento(s) ── */}
-                                        <div className="p-4 min-w-0 space-y-2">
-                                            {/* [🔍 Vincular]: visível enquanto o valor não bate; some no valor exato */}
-                                            {isPendente && canVincular && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setVincularLinha({id: linha.linha_id, valorAbs})}
-                                                    className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-primary/90 hover:bg-primary text-primary-foreground text-xs font-bold shadow-md shadow-primary/20">
-                                                    <Search className="w-3.5 h-3.5"/>
-                                                    Vincular
-                                                </button>
-                                            )}
-
+                                        <div className="p-3 min-w-0 space-y-1.5">
+                                            {/* Lista dos lançamentos já vinculados (se houver) — antes isso
+                                                era "ou" com o botão Vincular; agora os dois podem coexistir
+                                                enquanto sobrar saldo a fechar na linha. */}
                                             {isVinculado && linha.vinculacoes.length > 0 && (
-                                                <ul className="space-y-2">
+                                                <ul className="space-y-1.5">
                                                     {linha.vinculacoes.map((v) => (
                                                         <CardLancamento
                                                             key={v.vinculo_id ?? v.lancamento_id}
@@ -1083,6 +1015,24 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                 </ul>
                                             )}
 
+                                            {/* [🔍 Vincular]: visível enquanto sobrar saldo a fechar (linha
+                                                pendente OU vinculada parcialmente); some no valor exato.
+                                                IMPORTANTE: passa o SALDO restante da linha (linha.valor_saldo),
+                                                não o valor cheio da linha — senão o modal calcula o "restante"
+                                                contra o valor total, ignorando o que já foi vinculado antes. */}
+                                            {podeVincularMais && canVincular && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setVincularLinha({
+                                                        id: linha.linha_id,
+                                                        valorAbs: saldoAbs,
+                                                    })}
+                                                    className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-primary/90 hover:bg-primary text-primary-foreground text-xs font-bold shadow-md shadow-primary/20">
+                                                    <Search className="w-3.5 h-3.5"/>
+                                                    Vincular
+                                                </button>
+                                            )}
+
                                             {isIgnorado && (
                                                 <p className="text-[11px] text-muted-foreground italic py-2">
                                                     Linha ignorada — sem lançamento vinculado.
@@ -1093,9 +1043,10 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                 );
                             })}
                         </div>
+                        )}
 
                         {/* RN-D5: navegação ‹ › entre as linhas, sem sair da tela */}
-                        {linhas.length > LINHAS_POR_PAGINA && (
+                        {linhasFiltradas.length > LINHAS_POR_PAGINA && (
                             <div
                                 className="flex items-center justify-center gap-4 py-3 border-t border-white/5 bg-black/20">
                                 <button
@@ -1117,6 +1068,28 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                 </button>
                             </div>
                         )}
+
+                        {/*
+                          Rodapé de ação: o botão Salvar/Concluir saiu do cabeçalho e
+                          agora fica aqui embaixo, alinhado à direita, após a lista de
+                          linhas / paginação.
+                        */}
+                        <div className="flex items-center justify-end gap-3 px-4 py-3 border-t border-white/5 bg-black/25">
+                            <RequiresPermission permission={PERM.CONCILIACAO_CONCLUIR}>
+                                <button
+                                    type="button"
+                                    disabled={!podeFinalizar || finalizarMutation.isPending || extrato.status === "conciliado"}
+                                    onClick={() => {
+                                        if (!podeFinalizar) return;
+                                        setFinalizarOpen(true);
+                                    }}
+                                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-success hover:bg-success/90 text-white text-xs font-bold disabled:opacity-40 disabled:pointer-events-none shadow-lg shadow-success/20">
+                                    {finalizarMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin"/> :
+                                        <CheckCircle2 className="w-4 h-4"/>}
+                                    {rotuloAcaoConciliacao}
+                                </button>
+                            </RequiresPermission>
+                        </div>
                     </div>
                 </>
             )}
