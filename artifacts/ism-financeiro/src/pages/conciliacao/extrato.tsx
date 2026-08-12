@@ -1,4 +1,4 @@
-import {useMemo, useState} from "react";
+import {useMemo, useState, useEffect} from "react";
 import {useLocation} from "wouter";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
@@ -430,6 +430,11 @@ const LINHAS_POR_PAGINA = 6;
 /** Tolerância em reais para considerar o saldo da linha "zerado" (evita
  *  ruído de arredondamento de ponto flutuante). */
 const TOLERANCIA_SALDO = 0.005;
+/** Busca automática por descrição: quantidade mínima de caracteres para
+ *  disparar o filtro sozinho, e tempo de debounce (ms) para não refiltrar
+ *  a cada tecla digitada. */
+const BUSCA_MIN_CHARS = 3;
+const BUSCA_DEBOUNCE_MS = 350;
 
 export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: string }) {
     const [, setLocation] = useLocation();
@@ -455,8 +460,11 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     const [pagina, setPagina] = useState(0);
 
     // Barra de filtros (Tipo / Status / Pesquisar / Aplicar) - igual ao protótipo.
-    // Os selects e o campo de busca só afetam a lista quando o usuário clica em
-    // "Aplicar" (filtrosAplicados), evitando refiltrar a cada tecla digitada.
+    // Tipo e Status só afetam a lista quando o usuário clica em "Aplicar"
+    // (filtrosAplicados). A Pesquisa (por descrição) é diferente: ela é
+    // aplicada sozinha assim que o usuário digita pelo menos
+    // BUSCA_MIN_CHARS caracteres, com um pequeno debounce (ver useEffect
+    // abaixo) — "Aplicar" e Enter continuam funcionando como atalho manual.
     const [filtroTipo, setFiltroTipo] = useState<"todos" | "credito" | "debito">("todos");
     const [filtroStatus, setFiltroStatus] = useState<"todos" | "pendente" | "vinculado" | "ignorado">("todos");
     const [buscaTexto, setBuscaTexto] = useState("");
@@ -465,6 +473,27 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
         status: "todos" | "pendente" | "vinculado" | "ignorado";
         busca: string;
     }>({tipo: "todos", status: "todos", busca: ""});
+
+    // Busca automática por nome/descrição: dispara sozinha a partir de
+    // BUSCA_MIN_CHARS caracteres digitados. Se o campo for esvaziado, o
+    // filtro de busca é limpo na hora (sem esperar debounce).
+    useEffect(() => {
+        const termo = buscaTexto.trim();
+
+        if (termo.length === 0) {
+            setFiltrosAplicados((prev) => (prev.busca === "" ? prev : {...prev, busca: ""}));
+            return;
+        }
+
+        if (termo.length < BUSCA_MIN_CHARS) return;
+
+        const timeoutId = setTimeout(() => {
+            setFiltrosAplicados((prev) => (prev.busca === termo ? prev : {...prev, busca: termo}));
+            setPagina(0);
+        }, BUSCA_DEBOUNCE_MS);
+
+        return () => clearTimeout(timeoutId);
+    }, [buscaTexto]);
 
     function aplicarFiltros() {
         setFiltrosAplicados({tipo: filtroTipo, status: filtroStatus, busca: buscaTexto.trim()});
@@ -811,7 +840,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                     value={buscaTexto}
                                     onChange={(e) => setBuscaTexto(e.target.value)}
                                     onKeyDown={(e) => e.key === "Enter" && aplicarFiltros()}
-                                    placeholder="Pesquisar"
+                                    placeholder="Pesquisar (mín. 3 letras)"
                                     className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-black/30 border border-white/10 text-xs text-white placeholder:text-muted-foreground outline-none focus:border-primary/40"
                                 />
                             </div>
