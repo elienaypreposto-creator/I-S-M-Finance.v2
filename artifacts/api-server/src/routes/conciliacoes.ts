@@ -491,6 +491,58 @@ router.delete(
                 .where(eq(conciliacoesTable.extrato_id, extratoId))
                 .limit(1);
 
+            // Bug relatado pelo Especialista Financeiro: excluir o extrato/
+            // conciliação sem também excluir o(s) residual(is) gerado(s) por
+            // ela deixa um lançamento "órfão" no Contas a Pagar/Receber,
+            // duplicando a dívida (o título original permanece com o valor
+            // cheio, mas o residual do pagamento parcial nunca é limpo).
+            // Calculado ANTES da transação para poder responder 409 (não 500)
+            // se algum residual já tiver sido quitado.
+            let residuoIds: number[] = [];
+            if (conciliacao) {
+                const itensPrevio = await db
+                    .select({id: itensConciliacaoTable.id})
+                    .from(itensConciliacaoTable)
+                    .where(eq(itensConciliacaoTable.conciliacao_id, conciliacao.id));
+                const itemIdsPrevio = itensPrevio.map((i) => i.id);
+
+                if (itemIdsPrevio.length > 0) {
+                    const vinculosPrevio = await db
+                        .select({lancamento_id: itensConciliacaoLancamentosTable.lancamento_id})
+                        .from(itensConciliacaoLancamentosTable)
+                        .where(inArray(itensConciliacaoLancamentosTable.item_conciliacao_id, itemIdsPrevio));
+
+                    if (vinculosPrevio.length > 0) {
+                        const residuos = await db
+                            .select({id: lancamentosTable.id, status: lancamentosTable.status})
+                            .from(lancamentosTable)
+                            .where(
+                                and(
+                                    eq(lancamentosTable.is_residuo_parcial, true),
+                                    inArray(
+                                        lancamentosTable.lancamento_origem_id,
+                                        vinculosPrevio.map((v) => v.lancamento_id),
+                                    ),
+                                ),
+                            );
+
+                        const residuoQuitado = residuos.find(
+                            (r) => r.status === "pago" || r.status === "recebido" || r.status === "pago_parcial",
+                        );
+                        if (residuoQuitado) {
+                            return errorResponse(
+                                res,
+                                409,
+                                "CONFLICT",
+                                `Não é possível excluir: o residual #${residuoQuitado.id} já foi quitado. Estorne o residual antes.`,
+                            );
+                        }
+
+                        residuoIds = residuos.map((r) => r.id);
+                    }
+                }
+            }
+
             await db.transaction(async (tx) => {
                 if (conciliacao) {
                     const itens = await tx
@@ -498,6 +550,10 @@ router.delete(
                         .from(itensConciliacaoTable)
                         .where(eq(itensConciliacaoTable.conciliacao_id, conciliacao.id));
                     const itemIds = itens.map((i) => i.id);
+
+                    if (residuoIds.length > 0) {
+                        await tx.delete(lancamentosTable).where(inArray(lancamentosTable.id, residuoIds));
+                    }
 
                     if (itemIds.length > 0) {
                         await tx
@@ -1198,18 +1254,37 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
         // por proximidade.
         const usaFiltroLivre = Boolean(busca) || valorBusca !== null || vencimentoBusca !== null;
 
-        // DEF-04/08 / Modo B: após quitação exata (pago/recebido) a 5ª linha
-        // (juros) ainda precisa achar o título - tabela-verdade §3.3 caso 3.
+        // Regressão reportada pelo Especialista Financeiro (Card 71): a
+        // exceção de Modo B ("título já em uso neste extrato pode continuar
+        // aparecendo mesmo pago") deixava lançamentos antigos pago/recebido
+        // vazarem para a busca. TRAVA ABSOLUTA: pago/recebido/pago_parcial
+        // (e cancelado) NUNCA são candidatos, sem exceção, independentemente
+        // de data, janela ou qualquer outro filtro.
         const condicoes = [
             eq(lancamentosTable.tipo, tipoCompatvel),
-            or(
-                eq(lancamentosTable.status, "pendente"),
-                eq(lancamentosTable.status, "atrasado"),
-                eq(lancamentosTable.status, "pago_parcial"),
-                eq(lancamentosTable.status, "pago"),
-                eq(lancamentosTable.status, "recebido"),
-            ),
+            notInArray(lancamentosTable.status, ["pago", "recebido", "pago_parcial", "cancelado"]),
         ];
+
+        // Mantido apenas para ORDENAÇÃO (prioriza títulos já vinculados a
+        // outras linhas deste extrato - Modo B) - NÃO participa mais do
+        // filtro de status acima.
+        const [itemCtxPrevio] = await db
+            .select({conciliacao_id: itensConciliacaoTable.conciliacao_id})
+            .from(itensConciliacaoTable)
+            .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
+            .limit(1);
+        const idsEmUsoNoExtrato = new Set<number>();
+        if (itemCtxPrevio) {
+            const vinculosExtratoPrevio = await db
+                .select({lancamento_id: itensConciliacaoLancamentosTable.lancamento_id})
+                .from(itensConciliacaoLancamentosTable)
+                .innerJoin(
+                    itensConciliacaoTable,
+                    eq(itensConciliacaoLancamentosTable.item_conciliacao_id, itensConciliacaoTable.id),
+                )
+                .where(eq(itensConciliacaoTable.conciliacao_id, itemCtxPrevio.conciliacao_id));
+            for (const v of vinculosExtratoPrevio) idsEmUsoNoExtrato.add(v.lancamento_id);
+        }
 
         if (!usaFiltroLivre) {
             const dataRefIso =
@@ -1283,33 +1358,8 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
             candidatos.map((c) => c.id),
         );
 
-        // Modo B: prioriza títulos já vinculados a outras linhas deste extrato.
-        const [itemCtx] = await db
-            .select({
-                conciliacao_id: itensConciliacaoTable.conciliacao_id,
-            })
-            .from(itensConciliacaoTable)
-            .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
-            .limit(1);
-        const idsEmUsoNoExtrato = new Set<number>();
-        if (itemCtx) {
-            const vinculosExtrato = await db
-                .select({
-                    lancamento_id: itensConciliacaoLancamentosTable.lancamento_id,
-                })
-                .from(itensConciliacaoLancamentosTable)
-                .innerJoin(
-                    itensConciliacaoTable,
-                    eq(
-                        itensConciliacaoLancamentosTable.item_conciliacao_id,
-                        itensConciliacaoTable.id,
-                    ),
-                )
-                .where(eq(itensConciliacaoTable.conciliacao_id, itemCtx.conciliacao_id));
-            for (const v of vinculosExtrato) idsEmUsoNoExtrato.add(v.lancamento_id);
-        }
-
         // Ordena: Modo B (já no extrato) → proximidade de valor → proximidade de data.
+        // (idsEmUsoNoExtrato já foi calculado acima, junto do filtro de status.)
         const dataRefTime = linha.data_movimento ? new Date(linha.data_movimento).getTime() : Date.now();
         const ordenados = [...candidatos].sort((a, b) => {
             const aModoB = idsEmUsoNoExtrato.has(a.id) ? 0 : 1;

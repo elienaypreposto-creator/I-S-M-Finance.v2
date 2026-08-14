@@ -27,8 +27,6 @@ import {
     Search,
     Copy,
     Trash2,
-    ChevronLeft,
-    ChevronRight,
     Sparkles,
     RefreshCw,
     Filter,
@@ -36,11 +34,7 @@ import {
 } from "lucide-react";
 import {invalidateRelated} from "@/App";
 import {formatValorBrInput, brMoneyDisplayToApiString} from "@/validations/lancamentos.schema";
-// AJUSTAR este caminho: aponte para onde você salvou o novo arquivo
-// lancamento-modal.tsx — o mais simples é colocá-lo na MESMA PASTA do seu
-// Lancamentos.tsx (ex.: src/pages/lancamentos/lancamento-modal.tsx) e usar
-// o alias correspondente, ex.: "@/pages/lancamentos/lancamento-modal".
-import { LancamentoModal } from "@/components/lancamentos/lancamento-modal";
+import {RegraConciliacaoModal} from "@/components/conciliacao/regra-conciliacao-modal";
 
 type ExtratoDetalheExtrato = {
     id: number;
@@ -426,7 +420,6 @@ function CardLancamento({
     );
 }
 
-const LINHAS_POR_PAGINA = 6;
 /** Tolerância em reais para considerar o saldo da linha "zerado" (evita
  *  ruído de arredondamento de ponto flutuante). */
 const TOLERANCIA_SALDO = 0.005;
@@ -446,6 +439,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     const canIgnorar = hasPermission(PERM.CONCILIACAO_IGNORAR);
     const canDesfazer = hasPermission(PERM.CONCILIACAO_DESFAZER);
     const canEditarLancamento = hasPermission(PERM.LANCAMENTOS_EDITAR);
+    const canCriarRegra = hasPermission(PERM.REGRAS_CONCILIACAO_CRIAR);
 
     const [vincularLinha, setVincularLinha] = useState<{ id: number; valorAbs: string | number } | null>(null);
     const [ignorarLinhaId, setIgnorarLinhaId] = useState<number | null>(null);
@@ -453,11 +447,11 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     const [desfazerLinhaId, setDesfazerLinhaId] = useState<number | null>(null);
     const [finalizarOpen, setFinalizarOpen] = useState(false);
     const [editarLancamentoId, setEditarLancamentoId] = useState<number | null>(null);
-    // RN-D3 - [+] verde: criar lançamento a partir da linha (agora usando o
-    // formulário completo de Novo Lançamento, igual à tela de Lançamentos).
-    const [novoLancamentoLinha, setNovoLancamentoLinha] = useState<LinhaDetalhe | null>(null);
-    // RN-D5 - navegação ‹ › entre as linhas, sem sair da tela.
-    const [pagina, setPagina] = useState(0);
+    // RN-D3 - [+] verde: NÃO cria um lançamento avulso. Abre o cadastro de
+    // "Regra de Conciliação Automática" (Fase 6 / Card 48), pré-preenchido
+    // com a descrição exata e a natureza (entrada/saída) da linha, para que
+    // os PRÓXIMOS extratos casem e classifiquem/criem o lançamento sozinhos.
+    const [regraLinha, setRegraLinha] = useState<LinhaDetalhe | null>(null);
 
     // Barra de filtros (Tipo / Status / Pesquisar / Aplicar) - igual ao protótipo.
     // Tipo e Status só afetam a lista quando o usuário clica em "Aplicar"
@@ -489,7 +483,6 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
 
         const timeoutId = setTimeout(() => {
             setFiltrosAplicados((prev) => (prev.busca === termo ? prev : {...prev, busca: termo}));
-            setPagina(0);
         }, BUSCA_DEBOUNCE_MS);
 
         return () => clearTimeout(timeoutId);
@@ -497,7 +490,6 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
 
     function aplicarFiltros() {
         setFiltrosAplicados({tipo: filtroTipo, status: filtroStatus, busca: buscaTexto.trim()});
-        setPagina(0);
     }
 
     function limparFiltros() {
@@ -505,7 +497,6 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
         setFiltroStatus("todos");
         setBuscaTexto("");
         setFiltrosAplicados({tipo: "todos", status: "todos", busca: ""});
-        setPagina(0);
     }
 
     const {data, isLoading, isError, refetch} = useQuery({
@@ -597,46 +588,24 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
         },
     });
 
-    /**
-     * Chamado depois que o LancamentoModal cria o lançamento a partir da linha
-     * (RN-D3). Vincula automaticamente à linha de origem, sem juros/desconto e
-     * sem gerar residual — igual ao comportamento antigo do botão [+], mas
-     * agora usando o formulário completo de lançamento. Reaproveita o mesmo
-     * endpoint do VincularModal (POST /conciliacoes/linhas/:id/vincular).
-     */
-    const vincularAutoMutation = useMutation({
-        mutationFn: ({linhaId, lancamentoId}: { linhaId: number; lancamentoId: number }) =>
-            fetchApiData(`/conciliacoes/linhas/${linhaId}/vincular`, {
-                method: "POST",
-                body: JSON.stringify({
-                    lancamentos: [{lancamento_id: lancamentoId, desconto: "0.00", juros_multa: "0.00"}],
-                    gerar_parcial: false,
-                }),
-            }),
-        onSuccess: () => {
-            invalidateRelated(queryClient, "conciliacao");
-            void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
-            void queryClient.invalidateQueries({queryKey: ["conciliacoes-pendencias-mes"]});
-            toast({title: "Lançamento criado e vinculado", description: "A linha já foi conciliada."});
-        },
-        onError: (e: unknown) =>
-            toast({
-                variant: "destructive",
-                title: "Lançamento criado, mas não foi possível vincular",
-                description: e instanceof Error
-                    ? `${e.message} — vincule manualmente pelo botão "Vincular".`
-                    : "Vincule manualmente pelo botão \"Vincular\".",
-            }),
-    });
-
     const extrato = data?.extrato;
     const conc = data?.conciliacao;
     const linhas = data?.linhas ?? [];
     const podeFinalizar = (conc?.resumo_pendentes ?? 1) === 0;
-    /** FEAT-05 / Card 57: rótulo dinâmico Salvar / Concluir (nunca "Finalizar/Conciliar"). */
-    const rotuloAcaoConciliacao = podeFinalizar ? "Concluir" : "Salvar";
+    /**
+     * Reunião com o Especialista Financeiro: só pode se chamar "Conciliar"
+     * quando 100% das linhas estiverem vinculadas ou ignoradas (nenhuma
+     * pendente). Havendo qualquer pendência, o botão é "Salvar" — ele está
+     * apenas salvando o progresso para continuar depois.
+     *
+     * ATENÇÃO: isto substitui a decisão anterior (RN-I3, doc de
+     * conciliação) de que o cliente teria rejeitado a palavra "Conciliar"
+     * em favor de "Concluir". Ver aviso ao final da mensagem para o time.
+     */
+    const rotuloAcaoConciliacao = podeFinalizar ? "Conciliar" : "Salvar";
 
-    // Aplica Tipo / Status / Pesquisar sobre a lista antes de paginar.
+    // Aplica Tipo / Status / Pesquisar sobre a lista. Sem paginação: a lista
+    // inteira fica dentro de um contêiner com overflow-y-auto (scroll).
     const linhasFiltradas = useMemo(() => {
         return linhas.filter((linha) => {
             if (filtrosAplicados.tipo !== "todos" && linha.tipo_movimento !== filtrosAplicados.tipo) return false;
@@ -648,14 +617,6 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
             return true;
         });
     }, [linhas, filtrosAplicados]);
-
-    // RN-D5: navegação ‹ › entre as linhas, sem sair da tela.
-    const totalPaginas = Math.max(1, Math.ceil(linhasFiltradas.length / LINHAS_POR_PAGINA));
-    const paginaAtual = Math.min(pagina, totalPaginas - 1);
-    const linhasDaPagina = useMemo(
-        () => linhasFiltradas.slice(paginaAtual * LINHAS_POR_PAGINA, paginaAtual * LINHAS_POR_PAGINA + LINHAS_POR_PAGINA),
-        [linhasFiltradas, paginaAtual],
-    );
 
     return (
         <div className="flex flex-col gap-4 h-full max-w-6xl mx-auto py-2">
@@ -679,29 +640,29 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
             )}
 
             {/*
-              RN-D3: [+] verde - abre o MESMO formulário completo de "Novo
-              Lançamento" usado na tela de Lançamentos, pré-preenchido com
-              tipo/vencimento/valor/descrição vindos da linha do extrato. Ao
-              salvar, o lançamento é criado e automaticamente vinculado a
-              esta linha (vincularAutoMutation) - sem passo extra manual.
+              RN-D3 (reinterpretado - reunião com o Especialista Financeiro):
+              o [+] verde NÃO cria um lançamento avulso. Ele abre o cadastro
+              de "Regra de Conciliação Automática" (Fase 6 / Card 48),
+              pré-preenchido com o texto exato da linha (ex.: "TAR PIX") e a
+              natureza (entrada/saída), para que os PRÓXIMOS extratos casem
+              e classifiquem/criem o lançamento sozinhos - sem precisar
+              repetir o cadastro manual toda vez que a mesma tarifa aparecer.
             */}
-            {novoLancamentoLinha && (
-                <LancamentoModal
+            {regraLinha && (
+                <RegraConciliacaoModal
+                    open
                     prefill={{
-                        tipo: novoLancamentoLinha.tipo_movimento === "credito" ? "CR" : "CP",
-                        vencimento: novoLancamentoLinha.data_movimento ?? "",
-                        valor: Math.abs(Number(novoLancamentoLinha.valor)),
-                        descricao: novoLancamentoLinha.descricao,
-                    } satisfies LancamentoPrefill}
-                    onClose={() => setNovoLancamentoLinha(null)}
-                    onSaved={(created) => {
-                        const linhaId = novoLancamentoLinha.linha_id;
-                        setNovoLancamentoLinha(null);
-                        invalidateRelated(queryClient, "lancamentos");
-                        void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
-                        if (created?.id) {
-                            vincularAutoMutation.mutate({linhaId, lancamentoId: created.id});
-                        }
+                        texto_gatilho: regraLinha.descricao ?? "",
+                        natureza: regraLinha.tipo_movimento === "credito" ? "entrada" : "saida",
+                        conta_id: extrato?.conta_id ?? null,
+                    }}
+                    onClose={() => setRegraLinha(null)}
+                    onSuccess={() => {
+                        setRegraLinha(null);
+                        toast({
+                            title: "Regra criada",
+                            description: "A partir de agora, extratos com este padrão são classificados automaticamente.",
+                        });
                     }}
                 />
             )}
@@ -747,9 +708,9 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
 
             <ConfirmDialog
                 open={finalizarOpen}
-                title="Concluir conciliação?"
-                description="Não pode haver linhas pendentes. Após concluir, o extrato será marcado como conciliado."
-                confirmLabel="Concluir"
+                title="Conciliar extrato?"
+                description="Não pode haver linhas pendentes. Após conciliar, o extrato será marcado como conciliado."
+                confirmLabel="Conciliar"
                 variant="default"
                 icon={CheckCircle2}
                 onCancel={() => setFinalizarOpen(false)}
@@ -879,8 +840,11 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                 Nenhuma linha encontrada com os filtros aplicados.
                             </div>
                         ) : (
-                        <div className="divide-y divide-white/5 overflow-y-auto max-h-[calc(100vh-28rem)]">
-                            {linhasDaPagina.map((linha) => {
+                        /* Scroll infinito: sem paginação - a lista inteira vive dentro
+                           deste contêiner com overflow-y-auto (usabilidade pedida pelo
+                           Especialista Financeiro). */
+                        <div className="divide-y divide-white/5 overflow-y-auto flex-1 min-h-0">
+                            {linhasFiltradas.map((linha) => {
                                 const isPendente = linha.status === "pendente";
                                 const isVinculado = linha.status === "vinculado";
                                 const isIgnorado = linha.status === "ignorado";
@@ -924,14 +888,15 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                     )}
                                                 </div>
                                                 <div className="flex items-center gap-1.5 shrink-0">
-                                                    {/* RN-D3: [+] verde - abre o formulário completo de Novo Lançamento.
-                                                        Agora fica visível enquanto ainda faltar saldo a fechar, mesmo
-                                                        que já exista algum vínculo parcial na linha. */}
-                                                    {podeVincularMais && canVincular && (
+                                                    {/* RN-D3 (reinterpretado): [+] verde - abre "Nova regra de
+                                                        conciliação automática" pré-preenchida com esta linha,
+                                                        para os PRÓXIMOS extratos casarem sozinhos. Não cria um
+                                                        lançamento avulso nem depende de saldo em aberto. */}
+                                                    {canCriarRegra && (
                                                         <button
                                                             type="button"
-                                                            title="Criar lançamento a partir desta linha"
-                                                            onClick={() => setNovoLancamentoLinha(linha)}
+                                                            title="Criar regra de conciliação automática a partir desta linha"
+                                                            onClick={() => setRegraLinha(linha)}
                                                             className="w-6 h-6 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 flex items-center justify-center shrink-0">
                                                             <Plus className="w-3.5 h-3.5"/>
                                                         </button>
@@ -1049,6 +1014,8 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                 IMPORTANTE: passa o SALDO restante da linha (linha.valor_saldo),
                                                 não o valor cheio da linha — senão o modal calcula o "restante"
                                                 contra o valor total, ignorando o que já foi vinculado antes. */}
+                                            {/* UX: botão menor (40% da coluna) em vez de ocupar a largura
+                                                inteira ou dividir 50/50 - pedido explícito de revisão de UI. */}
                                             {podeVincularMais && canVincular && (
                                                 <button
                                                     type="button"
@@ -1056,7 +1023,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                         id: linha.linha_id,
                                                         valorAbs: saldoAbs,
                                                     })}
-                                                    className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-primary/90 hover:bg-primary text-primary-foreground text-xs font-bold shadow-md shadow-primary/20">
+                                                    className="w-[40%] inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-primary/90 hover:bg-primary text-primary-foreground text-xs font-bold shadow-md shadow-primary/20">
                                                     <Search className="w-3.5 h-3.5"/>
                                                     Vincular
                                                 </button>
@@ -1074,34 +1041,10 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                         </div>
                         )}
 
-                        {/* RN-D5: navegação ‹ › entre as linhas, sem sair da tela */}
-                        {linhasFiltradas.length > LINHAS_POR_PAGINA && (
-                            <div
-                                className="flex items-center justify-center gap-4 py-3 border-t border-white/5 bg-black/20">
-                                <button
-                                    type="button"
-                                    disabled={paginaAtual === 0}
-                                    onClick={() => setPagina((p) => Math.max(0, p - 1))}
-                                    className="p-1.5 rounded-lg border border-white/10 text-white disabled:opacity-30 hover:bg-white/5">
-                                    <ChevronLeft className="w-4 h-4"/>
-                                </button>
-                                <span className="text-xs text-muted-foreground">
-                                    {paginaAtual + 1} / {totalPaginas}
-                                </span>
-                                <button
-                                    type="button"
-                                    disabled={paginaAtual >= totalPaginas - 1}
-                                    onClick={() => setPagina((p) => Math.min(totalPaginas - 1, p + 1))}
-                                    className="p-1.5 rounded-lg border border-white/10 text-white disabled:opacity-30 hover:bg-white/5">
-                                    <ChevronRight className="w-4 h-4"/>
-                                </button>
-                            </div>
-                        )}
-
                         {/*
-                          Rodapé de ação: o botão Salvar/Concluir saiu do cabeçalho e
-                          agora fica aqui embaixo, alinhado à direita, após a lista de
-                          linhas / paginação.
+                          Rodapé de ação: o botão Salvar/Conciliar fica alinhado à
+                          direita, após a lista de linhas (scroll infinito - sem
+                          paginação, ver contêiner overflow-y-auto acima).
                         */}
                         <div className="flex items-center justify-end gap-3 px-4 py-3 border-t border-white/5 bg-black/25">
                             <RequiresPermission permission={PERM.CONCILIACAO_CONCLUIR}>

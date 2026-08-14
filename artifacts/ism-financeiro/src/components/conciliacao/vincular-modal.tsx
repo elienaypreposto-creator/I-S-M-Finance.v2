@@ -1,4 +1,5 @@
 import {useEffect, useMemo, useRef, useState} from "react";
+import {createPortal} from "react-dom";
 import {useForm, useFieldArray, Controller, useWatch} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
@@ -198,21 +199,47 @@ function VincularFormBody({
     // =0 bate
     const restanteCents = deltaCents != null ? deltaCents - somaJurosCents : null;
 
+    // Bug reportado (extrato R$21,63 x lançamento R$50,00 = Δ negativo com
+    // 1 único lançamento selecionado): "restante < 0" SEMPRE significa que o
+    // lançamento é maior que o extrato, ou seja, pagamento PARCIAL - e a
+    // opção "Gerar movimentação residual" deveria estar disponível também
+    // com 1 lançamento (não só a partir de 2). A única situação em que ela
+    // NÃO deve aparecer é quando esse mesmo título já vinha recebendo outras
+    // linhas deste extrato (Modo B em andamento) - aí o correto é só deixar
+    // o pagamento parcial seguir (o backend ignora residual nesse caso).
+    const quitadoAnteriorCentsSelecionado =
+        selectedItens.length === 1
+            ? Math.round(Math.abs(Number(lancamentosQuitadoById.get(selectedItens[0]!.lancamento_id) ?? 0)) * 100)
+            : 0;
+    const emQuitacaoMultiLinha = selectedItens.length === 1 && quitadoAnteriorCentsSelecionado > 0;
+
     const showGapExtrato =
         restanteCents != null && restanteCents > 0 && selectedItens.length > 0;
+    /** Só informativo (sem checkbox) quando já é uma quitação multi-linha em andamento. */
     const showModoBParcial =
-        restanteCents != null && restanteCents < 0 && selectedItens.length === 1;
+        restanteCents != null && restanteCents < 0 && selectedItens.length === 1 && emQuitacaoMultiLinha;
+    /** Oferece o checkbox de residual com 2+ lançamentos OU com 1 lançamento "fresco" (1º vínculo). */
     const showResidual =
-        restanteCents != null && restanteCents < 0 && selectedItens.length >= 2;
+        restanteCents != null &&
+        restanteCents < 0 &&
+        (selectedItens.length >= 2 || (selectedItens.length === 1 && !emQuitacaoMultiLinha));
     const showExcedente = showGapExtrato;
     const valoresBatendo = selectedItens.length > 0 && restanteCents === 0;
 
+    // Com 1 único lançamento, o pagamento parcial é válido mesmo sem marcar
+    // o residual (o usuário pode preferir deixar em aberto e completar
+    // depois via outra linha - Modo B). Com 2+ lançamentos o residual (com
+    // origem escolhida) é obrigatório para fechar - regra espelhada do Zod.
+    const podeDeixarParcialSemResidual = showResidual && selectedItens.length === 1;
+
     // Libera submit quando Zod também aceita: exato, cobertura parcial (gap+juros=0),
-    // Modo B parcial, ou residual Modo A com origem.
+    // Modo B parcial (quitação em andamento), pagamento parcial 1:1, ou residual
+    // Modo A (2+) com origem escolhida.
     const podeConcluir =
         selectedItens.length > 0 &&
         (valoresBatendo ||
             showModoBParcial ||
+            podeDeixarParcialSemResidual ||
             (showGapExtrato && somaJurosCents === 0) ||
             (showResidual &&
                 gerarParcial &&
@@ -276,6 +303,18 @@ function VincularFormBody({
             setValue("residuo_lancamento_id", null, {shouldValidate: true});
         }
     }, [showResidual, gerarParcial, setValue]);
+
+    // Com 1 único lançamento selecionado a origem do residual é óbvia (não
+    // há o que escolher) - preenche sozinho em vez de exigir um select
+    // redundante de uma opção só.
+    useEffect(() => {
+        if (showResidual && gerarParcial && selectedItens.length === 1) {
+            const unico = selectedItens[0]!.lancamento_id;
+            if (residuoIdSelecionado !== unico) {
+                setValue("residuo_lancamento_id", unico, {shouldValidate: true});
+            }
+        }
+    }, [showResidual, gerarParcial, selectedItens, residuoIdSelecionado, setValue]);
 
     const vincularMutation = useMutation({
         mutationFn: (payload: VincularPayload) =>
@@ -611,7 +650,7 @@ function VincularFormBody({
                                 {String(errors.itens.message)}
                             </p>
                         )}
-                        {gerarParcial && (
+                        {gerarParcial && selectedItens.length >= 2 && (
                             <div>
                                 <span className={labelCls}>Origem do residual</span>
                                 <Controller
@@ -813,10 +852,25 @@ export function VincularModal({
         setVencimentoAtivo(vencimentoTexto);
     };
 
-    return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 backdrop-blur-md p-4">
+    // Bug de viewport reportado: o modal era renderizado inline na árvore da
+    // página (dentro do <main overflow-y-auto> do layout), e não via Portal.
+    // "position: fixed" só trava na tela quando NENHUM ancestral cria um
+    // novo bloco de contenção (transform/filter/perspective/etc) - como o
+    // <main> do layout tem overflow-y-auto e roda animação de entrada
+    // (animate-in), ele podia virar esse "container", fazendo o fixed se
+    // comportar como absolute relativo ao topo do conteúdo rolado, não do
+    // viewport. Renderizar via createPortal em document.body (igual o
+    // Radix Dialog faz por baixo dos panos) elimina esse problema de vez.
+    return createPortal(
+        <div className="fixed inset-0 z-[60]">
+            {/* DialogOverlay: cobre a tela inteira, sempre fixed ao viewport. */}
+            <div className="fixed inset-0 bg-black/75 backdrop-blur-md"/>
+            {/* DialogContent: fixed + left-50%/-translate-x-50% (centraliza
+                horizontalmente) e top-[5%]/md:top-[10%] com translate-y-0
+                (NÃO usar top-1/2 -translate-y-1/2, que centralizaria
+                verticalmente) - abre quase no topo da tela. */}
             <div
-                className="bg-[#121417] border border-white/10 rounded-2xl w-full max-w-2xl max-h-[90vh] min-h-0 shadow-2xl flex flex-col overflow-hidden">
+                className="fixed left-[50%] top-[5%] md:top-[10%] -translate-x-[50%] translate-y-0 bg-[#121417] border border-white/10 rounded-2xl w-[calc(100%-2rem)] max-w-2xl max-h-[90vh] min-h-0 shadow-2xl flex flex-col overflow-hidden">
                 <div className="flex items-center justify-between p-5 border-b border-white/5 shrink-0">
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-xl bg-primary/15 flex items-center justify-center">
@@ -953,6 +1007,7 @@ export function VincularModal({
                     />
                 )}
             </div>
-        </div>
+        </div>,
+        document.body,
     );
 }
