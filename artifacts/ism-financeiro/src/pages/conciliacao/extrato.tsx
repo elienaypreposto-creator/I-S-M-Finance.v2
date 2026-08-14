@@ -592,16 +592,6 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     const conc = data?.conciliacao;
     const linhas = data?.linhas ?? [];
     const podeFinalizar = (conc?.resumo_pendentes ?? 1) === 0;
-    /**
-     * Reunião com o Especialista Financeiro: só pode se chamar "Conciliar"
-     * quando 100% das linhas estiverem vinculadas ou ignoradas (nenhuma
-     * pendente). Havendo qualquer pendência, o botão é "Salvar" — ele está
-     * apenas salvando o progresso para continuar depois.
-     *
-     * ATENÇÃO: isto substitui a decisão anterior (RN-I3, doc de
-     * conciliação) de que o cliente teria rejeitado a palavra "Conciliar"
-     * em favor de "Concluir". Ver aviso ao final da mensagem para o time.
-     */
     const rotuloAcaoConciliacao = podeFinalizar ? "Conciliar" : "Salvar";
 
     // Aplica Tipo / Status / Pesquisar sobre a lista. Sem paginação: a lista
@@ -640,9 +630,8 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
             )}
 
             {/*
-              RN-D3 (reinterpretado - reunião com o Especialista Financeiro):
               o [+] verde NÃO cria um lançamento avulso. Ele abre o cadastro
-              de "Regra de Conciliação Automática" (Fase 6 / Card 48),
+              de "Regra de Conciliação Automática",
               pré-preenchido com o texto exato da linha (ex.: "TAR PIX") e a
               natureza (entrada/saída), para que os PRÓXIMOS extratos casem
               e classifiquem/criem o lançamento sozinhos - sem precisar
@@ -840,9 +829,6 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                 Nenhuma linha encontrada com os filtros aplicados.
                             </div>
                         ) : (
-                        /* Scroll infinito: sem paginação - a lista inteira vive dentro
-                           deste contêiner com overflow-y-auto (usabilidade pedida pelo
-                           Especialista Financeiro). */
                         <div className="divide-y divide-white/5 overflow-y-auto flex-1 min-h-0">
                             {linhasFiltradas.map((linha) => {
                                 const isPendente = linha.status === "pendente";
@@ -851,11 +837,6 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                 const isCredito = linha.tipo_movimento === "credito";
                                 const valorAbs = Math.abs(Number(linha.valor));
 
-                                // FIX: o status "vinculado" só indica que existe pelo menos 1
-                                // vínculo — não que o valor da linha já foi totalmente coberto.
-                                // Antes disso era ignorado e a UI escondia o botão "Vincular"
-                                // (e o "+") assim que o primeiro lançamento parcial entrava,
-                                // impedindo completar o valor com mais lançamentos.
                                 const saldoAbs = Math.abs(Number(linha.valor_saldo));
                                 const faltaFechar = saldoAbs > TOLERANCIA_SALDO;
                                 const podeVincularMais = !isIgnorado && (isPendente || faltaFechar);
@@ -1014,8 +995,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                 IMPORTANTE: passa o SALDO restante da linha (linha.valor_saldo),
                                                 não o valor cheio da linha — senão o modal calcula o "restante"
                                                 contra o valor total, ignorando o que já foi vinculado antes. */}
-                                            {/* UX: botão menor (40% da coluna) em vez de ocupar a largura
-                                                inteira ou dividir 50/50 - pedido explícito de revisão de UI. */}
+                                            {/* UX: botão menor. */}
                                             {podeVincularMais && canVincular && (
                                                 <button
                                                     type="button"

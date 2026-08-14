@@ -1,4 +1,5 @@
 import {useEffect, useState} from "react";
+import {createPortal} from "react-dom";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
@@ -187,9 +188,10 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, editItem, prefi
     const labelCls = "text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1 block";
     const podeSalvar = textoGatilho.trim().length > 0 && !regexError;
 
-    return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 backdrop-blur-md p-4">
-            <div className="bg-[#121417] border border-white/10 rounded-2xl w-full max-w-xl shadow-2xl flex flex-col max-h-[90vh]">
+    return createPortal(
+        <div className="fixed inset-0 z-[60]">
+            <div className="fixed inset-0 bg-black/75 backdrop-blur-md"/>
+            <div className="fixed left-[50%] top-[5%] md:top-[10%] -translate-x-[50%] translate-y-0 bg-[#121417] border border-white/10 rounded-2xl w-[calc(100%-2rem)] max-w-xl shadow-2xl flex flex-col max-h-[90vh]">
                 <div className="flex items-center justify-between p-5 border-b border-white/5 shrink-0">
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-xl bg-sky-500/15 flex items-center justify-center">
@@ -352,6 +354,7 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, editItem, prefi
                     </div>
                 </form>
             </div>
-        </div>
+        </div>,
+        document.body,
     );
 }

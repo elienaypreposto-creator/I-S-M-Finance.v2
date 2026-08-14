@@ -219,9 +219,7 @@ export default function ConciliacaoList() {
                 className="glass-panel rounded-2xl flex flex-col overflow-hidden flex-1 min-h-0 border border-white/10">
                 <div
                     className="px-4 py-3 border-b border-white/5 flex flex-wrap items-center gap-3 bg-black/20">
-                    {/* Reunião com o Especialista Financeiro: filtros de Conta e
-                        Período à esquerda; "Mês" foi substituído pelo calendário
-                        de período (mesmo componente usado em Lançamentos). */}
+                    {/* mesmo componente usado em Lançamentos */}
                     <div className="flex flex-wrap items-center gap-2">
                         <label className="text-[10px] uppercase tracking-wide text-muted-foreground">
                             Conta
