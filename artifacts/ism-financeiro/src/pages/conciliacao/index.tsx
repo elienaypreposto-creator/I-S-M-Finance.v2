@@ -1,10 +1,11 @@
-import {useMemo, useState, type MouseEvent} from "react";
+import {useState, type MouseEvent} from "react";
 import {useLocation} from "wouter";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 import {PageHeader} from "@/components/shared/page-header";
 import {ApiEnvelope, fetchApi, fetchApiData} from "@/lib/api-config";
 import {cn} from "@/lib/utils";
 import {ImportExtratoModal} from "@/components/conciliacao/import-extrato-modal";
+import {DateRangePicker} from "@/components/shared/date-range-picker";
 import {RequiresPermission} from "@/components/auth/requires-permission";
 import {PERM} from "@/lib/permissoes";
 import {useAuth} from "@/hooks/use-auth";
@@ -47,21 +48,6 @@ type ContaFiltro = {
     id: number;
     nome: string;
 };
-
-const MESES_PT = [
-    "janeiro",
-    "fevereiro",
-    "março",
-    "abril",
-    "maio",
-    "junho",
-    "julho",
-    "agosto",
-    "setembro",
-    "outubro",
-    "novembro",
-    "dezembro",
-];
 
 function num(v: number | null | undefined) {
     return Number(v ?? 0);
@@ -121,23 +107,6 @@ function formatAgenciaConta(row: ConciliacaoListItem): string {
     return `Agência:${agencia} | Conta:${conta}`;
 }
 
-function buildMesOptions(qtd = 18) {
-    const agora = new Date();
-    const opts: { value: string; label: string; mes: number; ano: number }[] = [];
-    for (let i = 0; i < qtd; i++) {
-        const d = new Date(agora.getFullYear(), agora.getMonth() - i, 1);
-        const mes = d.getMonth() + 1;
-        const ano = d.getFullYear();
-        opts.push({
-            value: `${ano}-${String(mes).padStart(2, "0")}`,
-            label: `${MESES_PT[mes - 1]} / ${ano}`,
-            mes,
-            ano,
-        });
-    }
-    return opts;
-}
-
 export default function ConciliacaoList() {
     const [, setLocation] = useLocation();
     const queryClient = useQueryClient();
@@ -148,15 +117,11 @@ export default function ConciliacaoList() {
 
     const [page, setPage] = useState(1);
     const [importOpen, setImportOpen] = useState(false);
-    /** "" = todos os meses (histórico completo, mais recente primeiro). */
-    const [mesAno, setMesAno] = useState("");
+    /** "" = sem filtro de período (histórico completo, mais recente primeiro). */
+    const [dataInicio, setDataInicio] = useState("");
+    const [dataFim, setDataFim] = useState("");
     const [contaId, setContaId] = useState<string>("");
     const limit = 15;
-
-    const mesOptions = useMemo(() => buildMesOptions(18), []);
-    const [anoFiltro, mesFiltro] = mesAno
-        ? mesAno.split("-").map(Number)
-        : [undefined, undefined];
 
     const {data: contas} = useQuery({
         queryKey: ["contas-bancarias-filtro"],
@@ -164,15 +129,13 @@ export default function ConciliacaoList() {
     });
 
     const {data, isLoading, isError, refetch} = useQuery({
-        queryKey: ["conciliacoes", page, limit, mesAno, contaId],
+        queryKey: ["conciliacoes", page, limit, dataInicio, dataFim, contaId],
         queryFn: async () => {
             const params = new URLSearchParams();
             params.set("page", String(page));
             params.set("limit", String(limit));
-            if (mesFiltro && anoFiltro) {
-                params.set("mes", String(mesFiltro));
-                params.set("ano", String(anoFiltro));
-            }
+            if (dataInicio) params.set("data_inicio", dataInicio);
+            if (dataFim) params.set("data_fim", dataFim);
             if (contaId) params.set("conta_id", contaId);
             const envelope = await fetchApi<ApiEnvelope<ConciliacaoListItem[]>>(
                 `/conciliacoes?${params.toString()}`,
@@ -255,30 +218,11 @@ export default function ConciliacaoList() {
             <div
                 className="glass-panel rounded-2xl flex flex-col overflow-hidden flex-1 min-h-0 border border-white/10">
                 <div
-                    className="px-4 py-3 border-b border-white/5 flex flex-wrap items-center gap-3 justify-between bg-black/20">
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <FileStack className="w-4 h-4"/>
-                        <span>{total.toLocaleString("pt-BR")} extrato(s) no filtro</span>
-                    </div>
+                    className="px-4 py-3 border-b border-white/5 flex flex-wrap items-center gap-3 bg-black/20">
+                    {/* Reunião com o Especialista Financeiro: filtros de Conta e
+                        Período à esquerda; "Mês" foi substituído pelo calendário
+                        de período (mesmo componente usado em Lançamentos). */}
                     <div className="flex flex-wrap items-center gap-2">
-                        <label className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                            Mês
-                            <select
-                                value={mesAno}
-                                onChange={(e) => {
-                                    setMesAno(e.target.value);
-                                    setPage(1);
-                                }}
-                                className="ml-1.5 bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-xs text-white capitalize"
-                            >
-                                <option value="">Todos os meses</option>
-                                {mesOptions.map((o) => (
-                                    <option key={o.value} value={o.value}>
-                                        {o.label}
-                                    </option>
-                                ))}
-                            </select>
-                        </label>
                         <label className="text-[10px] uppercase tracking-wide text-muted-foreground">
                             Conta
                             <select
@@ -297,6 +241,21 @@ export default function ConciliacaoList() {
                                 ))}
                             </select>
                         </label>
+
+                        <DateRangePicker
+                            startDate={dataInicio}
+                            endDate={dataFim}
+                            onChange={(start, end) => {
+                                setDataInicio(start);
+                                setDataFim(end);
+                                setPage(1);
+                            }}
+                        />
+                    </div>
+
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground ml-auto">
+                        <FileStack className="w-4 h-4"/>
+                        <span>{total.toLocaleString("pt-BR")} extrato(s) no filtro</span>
                     </div>
                 </div>
 
