@@ -199,14 +199,6 @@ function VincularFormBody({
     // =0 bate
     const restanteCents = deltaCents != null ? deltaCents - somaJurosCents : null;
 
-    // Bug reportado (extrato R$21,63 x lançamento R$50,00 = Δ negativo com
-    // 1 único lançamento selecionado): "restante < 0" SEMPRE significa que o
-    // lançamento é maior que o extrato, ou seja, pagamento PARCIAL - e a
-    // opção "Gerar movimentação residual" deveria estar disponível também
-    // com 1 lançamento (não só a partir de 2). A única situação em que ela
-    // NÃO deve aparecer é quando esse mesmo título já vinha recebendo outras
-    // linhas deste extrato (Modo B em andamento) - aí o correto é só deixar
-    // o pagamento parcial seguir (o backend ignora residual nesse caso).
     const quitadoAnteriorCentsSelecionado =
         selectedItens.length === 1
             ? Math.round(Math.abs(Number(lancamentosQuitadoById.get(selectedItens[0]!.lancamento_id) ?? 0)) * 100)
@@ -226,15 +218,8 @@ function VincularFormBody({
     const showExcedente = showGapExtrato;
     const valoresBatendo = selectedItens.length > 0 && restanteCents === 0;
 
-    // Com 1 único lançamento, o pagamento parcial é válido mesmo sem marcar
-    // o residual (o usuário pode preferir deixar em aberto e completar
-    // depois via outra linha - Modo B). Com 2+ lançamentos o residual (com
-    // origem escolhida) é obrigatório para fechar - regra espelhada do Zod.
     const podeDeixarParcialSemResidual = showResidual && selectedItens.length === 1;
 
-    // Libera submit quando Zod também aceita: exato, cobertura parcial (gap+juros=0),
-    // Modo B parcial (quitação em andamento), pagamento parcial 1:1, ou residual
-    // Modo A (2+) com origem escolhida.
     const podeConcluir =
         selectedItens.length > 0 &&
         (valoresBatendo ||
@@ -304,9 +289,6 @@ function VincularFormBody({
         }
     }, [showResidual, gerarParcial, setValue]);
 
-    // Com 1 único lançamento selecionado a origem do residual é óbvia (não
-    // há o que escolher) - preenche sozinho em vez de exigir um select
-    // redundante de uma opção só.
     useEffect(() => {
         if (showResidual && gerarParcial && selectedItens.length === 1) {
             const unico = selectedItens[0]!.lancamento_id;
@@ -852,15 +834,6 @@ export function VincularModal({
         setVencimentoAtivo(vencimentoTexto);
     };
 
-    // Bug de viewport reportado: o modal era renderizado inline na árvore da
-    // página (dentro do <main overflow-y-auto> do layout), e não via Portal.
-    // "position: fixed" só trava na tela quando NENHUM ancestral cria um
-    // novo bloco de contenção (transform/filter/perspective/etc) - como o
-    // <main> do layout tem overflow-y-auto e roda animação de entrada
-    // (animate-in), ele podia virar esse "container", fazendo o fixed se
-    // comportar como absolute relativo ao topo do conteúdo rolado, não do
-    // viewport. Renderizar via createPortal em document.body (igual o
-    // Radix Dialog faz por baixo dos panos) elimina esse problema de vez.
     return createPortal(
         <div className="fixed inset-0 z-[60]">
             {/* DialogOverlay: cobre a tela inteira, sempre fixed ao viewport. */}

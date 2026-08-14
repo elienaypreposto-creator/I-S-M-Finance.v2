@@ -491,13 +491,6 @@ router.delete(
                 .where(eq(conciliacoesTable.extrato_id, extratoId))
                 .limit(1);
 
-            // Bug relatado pelo Especialista Financeiro: excluir o extrato/
-            // conciliação sem também excluir o(s) residual(is) gerado(s) por
-            // ela deixa um lançamento "órfão" no Contas a Pagar/Receber,
-            // duplicando a dívida (o título original permanece com o valor
-            // cheio, mas o residual do pagamento parcial nunca é limpo).
-            // Calculado ANTES da transação para poder responder 409 (não 500)
-            // se algum residual já tiver sido quitado.
             let residuoIds: number[] = [];
             if (conciliacao) {
                 const itensPrevio = await db
@@ -1249,25 +1242,13 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
         const tipoCompatvel = linha.tipo_movimento === "debito" ? "CP" : "CR";
         const valorLinhaCents = toCents(linha.valor);
 
-        // Busca por texto, valor ou vencimento ignora a janela de datas: o
-        // usuário está procurando um lançamento específico, não navegando
-        // por proximidade.
         const usaFiltroLivre = Boolean(busca) || valorBusca !== null || vencimentoBusca !== null;
 
-        // Regressão reportada pelo Especialista Financeiro (Card 71): a
-        // exceção de Modo B ("título já em uso neste extrato pode continuar
-        // aparecendo mesmo pago") deixava lançamentos antigos pago/recebido
-        // vazarem para a busca. TRAVA ABSOLUTA: pago/recebido/pago_parcial
-        // (e cancelado) NUNCA são candidatos, sem exceção, independentemente
-        // de data, janela ou qualquer outro filtro.
         const condicoes = [
             eq(lancamentosTable.tipo, tipoCompatvel),
             notInArray(lancamentosTable.status, ["pago", "recebido", "pago_parcial", "cancelado"]),
         ];
 
-        // Mantido apenas para ORDENAÇÃO (prioriza títulos já vinculados a
-        // outras linhas deste extrato - Modo B) - NÃO participa mais do
-        // filtro de status acima.
         const [itemCtxPrevio] = await db
             .select({conciliacao_id: itensConciliacaoTable.conciliacao_id})
             .from(itensConciliacaoTable)
