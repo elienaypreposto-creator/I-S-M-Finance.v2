@@ -100,6 +100,15 @@ function statusStyles(status: string) {
     }
 }
 
+/** Enquanto o extrato não estiver 100% conciliado, o rótulo exibido é sempre
+ *  "pendente" — não expomos o estado intermediário "parcial" na listagem
+ *  (ver print: só existem os badges PENDENTE e CONCILIADO). A cor já é a
+ *  mesma para os dois em statusStyles, então só precisamos normalizar o
+ *  texto mostrado. */
+function statusLabel(status: string): string {
+    return status === "parcial" ? "pendente" : status;
+}
+
 function formatAgenciaConta(row: ConciliacaoListItem): string {
     const agencia = [row.conta_agencia, row.conta_digito_agencia].filter(Boolean).join("") || "—";
     const contaBase = row.conta_numero ?? "—";
@@ -324,7 +333,7 @@ export default function ConciliacaoList() {
                                                 statusStyles(row.status),
                                             )}
                                         >
-                                            {row.status}
+                                            {statusLabel(row.status)}
                                         </span>
                                     </td>
                                     <td className="px-4 py-3 text-white/80 whitespace-nowrap tabular-nums">

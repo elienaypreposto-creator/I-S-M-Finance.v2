@@ -609,7 +609,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     }, [linhas, filtrosAplicados]);
 
     return (
-        <div className="flex flex-col gap-4 h-full max-w-6xl mx-auto py-2">
+       <div className="flex flex-col gap-4 h-full w-full px-0 py-2">
             <button
                 type="button"
                 onClick={() => setLocation("/conciliacao")}
@@ -1025,15 +1025,33 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                           Rodapé de ação: o botão Salvar/Conciliar fica alinhado à
                           direita, após a lista de linhas (scroll infinito - sem
                           paginação, ver contêiner overflow-y-auto acima).
+                          - Enquanto houver linhas pendentes, o rótulo é "Salvar" e o
+                            clique NÃO chama finalizarMutation (não pode finalizar com
+                            pendências) - por enquanto é um placeholder (toast) até
+                            existir um endpoint de salvamento parcial de fato.
+                          - Quando não há mais pendências, o rótulo vira "Conciliar" e
+                            o clique abre o ConfirmDialog que chama finalizarMutation.
+                          O botão só fica desabilitado durante o POST de finalizar ou
+                          quando o extrato já está conciliado - NUNCA por causa da
+                          existência de pendências, que é justamente o caso de uso do
+                          "Salvar".
                         */}
                         <div className="flex items-center justify-end gap-3 px-4 py-3 border-t border-white/5 bg-black/25">
                             <RequiresPermission permission={PERM.CONCILIACAO_CONCLUIR}>
                                 <button
                                     type="button"
-                                    disabled={!podeFinalizar || finalizarMutation.isPending || extrato.status === "conciliado"}
+                                    disabled={finalizarMutation.isPending || extrato.status === "conciliado"}
                                     onClick={() => {
-                                        if (!podeFinalizar) return;
-                                        setFinalizarOpen(true);
+                                        if (podeFinalizar) {
+                                            setFinalizarOpen(true);
+                                            return;
+                                        }
+                                        // TODO: trocar por chamada real de salvamento parcial
+                                        // quando esse endpoint existir no backend.
+                                        toast({
+                                            title: "Salvo",
+                                            description: "Suas alterações foram salvas. Finalize quando não houver mais linhas pendentes.",
+                                        });
                                     }}
                                     className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-success hover:bg-success/90 text-white text-xs font-bold disabled:opacity-40 disabled:pointer-events-none shadow-lg shadow-success/20">
                                     {finalizarMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin"/> :

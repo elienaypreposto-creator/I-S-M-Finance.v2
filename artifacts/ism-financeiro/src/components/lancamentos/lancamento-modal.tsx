@@ -1,4 +1,5 @@
 import {useEffect, useState} from "react";
+import {createPortal} from "react-dom";
 import {
     useForm,
     Controller,
@@ -935,7 +936,7 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
 
     const selectedRisk = riskLevels[nivelRisco];
 
-    return (
+    return createPortal(
         <>
             {/* Sub-modal de parceiro - z-[60] sobrepõe o modal de lançamentos */}
             {parceiroSubModal && (
@@ -965,7 +966,7 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
             />
 
             <div
-                className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 backdrop-blur-md p-4 pt-16 overflow-hidden">
+                className="fixed inset-0 z-[65] flex items-start justify-center bg-black/70 backdrop-blur-md p-4 pt-16 overflow-hidden">
                 <div
                     className="bg-[#121417] border border-white/10 rounded-2xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[90vh]">
 
@@ -1536,6 +1537,7 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                     </form>
                 </div>
             </div>
-        </>
+        </>,
+        document.body,
     );
 }

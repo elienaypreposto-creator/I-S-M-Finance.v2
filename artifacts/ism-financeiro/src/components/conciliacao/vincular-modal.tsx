@@ -18,6 +18,11 @@ import {useAuth} from "@/hooks/use-auth";
 import {PERM} from "@/lib/permissoes";
 import {EditarLancamentoConciliacaoModal} from "@/components/conciliacao/editar-lancamento-modal";
 import {StatusBadge} from "@/components/shared/status-badge";
+import {invalidateRelated} from "@/App";
+// RN-D3: "Novo" - cria um lançamento a partir da linha de origem e já
+// vincula automaticamente. Função movida do botão [+] da tela de
+// conciliação para dentro deste modal.
+import {LancamentoModal, type LancamentoPrefill} from "@/components/lancamentos/lancamento-modal";
 
 export type LancamentoCompativel = {
     id: number;
@@ -44,6 +49,12 @@ type VincularModalProps = {
     linhaId: number;
     valorExtratoAbs: string | number;
     onSuccess: () => void;
+    /** Dados da linha de origem, usados para pré-preencher o formulário do
+     *  botão "Novo" (criar lançamento a partir desta linha - RN-D3, função
+     *  que antes vivia no botão [+] da tela de conciliação). */
+    tipoMovimento: string;
+    dataMovimento: string | null;
+    descricaoLinha: string | null;
 };
 
 type VincularPayload = {
@@ -781,7 +792,13 @@ export function VincularModal({
                                   linhaId,
                                   valorExtratoAbs,
                                   onSuccess,
+                                  tipoMovimento,
+                                  dataMovimento,
+                                  descricaoLinha,
                               }: VincularModalProps) {
+    const queryClient = useQueryClient();
+    const {toast} = useToast();
+
     const [diasJanela, setDiasJanela] = useState(DIAS_JANELA_INICIAL);
     // RN-D4: campos de busca manual - descrição/parceiro (texto livre), valor
     // e vencimento, além da janela de datas. "buscaAtiva"/"valorAtivo"/
@@ -794,6 +811,14 @@ export function VincularModal({
     const [vencimentoTexto, setVencimentoTexto] = useState("");
     const [vencimentoAtivo, setVencimentoAtivo] = useState("");
 
+    // RN-D3: "Novo" - abre o mesmo formulário completo de "Novo Lançamento"
+    // usado na tela de Lançamentos, pré-preenchido com tipo/vencimento/valor/
+    // descrição vindos da linha do extrato. Ao salvar, o lançamento é criado
+    // e automaticamente vinculado a esta linha (vincularAutoMutation) - sem
+    // passo extra manual. Essa função morava no botão [+] da tela de
+    // conciliação e foi movida para dentro deste modal.
+    const [novoLancamentoOpen, setNovoLancamentoOpen] = useState(false);
+
     // Reseta a janela/busca sempre que uma linha diferente é aberta.
     useEffect(() => {
         setDiasJanela(DIAS_JANELA_INICIAL);
@@ -803,6 +828,7 @@ export function VincularModal({
         setValorAtivo("");
         setVencimentoTexto("");
         setVencimentoAtivo("");
+        setNovoLancamentoOpen(false);
     }, [linhaId]);
 
     const {data: lancamentos = [], isLoading, isFetching} = useQuery<LancamentoCompativel[]>({
@@ -818,6 +844,37 @@ export function VincularModal({
             return fetchApiData<LancamentoCompativel[]>(`/conciliacoes/buscar-lancamentos?${params.toString()}`);
         },
         enabled: open && linhaId > 0,
+    });
+
+    // RN-D3: reaproveita o mesmo endpoint do fluxo de vincular manual (POST
+    // /conciliacoes/linhas/:id/vincular), sem desconto/juros e sem residuo -
+    // igual ao comportamento antigo do botão [+].
+    const vincularAutoMutation = useMutation({
+        mutationFn: ({lancamentoId}: { lancamentoId: number }) =>
+            fetchApiData(`/conciliacoes/linhas/${linhaId}/vincular`, {
+                method: "POST",
+                body: JSON.stringify({
+                    lancamentos: [{lancamento_id: lancamentoId, desconto: "0.00", juros_multa: "0.00"}],
+                    gerar_parcial: false,
+                }),
+            }),
+        onSuccess: () => {
+            invalidateRelated(queryClient, "conciliacao");
+            void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
+            void queryClient.invalidateQueries({queryKey: ["conciliacoes-pendencias-mes"]});
+            toast({title: "Lançamento criado e vinculado", description: "A linha já foi conciliada."});
+            setNovoLancamentoOpen(false);
+            onClose();
+            onSuccess();
+        },
+        onError: (e: unknown) =>
+            toast({
+                variant: "destructive",
+                title: "Lançamento criado, mas não foi possível vincular",
+                description: e instanceof Error
+                    ? `${e.message} — vincule manualmente pela lista abaixo.`
+                    : "Vincule manualmente pela lista abaixo.",
+            }),
     });
 
     if (!open) return null;
@@ -844,25 +901,57 @@ export function VincularModal({
                 verticalmente) - abre quase no topo da tela. */}
             <div
                 className="fixed left-[50%] top-[5%] md:top-[10%] -translate-x-[50%] translate-y-0 bg-[#121417] border border-white/10 rounded-2xl w-[calc(100%-2rem)] max-w-2xl max-h-[90vh] min-h-0 shadow-2xl flex flex-col overflow-hidden">
-                <div className="flex items-center justify-between p-5 border-b border-white/5 shrink-0">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-primary/15 flex items-center justify-center">
+                {/* Cabeçalho com flex-wrap: em telas estreitas o bloco de ações
+                    (Novo + fechar) quebra para a linha de baixo em vez de
+                    espremer o título. */}
+                <div className="flex items-center justify-between gap-3 p-5 border-b border-white/5 shrink-0 flex-wrap">
+                    <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-xl bg-primary/15 flex items-center justify-center shrink-0">
                             <Link2 className="w-5 h-5 text-primary"/>
                         </div>
-                        <div>
+                        <div className="min-w-0">
                             <h2 className="text-lg font-bold text-white">Vincular lançamentos</h2>
-                            <p className="text-xs text-muted-foreground">
+                            <p className="text-xs text-muted-foreground truncate">
                                 Linha #{linhaId} · Valor extrato {formatCurrency(Number(valorExtratoAbs))}
                             </p>
                         </div>
                     </div>
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        className="p-2 rounded-xl text-muted-foreground hover:bg-white/5 hover:text-white transition-colors">
-                        <X className="w-5 h-5"/>
-                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                        <button
+                            type="button"
+                            title="Criar lançamento a partir desta linha"
+                            onClick={() => setNovoLancamentoOpen(true)}
+                            className="inline-flex items-center px-4 py-1.5 rounded-full bg-success hover:bg-success/90 text-white text-xs font-bold shadow-md shadow-success/20">
+                            Novo
+                        </button>
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            className="p-2 rounded-xl text-muted-foreground hover:bg-white/5 hover:text-white transition-colors">
+                            <X className="w-5 h-5"/>
+                        </button>
+                    </div>
                 </div>
+
+                {novoLancamentoOpen && (
+                    <LancamentoModal
+                        prefill={{
+                            tipo: tipoMovimento === "credito" ? "CR" : "CP",
+                            vencimento: dataMovimento ?? "",
+                            valor: Math.abs(Number(valorExtratoAbs)),
+                            descricao: descricaoLinha,
+                        } satisfies LancamentoPrefill}
+                        onClose={() => setNovoLancamentoOpen(false)}
+                        onSaved={(created) => {
+                            invalidateRelated(queryClient, "lancamentos");
+                            if (created?.id) {
+                                vincularAutoMutation.mutate({lancamentoId: created.id});
+                            } else {
+                                setNovoLancamentoOpen(false);
+                            }
+                        }}
+                    />
+                )}
 
                 {/* RN-D4: janela de busca configurável + busca por descrição/parceiro/
                     valor/vencimento, em vez de depender só da proximidade de data. */}
