@@ -404,7 +404,7 @@ function CardLancamento({
     }
 
     return (
-        <li className="rounded-lg bg-black/30 border border-white/10 px-2.5 py-2 space-y-1">
+        <li className="rounded-lg bg-black/30 border border-white/10 px-2.5 py-2 space-y-1 w-full">
             <div className="flex items-center justify-between gap-2">
                 {isResidual ? (
                     <label className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-200 min-w-0">
@@ -452,7 +452,7 @@ function CardLancamento({
                     {canDesfazer && (
                         <button
                             type="button"
-                            title="Remover vínculo"
+                            title="Estornar quitação / remover vínculo"
                             onClick={onRemoverVinculo}
                             className="p-1 rounded hover:bg-red-500/20 text-muted-foreground hover:text-red-300">
                             <Trash2 className="w-3.5 h-3.5"/>
@@ -1118,7 +1118,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
 
 
                     <div
-                        className="glass-panel rounded-2xl border border-white/10 overflow-hidden flex flex-col flex-1 min-h-0">
+                        className="glass-panel rounded-xl border border-white/10 overflow-hidden flex flex-col flex-1 min-h-0 w-full min-w-0 max-w-none">
                         {/* Barra de filtros: Tipo, Status, Aplicar, Atualizar, Limpar e Pesquisar (igual ao protótipo) */}
                         <div className="flex flex-wrap items-center gap-2 px-3.5 py-2.5 border-b border-white/5 bg-black/10">
                             <select

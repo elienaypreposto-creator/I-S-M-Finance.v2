@@ -59,8 +59,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
               </div>
             </div>
           </header>
+          {/* Sem max-w-7xl: todas as páginas agora ocupam 100% da largura
+              disponível, igual ao comportamento da tela de conciliação. */}
           <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 animate-in">
-            <div className="max-w-7xl mx-auto w-full">
+            <div className="w-full">
               {children}
             </div>
           </main>
