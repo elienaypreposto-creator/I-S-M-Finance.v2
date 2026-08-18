@@ -2,7 +2,7 @@ import {createHash} from "crypto";
 import {Router} from "express";
 import {z} from "zod";
 import multer from "multer";
-import {and, asc, count, desc, eq, gte, ilike, inArray, isNull, lt, lte, ne, notInArray, or, sql} from "drizzle-orm";
+import {and, asc, count, desc, eq, gte, ilike, inArray, isNull, lt, lte, notInArray, or, sql} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {
     conciliacoesTable,
@@ -42,6 +42,27 @@ import {PERM} from "../constants/permissoes";
 
 const router = Router();
 const upload = multer({storage: multer.memoryStorage()});
+
+/**
+ * Erro com status/code HTTP explícitos - usado para abortar uma transaction
+ * (throw) em rotas que aplicam várias ações em lote (ex.: POST .../salvar) e
+ * ainda assim devolver o errorResponse correto para quem chamou, em vez de
+ * cair no catch genérico 500.
+ */
+class ErroComStatus extends Error {
+    status: number;
+    code: string;
+
+    constructor(status: number, code: string, message: string) {
+        super(message);
+        this.status = status;
+        this.code = code;
+    }
+}
+
+function errorComStatus(status: number, code: string, message: string): ErroComStatus {
+    return new ErroComStatus(status, code, message);
+}
 
 // ---------------------------------------------------------------------------
 // Schemas de validação
@@ -134,44 +155,6 @@ function descreverResiduoParcial(params: {
     },`;
 }
 
-/**
- * Modo B / quitadoAnterior: soma `valor_vinculado` ainda em rascunho
- * (conciliação ≠ conciliado). O campo `lancamentos.valor_quitado` só reflete
- * o que já foi martelado no finalizar - não usar sozinho na decisão.
- */
-async function quitadoRascunhoPorLancamentoCents(
-    lancamentoIds: number[],
-): Promise<Map<number, number>> {
-    const map = new Map<number, number>();
-    if (lancamentoIds.length === 0) return map;
-
-    const rows = await db
-        .select({
-            lancamento_id: itensConciliacaoLancamentosTable.lancamento_id,
-            valor_vinculado: itensConciliacaoLancamentosTable.valor_vinculado,
-        })
-        .from(itensConciliacaoLancamentosTable)
-        .innerJoin(
-            itensConciliacaoTable,
-            eq(itensConciliacaoLancamentosTable.item_conciliacao_id, itensConciliacaoTable.id),
-        )
-        .innerJoin(
-            conciliacoesTable,
-            eq(itensConciliacaoTable.conciliacao_id, conciliacoesTable.id),
-        )
-        .where(
-            and(
-                inArray(itensConciliacaoLancamentosTable.lancamento_id, lancamentoIds),
-                ne(conciliacoesTable.status, "conciliado"),
-            ),
-        );
-
-    for (const row of rows) {
-        map.set(row.lancamento_id, (map.get(row.lancamento_id) ?? 0) + toCents(row.valor_vinculado));
-    }
-    return map;
-}
-
 const vincularBodySchema = z.object({
     lancamentos: z
         .array(
@@ -188,6 +171,36 @@ const vincularBodySchema = z.object({
     gerar_parcial: z.boolean().default(false),
     /** Obrigatório com 2+ lançamentos quando gerar_parcial=true (DEF-07). */
     residuo_lancamento_id: z.coerce.number().int().positive().optional(),
+    /**
+     * Regra de Ouro (Fase 8): quando true, só CALCULA a decisão (mesma regra
+     * de negócio do backend) e devolve, sem gravar nada no banco. Usado pelo
+     * modal de "Vincular" para manter o resultado só em memória no front até
+     * o usuário clicar em Salvar/Conciliar na tela do extrato.
+     */
+    preview: z.boolean().default(false),
+    /**
+     * Só relevante em preview=true: contexto de rascunhos AINDA não salvos
+     * nesta sessão do usuário (outras rodadas de vincular na mesma linha, ou
+     * em outras linhas do mesmo extrato que já reservaram parte do MESMO
+     * lançamento). Sem isso, o preview de uma 2ª rodada não sabe que a 1ª
+     * já "usou" parte do extrato/lançamento e recalcula tudo do zero. No
+     * Salvar de verdade isso não é necessário: as ações são aplicadas em
+     * sequência dentro da MESMA transaction e cada uma já vê o efeito da
+     * anterior.
+     */
+    contexto_rascunho: z
+        .object({
+            ja_vinculado_local_cents: z.number().int().min(0).default(0),
+            quitado_local_por_lancamento: z.record(z.string(), z.number().int()).default({}),
+            /** true quando um "Desfazer" desta MESMA linha já está
+             *  rascunhado antes deste vincular (ainda não salvo) - o vínculo
+             *  real no banco será descartado no Salvar, então o preview
+             *  também precisa ignorá-lo agora (senão calcularia incremental
+             *  sobre um vínculo que, do ponto de vista do usuário, já foi
+             *  desfeito). */
+            ignorar_vinculos_reais: z.boolean().default(false),
+        })
+        .optional(),
 });
 
 /**
@@ -1283,7 +1296,12 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
 
         const condicoes = [
             eq(lancamentosTable.tipo, tipoCompatvel),
-            notInArray(lancamentosTable.status, ["pago", "recebido", "pago_parcial", "cancelado"]),
+            // Card 71 + regressão Modo B: "pago_parcial" PRECISA continuar
+            // aparecendo aqui, senão fica impossível conciliar o saldo restante
+            // de um título que já recebeu parte do valor em outra linha do
+            // extrato. Só status realmente encerrados ("pago"/"recebido") e
+            // "cancelado" ficam de fora.
+            notInArray(lancamentosTable.status, ["pago", "recebido", "cancelado"]),
         ];
 
         const [itemCtxPrevio] = await db
@@ -1372,10 +1390,6 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
             .where(and(...condicoes))
             .limit(100);
 
-        const quitadoRascunhoMap = await quitadoRascunhoPorLancamentoCents(
-            candidatos.map((c) => c.id),
-        );
-
         // Ordena: Modo B (já no extrato) → proximidade de valor → proximidade de data.
         // (idsEmUsoNoExtrato já foi calculado acima, junto do filtro de status.)
         const dataRefTime = linha.data_movimento ? new Date(linha.data_movimento).getTime() : Date.now();
@@ -1396,17 +1410,16 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
         return successResponse(
             res,
             ordenados.map((l) => {
-                const quitadoCommitadoCents = toCents(l.valor_quitado);
-                const quitadoRascunhoCents = quitadoRascunhoMap.get(l.id) ?? 0;
-                const quitadoAcumuladoCents = quitadoCommitadoCents + quitadoRascunhoCents;
+                // Regra de Ouro: valor_quitado do título já é a fonte de
+                // verdade em tempo real (persistirVinculo martela na hora do
+                // Salvar) - não há mais "rascunho" via ledger pra somar aqui.
+                const quitadoAcumuladoCents = toCents(l.valor_quitado);
                 const valorCents = toCents(l.valor);
                 return {
                     ...l,
                     valor: toDecimal(l.valor),
                     valor_quitado: l.valor_quitado != null ? toDecimal(l.valor_quitado) : null,
-                    /** Commitado + vínculos em rascunho (ciclo adiado). */
                     quitado_acumulado: fromCents(quitadoAcumuladoCents),
-                    quitado_rascunho: fromCents(quitadoRascunhoCents),
                     saldo_aberto_titulo: fromCents(Math.max(0, valorCents - quitadoAcumuladoCents)),
                     em_modo_b_neste_extrato: idsEmUsoNoExtrato.has(l.id),
                 };
@@ -1499,6 +1512,11 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
                     // a data do residual parcial (RN-G3).
                     lancamento_vencimento: lancamentosTable.vencimento,
                     is_residuo_parcial: lancamentosTable.is_residuo_parcial,
+                    // Card 76: residual ainda não materializado (só existe em
+                    // lancamentosTable depois do finalizar) - front usa isso para
+                    // avisar "vai gerar residual ao salvar/conciliar".
+                    eh_origem_residuo: itensConciliacaoLancamentosTable.eh_origem_residuo,
+                    residuo_valor_pendente: itensConciliacaoLancamentosTable.residuo_valor_pendente,
                 })
                 .from(itensConciliacaoLancamentosTable)
                 .innerJoin(lancamentosTable, eq(lancamentosTable.id, itensConciliacaoLancamentosTable.lancamento_id))
@@ -1536,6 +1554,11 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
                     /** @deprecated alias - usar juros_multa */
                     acrescimo: toDecimal(v.juros_multa),
                     vencimento: v.lancamento_vencimento,
+                    // Card 76: enquanto não finalizar, o residual é só uma promessa -
+                    // ainda não existe como lançamento em lancamentosTable.
+                    residuo_pendente: v.eh_origem_residuo
+                        ? {valor: toDecimal(v.residuo_valor_pendente ?? "0")}
+                        : null,
                 })),
         }));
 
@@ -1571,6 +1594,76 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
     }
 });
 
+/** Lê e valida o item/conciliação de uma linha para poder ignorá-la. */
+async function validarIgnorar(executor: typeof db, linhaId: number) {
+    const [item] = await executor
+        .select({
+            id: itensConciliacaoTable.id,
+            conciliacao_id: itensConciliacaoTable.conciliacao_id,
+            extrato_linha_id: itensConciliacaoTable.extrato_linha_id,
+            status: itensConciliacaoTable.status,
+        })
+        .from(itensConciliacaoTable)
+        .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
+        .limit(1);
+
+    if (!item) {
+        return {ok: false as const, status: 404, code: "NOT_FOUND", message: "Linha de extrato não encontrada para conciliação."};
+    }
+    if (item.status === "ignorado") {
+        return {ok: false as const, status: 400, code: "VALIDATION_ERROR", message: "A linha já está ignorada."};
+    }
+    if (item.status === "vinculado") {
+        return {ok: false as const, status: 400, code: "VALIDATION_ERROR", message: "Desfaça o vínculo antes de ignorar."};
+    }
+
+    const [conciliacao] = await executor
+        .select({extrato_id: conciliacoesTable.extrato_id})
+        .from(conciliacoesTable)
+        .where(eq(conciliacoesTable.id, item.conciliacao_id))
+        .limit(1);
+
+    if (!conciliacao) {
+        return {ok: false as const, status: 404, code: "NOT_FOUND", message: "Conciliação não encontrada."};
+    }
+
+    return {ok: true as const, item, conciliacao};
+}
+
+/** Persiste o ignorar (mesma lógica usada pela rota individual e pelo Salvar em lote). */
+async function persistirIgnorar(
+    tx: any,
+    ctx: { item: { id: number; conciliacao_id: number }; conciliacao: { extrato_id: number } },
+    params: { linhaId: number; motivoCodigo: string | null; motivo: string | null; usuarioId?: number },
+) {
+    const {item, conciliacao} = ctx;
+    const {linhaId, motivoCodigo, motivo, usuarioId} = params;
+    const motivoTexto = motivo || (motivoCodigo ? motivoCodigo.replace(/_/g, " ") : null);
+
+    await tx
+        .update(itensConciliacaoTable)
+        .set({
+            status: "ignorado",
+            motivo_ignorar: motivoTexto,
+            motivo_ignorar_codigo: motivoCodigo,
+            data_conciliacao: hojeIsoLocal(),
+            updated_at: new Date(),
+        })
+        .where(eq(itensConciliacaoTable.id, item.id));
+
+    await tx.insert(historicoConciliacaoTable).values({
+        conciliacao_id: item.conciliacao_id,
+        item_conciliacao_id: item.id,
+        usuario_id: usuarioId,
+        acao: "ignorar",
+        detalhes: JSON.stringify({linha_id: linhaId, motivo_codigo: motivoCodigo, motivo: motivoTexto}),
+    });
+
+    await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
+
+    return {linha_id: linhaId, status: "ignorado" as const, motivo_ignorar: motivoTexto};
+}
+
 router.post(
     "/conciliacoes/linhas/:linha_id/ignorar",
     withPermission(PERM.CONCILIACAO_IGNORAR),
@@ -1594,80 +1687,321 @@ router.post(
                 }
             }
 
-            const [item] = await db
-                .select({
-                    id: itensConciliacaoTable.id,
-                    conciliacao_id: itensConciliacaoTable.conciliacao_id,
-                    extrato_linha_id: itensConciliacaoTable.extrato_linha_id,
-                    status: itensConciliacaoTable.status,
-                })
-                .from(itensConciliacaoTable)
-                .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
-                .limit(1);
-
-            if (!item) {
-                return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada para conciliação.");
-            }
-            if (item.status === "ignorado") {
-                return errorResponse(res, 400, "VALIDATION_ERROR", "A linha já está ignorada.");
-            }
-            if (item.status === "vinculado") {
-                return errorResponse(res, 400, "VALIDATION_ERROR", "Desfaça o vínculo antes de ignorar.");
+            const validado = await validarIgnorar(db, linhaId);
+            if (!validado.ok) {
+                return errorResponse(res, validado.status, validado.code, validado.message);
             }
 
-            const [conciliacao] = await db
-                .select({extrato_id: conciliacoesTable.extrato_id})
-                .from(conciliacoesTable)
-                .where(eq(conciliacoesTable.id, item.conciliacao_id))
-                .limit(1);
+            const resultado = await db.transaction((tx) =>
+                persistirIgnorar(tx, validado, {
+                    linhaId,
+                    motivoCodigo: body.motivo_codigo ?? null,
+                    motivo: body.motivo ?? null,
+                    usuarioId: req.user?.id,
+                }),
+            );
 
-            if (!conciliacao) {
-                return errorResponse(res, 404, "NOT_FOUND", "Conciliação não encontrada.");
-            }
-
-            const motivoTexto =
-                body.motivo ||
-                (body.motivo_codigo
-                    ? body.motivo_codigo.replace(/_/g, " ")
-                    : null);
-
-            await db.transaction(async (tx) => {
-                await tx
-                    .update(itensConciliacaoTable)
-                    .set({
-                        status: "ignorado",
-                        motivo_ignorar: motivoTexto,
-                        motivo_ignorar_codigo: body.motivo_codigo ?? null,
-                        data_conciliacao: hojeIsoLocal(),
-                        updated_at: new Date(),
-                    })
-                    .where(eq(itensConciliacaoTable.id, item.id));
-
-                await tx.insert(historicoConciliacaoTable).values({
-                    conciliacao_id: item.conciliacao_id,
-                    item_conciliacao_id: item.id,
-                    usuario_id: req.user?.id,
-                    acao: "ignorar",
-                    detalhes: JSON.stringify({
-                        linha_id: linhaId,
-                        motivo_codigo: body.motivo_codigo ?? null,
-                        motivo: motivoTexto,
-                    }),
-                });
-
-                await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
-            });
-
-            return successResponse(res, {
-                linha_id: linhaId,
-                status: "ignorado",
-                motivo_ignorar: motivoTexto,
-            });
+            return successResponse(res, resultado);
         } catch (e) {
             return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao ignorar linha do extrato.", String(e));
         }
     },
 );
+/**
+ * Lê e decide (regra de negócio pura, via decidirVincular) o resultado de um
+ * vincular, SEM gravar nada. Reaproveitado tanto pelo preview (Regra de
+ * Ouro - modal só mostra o resultado, não persiste) quanto pelo Salvar de
+ * verdade (que decide de novo, agora dentro da transaction, e persiste).
+ */
+async function calcularVinculo(
+    executor: typeof db,
+    params: {
+        linhaId: number;
+        lancamentosPayload: VincularBody["lancamentos"];
+        gerarParcial: boolean;
+        residuoLancamentoId: number | null;
+        contextoRascunho?: VincularBody["contexto_rascunho"];
+    },
+) {
+    const {linhaId, lancamentosPayload, gerarParcial, residuoLancamentoId, contextoRascunho} = params;
+
+    const [item] = await executor
+        .select()
+        .from(itensConciliacaoTable)
+        .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
+        .limit(1);
+
+    if (!item) {
+        return {ok: false as const, status: 404, code: "NOT_FOUND", message: "Linha de extrato não encontrada para conciliação."};
+    }
+    if (item.status === "ignorado") {
+        return {ok: false as const, status: 400, code: "VALIDATION_ERROR", message: "Reverta o ignorar antes de vincular."};
+    }
+
+    const vinculosExistentesReais = await executor
+        .select({
+            id: itensConciliacaoLancamentosTable.id,
+            lancamento_id: itensConciliacaoLancamentosTable.lancamento_id,
+            valor_vinculado: itensConciliacaoLancamentosTable.valor_vinculado,
+        })
+        .from(itensConciliacaoLancamentosTable)
+        .where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id));
+
+    // Preview: se um "Desfazer" desta mesma linha já está rascunhado antes
+    // deste vincular (ver ignorar_vinculos_reais), o vínculo real ainda no
+    // banco será descartado no Salvar - trata como se já não existisse.
+    const ignorarVinculosReais = contextoRascunho?.ignorar_vinculos_reais ?? false;
+    const vinculosExistentes = ignorarVinculosReais ? [] : vinculosExistentesReais;
+
+    const jaVinculadoIds = new Set(vinculosExistentes.map((v) => v.lancamento_id));
+    const idsNovos = lancamentosPayload.map((l) => l.lancamento_id);
+    const duplicados = idsNovos.filter((id) => jaVinculadoIds.has(id));
+    if (duplicados.length > 0) {
+        return {
+            ok: false as const,
+            status: 409,
+            code: "CONFLICT",
+            message: `Lançamento(s) já vinculado(s) a esta linha: ${duplicados.join(", ")}.`,
+        };
+    }
+
+    const extratoTotalCents = toCents(item.valor_extrato);
+    const jaVinculadoRealCents = sumCents(vinculosExistentes.map((v) => toCents(v.valor_vinculado)));
+    // Preview: soma de rodadas de vincular ainda não salvas nesta sessão
+    // (mesma linha) - sem persistência real de fato ainda não existe.
+    const jaVinculadoLocalCents = contextoRascunho?.ja_vinculado_local_cents ?? 0;
+    const jaVinculadoCents = jaVinculadoRealCents + jaVinculadoLocalCents;
+    const saldoAbertoCents = Math.max(0, extratoTotalCents - jaVinculadoCents);
+    const houveVinculoAnterior = vinculosExistentes.length > 0 || jaVinculadoLocalCents > 0;
+
+    if (houveVinculoAnterior && saldoAbertoCents <= 0) {
+        return {
+            ok: false as const,
+            status: 409,
+            code: "CONFLICT",
+            message: "Esta linha já está totalmente vinculada (valores batem).",
+        };
+    }
+
+    // Base da decisão = saldo restante (incremental) ou valor cheio (1º vínculo).
+    const extratoParaDecisaoCents = houveVinculoAnterior ? saldoAbertoCents : extratoTotalCents;
+
+    const [conciliacao] = await executor
+        .select()
+        .from(conciliacoesTable)
+        .where(eq(conciliacoesTable.id, item.conciliacao_id))
+        .limit(1);
+    if (!conciliacao) {
+        return {ok: false as const, status: 404, code: "NOT_FOUND", message: "Conciliação não encontrada."};
+    }
+
+    const lancamentos = await executor
+        .select()
+        .from(lancamentosTable)
+        .where(inArray(lancamentosTable.id, idsNovos));
+
+    if (lancamentos.length !== idsNovos.length) {
+        return {ok: false as const, status: 400, code: "VALIDATION_ERROR", message: "Um ou mais lançamentos informados são inválidos."};
+    }
+
+    const payloadMap = new Map(lancamentosPayload.map((l) => [l.lancamento_id, l]));
+    const quitadoLocalExtra = contextoRascunho?.quitado_local_por_lancamento ?? {};
+
+    // Regra de Ouro: persistirVinculo agora martela o título assim que o
+    // vínculo é salvo (não mais só no finalizar), então lancamento.valor_quitado
+    // já é a fonte de verdade em tempo real - não soma mais um "rascunho" via
+    // ledger de itens_conciliacao_lancamentos (isso duplicaria o valor).
+    // O que falta somar é só o rascunho LOCAL (ainda em memória no front,
+    // vindo de contexto_rascunho, nunca persistido).
+    const decision = decidirVincular({
+        extratoCents: extratoParaDecisaoCents,
+        lancamentos: lancamentos.map((lancamento) => {
+            const p = payloadMap.get(lancamento.id);
+            const jurosMulta = p?.juros_multa ?? p?.acrescimo ?? 0;
+            const quitadoAnteriorCents =
+                toCents(lancamento.valor_quitado) +
+                (quitadoLocalExtra[String(lancamento.id)] ?? 0);
+            return {
+                lancamento_id: lancamento.id,
+                valorCents: toCents(lancamento.valor),
+                descontoCents: toCents(p?.desconto ?? 0),
+                jurosMultaCents: toCents(jurosMulta),
+                quitadoAnteriorCents,
+            };
+        }),
+        gerarParcial,
+        residuoLancamentoId: residuoLancamentoId ?? null,
+    });
+
+    if (decision.ok === false) {
+        return {ok: false as const, status: decision.status, code: decision.code, message: decision.message};
+    }
+
+    const lancamentoById = new Map(lancamentos.map((l) => [l.id, l]));
+    const novoVinculoCents = sumCents(decision.itens.map((i) => i.valorVinculadoCents));
+    const totalConciliadoCents = jaVinculadoRealCents + novoVinculoCents;
+    // Saldo restante absoluto na linha após este acúmulo (só considera o que
+    // já está REAL no banco - rascunho local ainda não é "saldo comprometido"
+    // até o Salvar aplicar de verdade).
+    const valorSaldoFinalCents = Math.max(0, extratoTotalCents - totalConciliadoCents);
+
+    return {
+        ok: true as const,
+        item,
+        conciliacao,
+        lancamentoById,
+        decision,
+        extratoTotalCents,
+        jaVinculadoRealCents,
+        totalConciliadoCents,
+        valorSaldoFinalCents,
+    };
+}
+
+type VincularCalcOk = Extract<Awaited<ReturnType<typeof calcularVinculo>>, { ok: true }>;
+
+/**
+ * Grava de fato o resultado de `calcularVinculo` - inclui a criação
+ * IMEDIATA do lançamento residual (Regra de Ouro: a persistência inteira do
+ * vincular já foi adiada para o momento do Salvar/Conciliar, então não há
+ * mais motivo para adiar o residual num segundo momento como antes).
+ */
+async function persistirVinculo(
+    tx: any,
+    calc: VincularCalcOk,
+    params: {
+        linhaId: number;
+        lancamentosPayload: VincularBody["lancamentos"];
+        gerarParcial: boolean;
+        residuoLancamentoId: number | null;
+        usuarioId?: number;
+    },
+) {
+    const {item, conciliacao, lancamentoById, decision, extratoTotalCents, totalConciliadoCents, valorSaldoFinalCents} = calc;
+    const {linhaId, lancamentosPayload, gerarParcial, residuoLancamentoId, usuarioId} = params;
+
+    let residuoCriado: { lancamento_id: number; valor: number } | null = null;
+    if (decision.residual) {
+        const origem = lancamentoById.get(decision.residual.origemLancamentoId);
+        if (!origem) {
+            throw new Error("Não foi possível identificar lançamento de origem para o residual.");
+        }
+        const [novoResiduo] = await tx
+            .insert(lancamentosTable)
+            .values({
+                tipo: origem.tipo,
+                vencimento: origem.vencimento,
+                competencia: origem.competencia,
+                conta_id: origem.conta_id ?? conciliacao.conta_id,
+                parceiro_id: origem.parceiro_id,
+                descricao: descreverResiduoParcial({
+                    valorCents: decision.residual.valorCents,
+                    vencimento: origem.vencimento,
+                    descricaoOrigem: origem.descricao,
+                }),
+                valor: centsToDecimalString(decision.residual.valorCents),
+                status: "pendente",
+                origem: "residuo_parcial",
+                plano_conta_id: origem.plano_conta_id,
+                departamento_id: origem.departamento_id,
+                centro_custo_id: origem.centro_custo_id,
+                parcela_atual: origem.parcela_atual,
+                total_parcelas: origem.total_parcelas,
+                riscos: origem.riscos ?? [],
+                is_residuo_parcial: true,
+                lancamento_origem_id: origem.id,
+                criado_por: usuarioId,
+            })
+            .returning();
+        residuoCriado = {lancamento_id: novoResiduo.id, valor: fromCents(decision.residual.valorCents)};
+    }
+
+    await tx.insert(itensConciliacaoLancamentosTable).values(
+        decision.itens.map((v) => ({
+            item_conciliacao_id: item.id,
+            lancamento_id: v.lancamento_id,
+            valor_vinculado: centsToDecimalString(v.valorVinculadoCents),
+            desconto: centsToDecimalString(v.descontoCents),
+            juros_multa: centsToDecimalString(v.jurosMultaCents),
+        })),
+    );
+
+    // Crítico: o título original (lancamentosTable) precisa refletir a
+    // quitação já no momento em que o vínculo é de fato salvo (Salvar/Conciliar
+    // em lote), sem esperar o finalizar da conciliação inteira - senão o
+    // lançamento fica com status/valor_quitado antigos mesmo após persistir.
+    for (const vinculoItem of decision.itens) {
+        const origem = lancamentoById.get(vinculoItem.lancamento_id);
+        if (!origem) continue;
+
+        const novoQuitadoCents = toCents(origem.valor_quitado) + vinculoItem.valorVinculadoCents;
+        const novoJurosCents = toCents(origem.juros) + vinculoItem.jurosMultaCents;
+        const novoDescontoCents = toCents(origem.desconto) + vinculoItem.descontoCents;
+        const tipoExtratoLancamento = origem.tipo === "CR" ? "credito" : "debito";
+        const novoStatus = statusAposQuitacao({
+            tipoExtrato: tipoExtratoLancamento,
+            valorLancamentoCents: toCents(origem.valor),
+            valorQuitadoAcumuladoCents: novoQuitadoCents,
+            descontoAcumuladoCents: novoDescontoCents,
+        });
+
+        await tx
+            .update(lancamentosTable)
+            .set({
+                status: novoStatus,
+                data_quitacao: toDateIso(origem.data_quitacao) ?? toDateIso(item.data) ?? hojeIsoLocal(),
+                conta_id: conciliacao.conta_id,
+                valor_quitado: centsToDecimalString(novoQuitadoCents),
+                juros: centsToDecimalString(novoJurosCents),
+                desconto: centsToDecimalString(novoDescontoCents),
+                updated_at: new Date(),
+            })
+            .where(eq(lancamentosTable.id, vinculoItem.lancamento_id));
+    }
+
+    await tx
+        .update(itensConciliacaoTable)
+        .set({
+            status: "vinculado",
+            valor_vinculado_total: centsToDecimalString(totalConciliadoCents),
+            valor_saldo: centsToDecimalString(valorSaldoFinalCents),
+            data_conciliacao: hojeIsoLocal(),
+            updated_at: new Date(),
+        })
+        .where(eq(itensConciliacaoTable.id, item.id));
+
+    await tx.insert(historicoConciliacaoTable).values({
+        conciliacao_id: item.conciliacao_id,
+        item_conciliacao_id: item.id,
+        usuario_id: usuarioId,
+        acao: decision.residual ? "criar_residuo_parcial" : "vincular",
+        detalhes: JSON.stringify({
+            linha_id: linhaId,
+            lancamentos: lancamentosPayload,
+            gerar_parcial: gerarParcial,
+            residuo_lancamento_id: residuoLancamentoId ?? null,
+            valor_extrato: fromCents(extratoTotalCents),
+            total_conciliado: fromCents(totalConciliadoCents),
+            delta: fromCents(decision.deltaCents),
+            ramo: decision.ramo,
+            valor_saldo: fromCents(valorSaldoFinalCents),
+            residuo_criado_lancamento_id: residuoCriado?.lancamento_id ?? null,
+        }),
+    });
+
+    await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
+
+    return {
+        linha_id: linhaId,
+        status: "vinculado" as const,
+        ramo: decision.ramo,
+        delta: fromCents(decision.deltaCents),
+        total_conciliado: fromCents(totalConciliadoCents),
+        valor_saldo: fromCents(valorSaldoFinalCents),
+        residuo: residuoCriado,
+    };
+}
+
 router.post(
     "/conciliacoes/linhas/:linha_id/vincular",
     withPermission(PERM.CONCILIACAO_VINCULAR),
@@ -1678,222 +2012,58 @@ router.post(
             const {
                 lancamentos: lancamentosPayload,
                 gerar_parcial: gerarParcial,
-                residuo_lancamento_id: residuoLancamentoId
-            } =
-                req.body as VincularBody;
+                residuo_lancamento_id: residuoLancamentoId,
+                preview,
+                contexto_rascunho: contextoRascunho,
+            } = req.body as VincularBody;
 
-            const [item] = await db
-                .select()
-                .from(itensConciliacaoTable)
-                .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
-                .limit(1);
-
-            if (!item) {
-                return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada para conciliação.");
-            }
-            if (item.status === "ignorado") {
-                return errorResponse(
-                    res,
-                    400,
-                    "VALIDATION_ERROR",
-                    "Reverta o ignorar antes de vincular.",
-                );
-            }
-
-            const vinculosExistentes = await db
-                .select({
-                    id: itensConciliacaoLancamentosTable.id,
-                    lancamento_id: itensConciliacaoLancamentosTable.lancamento_id,
-                    valor_vinculado: itensConciliacaoLancamentosTable.valor_vinculado,
-                })
-                .from(itensConciliacaoLancamentosTable)
-                .where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id));
-
-            const jaVinculadoIds = new Set(vinculosExistentes.map((v) => v.lancamento_id));
-            const idsNovos = lancamentosPayload.map((l) => l.lancamento_id);
-            const duplicados = idsNovos.filter((id) => jaVinculadoIds.has(id));
-            if (duplicados.length > 0) {
-                return errorResponse(
-                    res,
-                    409,
-                    "CONFLICT",
-                    `Lançamento(s) já vinculado(s) a esta linha: ${duplicados.join(", ")}.`,
-                );
-            }
-
-            const extratoTotalCents = toCents(item.valor_extrato);
-            const jaVinculadoCents = sumCents(vinculosExistentes.map((v) => toCents(v.valor_vinculado)));
-            const saldoAbertoCents = Math.max(0, extratoTotalCents - jaVinculadoCents);
-
-            // Incremental: só permite acumular se ainda há saldo a cobrir no extrato.
-            if (vinculosExistentes.length > 0 && saldoAbertoCents <= 0) {
-                return errorResponse(
-                    res,
-                    409,
-                    "CONFLICT",
-                    "Esta linha já está totalmente vinculada (valores batem).",
-                );
-            }
-
-            // Base da decisão = saldo restante (incremental) ou valor cheio (1º vínculo).
-            const extratoParaDecisaoCents =
-                vinculosExistentes.length > 0 ? saldoAbertoCents : extratoTotalCents;
-
-            const [linhaExtrato] = await db
-                .select()
-                .from(extratoLinhasTable)
-                .where(eq(extratoLinhasTable.id, linhaId))
-                .limit(1);
-            if (!linhaExtrato) {
-                return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada.");
-            }
-
-            const [conciliacao] = await db
-                .select()
-                .from(conciliacoesTable)
-                .where(eq(conciliacoesTable.id, item.conciliacao_id))
-                .limit(1);
-            if (!conciliacao) {
-                return errorResponse(res, 404, "NOT_FOUND", "Conciliação não encontrada.");
-            }
-
-            const idsLancamentos = idsNovos;
-            const lancamentos = await db
-                .select()
-                .from(lancamentosTable)
-                .where(inArray(lancamentosTable.id, idsLancamentos));
-
-            if (lancamentos.length !== idsLancamentos.length) {
-                return errorResponse(res, 400, "VALIDATION_ERROR", "Um ou mais lançamentos informados são inválidos.");
-            }
-
-            const payloadMap = new Map(lancamentosPayload.map((l) => [l.lancamento_id, l]));
-            const quitadoRascunhoMap = await quitadoRascunhoPorLancamentoCents(idsLancamentos);
-
-            const decision = decidirVincular({
-                extratoCents: extratoParaDecisaoCents,
-                lancamentos: lancamentos.map((lancamento) => {
-                    const p = payloadMap.get(lancamento.id);
-                    const jurosMulta = p?.juros_multa ?? p?.acrescimo ?? 0;
-                    const quitadoAnteriorCents =
-                        toCents(lancamento.valor_quitado) + (quitadoRascunhoMap.get(lancamento.id) ?? 0);
-                    return {
-                        lancamento_id: lancamento.id,
-                        valorCents: toCents(lancamento.valor),
-                        descontoCents: toCents(p?.desconto ?? 0),
-                        jurosMultaCents: toCents(jurosMulta),
-                        quitadoAnteriorCents,
-                    };
-                }),
+            const calc = await calcularVinculo(db, {
+                linhaId,
+                lancamentosPayload,
                 gerarParcial,
                 residuoLancamentoId: residuoLancamentoId ?? null,
+                contextoRascunho,
             });
 
-            if (!decision.ok) {
-                return errorResponse(res, decision.status, decision.code, decision.message);
+            if (!calc.ok) {
+                return errorResponse(res, calc.status, calc.code, calc.message);
             }
 
-            const lancamentoById = new Map(lancamentos.map((l) => [l.id, l]));
-            const novoVinculoCents = sumCents(decision.itens.map((i) => i.valorVinculadoCents));
-            const totalConciliadoCents = jaVinculadoCents + novoVinculoCents;
-            // Saldo restante absoluto na linha após este acúmulo.
-            const valorSaldoFinalCents = Math.max(0, extratoTotalCents - totalConciliadoCents);
-
-            const resultado = await db.transaction(async (tx) => {
-                let novoResiduo: unknown = null;
-
-                if (decision.residual) {
-                    const origem = lancamentoById.get(decision.residual.origemLancamentoId);
-                    if (!origem) {
-                        throw new Error("Não foi possível identificar lançamento de origem para o residual.");
-                    }
-
-                    const descricaoResidual = descreverResiduoParcial({
-                        valorCents: decision.residual.valorCents,
-                        vencimento: origem.vencimento,
-                        descricaoOrigem: origem.descricao,
-                    });
-
-                    const [residuo] = await tx
-                        .insert(lancamentosTable)
-                        .values({
-                            tipo: origem.tipo,
-                            vencimento: origem.vencimento,
-                            competencia: origem.competencia,
-                            conta_id: origem.conta_id ?? conciliacao.conta_id,
-                            parceiro_id: origem.parceiro_id,
-                            descricao: descricaoResidual,
-                            valor: centsToDecimalString(decision.residual.valorCents),
-                            status: "pendente",
-                            origem: "residuo_parcial",
-                            plano_conta_id: origem.plano_conta_id,
-                            departamento_id: origem.departamento_id,
-                            centro_custo_id: origem.centro_custo_id,
-                            parcela_atual: origem.parcela_atual,
-                            total_parcelas: origem.total_parcelas,
-                            riscos: origem.riscos ?? [],
-                            is_residuo_parcial: true,
-                            lancamento_origem_id: origem.id,
-                            criado_por: req.user?.id,
-                        })
-                        .returning();
-
-                    novoResiduo = residuo;
-                }
-
-                await tx.insert(itensConciliacaoLancamentosTable).values(
-                    decision.itens.map((v) => ({
-                        item_conciliacao_id: item.id,
-                        lancamento_id: v.lancamento_id,
-                        valor_vinculado: centsToDecimalString(v.valorVinculadoCents),
-                        desconto: centsToDecimalString(v.descontoCents),
-                        juros_multa: centsToDecimalString(v.jurosMultaCents),
-                    })),
-                );
-
-                await tx
-                    .update(itensConciliacaoTable)
-                    .set({
-                        status: "vinculado",
-                        valor_vinculado_total: centsToDecimalString(totalConciliadoCents),
-                        valor_saldo: centsToDecimalString(valorSaldoFinalCents),
-                        data_conciliacao: hojeIsoLocal(),
-                        updated_at: new Date(),
-                    })
-                    .where(eq(itensConciliacaoTable.id, item.id));
-
-                await tx.insert(historicoConciliacaoTable).values({
-                    conciliacao_id: item.conciliacao_id,
-                    item_conciliacao_id: item.id,
-                    usuario_id: req.user?.id,
-                    acao: decision.residual ? "criar_residuo_parcial" : "vincular",
-                    detalhes: JSON.stringify({
-                        linha_id: linhaId,
-                        lancamentos: lancamentosPayload,
-                        gerar_parcial: gerarParcial,
-                        residuo_lancamento_id: residuoLancamentoId ?? null,
-                        valor_extrato: fromCents(extratoTotalCents),
-                        ja_vinculado: fromCents(jaVinculadoCents),
-                        incremental: vinculosExistentes.length > 0,
-                        total_conciliado: fromCents(totalConciliadoCents),
-                        delta: fromCents(decision.deltaCents),
-                        ramo: decision.ramo,
-                        valor_saldo: fromCents(valorSaldoFinalCents),
-                    }),
-                });
-
-                await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
-
-                return {
+            if (preview) {
+                // Regra de Ouro (Fase 8): o modal só devolve o cálculo pro front
+                // guardar em memória - nada é gravado até o Salvar/Conciliar.
+                return successResponse(res, {
                     linha_id: linhaId,
                     status: "vinculado",
-                    ramo: decision.ramo,
-                    delta: fromCents(decision.deltaCents),
-                    total_conciliado: fromCents(totalConciliadoCents),
-                    valor_saldo: fromCents(valorSaldoFinalCents),
-                    residuo: novoResiduo,
-                };
-            });
+                    preview: true,
+                    ramo: calc.decision.ramo,
+                    delta: fromCents(calc.decision.deltaCents),
+                    total_conciliado: fromCents(calc.totalConciliadoCents),
+                    valor_saldo: fromCents(calc.valorSaldoFinalCents),
+                    itens: calc.decision.itens.map((i) => ({
+                        lancamento_id: i.lancamento_id,
+                        valor_vinculado: fromCents(i.valorVinculadoCents),
+                        desconto: fromCents(i.descontoCents),
+                        juros_multa: fromCents(i.jurosMultaCents),
+                    })),
+                    residual: calc.decision.residual
+                        ? {
+                            lancamento_origem_id: calc.decision.residual.origemLancamentoId,
+                            valor: fromCents(calc.decision.residual.valorCents),
+                        }
+                        : null,
+                });
+            }
+
+            const resultado = await db.transaction((tx) =>
+                persistirVinculo(tx, calc, {
+                    linhaId,
+                    lancamentosPayload,
+                    gerarParcial,
+                    residuoLancamentoId: residuoLancamentoId ?? null,
+                    usuarioId: req.user?.id,
+                }),
+            );
 
             return successResponse(res, resultado);
         } catch (e) {
@@ -2183,33 +2353,26 @@ router.patch(
     },
 );
 
-router.post(
-    "/conciliacoes/:extrato_id/finalizar",
-    withPermission(PERM.CONCILIACAO_CONCLUIR),
-    async (req, res) => {
-        try {
-            const extratoId = Number(req.params.extrato_id);
-            const [conciliacao] = await db
-                .select()
-                .from(conciliacoesTable)
-                .where(eq(conciliacoesTable.extrato_id, extratoId))
-                .limit(1);
+/** Conta quantas linhas ainda estão pendentes nesta conciliação. */
+async function contarPendentes(executor: typeof db, conciliacaoId: number): Promise<number> {
+    const [pendente] = await executor
+        .select({total: count()})
+        .from(itensConciliacaoTable)
+        .where(and(eq(itensConciliacaoTable.conciliacao_id, conciliacaoId), eq(itensConciliacaoTable.status, "pendente")));
+    return Number(pendente?.total ?? 0);
+}
 
-            if (!conciliacao) {
-                return errorResponse(res, 404, "NOT_FOUND", "Conciliação do extrato não encontrada.");
-            }
-
-            const [pendente] = await db
-                .select({total: count()})
-                .from(itensConciliacaoTable)
-                .where(and(eq(itensConciliacaoTable.conciliacao_id, conciliacao.id), eq(itensConciliacaoTable.status, "pendente")));
-
-            if (Number(pendente.total) > 0) {
-                return errorResponse(res, 400, "VALIDATION_ERROR", "Ainda existem linhas pendentes para conciliação.");
-            }
-
-            await db.transaction(async (tx) => {
-                const dataConciliacao = hojeIsoLocal();
+/**
+ * Materializa a conciliação: marca extrato/conciliação como conciliado,
+ * marteliza `valor_quitado`/status dos títulos (RN-G) e faz uma varredura
+ * legada de residuais que porventura ainda estejam com a flag antiga
+ * `eh_origem_residuo` (fluxo anterior à Regra de Ouro - hoje o residual já
+ * nasce no `persistirVinculo`, mas manter esta varredura aqui é inofensivo
+ * e evita perder qualquer residual de uma conciliação criada antes deste
+ * deploy). Só chamar depois de confirmar que não há linhas pendentes.
+ */
+async function persistirFinalizacao(tx: any, conciliacao: { id: number; conta_id: number | null }, extratoId: number, usuarioId?: number) {
+    const dataConciliacao = hojeIsoLocal();
 
                 await tx
                     .update(extratosTable)
@@ -2439,13 +2602,125 @@ router.post(
                         .where(eq(lancamentosTable.id, lancamentoId));
                 }
 
-                await tx.insert(historicoConciliacaoTable).values({
-                    conciliacao_id: conciliacao.id,
-                    usuario_id: req.user?.id,
-                    acao: "salvar",
-                    detalhes: `Extrato ${extratoId} finalizado como conciliado em ${dataConciliacao}. Lançamentos atualizados: ${porLancamento.size}.`,
-                });
-            });
+                // Card 76: só agora (Salvar/Conciliar confirmado) os residuais
+                // parciais marcados durante o vincular nascem de fato em
+                // lancamentosTable - até aqui existiam só como "promessa"
+                // (eh_origem_residuo/residuo_valor_pendente) no vínculo.
+                const residuaisPendentes = await tx
+                    .select({
+                        origemLancamentoId: itensConciliacaoLancamentosTable.lancamento_id,
+                        valorPendente: itensConciliacaoLancamentosTable.residuo_valor_pendente,
+                    })
+                    .from(itensConciliacaoLancamentosTable)
+                    .innerJoin(
+                        itensConciliacaoTable,
+                        eq(itensConciliacaoLancamentosTable.item_conciliacao_id, itensConciliacaoTable.id),
+                    )
+                    .where(
+                        and(
+                            eq(itensConciliacaoTable.conciliacao_id, conciliacao.id),
+                            eq(itensConciliacaoLancamentosTable.eh_origem_residuo, true),
+                        ),
+                    );
+
+                if (residuaisPendentes.length > 0) {
+                    type OrigemResiduo = {
+                        id: number;
+                        tipo: string;
+                        vencimento: string | null;
+                        competencia: string | null;
+                        conta_id: number | null;
+                        parceiro_id: number | null;
+                        descricao: string | null;
+                        plano_conta_id: number | null;
+                        departamento_id: number | null;
+                        centro_custo_id: number | null;
+                        parcela_atual: number | null;
+                        total_parcelas: number | null;
+                        riscos: unknown;
+                    };
+                    const origemIds = residuaisPendentes.map((r) => r.origemLancamentoId);
+                    const origens: OrigemResiduo[] = await tx
+                        .select({
+                            id: lancamentosTable.id,
+                            tipo: lancamentosTable.tipo,
+                            vencimento: lancamentosTable.vencimento,
+                            competencia: lancamentosTable.competencia,
+                            conta_id: lancamentosTable.conta_id,
+                            parceiro_id: lancamentosTable.parceiro_id,
+                            descricao: lancamentosTable.descricao,
+                            plano_conta_id: lancamentosTable.plano_conta_id,
+                            departamento_id: lancamentosTable.departamento_id,
+                            centro_custo_id: lancamentosTable.centro_custo_id,
+                            parcela_atual: lancamentosTable.parcela_atual,
+                            total_parcelas: lancamentosTable.total_parcelas,
+                            riscos: lancamentosTable.riscos,
+                        })
+                        .from(lancamentosTable)
+                        .where(inArray(lancamentosTable.id, origemIds));
+                    const origemById = new Map<number, OrigemResiduo>(origens.map((o) => [o.id, o]));
+
+                    for (const pendente of residuaisPendentes) {
+                        const origem = origemById.get(pendente.origemLancamentoId);
+                        if (!origem || pendente.valorPendente == null) continue;
+
+                        await tx.insert(lancamentosTable).values({
+                            tipo: origem.tipo,
+                            vencimento: origem.vencimento,
+                            competencia: origem.competencia,
+                            conta_id: origem.conta_id ?? conciliacao.conta_id,
+                            parceiro_id: origem.parceiro_id,
+                            descricao: descreverResiduoParcial({
+                                valorCents: toCents(pendente.valorPendente),
+                                vencimento: origem.vencimento,
+                                descricaoOrigem: origem.descricao,
+                            }),
+                            valor: pendente.valorPendente,
+                            status: "pendente",
+                            origem: "residuo_parcial",
+                            plano_conta_id: origem.plano_conta_id,
+                            departamento_id: origem.departamento_id,
+                            centro_custo_id: origem.centro_custo_id,
+                            parcela_atual: origem.parcela_atual,
+                            total_parcelas: origem.total_parcelas,
+                            riscos: origem.riscos ?? [],
+                            is_residuo_parcial: true,
+                            lancamento_origem_id: origem.id,
+                            criado_por: usuarioId,
+                        });
+                    }
+                }
+
+    await tx.insert(historicoConciliacaoTable).values({
+        conciliacao_id: conciliacao.id,
+        usuario_id: usuarioId,
+        acao: "salvar",
+        detalhes: `Extrato ${extratoId} finalizado como conciliado em ${dataConciliacao}. Lançamentos atualizados: ${porLancamento.size}.`,
+    });
+}
+
+router.post(
+    "/conciliacoes/:extrato_id/finalizar",
+    withPermission(PERM.CONCILIACAO_CONCLUIR),
+    async (req, res) => {
+        try {
+            const extratoId = Number(req.params.extrato_id);
+            const [conciliacao] = await db
+                .select()
+                .from(conciliacoesTable)
+                .where(eq(conciliacoesTable.extrato_id, extratoId))
+                .limit(1);
+
+            if (!conciliacao) {
+                return errorResponse(res, 404, "NOT_FOUND", "Conciliação do extrato não encontrada.");
+            }
+
+            const pendentes = await contarPendentes(db, conciliacao.id);
+            if (pendentes > 0) {
+                return errorResponse(res, 400, "VALIDATION_ERROR", "Ainda existem linhas pendentes para conciliação.");
+            }
+
+            await db.transaction((tx) => persistirFinalizacao(tx, conciliacao, extratoId, req.user?.id));
 
             return successResponse(res, {
                 extrato_id: extratoId,
@@ -2458,10 +2733,161 @@ router.post(
     });
 
 /**
+ * Regra de Ouro (Fase 8): "Salvar"/"Conciliar" na tela do extrato. Recebe TODAS
+ * as decisões de vincular/ignorar tomadas em memória no front (ainda não
+ * persistidas em lugar nenhum) e aplica cada uma de verdade, em sequência,
+ * dentro de UMA ÚNICA transaction - se qualquer ação falhar, nada é gravado.
+ * Se `finalizar` vier true (botão "Conciliar", tudo tratado) e realmente não
+ * sobrar linha pendente após aplicar as ações, finaliza no mesmo golpe.
+ */
+const acaoRascunhoSchema = z.discriminatedUnion("tipo", [
+    z.object({
+        tipo: z.literal("vincular"),
+        linha_id: z.coerce.number().int().positive(),
+        lancamentos: vincularBodySchema.shape.lancamentos,
+        gerar_parcial: z.boolean().default(false),
+        residuo_lancamento_id: z.coerce.number().int().positive().optional(),
+    }),
+    z.object({
+        tipo: z.literal("ignorar"),
+        linha_id: z.coerce.number().int().positive(),
+        motivo_codigo: z.enum(MOTIVOS_IGNORAR_PREDEFINIDOS).optional(),
+        motivo: z.string().trim().max(500).optional(),
+    }),
+    z.object({
+        tipo: z.literal("desfazer"),
+        linha_id: z.coerce.number().int().positive(),
+    }),
+    z.object({
+        tipo: z.literal("reverter_ignorar"),
+        linha_id: z.coerce.number().int().positive(),
+    }),
+]);
+
+const salvarBodySchema = z.object({
+    acoes: z.array(acaoRascunhoSchema).default([]),
+    finalizar: z.boolean().default(false),
+});
+
+router.post(
+    "/conciliacoes/:extrato_id/salvar",
+    withPermission(PERM.CONCILIACAO_VINCULAR),
+    validateBody(salvarBodySchema),
+    async (req, res) => {
+        try {
+            const extratoId = Number(req.params.extrato_id);
+            const body = req.body as z.infer<typeof salvarBodySchema>;
+            const usuarioId = req.user?.id;
+
+            const [conciliacao] = await db
+                .select()
+                .from(conciliacoesTable)
+                .where(eq(conciliacoesTable.extrato_id, extratoId))
+                .limit(1);
+            if (!conciliacao) {
+                return errorResponse(res, 404, "NOT_FOUND", "Conciliação do extrato não encontrada.");
+            }
+
+            const motivoObrigatorio = body.acoes.some((a) => a.tipo === "ignorar")
+                ? await getMotivoIgnorarObrigatorio()
+                : false;
+            for (const acao of body.acoes) {
+                if (acao.tipo !== "ignorar" || !motivoObrigatorio) continue;
+                const temCodigo = Boolean(acao.motivo_codigo);
+                const temTexto = Boolean(acao.motivo && acao.motivo.length > 0);
+                if (!temCodigo && !temTexto) {
+                    return errorResponse(
+                        res,
+                        400,
+                        "VALIDATION_ERROR",
+                        `Motivo é obrigatório para ignorar a linha ${acao.linha_id} (parâmetro motivo_ignorar_obrigatorio).`,
+                    );
+                }
+            }
+
+            const resultadoPorLinha: Array<Record<string, unknown>> = [];
+            let finalizado = false;
+
+            await db.transaction(async (tx) => {
+                for (const acao of body.acoes) {
+                    if (acao.tipo === "vincular") {
+                        const calc = await calcularVinculo(tx, {
+                            linhaId: acao.linha_id,
+                            lancamentosPayload: acao.lancamentos,
+                            gerarParcial: acao.gerar_parcial,
+                            residuoLancamentoId: acao.residuo_lancamento_id ?? null,
+                        });
+                        if (!calc.ok) {
+                            throw errorComStatus(calc.status, calc.code, `Linha ${acao.linha_id}: ${calc.message}`);
+                        }
+                        const resultado = await persistirVinculo(tx, calc, {
+                            linhaId: acao.linha_id,
+                            lancamentosPayload: acao.lancamentos,
+                            gerarParcial: acao.gerar_parcial,
+                            residuoLancamentoId: acao.residuo_lancamento_id ?? null,
+                            usuarioId,
+                        });
+                        resultadoPorLinha.push(resultado);
+                    } else if (acao.tipo === "ignorar") {
+                        const validado = await validarIgnorar(tx, acao.linha_id);
+                        if (!validado.ok) {
+                            throw errorComStatus(validado.status, validado.code, `Linha ${acao.linha_id}: ${validado.message}`);
+                        }
+                        const resultado = await persistirIgnorar(tx, validado, {
+                            linhaId: acao.linha_id,
+                            motivoCodigo: acao.motivo_codigo ?? null,
+                            motivo: acao.motivo ?? null,
+                            usuarioId,
+                        });
+                        resultadoPorLinha.push(resultado);
+                    } else if (acao.tipo === "desfazer") {
+                        const validado = await validarDesfazer(tx, acao.linha_id);
+                        if (!validado.ok) {
+                            throw errorComStatus(validado.status, validado.code, `Linha ${acao.linha_id}: ${validado.message}`);
+                        }
+                        const resultado = await persistirDesfazer(tx, validado, {linhaId: acao.linha_id, usuarioId});
+                        resultadoPorLinha.push(resultado);
+                    } else {
+                        const validado = await validarReverterIgnorar(tx, acao.linha_id);
+                        if (!validado.ok) {
+                            throw errorComStatus(validado.status, validado.code, `Linha ${acao.linha_id}: ${validado.message}`);
+                        }
+                        const resultado = await persistirReverterIgnorar(tx, validado, {linhaId: acao.linha_id, usuarioId});
+                        resultadoPorLinha.push(resultado);
+                    }
+                }
+
+                if (body.finalizar) {
+                    const pendentes = await contarPendentes(tx, conciliacao.id);
+                    if (pendentes > 0) {
+                        throw errorComStatus(400, "VALIDATION_ERROR", "Ainda existem linhas pendentes para conciliação.");
+                    }
+                    await persistirFinalizacao(tx, conciliacao, extratoId, usuarioId);
+                    finalizado = true;
+                }
+            });
+
+            return successResponse(res, {
+                extrato_id: extratoId,
+                linhas_processadas: resultadoPorLinha,
+                finalizado,
+            });
+        } catch (e) {
+            if (e instanceof ErroComStatus) {
+                return errorResponse(res, e.status, e.code, e.message);
+            }
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao salvar alterações da conciliação.", String(e));
+        }
+    },
+);
+
+/**
  * Remove somente um vínculo específico pelo vinculo_id.
  *
  * Diferente da rota abaixo, que remove todos os vínculos de uma linha,
- * esta rota exclui apenas o registro selecionado da relação N:N.
+ * esta rota exclui apenas o registro selecionado da relação N:N. É uma via
+ * de persistência imediata (fora da Regra de Ouro) mantida para uso pontual
+ * fora do fluxo do extrato; o front do extrato ainda não a consome.
  */
 router.delete(
     "/conciliacoes/vinculos/:vinculo_id",
@@ -2494,13 +2920,13 @@ router.delete(
                 return errorResponse(res, 404, "NOT_FOUND", "Item de conciliação não encontrado.");
             }
 
-            const [conciliacao] = await db
+            const [conciliacaoDoVinculo] = await db
                 .select()
                 .from(conciliacoesTable)
                 .where(eq(conciliacoesTable.id, item.conciliacao_id))
                 .limit(1);
 
-            if (!conciliacao) {
+            if (!conciliacaoDoVinculo) {
                 return errorResponse(res, 404, "NOT_FOUND", "Conciliação não encontrada.");
             }
 
@@ -2528,7 +2954,7 @@ router.delete(
             }
 
             await db.transaction(async (tx) => {
-                const conciliaJaCommitada = conciliacao.status === "conciliado";
+                const conciliaJaCommitada = conciliacaoDoVinculo.status === "conciliado";
 
                 if (conciliaJaCommitada) {
                     const [lancamento] = await tx
@@ -2634,7 +3060,7 @@ router.delete(
                     }),
                 });
 
-                await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
+                await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacaoDoVinculo.extrato_id);
             });
 
             return successResponse(res, {
@@ -2648,6 +3074,144 @@ router.delete(
     },
 );
 
+/** DEF-09: desfazer todos os vínculos da linha - lê e valida se é possível. */
+async function validarDesfazer(executor: typeof db, linhaId: number) {
+    const [item] = await executor
+        .select()
+        .from(itensConciliacaoTable)
+        .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
+        .limit(1);
+
+    if (!item) {
+        return {ok: false as const, status: 404, code: "NOT_FOUND", message: "Linha de extrato não encontrada para conciliação."};
+    }
+    if (item.status !== "vinculado") {
+        return {ok: false as const, status: 400, code: "VALIDATION_ERROR", message: "A linha não está vinculada."};
+    }
+
+    const [conciliacao] = await executor
+        .select()
+        .from(conciliacoesTable)
+        .where(eq(conciliacoesTable.id, item.conciliacao_id))
+        .limit(1);
+    if (!conciliacao) {
+        return {ok: false as const, status: 404, code: "NOT_FOUND", message: "Conciliação não encontrada."};
+    }
+
+    const vinculos = await executor
+        .select()
+        .from(itensConciliacaoLancamentosTable)
+        .where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id));
+
+    const residuos = await executor
+        .select()
+        .from(lancamentosTable)
+        .where(
+            and(
+                eq(lancamentosTable.is_residuo_parcial, true),
+                inArray(
+                    lancamentosTable.lancamento_origem_id,
+                    vinculos.map((v) => v.lancamento_id).length > 0
+                        ? vinculos.map((v) => v.lancamento_id)
+                        : [-1],
+                ),
+            ),
+        );
+
+    const residuoQuitado = residuos.find(
+        (r) => r.status === "pago" || r.status === "recebido" || r.status === "pago_parcial",
+    );
+    if (residuoQuitado) {
+        return {
+            ok: false as const,
+            status: 409,
+            code: "CONFLICT",
+            message: `Não é possível desfazer: o residual #${residuoQuitado.id} já foi quitado. Estorne o residual antes.`,
+        };
+    }
+
+    return {ok: true as const, item, conciliacao, vinculos, residuos};
+}
+
+type DesfazerCtx = Extract<Awaited<ReturnType<typeof validarDesfazer>>, { ok: true }>;
+
+/** Persiste o desfazer (mesma lógica usada pela rota individual e pelo Salvar em lote). */
+async function persistirDesfazer(tx: any, ctx: DesfazerCtx, params: { linhaId: number; usuarioId?: number }) {
+    const {item, conciliacao, vinculos, residuos} = ctx;
+    const {linhaId, usuarioId} = params;
+
+    // Crítico: como persistirVinculo agora martela o título já no momento do
+    // Salvar (não mais só no finalizar), o desfazer TAMBÉM precisa sempre
+    // reverter o título - independente do status da conciliação - senão a
+    // quitação fica "presa" no lançamento mesmo após o vínculo ser desfeito.
+    for (const v of vinculos) {
+        const [lanc] = await tx
+            .select()
+            .from(lancamentosTable)
+            .where(eq(lancamentosTable.id, v.lancamento_id))
+            .limit(1);
+        if (!lanc) continue;
+
+        const quitadoNovo = Math.max(0, toCents(lanc.valor_quitado) - toCents(v.valor_vinculado));
+        const jurosNovo = Math.max(0, toCents(lanc.juros) - toCents(v.juros_multa));
+        const descontoNovo = Math.max(0, toCents(lanc.desconto) - toCents(v.desconto));
+
+        const novoStatus = statusAposDesfazerVinculo({
+            statusAtual: lanc.status,
+            tipoExtrato: lanc.tipo === "CR" ? "credito" : "debito",
+            valorLancamentoCents: toCents(lanc.valor),
+            valorQuitadoAcumuladoCents: quitadoNovo,
+            descontoAcumuladoCents: descontoNovo,
+            vencimento: lanc.vencimento,
+            hojeIso: hojeIsoLocal(),
+        });
+
+        await tx
+            .update(lancamentosTable)
+            .set({
+                status: novoStatus,
+                valor_quitado: quitadoNovo > 0 ? centsToDecimalString(quitadoNovo) : null,
+                data_quitacao:
+                    quitadoNovo > 0 && (novoStatus === "pago" || novoStatus === "recebido" || novoStatus === "pago_parcial")
+                        ? lanc.data_quitacao
+                        : null,
+                juros: centsToDecimalString(jurosNovo),
+                desconto: centsToDecimalString(descontoNovo),
+                updated_at: new Date(),
+            })
+            .where(eq(lancamentosTable.id, lanc.id));
+    }
+
+    if (residuos.length > 0) {
+        await tx.delete(lancamentosTable).where(inArray(lancamentosTable.id, residuos.map((r: { id: number }) => r.id)));
+    }
+
+    await tx.delete(itensConciliacaoLancamentosTable).where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id));
+
+    await tx
+        .update(itensConciliacaoTable)
+        .set({
+            status: "pendente",
+            valor_vinculado_total: "0.00",
+            valor_saldo: item.valor_extrato,
+            data_conciliacao: null,
+            updated_at: new Date(),
+        })
+        .where(eq(itensConciliacaoTable.id, item.id));
+
+    await tx.insert(historicoConciliacaoTable).values({
+        conciliacao_id: item.conciliacao_id,
+        item_conciliacao_id: item.id,
+        usuario_id: usuarioId,
+        acao: "desfazer_vinculo",
+        detalhes: JSON.stringify({linha_id: linhaId, vinculos_removidos: vinculos.length, reverteu_titulo: true}),
+    });
+
+    await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
+
+    return {linha_id: linhaId, status: "pendente" as const};
+}
+
 /** DEF-09: desfazer todos os vínculos da linha. */
 router.delete(
     "/conciliacoes/linhas/:linha_id/vinculos",
@@ -2655,155 +3219,70 @@ router.delete(
     async (req, res) => {
         try {
             const linhaId = Number(req.params.linha_id);
-            const [item] = await db
-                .select()
-                .from(itensConciliacaoTable)
-                .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
-                .limit(1);
-
-            if (!item) {
-                return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada para conciliação.");
-            }
-            if (item.status !== "vinculado") {
-                return errorResponse(res, 400, "VALIDATION_ERROR", "A linha não está vinculada.");
+            const validado = await validarDesfazer(db, linhaId);
+            if (!validado.ok) {
+                return errorResponse(res, validado.status, validado.code, validado.message);
             }
 
-            const [conciliacao] = await db
-                .select()
-                .from(conciliacoesTable)
-                .where(eq(conciliacoesTable.id, item.conciliacao_id))
-                .limit(1);
-            if (!conciliacao) {
-                return errorResponse(res, 404, "NOT_FOUND", "Conciliação não encontrada.");
-            }
+            const resultado = await db.transaction((tx) => persistirDesfazer(tx, validado, {linhaId, usuarioId: req.user?.id}));
 
-            const vinculos = await db
-                .select()
-                .from(itensConciliacaoLancamentosTable)
-                .where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id));
-
-            const residuos = await db
-                .select()
-                .from(lancamentosTable)
-                .where(
-                    and(
-                        eq(lancamentosTable.is_residuo_parcial, true),
-                        inArray(
-                            lancamentosTable.lancamento_origem_id,
-                            vinculos.map((v) => v.lancamento_id).length > 0
-                                ? vinculos.map((v) => v.lancamento_id)
-                                : [-1],
-                        ),
-                    ),
-                );
-
-            const residuoQuitado = residuos.find(
-                (r) => r.status === "pago" || r.status === "recebido" || r.status === "pago_parcial",
-            );
-            if (residuoQuitado) {
-                return errorResponse(
-                    res,
-                    409,
-                    "CONFLICT",
-                    `Não é possível desfazer: o residual #${residuoQuitado.id} já foi quitado. Estorne o residual antes.`,
-                );
-            }
-
-            await db.transaction(async (tx) => {
-                // Rascunho: o título ainda não foi martelado - só remove N:N + residual.
-                // Se a conciliação já estava conciliada (desfazer pós-commit), reverte o título.
-                const conciliaJaCommitada = conciliacao.status === "conciliado";
-
-                if (conciliaJaCommitada) {
-                    for (const v of vinculos) {
-                        const [lanc] = await tx
-                            .select()
-                            .from(lancamentosTable)
-                            .where(eq(lancamentosTable.id, v.lancamento_id))
-                            .limit(1);
-                        if (!lanc) continue;
-
-                        const quitadoNovo = Math.max(
-                            0,
-                            toCents(lanc.valor_quitado) - toCents(v.valor_vinculado),
-                        );
-                        const jurosNovo = Math.max(0, toCents(lanc.juros) - toCents(v.juros_multa));
-                        const descontoNovo = Math.max(0, toCents(lanc.desconto) - toCents(v.desconto));
-
-                        const novoStatus = statusAposDesfazerVinculo({
-                            statusAtual: lanc.status,
-                            tipoExtrato: lanc.tipo === "CR" ? "credito" : "debito",
-                            valorLancamentoCents: toCents(lanc.valor),
-                            valorQuitadoAcumuladoCents: quitadoNovo,
-                            descontoAcumuladoCents: descontoNovo,
-                            vencimento: lanc.vencimento,
-                            hojeIso: hojeIsoLocal(),
-                        });
-
-                        await tx
-                            .update(lancamentosTable)
-                            .set({
-                                status: novoStatus,
-                                valor_quitado: quitadoNovo > 0 ? centsToDecimalString(quitadoNovo) : null,
-                                data_quitacao:
-                                    quitadoNovo > 0 &&
-                                    (novoStatus === "pago" ||
-                                        novoStatus === "recebido" ||
-                                        novoStatus === "pago_parcial")
-                                        ? lanc.data_quitacao
-                                        : null,
-                                juros: centsToDecimalString(jurosNovo),
-                                desconto: centsToDecimalString(descontoNovo),
-                                updated_at: new Date(),
-                            })
-                            .where(eq(lancamentosTable.id, lanc.id));
-                    }
-                }
-
-                if (residuos.length > 0) {
-                    await tx.delete(lancamentosTable).where(
-                        inArray(
-                            lancamentosTable.id,
-                            residuos.map((r) => r.id),
-                        ),
-                    );
-                }
-
-                await tx
-                    .delete(itensConciliacaoLancamentosTable)
-                    .where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id));
-
-                await tx
-                    .update(itensConciliacaoTable)
-                    .set({
-                        status: "pendente",
-                        valor_vinculado_total: "0.00",
-                        valor_saldo: item.valor_extrato,
-                        data_conciliacao: null,
-                        updated_at: new Date(),
-                    })
-                    .where(eq(itensConciliacaoTable.id, item.id));
-
-                await tx.insert(historicoConciliacaoTable).values({
-                    conciliacao_id: item.conciliacao_id,
-                    item_conciliacao_id: item.id,
-                    usuario_id: req.user?.id,
-                    acao: "desfazer_vinculo",
-                    detalhes: JSON.stringify({
-                        linha_id: linhaId,
-                        vinculos_removidos: vinculos.length,
-                        reverteu_titulo: conciliaJaCommitada,
-                    }),
-                });
-
-                await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
-            });
-
-            return successResponse(res, {linha_id: linhaId, status: "pendente"});
+            return successResponse(res, resultado);
         } catch (e) {
             return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao desfazer vínculos da linha.", String(e));
         }
     });
+
+/** Lê e valida se dá pra reverter o ignorar desta linha. */
+async function validarReverterIgnorar(executor: typeof db, linhaId: number) {
+    const [item] = await executor
+        .select()
+        .from(itensConciliacaoTable)
+        .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
+        .limit(1);
+
+    if (!item) {
+        return {ok: false as const, status: 404, code: "NOT_FOUND", message: "Linha de extrato não encontrada para conciliação."};
+    }
+    if (item.status !== "ignorado") {
+        return {ok: false as const, status: 400, code: "VALIDATION_ERROR", message: "A linha não está ignorada."};
+    }
+
+    const [conciliacao] = await executor
+        .select()
+        .from(conciliacoesTable)
+        .where(eq(conciliacoesTable.id, item.conciliacao_id))
+        .limit(1);
+    if (!conciliacao) {
+        return {ok: false as const, status: 404, code: "NOT_FOUND", message: "Conciliação não encontrada."};
+    }
+
+    return {ok: true as const, item, conciliacao};
+}
+
+type ReverterIgnorarCtx = Extract<Awaited<ReturnType<typeof validarReverterIgnorar>>, { ok: true }>;
+
+/** Persiste o reverter-ignorar (mesma lógica usada pela rota individual e pelo Salvar em lote). */
+async function persistirReverterIgnorar(tx: any, ctx: ReverterIgnorarCtx, params: { linhaId: number; usuarioId?: number }) {
+    const {item, conciliacao} = ctx;
+    const {linhaId, usuarioId} = params;
+
+    await tx
+        .update(itensConciliacaoTable)
+        .set({status: "pendente", motivo_ignorar: null, motivo_ignorar_codigo: null, data_conciliacao: null, updated_at: new Date()})
+        .where(eq(itensConciliacaoTable.id, item.id));
+
+    await tx.insert(historicoConciliacaoTable).values({
+        conciliacao_id: item.conciliacao_id,
+        item_conciliacao_id: item.id,
+        usuario_id: usuarioId,
+        acao: "desfazer_vinculo",
+        detalhes: JSON.stringify({linha_id: linhaId, acao: "reverter_ignorar"}),
+    });
+
+    await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
+
+    return {linha_id: linhaId, status: "pendente" as const};
+}
 
 /** DEF-09: reverter linha ignorada (nunca exige motivo - RN-H5). */
 router.post(
@@ -2812,52 +3291,14 @@ router.post(
     async (req, res) => {
         try {
             const linhaId = Number(req.params.linha_id);
-            const [item] = await db
-                .select()
-                .from(itensConciliacaoTable)
-                .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
-                .limit(1);
-
-            if (!item) {
-                return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada para conciliação.");
-            }
-            if (item.status !== "ignorado") {
-                return errorResponse(res, 400, "VALIDATION_ERROR", "A linha não está ignorada.");
+            const validado = await validarReverterIgnorar(db, linhaId);
+            if (!validado.ok) {
+                return errorResponse(res, validado.status, validado.code, validado.message);
             }
 
-            const [conciliacao] = await db
-                .select()
-                .from(conciliacoesTable)
-                .where(eq(conciliacoesTable.id, item.conciliacao_id))
-                .limit(1);
-            if (!conciliacao) {
-                return errorResponse(res, 404, "NOT_FOUND", "Conciliação não encontrada.");
-            }
+            const resultado = await db.transaction((tx) => persistirReverterIgnorar(tx, validado, {linhaId, usuarioId: req.user?.id}));
 
-            await db.transaction(async (tx) => {
-                await tx
-                    .update(itensConciliacaoTable)
-                    .set({
-                        status: "pendente",
-                        motivo_ignorar: null,
-                        motivo_ignorar_codigo: null,
-                        data_conciliacao: null,
-                        updated_at: new Date(),
-                    })
-                    .where(eq(itensConciliacaoTable.id, item.id));
-
-                await tx.insert(historicoConciliacaoTable).values({
-                    conciliacao_id: item.conciliacao_id,
-                    item_conciliacao_id: item.id,
-                    usuario_id: req.user?.id,
-                    acao: "desfazer_vinculo",
-                    detalhes: JSON.stringify({linha_id: linhaId, acao: "reverter_ignorar"}),
-                });
-
-                await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
-            });
-
-            return successResponse(res, {linha_id: linhaId, status: "pendente"});
+            return successResponse(res, resultado);
         } catch (e) {
             return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao reverter ignorar da linha.", String(e));
         }

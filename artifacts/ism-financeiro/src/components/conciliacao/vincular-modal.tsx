@@ -48,7 +48,24 @@ type VincularModalProps = {
     extratoId: string;
     linhaId: number;
     valorExtratoAbs: string | number;
-    onSuccess: () => void;
+    /** Regra de Ouro (Fase 8): chamado quando o usuário confirma o vínculo -
+     *  em vez de persistir na hora, o modal só CALCULA (preview, mesma regra
+     *  de negócio do backend) e devolve o resultado pro extrato.tsx guardar
+     *  como rascunho em memória até o Salvar/Conciliar. */
+    onDraftVincular: (draft: DraftVincular) => void;
+    /** Soma (em centavos) de OUTRAS rodadas de vincular já rascunhadas nesta
+     *  MESMA linha, nesta sessão (ainda não salvas) - necessário pro preview
+     *  calcular o saldo incremental corretamente numa 2ª rodada. */
+    jaVinculadoLocalCents?: number;
+    /** lancamento_id -> centavos já "reservados" por rascunhos de OUTRAS
+     *  linhas do mesmo extrato nesta sessão (ainda não salvos) - soma-se ao
+     *  valor_quitado real pra "Restante"/Modo B não ficarem desatualizados
+     *  enquanto o usuário ainda não clicou em Salvar. */
+    quitadoLocalPorLancamento?: Record<number, number>;
+    /** true quando um "Desfazer" desta MESMA linha já está rascunhado
+     *  localmente (ainda não salvo) - os vínculos reais no banco serão
+     *  descartados no Salvar, então o preview também deve ignorá-los agora. */
+    ignorarVinculosReais?: boolean;
     /** Dados da linha de origem, usados para pré-preencher o formulário do
      *  botão "Novo" (criar lançamento a partir desta linha - RN-D3, função
      *  que antes vivia no botão [+] da tela de conciliação). */
@@ -57,10 +74,35 @@ type VincularModalProps = {
     descricaoLinha: string | null;
 };
 
-type VincularPayload = {
+export type VincularPayload = {
     lancamentos: Array<{ lancamento_id: number; desconto: string; juros_multa: string }>;
     gerar_parcial: boolean;
     residuo_lancamento_id?: number;
+};
+
+export type DraftVincularItem = {
+    lancamento_id: number;
+    valor_vinculado: number;
+    desconto: number;
+    juros_multa: number;
+    descricao: string | null;
+    tipo: string;
+    status: string;
+    vencimento: string | null;
+};
+
+/** Resultado do preview (Regra de Ouro) - guardado em memória no extrato.tsx
+ *  até o Salvar/Conciliar de fato persistir via POST .../salvar. */
+export type DraftVincular = {
+    tipo: "vincular";
+    linhaId: number;
+    payload: VincularPayload;
+    ramo: string;
+    delta: number;
+    totalConciliado: number;
+    valorSaldo: number;
+    itens: DraftVincularItem[];
+    residual: { lancamentoOrigemId: number; valor: number } | null;
 };
 
 const DIAS_JANELA_INICIAL = 14;
@@ -84,7 +126,10 @@ function VincularFormBody({
                               valorExtratoAbs,
                               lancamentos,
                               onClose,
-                              onSuccess,
+                              onDraftVincular,
+                              jaVinculadoLocalCents,
+                              quitadoLocalPorLancamento,
+                              ignorarVinculosReais,
                               onBuscarMais,
                               buscandoMais,
                               podeBuscarMais,
@@ -94,7 +139,10 @@ function VincularFormBody({
     valorExtratoAbs: string | number;
     lancamentos: LancamentoCompativel[];
     onClose: () => void;
-    onSuccess: () => void;
+    onDraftVincular: (draft: DraftVincular) => void;
+    jaVinculadoLocalCents: number;
+    quitadoLocalPorLancamento: Record<number, number>;
+    ignorarVinculosReais: boolean;
     onBuscarMais: () => void;
     buscandoMais: boolean;
     podeBuscarMais: boolean;
@@ -122,13 +170,18 @@ function VincularFormBody({
     // o saldo devedor real já é outro - o backend usa a fórmula de Modo B
     // (quitado_anterior + extrato − base) sempre que 1 único lançamento é
     // selecionado, e o front precisa espelhar isso ou os dois divergem.
+    // Regra de Ouro: soma também o que já foi RASCUNHADO (não salvo ainda)
+    // nesta mesma sessão para o mesmo lançamento em OUTRAS linhas do
+    // extrato - sem isso, "Restante"/Modo B ficam desatualizados até salvar.
     const lancamentosQuitadoById = useMemo(() => {
         const m = new Map<number, string | number>();
         for (const l of lancamentos) {
-            m.set(l.id, l.valor_quitado ?? 0);
+            const baseReais = Number(l.valor_quitado ?? 0);
+            const extraCents = quitadoLocalPorLancamento[l.id] ?? 0;
+            m.set(l.id, baseReais + extraCents / 100);
         }
         return m;
-    }, [lancamentos]);
+    }, [lancamentos, quitadoLocalPorLancamento]);
 
     const schema = useMemo(
         () => buildVincularFormSchema(valorExtratoAbs, lancamentosValorById, lancamentosQuitadoById),
@@ -309,21 +362,66 @@ function VincularFormBody({
         }
     }, [showResidual, gerarParcial, selectedItens, residuoIdSelecionado, setValue]);
 
-    const vincularMutation = useMutation({
+    // Regra de Ouro (Fase 8): NÃO persiste nada aqui - só pede ao backend
+    // pra CALCULAR o resultado (mesma regra de negócio, sem duplicar lógica
+    // de dinheiro no front) e devolve pro extrato.tsx guardar como rascunho
+    // em memória até o usuário clicar em Salvar/Conciliar.
+    const previewVincularMutation = useMutation({
         mutationFn: (payload: VincularPayload) =>
-            fetchApiData(`/conciliacoes/linhas/${linhaId}/vincular`, {
+            fetchApiData<{
+                ramo: string;
+                delta: number;
+                total_conciliado: number;
+                valor_saldo: number;
+                itens: Array<{ lancamento_id: number; valor_vinculado: number; desconto: number; juros_multa: number }>;
+                residual: { lancamento_origem_id: number; valor: number } | null;
+            }>(`/conciliacoes/linhas/${linhaId}/vincular`, {
                 method: "POST",
-                body: JSON.stringify(payload),
+                body: JSON.stringify({
+                    ...payload,
+                    preview: true,
+                    contexto_rascunho: {
+                        ja_vinculado_local_cents: jaVinculadoLocalCents,
+                        quitado_local_por_lancamento: Object.fromEntries(
+                            Object.entries(quitadoLocalPorLancamento).map(([k, v]) => [k, v]),
+                        ),
+                        ignorar_vinculos_reais: ignorarVinculosReais,
+                    },
+                }),
             }),
-        onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
-            void queryClient.invalidateQueries({queryKey: ["conciliacoes"]});
+        onSuccess: (resultado, payload) => {
+            const lancamentoById = new Map(lancamentos.map((l) => [l.id, l]));
+            const itens: DraftVincularItem[] = resultado.itens.map((i) => {
+                const l = lancamentoById.get(i.lancamento_id);
+                return {
+                    lancamento_id: i.lancamento_id,
+                    valor_vinculado: Number(i.valor_vinculado),
+                    desconto: Number(i.desconto),
+                    juros_multa: Number(i.juros_multa),
+                    descricao: l?.descricao ?? null,
+                    tipo: l?.tipo ?? "",
+                    status: l?.status ?? "",
+                    vencimento: l?.vencimento ?? null,
+                };
+            });
+            onDraftVincular({
+                tipo: "vincular",
+                linhaId,
+                payload,
+                ramo: resultado.ramo,
+                delta: Number(resultado.delta),
+                totalConciliado: Number(resultado.total_conciliado),
+                valorSaldo: Number(resultado.valor_saldo),
+                itens,
+                residual: resultado.residual
+                    ? {lancamentoOrigemId: resultado.residual.lancamento_origem_id, valor: Number(resultado.residual.valor)}
+                    : null,
+            });
             toast({
-                title: "Vínculo registrado",
-                description: "A linha foi conciliada com os lançamentos selecionados.",
+                title: "Vínculo adicionado",
+                description: "Ainda não foi salvo - clique em Salvar/Conciliar no extrato para confirmar.",
             });
             onClose();
-            onSuccess();
         },
         onError: (e: unknown) => {
             const msg = e instanceof Error ? e.message : "Não foi possível vincular.";
@@ -346,7 +444,7 @@ function VincularFormBody({
         if (payload.gerar_parcial && values.residuo_lancamento_id) {
             payload.residuo_lancamento_id = values.residuo_lancamento_id;
         }
-        vincularMutation.mutate(payload);
+        previewVincularMutation.mutate(payload);
     };
 
     const onInvalid = (formErrors: typeof errors) => {
@@ -387,7 +485,10 @@ function VincularFormBody({
                         const l = lancamentos.find((x) => x.id === field.lancamento_id);
                         if (!l) return null;
                         const selected = watchedItens[index]?.selecionado ?? false;
-                        const quitadoAnteriorCents = Math.round(Math.abs(Number(l.valor_quitado ?? 0)) * 100);
+                        // Inclui rascunho local (Regra de Ouro) - ver lancamentosQuitadoById.
+                        const quitadoAnteriorCents = Math.round(
+                            Math.abs(Number(lancamentosQuitadoById.get(l.id) ?? 0)) * 100,
+                        );
                         return (
                             <div
                                 key={field.id}
@@ -432,8 +533,18 @@ function VincularFormBody({
                                                             {l.parceiro_nome}
                                                         </p>
                                                     )}
+                                                    {/* Card 77: valor original + "Restante" (valor − valor_quitado) lado
+                                                        a lado - dá visibilidade de quanto do título já está
+                                                        comprometido com outras conciliações antes de selecionar. */}
                                                     <p className="text-sm font-bold text-primary mt-0.5">
                                                         {formatCurrency(Number(l.valor))}
+                                                        {quitadoAnteriorCents > 0 && (
+                                                            <span className="text-[11px] font-semibold text-amber-300/90">
+                                                                {" "}| Restante: {formatCurrency(
+                                                                    toMoney(Math.max(0, Math.round(Math.abs(Number(l.valor)) * 100) - quitadoAnteriorCents)),
+                                                                )}
+                                                            </span>
+                                                        )}
                                                     </p>
                                                     {/* DEF-08/RN-E1: lançamento já com quitação anterior (ex.: status
                                                         "Pago" buscado só para receber uma linha extra de juros) - mostra
@@ -754,14 +865,14 @@ function VincularFormBody({
                     <button
                         type="submit"
                         disabled={
-                            vincularMutation.isPending ||
+                            previewVincularMutation.isPending ||
                             lancamentos.length === 0 ||
                             selectedItens.length === 0 ||
                             !podeConcluir
                         }
                         title={!podeConcluir && selectedItens.length > 0 ? "O restante precisa zerar (ou gerar a movimentação residual) para concluir" : undefined}
                         className="flex-1 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
-                        {vincularMutation.isPending ? (
+                        {previewVincularMutation.isPending ? (
                             <Loader2 className="w-4 h-4 animate-spin"/>
                         ) : (
                             <Link2 className="w-4 h-4"/>
@@ -791,7 +902,10 @@ export function VincularModal({
                                   extratoId,
                                   linhaId,
                                   valorExtratoAbs,
-                                  onSuccess,
+                                  onDraftVincular,
+                                  jaVinculadoLocalCents = 0,
+                                  quitadoLocalPorLancamento = {},
+                                  ignorarVinculosReais = false,
                                   tipoMovimento,
                                   dataMovimento,
                                   descricaoLinha,
@@ -848,24 +962,75 @@ export function VincularModal({
 
     // RN-D3: reaproveita o mesmo endpoint do fluxo de vincular manual (POST
     // /conciliacoes/linhas/:id/vincular), sem desconto/juros e sem residuo -
-    // igual ao comportamento antigo do botão [+].
+    // igual ao comportamento antigo do botão [+]. Regra de Ouro: o próprio
+    // lançamento nasce de fato (ele não tem "estado financeiro" até ser
+    // vinculado a algo), mas o VÍNCULO em si só é um preview - vira rascunho
+    // em memória (onDraftVincular) igual ao fluxo manual, só é persistido no
+    // Salvar/Conciliar do extrato.
     const vincularAutoMutation = useMutation({
-        mutationFn: ({lancamentoId}: { lancamentoId: number }) =>
-            fetchApiData(`/conciliacoes/linhas/${linhaId}/vincular`, {
+        mutationFn: async ({lancamentoId, descricao}: { lancamentoId: number; descricao: string | null }) => {
+            const payload: VincularPayload = {
+                lancamentos: [{lancamento_id: lancamentoId, desconto: "0.00", juros_multa: "0.00"}],
+                gerar_parcial: false,
+            };
+            const resultado = await fetchApiData<{
+                ramo: string;
+                delta: number;
+                total_conciliado: number;
+                valor_saldo: number;
+                itens: Array<{ lancamento_id: number; valor_vinculado: number; desconto: number; juros_multa: number }>;
+                residual: { lancamento_origem_id: number; valor: number } | null;
+            }>(`/conciliacoes/linhas/${linhaId}/vincular`, {
                 method: "POST",
                 body: JSON.stringify({
-                    lancamentos: [{lancamento_id: lancamentoId, desconto: "0.00", juros_multa: "0.00"}],
-                    gerar_parcial: false,
+                    ...payload,
+                    preview: true,
+                    contexto_rascunho: {
+                        ja_vinculado_local_cents: jaVinculadoLocalCents,
+                        quitado_local_por_lancamento: Object.fromEntries(
+                            Object.entries(quitadoLocalPorLancamento).map(([k, v]) => [k, v]),
+                        ),
+                        ignorar_vinculos_reais: ignorarVinculosReais,
+                    },
                 }),
-            }),
-        onSuccess: () => {
-            invalidateRelated(queryClient, "conciliacao");
-            void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
-            void queryClient.invalidateQueries({queryKey: ["conciliacoes-pendencias-mes"]});
-            toast({title: "Lançamento criado e vinculado", description: "A linha já foi conciliada."});
+            });
+            return {resultado, payload, descricao};
+        },
+        onSuccess: ({resultado, payload, descricao}) => {
+            const item = resultado.itens[0];
+            onDraftVincular({
+                tipo: "vincular",
+                linhaId,
+                payload,
+                ramo: resultado.ramo,
+                delta: Number(resultado.delta),
+                totalConciliado: Number(resultado.total_conciliado),
+                valorSaldo: Number(resultado.valor_saldo),
+                itens: item
+                    ? [
+                        {
+                            lancamento_id: item.lancamento_id,
+                            valor_vinculado: Number(item.valor_vinculado),
+                            desconto: Number(item.desconto),
+                            juros_multa: Number(item.juros_multa),
+                            descricao,
+                            tipo: tipoMovimento === "credito" ? "CR" : "CP",
+                            status: "pendente",
+                            vencimento: dataMovimento,
+                        },
+                    ]
+                    : [],
+                residual: resultado.residual
+                    ? {lancamentoOrigemId: resultado.residual.lancamento_origem_id, valor: Number(resultado.residual.valor)}
+                    : null,
+            });
+            invalidateRelated(queryClient, "lancamentos");
+            toast({
+                title: "Lançamento criado e vínculo adicionado",
+                description: "Ainda não foi salvo - clique em Salvar/Conciliar no extrato para confirmar.",
+            });
             setNovoLancamentoOpen(false);
             onClose();
-            onSuccess();
         },
         onError: (e: unknown) =>
             toast({
@@ -945,7 +1110,7 @@ export function VincularModal({
                         onSaved={(created) => {
                             invalidateRelated(queryClient, "lancamentos");
                             if (created?.id) {
-                                vincularAutoMutation.mutate({lancamentoId: created.id});
+                                vincularAutoMutation.mutate({lancamentoId: created.id, descricao: descricaoLinha});
                             } else {
                                 setNovoLancamentoOpen(false);
                             }
@@ -1062,7 +1227,10 @@ export function VincularModal({
                         valorExtratoAbs={valorExtratoAbs}
                         lancamentos={lancamentos}
                         onClose={onClose}
-                        onSuccess={onSuccess}
+                        onDraftVincular={onDraftVincular}
+                        jaVinculadoLocalCents={jaVinculadoLocalCents}
+                        quitadoLocalPorLancamento={quitadoLocalPorLancamento}
+                        ignorarVinculosReais={ignorarVinculosReais}
                         onBuscarMais={handleBuscarMais}
                         buscandoMais={isFetching}
                         podeBuscarMais={podeBuscarMais}

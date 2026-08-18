@@ -116,6 +116,15 @@ export const itensConciliacaoLancamentosTable = pgTable("itens_conciliacao_lanca
     valor_vinculado: numeric("valor_vinculado", {precision: 15, scale: 2}).notNull(),
     desconto: numeric("desconto", {precision: 15, scale: 2}).default("0").notNull(),
     juros_multa: numeric("juros_multa", {precision: 15, scale: 2}).default("0").notNull(),
+    /**
+     * Card 76: enquanto a conciliação não é salva/concluída, o residual
+     * parcial NÃO é criado como lançamento real (ficaria "solto" na aba
+     * Lançamentos antes do usuário confirmar). Este vínculo (o lançamento
+     * de origem) fica marcado como "vai gerar residual" e o valor fica
+     * pendente aqui - só materializa em lancamentosTable no POST .../finalizar.
+     */
+    eh_origem_residuo: boolean("eh_origem_residuo").default(false).notNull(),
+    residuo_valor_pendente: numeric("residuo_valor_pendente", {precision: 15, scale: 2}),
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [
