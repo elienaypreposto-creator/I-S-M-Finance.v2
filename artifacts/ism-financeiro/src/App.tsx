@@ -135,10 +135,14 @@ function PrivateRoute({
                           component: Component,
                           path,
                           permission,
+                          fullWidth,
                       }: {
     component: any;
     path: string;
     permission?: string;
+    /** Repassado ao AppLayout: quando true, remove o max-w-7xl do <main>
+     *  para essa rota ocupar 100% da largura disponível. */
+    fullWidth?: boolean;
 }) {
     const token = authStorage.getToken();
     const {hasPermission, loading} = useAuth();
@@ -152,7 +156,7 @@ function PrivateRoute({
             return (
                 <Route path={path}>
                     {() => (
-                        <AppLayout>
+                        <AppLayout fullWidth={fullWidth}>
                             <div className="p-8 text-sm text-muted-foreground">Carregando permissões…</div>
                         </AppLayout>
                     )}
@@ -163,7 +167,7 @@ function PrivateRoute({
             return (
                 <Route path={path}>
                     {() => (
-                        <AppLayout>
+                        <AppLayout fullWidth={fullWidth}>
                             <div className="p-8 text-sm text-destructive">
                                 Sem permissão para acessar este módulo.
                             </div>
@@ -177,7 +181,7 @@ function PrivateRoute({
     return (
         <Route path={path}>
             {(params) => (
-                <AppLayout>
+                <AppLayout fullWidth={fullWidth}>
                     <Component {...params} />
                 </AppLayout>
             )}
@@ -200,6 +204,7 @@ function Router() {
                 path="/conciliacao/extrato/:extratoId"
                 component={ConciliacaoExtratoDetalhe}
                 permission={PERM.CONCILIACAO_ACESSAR}
+                fullWidth
             />
 
             {/* Cadastros */}

@@ -97,6 +97,43 @@ function toDateIso(value: unknown): string | null {
     return /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : null;
 }
 
+/** Formata centavos como "70.000,00" (padrão BR, sem símbolo de moeda). */
+function centsToBrDecimal(cents: number): string {
+    const negativo = cents < 0;
+    const abs = Math.abs(cents);
+    const inteiro = Math.floor(abs / 100);
+    const centavos = String(abs % 100).padStart(2, "0");
+    const inteiroFormatado = inteiro.toLocaleString("pt-BR");
+    return `${negativo ? "-" : ""}${inteiroFormatado},${centavos}`;
+}
+
+/** Formata data ISO (YYYY-MM-DD) como DD/MM/YYYY. */
+function formatDateBr(iso: string): string {
+    const [y, m, d] = iso.split("-");
+    return `${d}/${m}/${y}`;
+}
+
+/**
+ * Monta a descrição do lançamento residual gerado após pagamento parcial, no
+ * padrão "Parcela Residual conciliação: {descrição do lançamento de origem}
+ * R$ {valor} {data}," — deixando explícito de qual lançamento este residual
+ * foi clonado.
+ */
+function descreverResiduoParcial(params: {
+    valorCents: number;
+    vencimento: string | null;
+    descricaoOrigem: string | null;
+}): string {
+    const {valorCents, vencimento, descricaoOrigem} = params;
+
+    const base = descricaoOrigem ?? "Lançamento";
+    const dataFormatada = vencimento ? formatDateBr(vencimento) : null;
+
+    return `Parcela Residual conciliação: ${base} R$ ${centsToBrDecimal(valorCents)}${
+        dataFormatada ? ` ${dataFormatada}` : ""
+    },`;
+}
+
 /**
  * Modo B / quitadoAnterior: soma `valor_vinculado` ainda em rascunho
  * (conciliação ≠ conciliado). O campo `lancamentos.valor_quitado` só reflete
@@ -1771,6 +1808,12 @@ router.post(
                         throw new Error("Não foi possível identificar lançamento de origem para o residual.");
                     }
 
+                    const descricaoResidual = descreverResiduoParcial({
+                        valorCents: decision.residual.valorCents,
+                        vencimento: origem.vencimento,
+                        descricaoOrigem: origem.descricao,
+                    });
+
                     const [residuo] = await tx
                         .insert(lancamentosTable)
                         .values({
@@ -1779,7 +1822,7 @@ router.post(
                             competencia: origem.competencia,
                             conta_id: origem.conta_id ?? conciliacao.conta_id,
                             parceiro_id: origem.parceiro_id,
-                            descricao: `${origem.descricao ?? "Lançamento"} (pagamento parcial)`,
+                            descricao: descricaoResidual,
                             valor: centsToDecimalString(decision.residual.valorCents),
                             status: "pendente",
                             origem: "residuo_parcial",
@@ -2413,6 +2456,197 @@ router.post(
             return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao finalizar extrato.", String(e));
         }
     });
+
+/**
+ * Remove somente um vínculo específico pelo vinculo_id.
+ *
+ * Diferente da rota abaixo, que remove todos os vínculos de uma linha,
+ * esta rota exclui apenas o registro selecionado da relação N:N.
+ */
+router.delete(
+    "/conciliacoes/vinculos/:vinculo_id",
+    withPermission(PERM.CONCILIACAO_DESFAZER),
+    async (req, res) => {
+        try {
+            const vinculoId = Number(req.params.vinculo_id);
+
+            if (!Number.isInteger(vinculoId) || vinculoId <= 0) {
+                return errorResponse(res, 400, "VALIDATION_ERROR", "ID do vínculo inválido.");
+            }
+
+            const [vinculo] = await db
+                .select()
+                .from(itensConciliacaoLancamentosTable)
+                .where(eq(itensConciliacaoLancamentosTable.id, vinculoId))
+                .limit(1);
+
+            if (!vinculo) {
+                return errorResponse(res, 404, "NOT_FOUND", "Vínculo não encontrado.");
+            }
+
+            const [item] = await db
+                .select()
+                .from(itensConciliacaoTable)
+                .where(eq(itensConciliacaoTable.id, vinculo.item_conciliacao_id))
+                .limit(1);
+
+            if (!item) {
+                return errorResponse(res, 404, "NOT_FOUND", "Item de conciliação não encontrado.");
+            }
+
+            const [conciliacao] = await db
+                .select()
+                .from(conciliacoesTable)
+                .where(eq(conciliacoesTable.id, item.conciliacao_id))
+                .limit(1);
+
+            if (!conciliacao) {
+                return errorResponse(res, 404, "NOT_FOUND", "Conciliação não encontrada.");
+            }
+
+            const residuos = await db
+                .select()
+                .from(lancamentosTable)
+                .where(
+                    and(
+                        eq(lancamentosTable.is_residuo_parcial, true),
+                        eq(lancamentosTable.lancamento_origem_id, vinculo.lancamento_id),
+                    ),
+                );
+
+            const residuoQuitado = residuos.find(
+                (r) => r.status === "pago" || r.status === "recebido" || r.status === "pago_parcial",
+            );
+
+            if (residuoQuitado) {
+                return errorResponse(
+                    res,
+                    409,
+                    "CONFLICT",
+                    `Não é possível desfazer: o residual #${residuoQuitado.id} já foi quitado. Estorne o residual antes.`,
+                );
+            }
+
+            await db.transaction(async (tx) => {
+                const conciliaJaCommitada = conciliacao.status === "conciliado";
+
+                if (conciliaJaCommitada) {
+                    const [lancamento] = await tx
+                        .select()
+                        .from(lancamentosTable)
+                        .where(eq(lancamentosTable.id, vinculo.lancamento_id))
+                        .limit(1);
+
+                    if (lancamento) {
+                        const quitadoNovo = Math.max(
+                            0,
+                            toCents(lancamento.valor_quitado) - toCents(vinculo.valor_vinculado),
+                        );
+                        const jurosNovo = Math.max(
+                            0,
+                            toCents(lancamento.juros) - toCents(vinculo.juros_multa),
+                        );
+                        const descontoNovo = Math.max(
+                            0,
+                            toCents(lancamento.desconto) - toCents(vinculo.desconto),
+                        );
+
+                        const novoStatus = statusAposDesfazerVinculo({
+                            statusAtual: lancamento.status,
+                            tipoExtrato: lancamento.tipo === "CR" ? "credito" : "debito",
+                            valorLancamentoCents: toCents(lancamento.valor),
+                            valorQuitadoAcumuladoCents: quitadoNovo,
+                            descontoAcumuladoCents: descontoNovo,
+                            vencimento: lancamento.vencimento,
+                            hojeIso: hojeIsoLocal(),
+                        });
+
+                        await tx
+                            .update(lancamentosTable)
+                            .set({
+                                status: novoStatus,
+                                valor_quitado: quitadoNovo > 0 ? centsToDecimalString(quitadoNovo) : null,
+                                data_quitacao:
+                                    quitadoNovo > 0 &&
+                                    (novoStatus === "pago" ||
+                                        novoStatus === "recebido" ||
+                                        novoStatus === "pago_parcial")
+                                        ? lancamento.data_quitacao
+                                        : null,
+                                juros: centsToDecimalString(jurosNovo),
+                                desconto: centsToDecimalString(descontoNovo),
+                                updated_at: new Date(),
+                            })
+                            .where(eq(lancamentosTable.id, lancamento.id));
+                    }
+                }
+
+                if (residuos.length > 0) {
+                    await tx.delete(lancamentosTable).where(
+                        inArray(
+                            lancamentosTable.id,
+                            residuos.map((r) => r.id),
+                        ),
+                    );
+                }
+
+                await tx
+                    .delete(itensConciliacaoLancamentosTable)
+                    .where(eq(itensConciliacaoLancamentosTable.id, vinculoId));
+
+                const vinculosRestantes = await tx
+                    .select()
+                    .from(itensConciliacaoLancamentosTable)
+                    .where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id));
+
+                const novoTotalCents = vinculosRestantes.reduce(
+                    (total, v) => total + toCents(v.valor_vinculado),
+                    0,
+                );
+
+                const extratoCents = toCents(item.valor_extrato);
+                const novoSaldoCents = Math.max(0, extratoCents - novoTotalCents);
+                const novoStatus = vinculosRestantes.length > 0 ? "vinculado" : "pendente";
+
+                await tx
+                    .update(itensConciliacaoTable)
+                    .set({
+                        status: novoStatus,
+                        valor_vinculado_total: centsToDecimalString(novoTotalCents),
+                        valor_saldo: centsToDecimalString(novoSaldoCents),
+                        data_conciliacao: novoStatus === "vinculado" ? item.data_conciliacao : null,
+                        updated_at: new Date(),
+                    })
+                    .where(eq(itensConciliacaoTable.id, item.id));
+
+                await tx.insert(historicoConciliacaoTable).values({
+                    conciliacao_id: item.conciliacao_id,
+                    item_conciliacao_id: item.id,
+                    usuario_id: req.user?.id,
+                    acao: "desfazer_vinculo",
+                    detalhes: JSON.stringify({
+                        linha_id: item.extrato_linha_id,
+                        vinculo_id: vinculoId,
+                        lancamento_id: vinculo.lancamento_id,
+                        valor_vinculado: vinculo.valor_vinculado,
+                        vinculos_restantes: vinculosRestantes.length,
+                        reverteu_titulo: conciliaJaCommitada,
+                    }),
+                });
+
+                await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
+            });
+
+            return successResponse(res, {
+                vinculo_id: vinculoId,
+                linha_id: item.extrato_linha_id,
+                status: "ok",
+            });
+        } catch (e) {
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao desfazer vínculo.", String(e));
+        }
+    },
+);
 
 /** DEF-09: desfazer todos os vínculos da linha. */
 router.delete(
