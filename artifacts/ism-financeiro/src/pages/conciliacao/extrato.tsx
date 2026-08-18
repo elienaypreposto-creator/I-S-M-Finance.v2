@@ -1,10 +1,10 @@
-import {useMemo, useState, useEffect} from "react";
+import {useMemo, useState, useEffect, useRef} from "react";
 import {useLocation} from "wouter";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
 import {formatCurrency, formatDate, cn} from "@/lib/utils";
-import {VincularModal} from "@/components/conciliacao/vincular-modal";
+import {VincularModal, type DraftVincular} from "@/components/conciliacao/vincular-modal";
 import {IgnorarLinhaModal, type MotivoIgnorarPayload} from "@/components/conciliacao/ignorar-linha-modal";
 import {EditarLancamentoConciliacaoModal} from "@/components/conciliacao/editar-lancamento-modal";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
@@ -31,6 +31,7 @@ import {
     RefreshCw,
     Filter,
     Download,
+    ChevronDown,
 } from "lucide-react";
 import {invalidateRelated} from "@/App";
 import {formatValorBrInput, brMoneyDisplayToApiString} from "@/validations/lancamentos.schema";
@@ -77,6 +78,13 @@ type VinculacaoDetalhe = {
     juros_multa?: string | number;
     /** Vencimento do residual = origem (imutável — Decisão nº 3). */
     vencimento?: string | null;
+    /** Card 76: residual marcado no vincular mas ainda não materializado em
+     *  lancamentosTable — só nasce como lançamento real ao Salvar/Conciliar. */
+    residuo_pendente?: { valor: string | number } | null;
+    /** Regra de Ouro (Fase 8): true quando este card representa um rascunho
+     *  em memória (ainda não persistido) - não tem vinculo_id real, então
+     *  não pode ser editado (desconto/juros) até o Salvar/Conciliar. */
+    _local?: boolean;
 };
 
 export type LinhaDetalhe = {
@@ -171,6 +179,127 @@ function corNaturezaTexto(isCredito: boolean) {
 }
 
 /**
+ * Regra de Ouro (Fase 8): nenhuma ação de conciliação (vincular, ignorar,
+ * desfazer, reverter-ignorar) é persistida no banco no momento do clique -
+ * cada uma fica guardada como um "rascunho" local, e só é enviada ao
+ * backend (POST /conciliacoes/:id/salvar) quando o usuário clica em
+ * Salvar/Conciliar. Por linha, a sequência de rascunhos só pode ser:
+ *   [] | [ignorar]
+ *   | [vincular...]
+ *   | [desfazer, vincular...]
+ *   | [reverter_ignorar, vincular...]
+ * ("Desfazer"/"Reverter ignorar" sempre resetam a lista para conter só a
+ * si mesmos, descartando rodadas de vincular rascunhadas antes deles - ver
+ * handlers dos botões "Desfazer vínculos"/"Reverter". Depois disso, novas
+ * rodadas de "Vincular" na MESMA linha voltam a ser empilhadas normalmente.)
+ */
+type DraftAcaoVincular = { tipo: "vincular"; draft: DraftVincular };
+type DraftAcaoIgnorar = { tipo: "ignorar"; motivoCodigo?: string; motivo?: string };
+type DraftAcaoDesfazer = { tipo: "desfazer" };
+type DraftAcaoReverterIgnorar = { tipo: "reverter_ignorar" };
+type DraftAcao = DraftAcaoVincular | DraftAcaoIgnorar | DraftAcaoDesfazer | DraftAcaoReverterIgnorar;
+
+type LinhaEfetiva = LinhaDetalhe & {
+    /** true quando existe QUALQUER rascunho local pendente para esta linha
+     *  (ainda não enviado ao Salvar/Conciliar). */
+    _draftAtivo: boolean;
+    /** Soma (em centavos) do que rodadas de vincular rascunhadas NESTA linha
+     *  já cobriram localmente - repassado ao modal como jaVinculadoLocalCents
+     *  para a próxima rodada de preview calcular o saldo certo. */
+    _jaVinculadoLocalCents: number;
+    /** true quando um "Desfazer" desta linha já está rascunhado - o preview
+     *  de novas rodadas de vincular deve ignorar os vínculos reais. */
+    _ignorarVinculosReais: boolean;
+};
+
+function centsFromReais(v: string | number | null | undefined): number {
+    return Math.round(Math.abs(Number(v) || 0) * 100);
+}
+
+function reaisFromCents(cents: number): number {
+    return cents / 100;
+}
+
+/** Soma (em centavos) do que cada rodada de vincular acrescentou LOCALMENTE
+ *  além do que já existia de fato no banco no momento em que foi calculada -
+ *  a base real é constante durante a sessão porque nada é persistido antes
+ *  do Salvar (ver contexto_rascunho.ja_vinculado_local_cents no backend). */
+function somaRoundsNovoCents(rounds: DraftVincular[], realBaseCents: number): number {
+    return rounds.reduce((acc, r) => acc + Math.round(r.totalConciliado * 100) - realBaseCents, 0);
+}
+
+/** Mescla a linha vinda do servidor com o(s) rascunho(s) locais desta
+ *  sessão (Regra de Ouro) - produz a linha "efetiva" que a tela exibe. */
+function mergeLinhaComDraft(linha: LinhaDetalhe, draft: DraftAcao[] | undefined): LinhaEfetiva {
+    if (!draft || draft.length === 0) {
+        return {...linha, _draftAtivo: false, _jaVinculadoLocalCents: 0, _ignorarVinculosReais: false};
+    }
+
+    const primeiro = draft[0]!;
+
+    if (primeiro.tipo === "ignorar") {
+        return {
+            ...linha,
+            status: "ignorado",
+            _draftAtivo: true,
+            _jaVinculadoLocalCents: 0,
+            _ignorarVinculosReais: false,
+        };
+    }
+
+    // A partir daqui: começa com "desfazer" ou "reverter_ignorar" (ambos
+    // "zeram" a base real da linha, opcionalmente seguidos de rodadas de
+    // "vincular") OU é só uma sequência de rodadas de "vincular".
+    const resetaBaseReal = primeiro.tipo === "desfazer" || primeiro.tipo === "reverter_ignorar";
+    const rounds = draft
+        .filter((a): a is DraftAcaoVincular => a.tipo === "vincular")
+        .map((a) => a.draft);
+
+    const extratoTotalCents = centsFromReais(linha.valor);
+    const realBaseCents = resetaBaseReal ? 0 : centsFromReais(linha.valor_vinculado_total);
+    const localNovoCents = somaRoundsNovoCents(rounds, realBaseCents);
+    const totalEfetivoCents = realBaseCents + localNovoCents;
+    const saldoEfetivoCents = Math.max(0, extratoTotalCents - totalEfetivoCents);
+
+    const vinculacoesBase: VinculacaoDetalhe[] = resetaBaseReal ? [] : linha.vinculacoes;
+    const vinculacoesLocais: VinculacaoDetalhe[] = rounds.flatMap((r) =>
+        r.itens.map((item) => ({
+            lancamento_id: item.lancamento_id,
+            descricao: item.descricao,
+            tipo: item.tipo,
+            status: item.status,
+            is_residuo_parcial: false,
+            valor_vinculado: item.valor_vinculado,
+            desconto: item.desconto,
+            juros_multa: item.juros_multa,
+            vencimento: item.vencimento,
+            residuo_pendente:
+                r.residual && r.residual.lancamentoOrigemId === item.lancamento_id
+                    ? {valor: r.residual.valor}
+                    : null,
+            _local: true,
+        })),
+    );
+
+    const temAlgumVinculo = vinculacoesBase.length > 0 || vinculacoesLocais.length > 0;
+
+    return {
+        ...linha,
+        status: temAlgumVinculo ? "vinculado" : "pendente",
+        vinculacoes: [...vinculacoesBase, ...vinculacoesLocais],
+        valor_vinculado_total: reaisFromCents(totalEfetivoCents),
+        valor_saldo: reaisFromCents(saldoEfetivoCents),
+        _draftAtivo: true,
+        _jaVinculadoLocalCents: localNovoCents,
+        // Preview de novas rodadas de vincular deve ignorar os vínculos
+        // reais quando a base real foi zerada por "desfazer" - já não se
+        // aplica a "reverter_ignorar" (uma linha ignorada nunca tem vínculos
+        // reais para ignorar, então o flag não faz diferença ali).
+        _ignorarVinculosReais: primeiro.tipo === "desfazer",
+    };
+}
+
+/**
  * Card de lançamento (coluna direita): Desconto / Juros-Multa editáveis (RN-G7).
  * Residual parcial: vencimento = origem, **não editável** (Decisão nº 3).
  * Padding/gaps reduzidos para acompanhar a densidade do protótipo (imagem 2).
@@ -200,6 +329,10 @@ function CardLancamento({
     const jurosOuAcrescimo = v.juros_multa ?? v.acrescimo ?? 0;
     const isCredito = v.tipo === "CR";
     const isResidual = Boolean(v.is_residuo_parcial);
+    // Regra de Ouro: rascunho local ainda não tem vinculo_id real - não dá
+    // pra editar desconto/juros dele até o Salvar/Conciliar persistir.
+    const isLocal = Boolean(v._local);
+    const podeEditarEsteVinculo = canEditarLancamento && !isLocal;
 
     const duplicarMutation = useMutation({
         mutationFn: async () => {
@@ -264,7 +397,7 @@ function CardLancamento({
     });
 
     function iniciarEdicao(campo: "desconto" | "juros_multa") {
-        if (!canEditarLancamento) return;
+        if (!podeEditarEsteVinculo) return;
         const atual = campo === "desconto" ? v.desconto : jurosOuAcrescimo;
         setValorEdicao(formatValorBrInput(String(Number(atual) || 0).replace(".", ",")));
         setEditando(campo);
@@ -286,6 +419,13 @@ function CardLancamento({
                 <span className={cn("text-[9px] font-bold px-1 rounded shrink-0", corNaturezaTexto(isCredito))}>
                     {v.tipo}
                 </span>
+                {isLocal && !isResidual && (
+                    <span
+                        title="Ainda não foi salvo - será persistido ao Salvar/Conciliar"
+                        className="text-[8px] font-bold px-1 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30 uppercase tracking-wide shrink-0">
+                        Não salvo
+                    </span>
+                )}
                 <div className="flex items-center gap-0.5 shrink-0">
                     {/* RN-I7: 📄 detalhar - reaproveita o modal "Editar lançamento" já existente */}
                     {canEditarLancamento && (
@@ -350,11 +490,11 @@ function CardLancamento({
                     ) : (
                         <button
                             type="button"
-                            disabled={!canEditarLancamento}
+                            disabled={!podeEditarEsteVinculo}
                             onClick={() => iniciarEdicao("desconto")}
                             className="flex items-center gap-1 text-xs text-white/90 mt-0.5 group disabled:opacity-60">
                             {formatCurrency(Number(v.desconto) || 0)}
-                            {canEditarLancamento && (
+                            {podeEditarEsteVinculo && (
                                 <Pencil className="w-3 h-3 text-muted-foreground group-hover:text-primary"/>
                             )}
                         </button>
@@ -391,11 +531,11 @@ function CardLancamento({
                     ) : (
                         <button
                             type="button"
-                            disabled={!canEditarLancamento}
+                            disabled={!podeEditarEsteVinculo}
                             onClick={() => iniciarEdicao("juros_multa")}
                             className="flex items-center gap-1 text-xs text-white/90 mt-0.5 group disabled:opacity-60">
                             {formatCurrency(Number(jurosOuAcrescimo) || 0)}
-                            {canEditarLancamento && (
+                            {podeEditarEsteVinculo && (
                                 <Pencil className="w-3 h-3 text-muted-foreground group-hover:text-primary"/>
                             )}
                         </button>
@@ -416,6 +556,19 @@ function CardLancamento({
                     {formatCurrency(Number(v.valor_vinculado))}
                 </span>
             </div>
+
+            {/* Card 76: residual marcado no "Vincular", mas só existe de fato
+                (aba Lançamentos) depois do Salvar/Conciliar - avisa aqui que
+                ainda é uma promessa em memória, não um lançamento criado. */}
+            {v.residuo_pendente && (
+                <div
+                    className="flex items-center gap-1.5 text-[10px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-1 mt-1">
+                    <CheckCircle2 className="w-3 h-3 shrink-0"/>
+                    <span className="truncate">
+                        Residual de {formatCurrency(Number(v.residuo_pendente.valor) || 0)} será criado ao Salvar/Conciliar
+                    </span>
+                </div>
+            )}
         </li>
     );
 }
@@ -428,9 +581,12 @@ const TOLERANCIA_SALDO = 0.005;
  *  a cada tecla digitada. */
 const BUSCA_MIN_CHARS = 3;
 const BUSCA_DEBOUNCE_MS = 350;
+/** Card 73: quantas linhas renderizar por "página" do botão "Role para
+ *  carregar mais" (lazy loading sob controle do usuário, não automático). */
+const LINHAS_POR_PAGINA = 25;
 
 export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: string }) {
-    const [, setLocation] = useLocation();
+    const [location, setLocation] = useLocation();
     const queryClient = useQueryClient();
     const {toast} = useToast();
     const {hasPermission} = useAuth();
@@ -441,12 +597,26 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     const canEditarLancamento = hasPermission(PERM.LANCAMENTOS_EDITAR);
     const canCriarRegra = hasPermission(PERM.REGRAS_CONCILIACAO_CRIAR);
 
-    const [vincularLinha, setVincularLinha] = useState<{ id: number; valorAbs: string | number } | null>(null);
+    const [vincularLinha, setVincularLinha] = useState<{
+        id: number;
+        valorAbs: string | number;
+        tipoMovimento: string;
+        dataMovimento: string | null;
+        descricaoLinha: string | null;
+        jaVinculadoLocalCents: number;
+        ignorarVinculosReais: boolean;
+    } | null>(null);
     const [ignorarLinhaId, setIgnorarLinhaId] = useState<number | null>(null);
     const [reverterLinhaId, setReverterLinhaId] = useState<number | null>(null);
     const [desfazerLinhaId, setDesfazerLinhaId] = useState<number | null>(null);
     const [finalizarOpen, setFinalizarOpen] = useState(false);
     const [editarLancamentoId, setEditarLancamentoId] = useState<number | null>(null);
+
+    // Regra de Ouro (Fase 8): TODAS as ações de conciliação (vincular,
+    // ignorar, desfazer, reverter-ignorar) ficam guardadas aqui como
+    // rascunho em memória - nada é persistido no banco antes do clique em
+    // Salvar/Conciliar (ver salvarMutation abaixo). Chave = linha_id.
+    const [draftsPorLinha, setDraftsPorLinha] = useState<Record<number, DraftAcao[]>>({});
     // RN-D3 - [+] verde: NÃO cria um lançamento avulso. Abre o cadastro de
     // "Regra de Conciliação Automática" (Fase 6 / Card 48), pré-preenchido
     // com a descrição exata e a natureza (entrada/saída) da linha, para que
@@ -499,6 +669,14 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
         setFiltrosAplicados({tipo: "todos", status: "todos", busca: ""});
     }
 
+    // Card 73 (reajuste): o carregamento automático "invisível" ao chegar no
+    // fim do scroll foi reprovado pelo cliente — agora o controle é do
+    // usuário via botão explícito "Role para carregar mais" no fim da lista.
+    const [linhasVisiveisCount, setLinhasVisiveisCount] = useState(LINHAS_POR_PAGINA);
+    useEffect(() => {
+        setLinhasVisiveisCount(LINHAS_POR_PAGINA);
+    }, [filtrosAplicados]);
+
     const {data, isLoading, isError, refetch} = useQuery({
         queryKey: ["conciliacao-extrato", extratoId],
         queryFn: () => fetchApiData<ExtratoDetalheResponse>(`/conciliacoes/${extratoId}`),
@@ -516,88 +694,204 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     });
     const motivoObrigatorio = parametros?.motivo_ignorar_obrigatorio ?? false;
 
-    const ignorarMutation = useMutation({
-        mutationFn: ({linhaId, payload}: { linhaId: number; payload: MotivoIgnorarPayload }) =>
-            fetchApiData<{ linha_id: number; status: string }>(`/conciliacoes/linhas/${linhaId}/ignorar`, {
-                method: "POST",
-                body: JSON.stringify(payload),
-            }),
-        onSuccess: () => {
-            setIgnorarLinhaId(null);
-            invalidateRelated(queryClient, "conciliacao");
-            void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
-            void queryClient.invalidateQueries({queryKey: ["conciliacoes-pendencias-mes"]});
-            toast({title: "Linha ignorada", description: "Esta movimentação foi marcada como ignorada."});
-        },
-        onError: (e: unknown) => {
-            const msg = e instanceof Error ? e.message : "Não foi possível ignorar.";
-            toast({variant: "destructive", title: "Erro", description: msg});
-        },
-    });
-
-    const reverterIgnorarMutation = useMutation({
-        mutationFn: (linhaId: number) =>
-            fetchApiData<{ linha_id: number; status: string }>(
-                `/conciliacoes/linhas/${linhaId}/reverter-ignorar`,
-                {method: "POST", body: JSON.stringify({})},
-            ),
-        onSuccess: () => {
-            setReverterLinhaId(null);
-            invalidateRelated(queryClient, "conciliacao");
-            void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
-            toast({title: "Ignorar revertido", description: "A linha voltou a pendente."});
-        },
-        onError: (e: unknown) => {
-            const msg = e instanceof Error ? e.message : "Não foi possível reverter.";
-            toast({variant: "destructive", title: "Erro", description: msg});
-        },
-    });
-
-    const desfazerVinculosMutation = useMutation({
-        mutationFn: (linhaId: number) =>
-            fetchApiData<{ linha_id: number; status: string }>(`/conciliacoes/linhas/${linhaId}/vinculos`, {
-                method: "DELETE",
-            }),
-        onSuccess: () => {
-            setDesfazerLinhaId(null);
-            invalidateRelated(queryClient, "conciliacao");
-            void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
-            toast({title: "Vínculos desfeitos", description: "A linha voltou a pendente."});
-        },
-        onError: (e: unknown) => {
-            const msg = e instanceof Error ? e.message : "Não foi possível desfazer.";
-            toast({variant: "destructive", title: "Erro", description: msg});
-        },
-    });
-
-    const finalizarMutation = useMutation({
-        mutationFn: () =>
-            fetchApiData<{ extrato_id: number; status: string }>(`/conciliacoes/${extratoId}/finalizar`, {
-                method: "POST",
-                body: JSON.stringify({}),
-            }),
-        onSuccess: () => {
-            setFinalizarOpen(false);
-            invalidateRelated(queryClient, "conciliacao");
-            void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
-            toast({title: "Extrato finalizado", description: "Conciliação concluída com sucesso."});
-        },
-        onError: (e: unknown) => {
-            const msg = e instanceof Error ? e.message : "Não foi possível finalizar.";
-            toast({variant: "destructive", title: "Erro ao finalizar", description: msg});
-        },
-    });
-
     const extrato = data?.extrato;
     const conc = data?.conciliacao;
     const linhas = data?.linhas ?? [];
-    const podeFinalizar = (conc?.resumo_pendentes ?? 1) === 0;
+
+    // Regra de Ouro: a linha "efetiva" mescla o que está no servidor com o
+    // rascunho local (se houver) desta sessão - é ela que a tela inteira
+    // usa para status/valores/vinculações, não o dado bruto do servidor.
+    const linhasEfetivas = useMemo<LinhaEfetiva[]>(
+        () => linhas.map((linha) => mergeLinhaComDraft(linha, draftsPorLinha[linha.linha_id])),
+        [linhas, draftsPorLinha],
+    );
+
+    const hasPendingChanges = useMemo(
+        () => Object.values(draftsPorLinha).some((acoes) => acoes.length > 0),
+        [draftsPorLinha],
+    );
+
+    /** lancamento_id -> centavos já comprometidos por rascunhos locais (de
+     *  QUALQUER linha desta sessão) - repassado ao modal de Vincular para o
+     *  "Restante"/Modo B não ficarem desatualizados antes do Salvar. */
+    const quitadoLocalPorLancamento = useMemo(() => {
+        const mapa: Record<number, number> = {};
+        for (const acoes of Object.values(draftsPorLinha)) {
+            for (const acao of acoes) {
+                if (acao.tipo !== "vincular") continue;
+                for (const item of acao.draft.itens) {
+                    mapa[item.lancamento_id] = (mapa[item.lancamento_id] ?? 0) + Math.round(item.valor_vinculado * 100);
+                }
+            }
+        }
+        return mapa;
+    }, [draftsPorLinha]);
+
+    // Proteção contra F5/fechar aba com rascunhos ainda não salvos (Regra de
+    // Ouro: nada é persistido até o Salvar/Conciliar) - dispara o prompt
+    // nativo do navegador em vez de deixar o progresso se perder em silêncio.
+    useEffect(() => {
+        if (!hasPendingChanges) return;
+        const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+            e.preventDefault();
+            e.returnValue = "";
+        };
+        window.addEventListener("beforeunload", handleBeforeUnload);
+        return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+    }, [hasPendingChanges]);
+
+    // Bloqueio de rota SPA: o beforeunload acima só cobre F5/fechar aba - não
+    // impede clicar num link do menu lateral (navegação interna via wouter)
+    // nem usar o "Voltar" do navegador. Guardamos aqui a rota que o usuário
+    // tentou acessar e só navegamos de fato se ele confirmar no modal.
+    const [pendingNavigationHref, setPendingNavigationHref] = useState<string | null>(null);
+    const hasPendingChangesRef = useRef(hasPendingChanges);
+    useEffect(() => {
+        hasPendingChangesRef.current = hasPendingChanges;
+    }, [hasPendingChanges]);
+    const currentPathRef = useRef(location);
+    useEffect(() => {
+        currentPathRef.current = location;
+    }, [location]);
+
+    function irPara(href: string) {
+        if (hasPendingChangesRef.current) {
+            setPendingNavigationHref(href);
+        } else {
+            setLocation(href);
+        }
+    }
+
+    // Intercepta cliques em qualquer link interno (menu lateral, breadcrumbs,
+    // etc.) enquanto houver rascunho pendente - captura no document ANTES do
+    // <Link> do wouter tratar o clique, então dá pra cancelar a navegação.
+    useEffect(() => {
+        if (!hasPendingChanges) return;
+        const handleClick = (e: MouseEvent) => {
+            if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            const anchor = (e.target as HTMLElement | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+            if (!anchor || anchor.target === "_blank") return;
+            const href = anchor.getAttribute("href");
+            if (!href || !href.startsWith("/")) return;
+            if (href === currentPathRef.current) return;
+            e.preventDefault();
+            e.stopPropagation();
+            setPendingNavigationHref(href);
+        };
+        document.addEventListener("click", handleClick, true);
+        return () => document.removeEventListener("click", handleClick, true);
+    }, [hasPendingChanges]);
+
+    // Intercepta o "Voltar"/"Avançar" nativo do navegador. Diferente de um
+    // clique em link, o popstate dispara DEPOIS que a URL já mudou de fato, e
+    // não dá pra "cancelar" a navegação de histórico via preventDefault - o
+    // browser não suporta isso. A técnica padrão é plantar uma "armadilha":
+    // assim que aparece rascunho pendente, duplicamos a entrada atual do
+    // histórico (mesma URL). O 1º "Voltar" do usuário só consome essa cópia
+    // extra e o pathname NÃO muda de verdade (wouter nem percebe, o
+    // componente do extrato continua montado) - só então mostramos o modal.
+    // Se ele insistir em clicar "Voltar" de novo antes de decidir, o
+    // popstate handler replanta a armadilha na hora, mantendo a trava.
+    useEffect(() => {
+        if (!hasPendingChanges) return;
+        window.history.pushState({ismTrap: true}, "", window.location.href);
+
+        const handlePopState = () => {
+            window.history.pushState({ismTrap: true}, "", window.location.href);
+            // Não dá pra recuperar "pra onde" o usuário ia (a URL nunca chega
+            // a mudar de fato) - assume o destino natural desta tela, igual
+            // ao botão "Voltar para conciliações" do cabeçalho.
+            setPendingNavigationHref("/conciliacao");
+        };
+        window.addEventListener("popstate", handlePopState);
+        return () => window.removeEventListener("popstate", handlePopState);
+    }, [hasPendingChanges]);
+
+    function confirmarSairComRascunho() {
+        const href = pendingNavigationHref;
+        setPendingNavigationHref(null);
+        if (href) setLocation(href);
+    }
+
+    function cancelarSairComRascunho() {
+        setPendingNavigationHref(null);
+    }
+
+    function buildAcoesSalvar(): Array<Record<string, unknown>> {
+        const acoes: Array<Record<string, unknown>> = [];
+        for (const [linhaIdStr, draftArr] of Object.entries(draftsPorLinha)) {
+            const linhaId = Number(linhaIdStr);
+            for (const acao of draftArr) {
+                if (acao.tipo === "vincular") {
+                    const payload = acao.draft.payload;
+                    acoes.push({
+                        tipo: "vincular",
+                        linha_id: linhaId,
+                        lancamentos: payload.lancamentos,
+                        gerar_parcial: payload.gerar_parcial,
+                        residuo_lancamento_id: payload.residuo_lancamento_id,
+                    });
+                } else if (acao.tipo === "ignorar") {
+                    acoes.push({
+                        tipo: "ignorar",
+                        linha_id: linhaId,
+                        motivo_codigo: acao.motivoCodigo,
+                        motivo: acao.motivo,
+                    });
+                } else if (acao.tipo === "desfazer") {
+                    acoes.push({tipo: "desfazer", linha_id: linhaId});
+                } else {
+                    acoes.push({tipo: "reverter_ignorar", linha_id: linhaId});
+                }
+            }
+        }
+        return acoes;
+    }
+
+    // Regra de Ouro: único ponto de persistência real de toda a tela - as
+    // ações rascunhadas (vincular/ignorar/desfazer/reverter-ignorar) só
+    // chegam ao banco aqui, em lote, dentro de UMA transação no backend.
+    const salvarMutation = useMutation({
+        mutationFn: (params: { finalizar: boolean }) =>
+            fetchApiData<{ extrato_id: number; linhas_processadas: unknown[]; finalizado: boolean }>(
+                `/conciliacoes/${extratoId}/salvar`,
+                {method: "POST", body: JSON.stringify({acoes: buildAcoesSalvar(), finalizar: params.finalizar})},
+            ),
+        onSuccess: (resultado) => {
+            setDraftsPorLinha({});
+            setFinalizarOpen(false);
+            invalidateRelated(queryClient, "conciliacao");
+            // É só agora, com a persistência real, que residuais pendentes
+            // nascem de fato em lancamentosTable e títulos mudam para
+            // pago/recebido - a aba Lançamentos precisa buscar de novo.
+            invalidateRelated(queryClient, "lancamentos");
+            void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
+            void queryClient.invalidateQueries({queryKey: ["conciliacoes-pendencias-mes"]});
+            toast({
+                title: resultado.finalizado ? "Extrato conciliado" : "Alterações salvas",
+                description: resultado.finalizado
+                    ? "Conciliação concluída com sucesso."
+                    : "Suas alterações foram salvas com sucesso.",
+            });
+        },
+        onError: (e: unknown) => {
+            const msg = e instanceof Error ? e.message : "Não foi possível salvar as alterações.";
+            toast({variant: "destructive", title: "Erro ao salvar", description: msg});
+        },
+    });
+
+    const pendentesEfetivos = useMemo(
+        () => linhasEfetivas.filter((l) => l.status === "pendente").length,
+        [linhasEfetivas],
+    );
+    const podeFinalizar = pendentesEfetivos === 0;
     const rotuloAcaoConciliacao = podeFinalizar ? "Conciliar" : "Salvar";
 
-    // Aplica Tipo / Status / Pesquisar sobre a lista. Sem paginação: a lista
-    // inteira fica dentro de um contêiner com overflow-y-auto (scroll).
+    // Aplica Tipo / Status / Pesquisar sobre a lista (já com rascunhos
+    // mesclados). Sem paginação: a lista inteira fica dentro de um
+    // contêiner com overflow-y-auto (scroll).
     const linhasFiltradas = useMemo(() => {
-        return linhas.filter((linha) => {
+        return linhasEfetivas.filter((linha) => {
             if (filtrosAplicados.tipo !== "todos" && linha.tipo_movimento !== filtrosAplicados.tipo) return false;
             if (filtrosAplicados.status !== "todos" && linha.status !== filtrosAplicados.status) return false;
             if (filtrosAplicados.busca) {
@@ -606,13 +900,22 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
             }
             return true;
         });
-    }, [linhas, filtrosAplicados]);
+    }, [linhasEfetivas, filtrosAplicados]);
+
+    // Card 73: só renderiza as primeiras N linhas filtradas — o resto só
+    // entra quando o usuário clicar em "Role para carregar mais" (ver botão
+    // no fim da lista), em vez de um observer invisível de scroll.
+    const linhasVisiveis = useMemo(
+        () => linhasFiltradas.slice(0, linhasVisiveisCount),
+        [linhasFiltradas, linhasVisiveisCount],
+    );
+    const restantesParaCarregar = linhasFiltradas.length - linhasVisiveis.length;
 
     return (
        <div className="flex flex-col gap-4 h-full w-full px-0 py-2">
             <button
                 type="button"
-                onClick={() => setLocation("/conciliacao")}
+                onClick={() => irPara("/conciliacao")}
                 className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-white transition-colors w-fit">
                 <ArrowLeft className="w-3.5 h-3.5"/>
                 Voltar para conciliações
@@ -624,8 +927,19 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                     extratoId={extratoId}
                     linhaId={vincularLinha.id}
                     valorExtratoAbs={vincularLinha.valorAbs}
+                    tipoMovimento={vincularLinha.tipoMovimento}
+                    dataMovimento={vincularLinha.dataMovimento}
+                    descricaoLinha={vincularLinha.descricaoLinha}
+                    jaVinculadoLocalCents={vincularLinha.jaVinculadoLocalCents}
+                    quitadoLocalPorLancamento={quitadoLocalPorLancamento}
+                    ignorarVinculosReais={vincularLinha.ignorarVinculosReais}
                     onClose={() => setVincularLinha(null)}
-                    onSuccess={() => setVincularLinha(null)}
+                    onDraftVincular={(draft) => {
+                        setDraftsPorLinha((prev) => {
+                            const atual = prev[draft.linhaId] ?? [];
+                            return {...prev, [draft.linhaId]: [...atual, {tipo: "vincular", draft}]};
+                        });
+                    }}
                 />
             )}
 
@@ -656,17 +970,45 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                 />
             )}
 
+            {/* Regra de Ouro: "Ignorar" só rascunha localmente - nada é
+                persistido até o Salvar/Conciliar no rodapé da tela. */}
             <IgnorarLinhaModal
                 open={ignorarLinhaId != null}
                 obrigatorio={motivoObrigatorio}
-                pending={ignorarMutation.isPending}
+                pending={false}
                 onClose={() => setIgnorarLinhaId(null)}
-                onConfirm={(payload) => {
+                onConfirm={(payload: MotivoIgnorarPayload) => {
                     if (ignorarLinhaId == null) return;
-                    ignorarMutation.mutate({linhaId: ignorarLinhaId, payload});
+                    const linhaId = ignorarLinhaId;
+                    // Caso raro: a linha já está ignorada DE VERDADE no banco (de um
+                    // Save anterior) e o usuário reverteu localmente (rascunho
+                    // "reverter_ignorar") e resolveu ignorar de novo antes de salvar -
+                    // nesse caso o estado real já é "ignorado", então basta descartar
+                    // o rascunho de reverter (nada muda) em vez de mandar um "ignorar"
+                    // que o backend rejeitaria (linha já ignorada).
+                    const linhaServidor = linhas.find((l) => l.linha_id === linhaId);
+                    setDraftsPorLinha((prev) => {
+                        if (linhaServidor?.status === "ignorado") {
+                            const {[linhaId]: _removido, ...resto} = prev;
+                            return resto;
+                        }
+                        return {
+                            ...prev,
+                            [linhaId]: [{tipo: "ignorar", motivoCodigo: payload.motivo_codigo, motivo: payload.motivo}],
+                        };
+                    });
+                    setIgnorarLinhaId(null);
+                    toast({
+                        title: "Linha marcada para ignorar",
+                        description: "Ainda não foi salvo - clique em Salvar/Conciliar para confirmar.",
+                    });
                 }}
             />
 
+            {/* Regra de Ouro: se o "ignorado" atual é só um rascunho local
+                (ainda não salvo), reverter apenas descarta esse rascunho -
+                sem chamada ao backend. Se já é real (de um Save anterior),
+                rascunha um "reverter_ignorar" para ser aplicado no Salvar. */}
             <ConfirmDialog
                 open={reverterLinhaId != null}
                 title="Reverter ignorar?"
@@ -677,10 +1019,27 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                 onCancel={() => setReverterLinhaId(null)}
                 onConfirm={() => {
                     if (reverterLinhaId == null) return;
-                    reverterIgnorarMutation.mutate(reverterLinhaId);
+                    const linhaId = reverterLinhaId;
+                    setDraftsPorLinha((prev) => {
+                        const atual = prev[linhaId];
+                        if (atual && atual[0]?.tipo === "ignorar") {
+                            const {[linhaId]: _removido, ...resto} = prev;
+                            return resto;
+                        }
+                        return {...prev, [linhaId]: [{tipo: "reverter_ignorar"}]};
+                    });
+                    setReverterLinhaId(null);
+                    toast({
+                        title: "Reverter rascunhado",
+                        description: "Ainda não foi salvo - clique em Salvar/Conciliar para confirmar.",
+                    });
                 }}
             />
 
+            {/* Regra de Ouro: se os vínculos atuais são só rascunho local
+                (linha ainda "pendente" de fato no banco), desfazer apenas
+                descarta o rascunho. Se já há vínculo real (de um Save
+                anterior), rascunha um "desfazer" para reverter no Salvar. */}
             <ConfirmDialog
                 open={desfazerLinhaId != null}
                 title="Desfazer vínculos?"
@@ -691,7 +1050,20 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                 onCancel={() => setDesfazerLinhaId(null)}
                 onConfirm={() => {
                     if (desfazerLinhaId == null) return;
-                    desfazerVinculosMutation.mutate(desfazerLinhaId);
+                    const linhaId = desfazerLinhaId;
+                    const linhaServidor = linhas.find((l) => l.linha_id === linhaId);
+                    setDraftsPorLinha((prev) => {
+                        if (linhaServidor?.status === "vinculado") {
+                            return {...prev, [linhaId]: [{tipo: "desfazer"}]};
+                        }
+                        const {[linhaId]: _removido, ...resto} = prev;
+                        return resto;
+                    });
+                    setDesfazerLinhaId(null);
+                    toast({
+                        title: "Vínculos removidos (rascunho)",
+                        description: "Ainda não foi salvo - clique em Salvar/Conciliar para confirmar.",
+                    });
                 }}
             />
 
@@ -703,7 +1075,19 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                 variant="default"
                 icon={CheckCircle2}
                 onCancel={() => setFinalizarOpen(false)}
-                onConfirm={() => finalizarMutation.mutate()}
+                onConfirm={() => salvarMutation.mutate({finalizar: true})}
+            />
+
+            <ConfirmDialog
+                open={pendingNavigationHref != null}
+                title="Alterações não salvas"
+                description="Você tem alterações não salvas. Deseja sair e descartar o progresso?"
+                confirmLabel="Sair"
+                cancelLabel="Continuar editando"
+                variant="warning"
+                icon={AlertCircle}
+                onCancel={cancelarSairComRascunho}
+                onConfirm={confirmarSairComRascunho}
             />
 
             <EditarLancamentoConciliacaoModal
@@ -830,7 +1214,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                             </div>
                         ) : (
                         <div className="divide-y divide-white/5 overflow-y-auto flex-1 min-h-0">
-                            {linhasFiltradas.map((linha) => {
+                            {linhasVisiveis.map((linha) => {
                                 const isPendente = linha.status === "pendente";
                                 const isVinculado = linha.status === "vinculado";
                                 const isIgnorado = linha.status === "ignorado";
@@ -867,6 +1251,13 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                             {formatDate(linha.data_movimento)}
                                                         </span>
                                                     )}
+                                                    {linha._draftAtivo && (
+                                                        <span
+                                                            title="Alterações locais ainda não salvas nesta linha"
+                                                            className="text-[9px] font-bold px-1.5 py-0.5 rounded border border-sky-500/30 bg-sky-500/10 text-sky-300 uppercase tracking-wide shrink-0">
+                                                            Não salvo
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 <div className="flex items-center gap-1.5 shrink-0">
                                                     {/* RN-D3 (reinterpretado): [+] verde - abre "Nova regra de
@@ -886,7 +1277,6 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                     {isPendente && canIgnorar && (
                                                         <button
                                                             type="button"
-                                                            disabled={ignorarMutation.isPending}
                                                             onClick={() => setIgnorarLinhaId(linha.linha_id)}
                                                             className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-[11px] font-semibold text-white/90 whitespace-nowrap">
                                                             <Ban className="w-3 h-3"/>
@@ -896,7 +1286,6 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                     {isIgnorado && canDesfazer && (
                                                         <button
                                                             type="button"
-                                                            disabled={reverterIgnorarMutation.isPending}
                                                             onClick={() => setReverterLinhaId(linha.linha_id)}
                                                             className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-[11px] font-semibold text-amber-200 whitespace-nowrap">
                                                             <RotateCcw className="w-3 h-3"/>
@@ -1002,6 +1391,11 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                     onClick={() => setVincularLinha({
                                                         id: linha.linha_id,
                                                         valorAbs: saldoAbs,
+                                                        tipoMovimento: linha.tipo_movimento,
+                                                        dataMovimento: linha.data_movimento,
+                                                        descricaoLinha: linha.descricao,
+                                                        jaVinculadoLocalCents: linha._jaVinculadoLocalCents,
+                                                        ignorarVinculosReais: linha._ignorarVinculosReais,
                                                     })}
                                                     className="w-[40%] inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-primary/90 hover:bg-primary text-primary-foreground text-xs font-bold shadow-md shadow-primary/20">
                                                     <Search className="w-3.5 h-3.5"/>
@@ -1018,6 +1412,20 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                     </div>
                                 );
                             })}
+                            {/* Card 73 (reajuste): substitui o antigo gatilho invisível de
+                                scroll infinito por um botão explícito no fim da lista —
+                                o carregamento de mais linhas fica sob controle do usuário. */}
+                            {restantesParaCarregar > 0 && (
+                                <div className="py-4 flex justify-center">
+                                    <button
+                                        type="button"
+                                        onClick={() => setLinhasVisiveisCount((n) => n + LINHAS_POR_PAGINA)}
+                                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-muted-foreground hover:text-white transition-colors">
+                                        <ChevronDown className="w-3.5 h-3.5"/>
+                                        Role para carregar mais ({restantesParaCarregar} restante{restantesParaCarregar === 1 ? "" : "s"})
+                                    </button>
+                                </div>
+                            )}
                         </div>
                         )}
 
@@ -1025,36 +1433,38 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                           Rodapé de ação: o botão Salvar/Conciliar fica alinhado à
                           direita, após a lista de linhas (scroll infinito - sem
                           paginação, ver contêiner overflow-y-auto acima).
-                          - Enquanto houver linhas pendentes, o rótulo é "Salvar" e o
-                            clique NÃO chama finalizarMutation (não pode finalizar com
-                            pendências) - por enquanto é um placeholder (toast) até
-                            existir um endpoint de salvamento parcial de fato.
-                          - Quando não há mais pendências, o rótulo vira "Conciliar" e
-                            o clique abre o ConfirmDialog que chama finalizarMutation.
-                          O botão só fica desabilitado durante o POST de finalizar ou
-                          quando o extrato já está conciliado - NUNCA por causa da
-                          existência de pendências, que é justamente o caso de uso do
-                          "Salvar".
+                          Regra de Ouro + botão inteligente (Fase 8):
+                          - Só fica clicável quando há alguma alteração local ainda
+                            não salva (hasPendingChanges) - sem rascunho pendente,
+                            fica desabilitado (nada novo para persistir).
+                          - Com pendências de linha zeradas (efetivamente, já
+                            considerando os rascunhos), o rótulo vira "Conciliar" e
+                            o clique abre o ConfirmDialog que salva + finaliza em
+                            uma única chamada a POST /salvar.
+                          - Caso contrário, o rótulo é "Salvar" e o clique já
+                            dispara o salvamento em lote de todos os rascunhos
+                            (sem precisar de confirmação, já que não é destrutivo).
                         */}
                         <div className="flex items-center justify-end gap-3 px-4 py-3 border-t border-white/5 bg-black/25">
+                            {hasPendingChanges && (
+                                <span className="text-[11px] text-amber-300/90 flex items-center gap-1.5">
+                                    <AlertCircle className="w-3.5 h-3.5"/>
+                                    Você tem alterações não salvas
+                                </span>
+                            )}
                             <RequiresPermission permission={PERM.CONCILIACAO_CONCLUIR}>
                                 <button
                                     type="button"
-                                    disabled={finalizarMutation.isPending || extrato.status === "conciliado"}
+                                    disabled={!hasPendingChanges || salvarMutation.isPending || extrato.status === "conciliado"}
                                     onClick={() => {
                                         if (podeFinalizar) {
                                             setFinalizarOpen(true);
                                             return;
                                         }
-                                        // TODO: trocar por chamada real de salvamento parcial
-                                        // quando esse endpoint existir no backend.
-                                        toast({
-                                            title: "Salvo",
-                                            description: "Suas alterações foram salvas. Finalize quando não houver mais linhas pendentes.",
-                                        });
+                                        salvarMutation.mutate({finalizar: false});
                                     }}
                                     className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-success hover:bg-success/90 text-white text-xs font-bold disabled:opacity-40 disabled:pointer-events-none shadow-lg shadow-success/20">
-                                    {finalizarMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin"/> :
+                                    {salvarMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin"/> :
                                         <CheckCircle2 className="w-4 h-4"/>}
                                     {rotuloAcaoConciliacao}
                                 </button>
