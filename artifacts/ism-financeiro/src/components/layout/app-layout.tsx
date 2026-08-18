@@ -3,22 +3,12 @@ import { AppSidebar } from "./app-sidebar";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Bell, User, LogOut } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
-import { cn } from "@/lib/utils";
 
 function getInitials(nome: string): string {
   return nome.trim().split(/\s+/).slice(0, 2).map((p) => p[0]?.toUpperCase() ?? "").join("");
 }
 
-export function AppLayout({
-  children,
-  fullWidth = false,
-}: {
-  children: ReactNode;
-  /** Quando true, o conteúdo ocupa 100% da largura disponível em vez de
-   *  ficar limitado a max-w-7xl (usar em telas de trabalho/densas, como
-   *  o detalhe da conciliação bancária). */
-  fullWidth?: boolean;
-}) {
+export function AppLayout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
 
   const style = {
@@ -69,8 +59,10 @@ export function AppLayout({
               </div>
             </div>
           </header>
+          {/* Sem max-w-7xl: todas as páginas agora ocupam 100% da largura
+              disponível, igual ao comportamento da tela de conciliação. */}
           <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 animate-in">
-            <div className={cn("w-full", !fullWidth && "max-w-7xl mx-auto")}>
+            <div className="w-full">
               {children}
             </div>
           </main>
