@@ -21,18 +21,20 @@ function regra(partial: Partial<RegraParaMatch> & Pick<RegraParaMatch, "id" | "t
     };
 }
 
-describe("regras-match — FEAT-03", () => {
+describe("regras-match - FEAT-03", () => {
     it("naturezaDaLinhaExtrato mapeia crédito/débito", () => {
         assert.equal(naturezaDaLinhaExtrato("credito"), "entrada");
         assert.equal(naturezaDaLinhaExtrato("debito"), "saida");
     });
 
-    it("contem / inicia / regex (case-insensitive)", () => {
+    it("contem / inicia / regex / exato (case-insensitive)", () => {
         assert.equal(regraCasaTexto({texto_gatilho: "TARIFA", tipo_match: "contem"}, "Tarifa pacote"), true);
         assert.equal(regraCasaTexto({texto_gatilho: "TARIFA", tipo_match: "inicia"}, "Tarifa pacote"), true);
         assert.equal(regraCasaTexto({texto_gatilho: "TARIFA", tipo_match: "inicia"}, "PIX Tarifa"), false);
         assert.equal(regraCasaTexto({texto_gatilho: "TARIFA\\s+PACOTE", tipo_match: "regex"}, "tarifa pacote X"), true);
         assert.equal(regraCasaTexto({texto_gatilho: "[invalid", tipo_match: "regex"}, "qualquer"), false);
+        assert.equal(regraCasaTexto({texto_gatilho: "TARIFA PIX", tipo_match: "exato"}, "tarifa pix"), true);
+        assert.equal(regraCasaTexto({texto_gatilho: "TARIFA PIX", tipo_match: "exato"}, "TARIFA PIX EXTRA"), false);
     });
 
     it("primeira regra da lista vence; natureza não cruza", () => {

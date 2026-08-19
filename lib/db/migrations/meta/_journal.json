@@ -57,6 +57,13 @@
       "when": 1787092904860,
       "tag": "0007_residuo_pendente",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787160500000,
+      "tag": "0008_tipo_match_exato",
+      "breakpoints": true
     }
   ]
 }

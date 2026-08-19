@@ -70,20 +70,14 @@ type VinculacaoDetalhe = {
     descricao: string | null;
     tipo: string;
     status: string;
-    /** Flag do título residual (DEF-08) — não inferir por status pendente. */
+    /** Flag do título residual (DEF-08) - não inferir por status pendente. */
     is_residuo_parcial?: boolean;
     valor_vinculado: string | number;
     desconto: string | number;
     acrescimo?: string | number;
     juros_multa?: string | number;
-    /** Vencimento do residual = origem (imutável — Decisão nº 3). */
     vencimento?: string | null;
-    /** Card 76: residual marcado no vincular mas ainda não materializado em
-     *  lancamentosTable — só nasce como lançamento real ao Salvar/Conciliar. */
     residuo_pendente?: { valor: string | number } | null;
-    /** Regra de Ouro (Fase 8): true quando este card representa um rascunho
-     *  em memória (ainda não persistido) - não tem vinculo_id real, então
-     *  não pode ser editado (desconto/juros) até o Salvar/Conciliar. */
     _local?: boolean;
 };
 
@@ -99,7 +93,6 @@ export type LinhaDetalhe = {
     valor_saldo: string | number;
     saldo_pos_linha: string | number | null;
     vinculacoes: VinculacaoDetalhe[];
-    /** Card 48 / FEAT-03 */
     regra_id?: number | null;
     classificacao_automatica?: boolean;
     regra_texto_gatilho?: string | null;
@@ -132,7 +125,7 @@ type ExtratoDetalheResponse = {
     conciliacao: ConciliacaoResumo;
     linhas: LinhaDetalhe[];
     // OBS: o diagnóstico de saldo continua vindo nesta resposta, mas deixou
-    // de ser exibido aqui — a exibição foi movida para a tela Home/Dashboard
+    // de ser exibido aqui - a exibição foi movida para a tela Home/Dashboard
     // (ver Dashboard.tsx). Mantido no tipo para não quebrar o contrato com o
     // backend; se a Home passar a ter um endpoint próprio, este campo pode
     // ser removido daqui.
@@ -164,7 +157,7 @@ function statusLinhaBadge(status: string) {
 }
 
 /**
- * RN-D2: cor semântica por natureza — crédito/entrada = VERDE, débito/saída
+ * RN-D2: cor semântica por natureza - crédito/entrada = VERDE, débito/saída
  * = VERMELHO. O código anterior usava teal/orange; o card pede explicitamente
  * vermelho/verde, então padronizei aqui (não em todo o app, só neste módulo).
  */
@@ -178,21 +171,6 @@ function corNaturezaTexto(isCredito: boolean) {
     return isCredito ? "text-emerald-300" : "text-red-300";
 }
 
-/**
- * Regra de Ouro (Fase 8): nenhuma ação de conciliação (vincular, ignorar,
- * desfazer, reverter-ignorar) é persistida no banco no momento do clique -
- * cada uma fica guardada como um "rascunho" local, e só é enviada ao
- * backend (POST /conciliacoes/:id/salvar) quando o usuário clica em
- * Salvar/Conciliar. Por linha, a sequência de rascunhos só pode ser:
- *   [] | [ignorar]
- *   | [vincular...]
- *   | [desfazer, vincular...]
- *   | [reverter_ignorar, vincular...]
- * ("Desfazer"/"Reverter ignorar" sempre resetam a lista para conter só a
- * si mesmos, descartando rodadas de vincular rascunhadas antes deles - ver
- * handlers dos botões "Desfazer vínculos"/"Reverter". Depois disso, novas
- * rodadas de "Vincular" na MESMA linha voltam a ser empilhadas normalmente.)
- */
 type DraftAcaoVincular = { tipo: "vincular"; draft: DraftVincular };
 type DraftAcaoIgnorar = { tipo: "ignorar"; motivoCodigo?: string; motivo?: string };
 type DraftAcaoDesfazer = { tipo: "desfazer" };
@@ -200,15 +178,8 @@ type DraftAcaoReverterIgnorar = { tipo: "reverter_ignorar" };
 type DraftAcao = DraftAcaoVincular | DraftAcaoIgnorar | DraftAcaoDesfazer | DraftAcaoReverterIgnorar;
 
 type LinhaEfetiva = LinhaDetalhe & {
-    /** true quando existe QUALQUER rascunho local pendente para esta linha
-     *  (ainda não enviado ao Salvar/Conciliar). */
     _draftAtivo: boolean;
-    /** Soma (em centavos) do que rodadas de vincular rascunhadas NESTA linha
-     *  já cobriram localmente - repassado ao modal como jaVinculadoLocalCents
-     *  para a próxima rodada de preview calcular o saldo certo. */
     _jaVinculadoLocalCents: number;
-    /** true quando um "Desfazer" desta linha já está rascunhado - o preview
-     *  de novas rodadas de vincular deve ignorar os vínculos reais. */
     _ignorarVinculosReais: boolean;
 };
 
@@ -231,16 +202,10 @@ function reaisFromCents(cents: number): number {
     return cents / 100;
 }
 
-/** Soma (em centavos) do que cada rodada de vincular acrescentou LOCALMENTE
- *  além do que já existia de fato no banco no momento em que foi calculada -
- *  a base real é constante durante a sessão porque nada é persistido antes
- *  do Salvar (ver contexto_rascunho.ja_vinculado_local_cents no backend). */
 function somaRoundsNovoCents(rounds: DraftVincular[], realBaseCents: number): number {
     return rounds.reduce((acc, r) => acc + Math.round(r.totalConciliado * 100) - realBaseCents, 0);
 }
 
-/** Mescla a linha vinda do servidor com o(s) rascunho(s) locais desta
- *  sessão (Regra de Ouro) - produz a linha "efetiva" que a tela exibe. */
 function mergeLinhaComDraft(linha: LinhaDetalhe, draft: DraftAcao[] | undefined): LinhaEfetiva {
     if (!draft || draft.length === 0) {
         return {...linha, _draftAtivo: false, _jaVinculadoLocalCents: 0, _ignorarVinculosReais: false};
@@ -258,9 +223,6 @@ function mergeLinhaComDraft(linha: LinhaDetalhe, draft: DraftAcao[] | undefined)
         };
     }
 
-    // A partir daqui: começa com "desfazer" ou "reverter_ignorar" (ambos
-    // "zeram" a base real da linha, opcionalmente seguidos de rodadas de
-    // "vincular") OU é só uma sequência de rodadas de "vincular".
     const resetaBaseReal = primeiro.tipo === "desfazer" || primeiro.tipo === "reverter_ignorar";
     const rounds = draft
         .filter((a): a is DraftAcaoVincular => a.tipo === "vincular")
@@ -302,10 +264,6 @@ function mergeLinhaComDraft(linha: LinhaDetalhe, draft: DraftAcao[] | undefined)
         valor_saldo: reaisFromCents(saldoEfetivoCents),
         _draftAtivo: true,
         _jaVinculadoLocalCents: localNovoCents,
-        // Preview de novas rodadas de vincular deve ignorar os vínculos
-        // reais quando a base real foi zerada por "desfazer" - já não se
-        // aplica a "reverter_ignorar" (uma linha ignorada nunca tem vínculos
-        // reais para ignorar, então o flag não faz diferença ali).
         _ignorarVinculosReais: primeiro.tipo === "desfazer",
     };
 }
@@ -340,8 +298,6 @@ function CardLancamento({
     const jurosOuAcrescimo = v.juros_multa ?? v.acrescimo ?? 0;
     const isCredito = v.tipo === "CR";
     const isResidual = Boolean(v.is_residuo_parcial);
-    // Regra de Ouro: rascunho local ainda não tem vinculo_id real - não dá
-    // pra editar desconto/juros dele até o Salvar/Conciliar persistir.
     const isLocal = Boolean(v._local);
     const podeEditarEsteVinculo = canEditarLancamento && !isLocal;
 
@@ -363,8 +319,6 @@ function CardLancamento({
                     centro_custo_id: original.centro_custo_id ?? null,
                     forma_pagamento: original.forma_pagamento ?? null,
                     dados_pagamento: original.dados_pagamento ?? null,
-                    // Cópia nasce solta (pendente, sem vínculo) - o usuário decide
-                    // depois com qual linha do extrato ela vai conciliar.
                     status: "pendente",
                 }),
             });
@@ -424,7 +378,7 @@ function CardLancamento({
                     </label>
                 ) : (
                     <span className="text-white/90 font-medium text-[12px] truncate min-w-0" title={v.descricao ?? ""}>
-                        #{v.lancamento_id} · {v.descricao ?? "—"}
+                        #{v.lancamento_id} · {v.descricao ?? "-"}
                     </span>
                 )}
                 <span className={cn("text-[9px] font-bold px-1 rounded shrink-0", corNaturezaTexto(isCredito))}>
@@ -568,7 +522,7 @@ function CardLancamento({
                 </span>
             </div>
 
-            {/* Card 76: residual marcado no "Vincular", mas só existe de fato
+            {/* residual marcado no "Vincular", mas só existe de fato
                 (aba Lançamentos) depois do Salvar/Conciliar - avisa aqui que
                 ainda é uma promessa em memória, não um lançamento criado. */}
             {v.residuo_pendente && (
@@ -584,17 +538,11 @@ function CardLancamento({
     );
 }
 
-/** Tolerância em reais para considerar o saldo da linha "zerado" (evita
- *  ruído de arredondamento de ponto flutuante). */
 const TOLERANCIA_SALDO = 0.005;
-/** Busca automática por descrição: quantidade mínima de caracteres para
- *  disparar o filtro sozinho, e tempo de debounce (ms) para não refiltrar
- *  a cada tecla digitada. */
 const BUSCA_MIN_CHARS = 3;
 const BUSCA_DEBOUNCE_MS = 350;
-/** Card 73: quantas linhas renderizar por "página" do botão "Role para
- *  carregar mais" (lazy loading sob controle do usuário, não automático). */
 const LINHAS_POR_PAGINA = 25;
+const PENDING_RELOAD = "__reload__";
 
 export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: string }) {
     const [location, setLocation] = useLocation();
@@ -623,15 +571,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     const [finalizarOpen, setFinalizarOpen] = useState(false);
     const [editarLancamentoId, setEditarLancamentoId] = useState<number | null>(null);
 
-    // Regra de Ouro (Fase 8): TODAS as ações de conciliação (vincular,
-    // ignorar, desfazer, reverter-ignorar) ficam guardadas aqui como
-    // rascunho em memória - nada é persistido no banco antes do clique em
-    // Salvar/Conciliar (ver salvarMutation abaixo). Chave = linha_id.
     const [draftsPorLinha, setDraftsPorLinha] = useState<Record<number, DraftAcao[]>>({});
-    // RN-D3 - [+] verde: NÃO cria um lançamento avulso. Abre o cadastro de
-    // "Regra de Conciliação Automática" (Fase 6 / Card 48), pré-preenchido
-    // com a descrição exata e a natureza (entrada/saída) da linha, para que
-    // os PRÓXIMOS extratos casem e classifiquem/criem o lançamento sozinhos.
     const [regraLinha, setRegraLinha] = useState<LinhaDetalhe | null>(null);
 
     // Barra de filtros (Tipo / Status / Pesquisar / Aplicar) - igual ao protótipo.
@@ -639,7 +579,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     // (filtrosAplicados). A Pesquisa (por descrição) é diferente: ela é
     // aplicada sozinha assim que o usuário digita pelo menos
     // BUSCA_MIN_CHARS caracteres, com um pequeno debounce (ver useEffect
-    // abaixo) — "Aplicar" e Enter continuam funcionando como atalho manual.
+    // abaixo) - "Aplicar" e Enter continuam funcionando como atalho manual.
     const [filtroTipo, setFiltroTipo] = useState<"todos" | "credito" | "debito">("todos");
     const [filtroStatus, setFiltroStatus] = useState<"todos" | "pendente" | "vinculado" | "ignorado">("todos");
     const [buscaTexto, setBuscaTexto] = useState("");
@@ -680,9 +620,6 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
         setFiltrosAplicados({tipo: "todos", status: "todos", busca: ""});
     }
 
-    // Card 73 (reajuste): o carregamento automático "invisível" ao chegar no
-    // fim do scroll foi reprovado pelo cliente — agora o controle é do
-    // usuário via botão explícito "Role para carregar mais" no fim da lista.
     const [linhasVisiveisCount, setLinhasVisiveisCount] = useState(LINHAS_POR_PAGINA);
     useEffect(() => {
         setLinhasVisiveisCount(LINHAS_POR_PAGINA);
@@ -709,9 +646,6 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     const conc = data?.conciliacao;
     const linhas = data?.linhas ?? [];
 
-    // Regra de Ouro: a linha "efetiva" mescla o que está no servidor com o
-    // rascunho local (se houver) desta sessão - é ela que a tela inteira
-    // usa para status/valores/vinculações, não o dado bruto do servidor.
     const linhasEfetivas = useMemo<LinhaEfetiva[]>(
         () => linhas.map((linha) => mergeLinhaComDraft(linha, draftsPorLinha[linha.linha_id])),
         [linhas, draftsPorLinha],
@@ -738,23 +672,19 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
         return mapa;
     }, [draftsPorLinha]);
 
-    // Proteção contra F5/fechar aba com rascunhos ainda não salvos (Regra de
-    // Ouro: nada é persistido até o Salvar/Conciliar) - dispara o prompt
-    // nativo do navegador em vez de deixar o progresso se perder em silêncio.
+    const allowUnloadRef = useRef(false);
+
     useEffect(() => {
         if (!hasPendingChanges) return;
         const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+            if (allowUnloadRef.current) return;
             e.preventDefault();
-            e.returnValue = "";
+            e.returnValue = "Alterações não salvas. Você tem alterações não salvas. Deseja sair e descartar o progresso?";
         };
         window.addEventListener("beforeunload", handleBeforeUnload);
         return () => window.removeEventListener("beforeunload", handleBeforeUnload);
     }, [hasPendingChanges]);
 
-    // Bloqueio de rota SPA: o beforeunload acima só cobre F5/fechar aba - não
-    // impede clicar num link do menu lateral (navegação interna via wouter)
-    // nem usar o "Voltar" do navegador. Guardamos aqui a rota que o usuário
-    // tentou acessar e só navegamos de fato se ele confirmar no modal.
     const [pendingNavigationHref, setPendingNavigationHref] = useState<string | null>(null);
     const hasPendingChangesRef = useRef(hasPendingChanges);
     useEffect(() => {
@@ -773,9 +703,6 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
         }
     }
 
-    // Intercepta cliques em qualquer link interno (menu lateral, breadcrumbs,
-    // etc.) enquanto houver rascunho pendente - captura no document ANTES do
-    // <Link> do wouter tratar o clique, então dá pra cancelar a navegação.
     useEffect(() => {
         if (!hasPendingChanges) return;
         const handleClick = (e: MouseEvent) => {
@@ -793,34 +720,41 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
         return () => document.removeEventListener("click", handleClick, true);
     }, [hasPendingChanges]);
 
-    // Intercepta o "Voltar"/"Avançar" nativo do navegador. Diferente de um
-    // clique em link, o popstate dispara DEPOIS que a URL já mudou de fato, e
-    // não dá pra "cancelar" a navegação de histórico via preventDefault - o
-    // browser não suporta isso. A técnica padrão é plantar uma "armadilha":
-    // assim que aparece rascunho pendente, duplicamos a entrada atual do
-    // histórico (mesma URL). O 1º "Voltar" do usuário só consome essa cópia
-    // extra e o pathname NÃO muda de verdade (wouter nem percebe, o
-    // componente do extrato continua montado) - só então mostramos o modal.
-    // Se ele insistir em clicar "Voltar" de novo antes de decidir, o
-    // popstate handler replanta a armadilha na hora, mantendo a trava.
     useEffect(() => {
         if (!hasPendingChanges) return;
         window.history.pushState({ismTrap: true}, "", window.location.href);
 
         const handlePopState = () => {
             window.history.pushState({ismTrap: true}, "", window.location.href);
-            // Não dá pra recuperar "pra onde" o usuário ia (a URL nunca chega
-            // a mudar de fato) - assume o destino natural desta tela, igual
-            // ao botão "Voltar para conciliações" do cabeçalho.
             setPendingNavigationHref("/conciliacao");
         };
         window.addEventListener("popstate", handlePopState);
         return () => window.removeEventListener("popstate", handlePopState);
     }, [hasPendingChanges]);
 
+    useEffect(() => {
+        if (!hasPendingChanges) return;
+        const handleKeyDown = (e: KeyboardEvent) => {
+            const isF5 = e.key === "F5";
+            const isCtrlR = (e.ctrlKey || e.metaKey) && (e.key === "r" || e.key === "R");
+            if (!isF5 && !isCtrlR) return;
+            e.preventDefault();
+            e.stopPropagation();
+            setPendingNavigationHref(PENDING_RELOAD);
+        };
+        window.addEventListener("keydown", handleKeyDown, true);
+        return () => window.removeEventListener("keydown", handleKeyDown, true);
+    }, [hasPendingChanges]);
+
     function confirmarSairComRascunho() {
         const href = pendingNavigationHref;
         setPendingNavigationHref(null);
+        setDraftsPorLinha({});
+        if (href === PENDING_RELOAD) {
+            allowUnloadRef.current = true;
+            window.location.reload();
+            return;
+        }
         if (href) setLocation(href);
     }
 
@@ -859,9 +793,6 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
         return acoes;
     }
 
-    // Regra de Ouro: único ponto de persistência real de toda a tela - as
-    // ações rascunhadas (vincular/ignorar/desfazer/reverter-ignorar) só
-    // chegam ao banco aqui, em lote, dentro de UMA transação no backend.
     const salvarMutation = useMutation({
         mutationFn: (params: { finalizar: boolean }) =>
             fetchApiData<{ extrato_id: number; linhas_processadas: unknown[]; finalizado: boolean }>(
@@ -872,9 +803,6 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
             setDraftsPorLinha({});
             setFinalizarOpen(false);
             invalidateRelated(queryClient, "conciliacao");
-            // É só agora, com a persistência real, que residuais pendentes
-            // nascem de fato em lancamentosTable e títulos mudam para
-            // pago/recebido - a aba Lançamentos precisa buscar de novo.
             invalidateRelated(queryClient, "lancamentos");
             void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
             void queryClient.invalidateQueries({queryKey: ["conciliacoes-pendencias-mes"]});
@@ -898,40 +826,34 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     const podeFinalizar = pendentesEfetivos === 0;
     const rotuloAcaoConciliacao = podeFinalizar ? "Conciliar" : "Salvar";
 
-    // Aplica Tipo / Status / Pesquisar sobre a lista (já com rascunhos
-    // mesclados). Sem paginação: a lista inteira fica dentro de um
-    // contêiner com overflow-y-auto (scroll).
     const linhasFiltradas = useMemo(() => {
-    return linhasEfetivas.filter((linha) => {
-        if (
-            filtrosAplicados.tipo !== "todos" &&
-            linha.tipo_movimento !== filtrosAplicados.tipo
-        ) {
-            return false;
-        }
-
-        if (
-            filtrosAplicados.status !== "todos" &&
-            linha.status !== filtrosAplicados.status
-        ) {
-            return false;
-        }
-
-        if (filtrosAplicados.busca) {
-            const alvo = normalizarTextoBusca(linha.descricao ?? "");
-            const termo = normalizarTextoBusca(filtrosAplicados.busca);
-
-            if (!alvo.includes(termo)) {
+        return linhasEfetivas.filter((linha) => {
+            if (
+                filtrosAplicados.tipo !== "todos" &&
+                linha.tipo_movimento !== filtrosAplicados.tipo
+            ) {
                 return false;
             }
-        }
 
-        return true;
-    });
-}, [linhasEfetivas, filtrosAplicados]);
-    // Card 73: só renderiza as primeiras N linhas filtradas — o resto só
-    // entra quando o usuário clicar em "Role para carregar mais" (ver botão
-    // no fim da lista), em vez de um observer invisível de scroll.
+            if (
+                filtrosAplicados.status !== "todos" &&
+                linha.status !== filtrosAplicados.status
+            ) {
+                return false;
+            }
+
+            if (filtrosAplicados.busca) {
+                const alvo = normalizarTextoBusca(linha.descricao ?? "");
+                const termo = normalizarTextoBusca(filtrosAplicados.busca);
+
+                if (!alvo.includes(termo)) {
+                    return false;
+                }
+            }
+
+            return true;
+        });
+    }, [linhasEfetivas, filtrosAplicados]);
     const linhasVisiveis = useMemo(
         () => linhasFiltradas.slice(0, linhasVisiveisCount),
         [linhasFiltradas, linhasVisiveisCount],
@@ -939,7 +861,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     const restantesParaCarregar = linhasFiltradas.length - linhasVisiveis.length;
 
     return (
-       <div className="flex flex-col gap-4 h-full w-full px-0 py-2">
+        <div className="flex flex-col gap-4 h-full w-full px-0 py-2">
             <button
                 type="button"
                 onClick={() => irPara("/conciliacao")}
@@ -971,12 +893,9 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
             )}
 
             {/*
-              o [+] verde NÃO cria um lançamento avulso. Ele abre o cadastro
-              de "Regra de Conciliação Automática",
+              o [+] abre o cadastro de "Regra de Conciliação Automática",
               pré-preenchido com o texto exato da linha (ex.: "TAR PIX") e a
-              natureza (entrada/saída), para que os PRÓXIMOS extratos casem
-              e classifiquem/criem o lançamento sozinhos - sem precisar
-              repetir o cadastro manual toda vez que a mesma tarifa aparecer.
+              natureza (entrada/saída)
             */}
             {regraLinha && (
                 <RegraConciliacaoModal
@@ -987,13 +906,6 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                         conta_id: extrato?.conta_id ?? null,
                     }}
                     onClose={() => setRegraLinha(null)}
-                    onSuccess={() => {
-                        setRegraLinha(null);
-                        toast({
-                            title: "Regra criada",
-                            description: "A partir de agora, extratos com este padrão são classificados automaticamente.",
-                        });
-                    }}
                 />
             )}
 
@@ -1007,12 +919,6 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                 onConfirm={(payload: MotivoIgnorarPayload) => {
                     if (ignorarLinhaId == null) return;
                     const linhaId = ignorarLinhaId;
-                    // Caso raro: a linha já está ignorada DE VERDADE no banco (de um
-                    // Save anterior) e o usuário reverteu localmente (rascunho
-                    // "reverter_ignorar") e resolveu ignorar de novo antes de salvar -
-                    // nesse caso o estado real já é "ignorado", então basta descartar
-                    // o rascunho de reverter (nada muda) em vez de mandar um "ignorar"
-                    // que o backend rejeitaria (linha já ignorada).
                     const linhaServidor = linhas.find((l) => l.linha_id === linhaId);
                     setDraftsPorLinha((prev) => {
                         if (linhaServidor?.status === "ignorado") {
@@ -1063,10 +969,10 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                 }}
             />
 
-            {/* Regra de Ouro: se os vínculos atuais são só rascunho local
+            {/* se os vínculos atuais são só rascunho local
                 (linha ainda "pendente" de fato no banco), desfazer apenas
-                descarta o rascunho. Se já há vínculo real (de um Save
-                anterior), rascunha um "desfazer" para reverter no Salvar. */}
+                descarta o rascunho. Se já há vínculo real (de um Save anterior), 
+                rascunha um "desfazer" para reverter no Salvar. */}
             <ConfirmDialog
                 open={desfazerLinhaId != null}
                 title="Desfazer vínculos?"
@@ -1147,7 +1053,8 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                     <div
                         className="glass-panel rounded-xl border border-white/10 overflow-hidden flex flex-col flex-1 min-h-0 w-full min-w-0 max-w-none">
                         {/* Barra de filtros: Tipo, Status, Aplicar, Atualizar, Limpar e Pesquisar (igual ao protótipo) */}
-                        <div className="flex flex-wrap items-center gap-2 px-3.5 py-2.5 border-b border-white/5 bg-black/10">
+                        <div
+                            className="flex flex-wrap items-center gap-2 px-3.5 py-2.5 border-b border-white/5 bg-black/10">
                             <select
                                 value={filtroTipo}
                                 onChange={(e) => setFiltroTipo(e.target.value as typeof filtroTipo)}
@@ -1217,12 +1124,13 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                 <h2 className="text-sm font-bold text-white uppercase tracking-wide">Extrato</h2>
                                 {extrato.periodo_inicio && extrato.periodo_fim && (
                                     <span className="text-[10px] font-normal normal-case text-muted-foreground">
-                                        · Período {formatDate(extrato.periodo_inicio)} — {formatDate(extrato.periodo_fim)}
+                                        · Período {formatDate(extrato.periodo_inicio)} - {formatDate(extrato.periodo_fim)}
                                     </span>
                                 )}
                             </div>
                             <div className="hidden xl:block"/>
-                            <div className="px-3.5 py-2.5 flex items-center justify-center gap-2 border-t xl:border-t-0 border-white/5">
+                            <div
+                                className="px-3.5 py-2.5 flex items-center justify-center gap-2 border-t xl:border-t-0 border-white/5">
                                 <Unlink className="w-3.5 h-3.5 text-primary shrink-0"/>
                                 <h2 className="text-sm font-bold text-white uppercase tracking-wide">Movimentações
                                     não conciliadas</h2>
@@ -1240,32 +1148,32 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                 Nenhuma linha encontrada com os filtros aplicados.
                             </div>
                         ) : (
-                        <div className="divide-y divide-white/5 overflow-y-auto flex-1 min-h-0">
-                            {linhasVisiveis.map((linha) => {
-                                const isPendente = linha.status === "pendente";
-                                const isVinculado = linha.status === "vinculado";
-                                const isIgnorado = linha.status === "ignorado";
-                                const isCredito = linha.tipo_movimento === "credito";
-                                const valorAbs = Math.abs(Number(linha.valor));
+                            <div className="divide-y divide-white/5 overflow-y-auto flex-1 min-h-0">
+                                {linhasVisiveis.map((linha) => {
+                                    const isPendente = linha.status === "pendente";
+                                    const isVinculado = linha.status === "vinculado";
+                                    const isIgnorado = linha.status === "ignorado";
+                                    const isCredito = linha.tipo_movimento === "credito";
+                                    const valorAbs = Math.abs(Number(linha.valor));
 
-                                const saldoAbs = Math.abs(Number(linha.valor_saldo));
-                                const faltaFechar = saldoAbs > TOLERANCIA_SALDO;
-                                const podeVincularMais = !isIgnorado && (isPendente || faltaFechar);
+                                    const saldoAbs = Math.abs(Number(linha.valor_saldo));
+                                    const faltaFechar = saldoAbs > TOLERANCIA_SALDO;
+                                    const podeVincularMais = !isIgnorado && (isPendente || faltaFechar);
 
-                                return (
-                                    <div
-                                        key={linha.linha_id}
-                                        className={cn(
-                                            "grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_36px_minmax(0,1fr)] divide-y xl:divide-y-0 xl:divide-x divide-white/5",
-                                            isIgnorado && "opacity-45 grayscale-[0.35] bg-white/[0.015]",
-                                        )}
-                                    >
-                                        {/* ── COLUNA ESQUERDA: linha do extrato ── */}
-                                        <div className="p-3 space-y-1.5 min-w-0">
-                                            {/* Cabeçalho: badge + data à esquerda, [+] e [⊘ Ignorar]/[↺ Reverter]
+                                    return (
+                                        <div
+                                            key={linha.linha_id}
+                                            className={cn(
+                                                "grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_36px_minmax(0,1fr)] divide-y xl:divide-y-0 xl:divide-x divide-white/5",
+                                                isIgnorado && "opacity-45 grayscale-[0.35] bg-white/[0.015]",
+                                            )}
+                                        >
+                                            {/* ── COLUNA ESQUERDA: linha do extrato ── */}
+                                            <div className="p-3 space-y-1.5 min-w-0">
+                                                {/* Cabeçalho: badge + data à esquerda, [+] e [⊘ Ignorar]/[↺ Reverter]
                                                 juntos à direita, na mesma linha (layout do protótipo). */}
-                                            <div className="flex items-center justify-between gap-2 flex-wrap">
-                                                <div className="flex items-center gap-2 min-w-0">
+                                                <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                    <div className="flex items-center gap-2 min-w-0">
                           <span
                               className={cn(
                                   "text-[10px] font-black px-1.5 py-0.5 rounded border uppercase shrink-0",
@@ -1273,197 +1181,195 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                               )}>
                             {linha.tipo_movimento}
                           </span>
-                                                    {linha.data_movimento && (
-                                                        <span className="text-xs text-muted-foreground truncate">
+                                                        {linha.data_movimento && (
+                                                            <span className="text-xs text-muted-foreground truncate">
                                                             {formatDate(linha.data_movimento)}
                                                         </span>
-                                                    )}
-                                                    {linha._draftAtivo && (
-                                                        <span
-                                                            title="Alterações locais ainda não salvas nesta linha"
-                                                            className="text-[9px] font-bold px-1.5 py-0.5 rounded border border-sky-500/30 bg-sky-500/10 text-sky-300 uppercase tracking-wide shrink-0">
+                                                        )}
+                                                        {linha._draftAtivo && (
+                                                            <span
+                                                                title="Alterações locais ainda não salvas nesta linha"
+                                                                className="text-[9px] font-bold px-1.5 py-0.5 rounded border border-sky-500/30 bg-sky-500/10 text-sky-300 uppercase tracking-wide shrink-0">
                                                             Não salvo
                                                         </span>
-                                                    )}
+                                                        )}
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5 shrink-0">
+                                                        {/* [+] abre "Nova regra de conciliação automática" pré-preenchida com esta linha,
+                                                        para os PRÓXIMOS extratos casarem sozinhos.  */}
+                                                        {canCriarRegra && (
+                                                            <button
+                                                                type="button"
+                                                                title="Criar regra de conciliação automática a partir desta linha"
+                                                                onClick={() => setRegraLinha(linha)}
+                                                                className="w-6 h-6 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 flex items-center justify-center shrink-0">
+                                                                <Plus className="w-3.5 h-3.5"/>
+                                                            </button>
+                                                        )}
+                                                        {/* [⊘ Ignorar] ⇄ [↺ Reverter] - ao lado do [+], como no protótipo */}
+                                                        {isPendente && canIgnorar && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setIgnorarLinhaId(linha.linha_id)}
+                                                                className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-[11px] font-semibold text-white/90 whitespace-nowrap">
+                                                                <Ban className="w-3 h-3"/>
+                                                                Ignorar
+                                                            </button>
+                                                        )}
+                                                        {isIgnorado && canDesfazer && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setReverterLinhaId(linha.linha_id)}
+                                                                className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-[11px] font-semibold text-amber-200 whitespace-nowrap">
+                                                                <RotateCcw className="w-3 h-3"/>
+                                                                Reverter
+                                                            </button>
+                                                        )}
+                                                    </div>
                                                 </div>
-                                                <div className="flex items-center gap-1.5 shrink-0">
-                                                    {/* RN-D3 (reinterpretado): [+] verde - abre "Nova regra de
-                                                        conciliação automática" pré-preenchida com esta linha,
-                                                        para os PRÓXIMOS extratos casarem sozinhos. Não cria um
-                                                        lançamento avulso nem depende de saldo em aberto. */}
-                                                    {canCriarRegra && (
-                                                        <button
-                                                            type="button"
-                                                            title="Criar regra de conciliação automática a partir desta linha"
-                                                            onClick={() => setRegraLinha(linha)}
-                                                            className="w-6 h-6 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 flex items-center justify-center shrink-0">
-                                                            <Plus className="w-3.5 h-3.5"/>
-                                                        </button>
-                                                    )}
-                                                    {/* [⊘ Ignorar] ⇄ [↺ Reverter] - ao lado do [+], como no protótipo */}
-                                                    {isPendente && canIgnorar && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => setIgnorarLinhaId(linha.linha_id)}
-                                                            className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-[11px] font-semibold text-white/90 whitespace-nowrap">
-                                                            <Ban className="w-3 h-3"/>
-                                                            Ignorar
-                                                        </button>
-                                                    )}
-                                                    {isIgnorado && canDesfazer && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => setReverterLinhaId(linha.linha_id)}
-                                                            className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-[11px] font-semibold text-amber-200 whitespace-nowrap">
-                                                            <RotateCcw className="w-3 h-3"/>
-                                                            Reverter
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </div>
 
-                                            <p className="text-sm text-white font-medium leading-snug">
-                                                {linha.descricao ?? "—"}
-                                            </p>
+                                                <p className="text-sm text-white font-medium leading-snug">
+                                                    {linha.descricao ?? "-"}
+                                                </p>
 
-                                            <span className={cn("block text-lg font-black", corNaturezaTexto(isCredito))}>
+                                                <span
+                                                    className={cn("block text-lg font-black", corNaturezaTexto(isCredito))}>
                           {formatCurrency(valorAbs)}
                         </span>
 
-                                            {/* Quando já existe vínculo parcial, mostra quanto ainda falta —
+                                                {/* Quando já existe vínculo parcial, mostra quanto ainda falta -
                                                 senão o usuário não entende por que o botão "Vincular" voltou
                                                 a aparecer numa linha que já tem lançamento associado. */}
-                                            {isVinculado && faltaFechar && (
-                                                <p className="text-[11px] text-amber-300/90">
-                                                    Falta vincular {formatCurrency(saldoAbs)}
-                                                </p>
-                                            )}
+                                                {isVinculado && faltaFechar && (
+                                                    <p className="text-[11px] text-amber-300/90">
+                                                        Falta vincular {formatCurrency(saldoAbs)}
+                                                    </p>
+                                                )}
 
-                                            {linha.classificacao_automatica && (
-                                                <p className="text-[11px] text-sky-300/90 bg-sky-500/10 border border-sky-500/25 rounded-lg px-2 py-1 inline-flex items-center gap-1.5">
-                                                    <Sparkles className="w-3 h-3 shrink-0"/>
-                                                    {linha.status === "pendente" && linha.regra_criar_lancamento
-                                                        ? "Essa movimentação será criada"
-                                                        : linha.status === "pendente"
-                                                            ? "Classificação sugerida pela regra — revise"
-                                                            : "Classificada automaticamente pela regra"}
-                                                    {linha.regra_texto_gatilho
-                                                        ? ` (“${linha.regra_texto_gatilho}”)`
-                                                        : ""}
-                                                </p>
-                                            )}
+                                                {linha.classificacao_automatica && (
+                                                    <p className="text-[11px] text-sky-300/90 bg-sky-500/10 border border-sky-500/25 rounded-lg px-2 py-1 inline-flex items-center gap-1.5">
+                                                        <Sparkles className="w-3 h-3 shrink-0"/>
+                                                        {linha.status === "pendente" && linha.regra_criar_lancamento
+                                                            ? "Essa movimentação será criada"
+                                                            : linha.status === "pendente"
+                                                                ? "Classificação sugerida pela regra - revise"
+                                                                : "Classificada automaticamente pela regra"}
+                                                        {linha.regra_texto_gatilho
+                                                            ? ` (“${linha.regra_texto_gatilho}”)`
+                                                            : ""}
+                                                    </p>
+                                                )}
 
-                                            {linha.documento && (
-                                                <p className="text-[10px] text-muted-foreground font-mono">Doc.
-                                                    {" "}{linha.documento}</p>
-                                            )}
-                                            {linha.saldo_pos_linha != null && (
-                                                <p className="text-[11px] text-muted-foreground">
-                                                    Saldo pós-linha: {formatCurrency(Number(linha.saldo_pos_linha))}
-                                                </p>
-                                            )}
-                                        </div>
+                                                {linha.documento && (
+                                                    <p className="text-[10px] text-muted-foreground font-mono">Doc.
+                                                        {" "}{linha.documento}</p>
+                                                )}
+                                                {linha.saldo_pos_linha != null && (
+                                                    <p className="text-[11px] text-muted-foreground">
+                                                        Saldo pós-linha: {formatCurrency(Number(linha.saldo_pos_linha))}
+                                                    </p>
+                                                )}
+                                            </div>
 
-                                        {/* ── COLUNA CENTRAL: conector (RN-D4) ── */}
-                                        <div className="flex items-center justify-center py-1.5 xl:py-2">
-                                            {!isIgnorado && (
-                                                <div
-                                                    className={cn(
-                                                        "w-7 h-7 rounded-full flex items-center justify-center border shrink-0",
-                                                        !faltaFechar
-                                                            ? "bg-white/5 border-white/15 text-muted-foreground"
-                                                            : "bg-amber-500/15 border-amber-500/40 text-amber-300",
-                                                    )}
-                                                    title={!faltaFechar ? "Os valores batem" : "Os valores divergem"}>
-                                                    {!faltaFechar ? (
-                                                        <Link2 className="w-3.5 h-3.5"/>
-                                                    ) : (
-                                                        <span className="text-xs font-black">≠</span>
-                                                    )}
-                                                </div>
-                                            )}
-                                        </div>
+                                            {/* ── COLUNA CENTRAL: conector (RN-D4) ── */}
+                                            <div className="flex items-center justify-center py-1.5 xl:py-2">
+                                                {!isIgnorado && (
+                                                    <div
+                                                        className={cn(
+                                                            "w-7 h-7 rounded-full flex items-center justify-center border shrink-0",
+                                                            !faltaFechar
+                                                                ? "bg-white/5 border-white/15 text-muted-foreground"
+                                                                : "bg-amber-500/15 border-amber-500/40 text-amber-300",
+                                                        )}
+                                                        title={!faltaFechar ? "Os valores batem" : "Os valores divergem"}>
+                                                        {!faltaFechar ? (
+                                                            <Link2 className="w-3.5 h-3.5"/>
+                                                        ) : (
+                                                            <span className="text-xs font-black">≠</span>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
 
-                                        {/* ── COLUNA DIREITA: lançamento(s) ── */}
-                                        <div className="p-3 min-w-0 space-y-1.5">
-                                            {/* Lista dos lançamentos já vinculados (se houver) — antes isso
+                                            {/* ── COLUNA DIREITA: lançamento(s) ── */}
+                                            <div className="p-3 min-w-0 space-y-1.5">
+                                                {/* Lista dos lançamentos já vinculados (se houver) - antes isso
                                                 era "ou" com o botão Vincular; agora os dois podem coexistir
                                                 enquanto sobrar saldo a fechar na linha. */}
-                                            {isVinculado && linha.vinculacoes.length > 0 && (
-                                                <ul className="space-y-1.5">
-                                                    {linha.vinculacoes.map((v) => (
-                                                        <CardLancamento
-                                                            key={v.vinculo_id ?? v.lancamento_id}
-                                                            v={v}
-                                                            extratoId={extratoId}
-                                                            linhaId={linha.linha_id}
-                                                            canEditarLancamento={canEditarLancamento}
-                                                            canDesfazer={canDesfazer}
-                                                            onEditarLancamento={() => setEditarLancamentoId(v.lancamento_id)}
-                                                            onRemoverVinculo={() => setDesfazerLinhaId(linha.linha_id)}
-                                                        />
-                                                    ))}
-                                                </ul>
-                                            )}
+                                                {isVinculado && linha.vinculacoes.length > 0 && (
+                                                    <ul className="space-y-1.5">
+                                                        {linha.vinculacoes.map((v) => (
+                                                            <CardLancamento
+                                                                key={v.vinculo_id ?? v.lancamento_id}
+                                                                v={v}
+                                                                extratoId={extratoId}
+                                                                linhaId={linha.linha_id}
+                                                                canEditarLancamento={canEditarLancamento}
+                                                                canDesfazer={canDesfazer}
+                                                                onEditarLancamento={() => setEditarLancamentoId(v.lancamento_id)}
+                                                                onRemoverVinculo={() => setDesfazerLinhaId(linha.linha_id)}
+                                                            />
+                                                        ))}
+                                                    </ul>
+                                                )}
 
-                                            {/* [🔍 Vincular]: visível enquanto sobrar saldo a fechar (linha
+                                                {/* [Vincular]: visível enquanto sobrar saldo a fechar (linha
                                                 pendente OU vinculada parcialmente); some no valor exato.
                                                 IMPORTANTE: passa o SALDO restante da linha (linha.valor_saldo),
-                                                não o valor cheio da linha — senão o modal calcula o "restante"
+                                                não o valor cheio da linha - senão o modal calcula o "restante"
                                                 contra o valor total, ignorando o que já foi vinculado antes. */}
-                                            {/* UX: botão menor. */}
-                                            {podeVincularMais && canVincular && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setVincularLinha({
-                                                        id: linha.linha_id,
-                                                        valorAbs: saldoAbs,
-                                                        tipoMovimento: linha.tipo_movimento,
-                                                        dataMovimento: linha.data_movimento,
-                                                        descricaoLinha: linha.descricao,
-                                                        jaVinculadoLocalCents: linha._jaVinculadoLocalCents,
-                                                        ignorarVinculosReais: linha._ignorarVinculosReais,
-                                                    })}
-                                                    className="w-[40%] inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-primary/90 hover:bg-primary text-primary-foreground text-xs font-bold shadow-md shadow-primary/20">
-                                                    <Search className="w-3.5 h-3.5"/>
-                                                    Vincular
-                                                </button>
-                                            )}
+                                                {/* UX: botão menor. */}
+                                                {podeVincularMais && canVincular && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setVincularLinha({
+                                                            id: linha.linha_id,
+                                                            valorAbs: saldoAbs,
+                                                            tipoMovimento: linha.tipo_movimento,
+                                                            dataMovimento: linha.data_movimento,
+                                                            descricaoLinha: linha.descricao,
+                                                            jaVinculadoLocalCents: linha._jaVinculadoLocalCents,
+                                                            ignorarVinculosReais: linha._ignorarVinculosReais,
+                                                        })}
+                                                        className="w-[40%] inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-primary/90 hover:bg-primary text-primary-foreground text-xs font-bold shadow-md shadow-primary/20">
+                                                        <Search className="w-3.5 h-3.5"/>
+                                                        Vincular
+                                                    </button>
+                                                )}
 
-                                            {isIgnorado && (
-                                                <p className="text-[11px] text-muted-foreground italic py-2">
-                                                    Linha ignorada — sem lançamento vinculado.
-                                                </p>
-                                            )}
+                                                {isIgnorado && (
+                                                    <p className="text-[11px] text-muted-foreground italic py-2">
+                                                        Linha ignorada - sem lançamento vinculado.
+                                                    </p>
+                                                )}
+                                            </div>
                                         </div>
-                                    </div>
-                                );
-                            })}
-                            {/* Card 73 (reajuste): substitui o antigo gatilho invisível de
-                                scroll infinito por um botão explícito no fim da lista —
+                                    );
+                                })}
+                                {/* Card 73 (reajuste): substitui o antigo gatilho invisível de
+                                scroll infinito por um botão explícito no fim da lista -
                                 o carregamento de mais linhas fica sob controle do usuário. */}
-                            {restantesParaCarregar > 0 && (
-                                <div className="py-4 flex justify-center">
-                                    <button
-                                        type="button"
-                                        onClick={() => setLinhasVisiveisCount((n) => n + LINHAS_POR_PAGINA)}
-                                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-muted-foreground hover:text-white transition-colors">
-                                        <ChevronDown className="w-3.5 h-3.5"/>
-                                        Role para carregar mais ({restantesParaCarregar} restante{restantesParaCarregar === 1 ? "" : "s"})
-                                    </button>
-                                </div>
-                            )}
-                        </div>
+                                {restantesParaCarregar > 0 && (
+                                    <div className="py-4 flex justify-center">
+                                        <button
+                                            type="button"
+                                            onClick={() => setLinhasVisiveisCount((n) => n + LINHAS_POR_PAGINA)}
+                                            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-muted-foreground hover:text-white transition-colors">
+                                            <ChevronDown className="w-3.5 h-3.5"/>
+                                            Role para carregar mais
+                                            ({restantesParaCarregar} restante{restantesParaCarregar === 1 ? "" : "s"})
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
                         )}
 
                         {/*
                           Rodapé de ação: o botão Salvar/Conciliar fica alinhado à
                           direita, após a lista de linhas (scroll infinito - sem
                           paginação, ver contêiner overflow-y-auto acima).
-                          Regra de Ouro + botão inteligente (Fase 8):
                           - Só fica clicável quando há alguma alteração local ainda
-                            não salva (hasPendingChanges) - sem rascunho pendente,
-                            fica desabilitado (nada novo para persistir).
+                            não salva (hasPendingChanges).
                           - Com pendências de linha zeradas (efetivamente, já
                             considerando os rascunhos), o rótulo vira "Conciliar" e
                             o clique abre o ConfirmDialog que salva + finaliza em
@@ -1472,7 +1378,8 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                             dispara o salvamento em lote de todos os rascunhos
                             (sem precisar de confirmação, já que não é destrutivo).
                         */}
-                        <div className="flex items-center justify-end gap-3 px-4 py-3 border-t border-white/5 bg-black/25">
+                        <div
+                            className="flex items-center justify-end gap-3 px-4 py-3 border-t border-white/5 bg-black/25">
                             {hasPendingChanges && (
                                 <span className="text-[11px] text-amber-300/90 flex items-center gap-1.5">
                                     <AlertCircle className="w-3.5 h-3.5"/>

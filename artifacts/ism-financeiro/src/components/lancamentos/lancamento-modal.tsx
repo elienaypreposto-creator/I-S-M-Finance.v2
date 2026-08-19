@@ -48,22 +48,21 @@ import {
     ChevronRight,
     CalendarDays,
     Target,
-    Search,
     Building2,
     CreditCard,
     Trash2,
-    Edit2,
     AlertTriangle,
 } from "lucide-react";
 import {NovoParceiroModal, type ParceiroRow} from "@/pages/cadastros/parceiros";
+import {ParceiroCombobox} from "@/components/shared/parceiro-combobox";
+import {PlanoContaCombobox, type PlanoContaOption as PlanoConta} from "@/components/shared/plano-conta-combobox";
 
-type PlanoConta = { id: number; tipo: string; categoria: string; subcategoria: string | null };
 type Departamento = { id: number; nome: string };
 type CentroCusto = { id: number; nome: string; departamento_id: number | null };
 
 /**
  * Dados vindos da linha do extrato bancário (Conciliação) para pré-popular o
- * formulário na criação de um NOVO lançamento — não é edição de um lançamento
+ * formulário na criação de um NOVO lançamento - não é edição de um lançamento
  * existente, então não usa `LancamentoEditItem` (que dispara o GET
  * /lancamentos/:id). Usado pelo botão "+" em extrato.tsx (RN-D3).
  */
@@ -174,21 +173,6 @@ function ConfirmDialog({
     );
 }
 
-// Agrupa os itens de Plano de Contas por `categoria` (mostrada uma única vez,
-// como cabeçalho) com cada `subcategoria` indentada logo abaixo - mesmo quando
-// categorias diferentes compartilham a mesma subcategoria (ex.: "Aluguel"
-// aparecendo tanto em "Despesas Gerais" quanto em "Despesas Financeiros"
-// formam dois grupos distintos).
-function groupPlanoContasPorCategoria(itens: PlanoConta[]): { categoria: string; itens: PlanoConta[] }[] {
-    const map = new Map<string, PlanoConta[]>();
-    for (const item of itens) {
-        const lista = map.get(item.categoria) ?? [];
-        lista.push(item);
-        map.set(item.categoria, lista);
-    }
-    return Array.from(map.entries()).map(([categoria, grupoItens]) => ({categoria, itens: grupoItens}));
-}
-
 const BASE_RISK_LEVELS: Record<number, { label: string; color: string; tags: string[] }> = {
     1: {
         label: "Nível 1 - Alerta",
@@ -264,307 +248,6 @@ function CompetenciaPicker({value, onChange}: { value: string; onChange: (v: str
                 </div>
             </PopoverContent>
         </Popover>
-    );
-}
-
-function ParceiroCombobox({
-                              value,
-                              onChange,
-                              parceiros,
-                              search,
-                              onSearchChange,
-                              onEdit,
-                              onCreateNew,
-                              isLoading = false,
-                          }: {
-    value: string;
-    onChange: (v: string) => void;
-    parceiros: ParceiroRow[];
-    search: string;
-    onSearchChange: (s: string) => void;
-    onEdit: (p: ParceiroRow) => void;
-    onCreateNew: () => void;
-    isLoading?: boolean;
-}) {
-    const [open, setOpen] = useState(false);
-
-    const handleOpenChange = (o: boolean) => {
-        setOpen(o);
-        if (!o) onSearchChange("");
-    };
-
-    const selected = parceiros.find((p) => String(p.id) === value);
-
-    const badgeCls = (tipoPessoa: string) =>
-        `text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
-            tipoPessoa === "PJ" ? "bg-primary/20 text-primary" : "bg-teal-500/20 text-teal-400"
-        }`;
-
-    return (
-        <Popover open={open} onOpenChange={handleOpenChange}>
-            <PopoverTrigger asChild>
-                <button
-                    type="button"
-                    className="w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-left flex items-center justify-between hover:border-white/20 transition-all"
-                >
-                    {selected ? (
-                        <span className="text-white flex items-center gap-2 min-w-0">
-                            <span className={badgeCls(selected.tipo_pessoa)}>{selected.tipo_pessoa}</span>
-                            <span className="truncate">{selected.nome}</span>
-                        </span>
-                    ) : (
-                        <span className="text-muted-foreground/40">Selecione o cliente/fornecedor...</span>
-                    )}
-                    <Search className="w-4 h-4 text-muted-foreground shrink-0 ml-2"/>
-                </button>
-            </PopoverTrigger>
-            <PopoverContent
-                align="start"
-                sideOffset={4}
-                className="p-0 bg-[#1a1c23] border border-white/10 rounded-xl shadow-2xl"
-                style={{width: "var(--radix-popover-trigger-width)"}}
-            >
-                {/* Barra de busca */}
-                <div className="p-3 border-b border-white/5">
-                    <div className="flex items-center gap-2 bg-black/30 rounded-lg px-3 py-2">
-                        <Search className="w-4 h-4 text-muted-foreground shrink-0"/>
-                        <input
-                            autoFocus
-                            value={search}
-                            onChange={(e) => onSearchChange(e.target.value)}
-                            placeholder="Buscar por nome..."
-                            className="bg-transparent text-sm text-white outline-none w-full placeholder:text-muted-foreground/40"
-                        />
-                    </div>
-                </div>
-
-                {/* Lista de resultados */}
-                <div className="max-h-56 overflow-y-auto">
-                    {isLoading ? (
-                        <p className="px-4 py-3 text-xs text-muted-foreground text-center animate-pulse">Buscando...</p>
-                    ) : parceiros.length === 0 ? (
-                        <>
-                            <p className="px-4 py-3 text-xs text-muted-foreground text-center">
-                                {search ? `Nenhum resultado para "${search}"` : "Nenhum parceiro encontrado"}
-                            </p>
-                            {/* "Nenhum" aparece só no empty-state para permitir desselecionar */}
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    onChange("");
-                                    setOpen(false);
-                                }}
-                                className="w-full text-left px-4 py-2.5 text-xs text-muted-foreground hover:bg-white/5 transition-colors italic"
-                            >
-                                Nenhum (sem parceiro)
-                            </button>
-                        </>
-                    ) : (
-                        parceiros.map((p) => (
-                            /* Linha com botão de edição inline */
-                            <div
-                                key={p.id}
-                                className={`flex items-center justify-between px-4 py-2.5 transition-colors cursor-pointer hover:bg-white/5 ${
-                                    String(p.id) === value ? "bg-primary/10" : ""
-                                }`}
-                                onClick={() => {
-                                    onChange(String(p.id));
-                                    setOpen(false);
-                                }}
-                            >
-                                <span
-                                    className={`text-sm flex items-center gap-2 min-w-0 ${String(p.id) === value ? "text-primary" : "text-white"}`}>
-                                    <span className={badgeCls(p.tipo_pessoa)}>{p.tipo_pessoa}</span>
-                                    <span className="truncate">{p.nome}</span>
-                                </span>
-                                <button
-                                    type="button"
-                                    title="Editar parceiro"
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        e.preventDefault();
-                                        onEdit(p);
-                                        setOpen(false);
-                                    }}
-                                    className="ml-2 p-1 shrink-0 rounded hover:bg-white/10 text-muted-foreground hover:text-white transition-colors"
-                                >
-                                    <Edit2 className="w-3.5 h-3.5"/>
-                                </button>
-                            </div>
-                        ))
-                    )}
-                </div>
-
-                {/* Botão de quick create */}
-                <div className="p-2 border-t border-white/5">
-                    <button
-                        type="button"
-                        onClick={() => {
-                            onCreateNew();
-                            setOpen(false);
-                        }}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-xs text-primary hover:bg-primary/10 rounded-lg font-semibold transition-all"
-                    >
-                        <Plus className="w-3.5 h-3.5"/>
-                        Cadastrar Novo Cliente/Fornecedor
-                    </button>
-                </div>
-            </PopoverContent>
-        </Popover>
-    );
-}
-
-// ─── PlanoContaCombobox ───────────────────────────────────────────────────────
-// Campo de busca para Classificação (Plano de Contas), seguindo o mesmo
-// padrão visual do ParceiroCombobox acima. Enquanto o termo digitado tem
-// menos de 3 caracteres, filtra localmente na lista já carregada (`planoContas`,
-// recebida via prop); a partir de 3 caracteres, dispara (com debounce de
-// 200ms) uma busca no servidor via GET /plano-contas?search=<termo>. A lista
-// é sempre agrupada por categoria (cabeçalho em negrito, subcategorias
-// indentadas embaixo).
-function PlanoContaCombobox({
-                                value,
-                                onChange,
-                                planoContas,
-                                error,
-                            }: {
-    value: string;
-    onChange: (v: string) => void;
-    planoContas: PlanoConta[];
-    error?: string;
-}) {
-    const [open, setOpen] = useState(false);
-    const [searchTerm, setSearchTerm] = useState("");
-    const [debouncedSearch, setDebouncedSearch] = useState("");
-
-    // Debounce de 200ms
-    useEffect(() => {
-        const t = setTimeout(() => setDebouncedSearch(searchTerm.trim()), 200);
-        return () => clearTimeout(t);
-    }, [searchTerm]);
-
-    const shouldSearchServer = debouncedSearch.length >= 3;
-
-    const {data: searchResults, isFetching} = useQuery<PlanoConta[]>({
-        queryKey: ["plano-contas-search", debouncedSearch],
-        queryFn: () => fetchApiData<PlanoConta[]>(`/plano-contas?search=${encodeURIComponent(debouncedSearch)}`),
-        enabled: shouldSearchServer,
-    });
-
-    // Enquanto não há termo suficiente para acionar o servidor, filtra
-    // localmente na lista já carregada (útil para 1-2 caracteres, sem bater
-    // no servidor a cada tecla digitada).
-    const localFiltered = searchTerm.trim().length === 0
-        ? planoContas
-        : planoContas.filter((p) => {
-            const haystack = `${p.categoria} ${p.subcategoria ?? ""}`.toLowerCase();
-            return haystack.includes(searchTerm.trim().toLowerCase());
-        });
-
-    const options = shouldSearchServer ? (searchResults ?? []) : localFiltered;
-    const grupos = groupPlanoContasPorCategoria(options);
-    const selected = planoContas.find((p) => String(p.id) === value);
-
-    const handleOpenChange = (o: boolean) => {
-        setOpen(o);
-        if (!o) setSearchTerm("");
-    };
-
-    const handleSelect = (p: PlanoConta) => {
-        onChange(String(p.id));
-        setOpen(false);
-        setSearchTerm("");
-    };
-
-    return (
-        <div>
-            <Popover open={open} onOpenChange={handleOpenChange}>
-                <PopoverTrigger asChild>
-                    <button
-                        type="button"
-                        className={`w-full bg-[#1a1c23] border rounded-xl px-4 py-2.5 text-sm text-left flex items-center justify-between hover:border-white/20 transition-all ${
-                            error ? "border-red-500/60" : "border-white/10"
-                        }`}
-                    >
-                        <span className={selected ? "text-white truncate" : "text-muted-foreground/40"}>
-                            {selected
-                                ? `${selected.categoria}${selected.subcategoria ? ` — ${selected.subcategoria}` : ""}`
-                                : "Indique a categoria contábil..."}
-                        </span>
-                        <Search className="w-4 h-4 text-muted-foreground shrink-0 ml-2"/>
-                    </button>
-                </PopoverTrigger>
-                <PopoverContent
-                    align="start"
-                    sideOffset={4}
-                    className="p-0 bg-[#1a1c23] border border-white/10 rounded-xl shadow-2xl"
-                    style={{width: "var(--radix-popover-trigger-width)"}}
-                >
-                    {/* Barra de busca */}
-                    <div className="p-3 border-b border-white/5">
-                        <div className="flex items-center gap-2 bg-black/30 rounded-lg px-3 py-2">
-                            <Search className="w-4 h-4 text-muted-foreground shrink-0"/>
-                            <input
-                                autoFocus
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                                placeholder="Buscar categoria ou subcategoria..."
-                                className="bg-transparent text-sm text-white outline-none w-full placeholder:text-muted-foreground/40"
-                            />
-                        </div>
-                    </div>
-
-                    {/* Lista de resultados - agrupada por categoria */}
-                    <div className="max-h-64 overflow-y-auto">
-                        <button
-                            type="button"
-                            onClick={() => {
-                                onChange("");
-                                setOpen(false);
-                                setSearchTerm("");
-                            }}
-                            className="w-full text-left px-4 py-2.5 text-xs text-muted-foreground hover:bg-white/5 transition-colors border-b border-white/5"
-                        >
-                            Indique a categoria contábil...
-                        </button>
-
-                        {shouldSearchServer && isFetching ? (
-                            <p className="px-4 py-3 text-xs text-muted-foreground text-center animate-pulse">Buscando...</p>
-                        ) : grupos.length === 0 ? (
-                            <p className="px-4 py-3 text-xs text-muted-foreground text-center">Nenhuma categoria
-                                encontrada.</p>
-                        ) : (
-                            grupos.map((grupo) => (
-                                <div key={grupo.categoria} className="py-1">
-                                    {/* Cabeçalho da categoria - mostrado uma única vez por grupo */}
-                                    <p className="px-4 py-1 text-[11px] font-bold text-white uppercase tracking-wide">
-                                        {grupo.categoria}
-                                    </p>
-                                    {grupo.itens.map((item) => {
-                                        const isSelected = String(item.id) === value;
-                                        return (
-                                            <button
-                                                key={item.id}
-                                                type="button"
-                                                onClick={() => handleSelect(item)}
-                                                className={`w-full text-left pl-8 pr-4 py-1.5 text-xs transition-colors ${
-                                                    isSelected
-                                                        ? "bg-primary/10 text-primary font-semibold"
-                                                        : "text-white/70 hover:bg-white/5"
-                                                }`}
-                                            >
-                                                {item.subcategoria || item.categoria}
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            ))
-                        )}
-                    </div>
-                </PopoverContent>
-            </Popover>
-            {error && <p className="text-[10px] text-destructive mt-1 font-medium">{error}</p>}
-        </div>
     );
 }
 
@@ -717,7 +400,7 @@ function PagamentoPIXRow({index, control, setValue, removePagamento, errors}: Pa
 type LancamentoModalProps = {
     onClose: () => void;
     /** Chamado após salvar com sucesso. No modo de criação (sem `editItem`),
-     *  recebe o registro criado (com `id`) — útil para quem abriu o modal em
+     *  recebe o registro criado (com `id`) - útil para quem abriu o modal em
      *  contexto de Conciliação vincular a linha do extrato em seguida. No
      *  modo edição, é chamado sem argumento. */
     onSaved: (created?: { id: number }) => void;
@@ -747,7 +430,7 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
 
     // Só é edição de um lançamento já existente quando `editItem` foi passado
     // (criação nova e criação via prefill de conciliação NÃO mostram
-    // Desconto/Juros — esses campos só fazem sentido para ajustar um título
+    // Desconto/Juros - esses campos só fazem sentido para ajustar um título
     // já lançado, na aba Lançamentos).
     const isEditing = !!editItem;
 
@@ -857,7 +540,7 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     }, [editItem, prefill, reset]);
 
     // Hidrata o formulário com os dados completos (`editItemFull`, incluindo
-    // dados_pagamento) assim que uma busca NOVA chegar do servidor — tanto a
+    // dados_pagamento) assim que uma busca NOVA chegar do servidor - tanto a
     // primeira quanto qualquer uma vinda de uma invalidação explícita (ex.:
     // depois de salvar). Usar `dataUpdatedAt` em vez do id evita dois
     // problemas opostos: (1) reabrir o MESMO lançamento não fica preso nos
@@ -1251,7 +934,8 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                                     placeholder="0,00"
                                                 />
                                             )}/>
-                                            {errors.descontoBr && <p className={errorCls}>{errors.descontoBr.message}</p>}
+                                            {errors.descontoBr &&
+                                                <p className={errorCls}>{errors.descontoBr.message}</p>}
                                         </div>
                                         <div>
                                             <label className={labelCls}>Juros / Acréscimo (R$)</label>

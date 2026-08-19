@@ -13,14 +13,11 @@ import {
     Users,
     Key,
     Target,
-    Tags,
     Landmark,
     Briefcase,
     LineChart,
     Wallet,
     UserCheck,
-    Plus,
-    Sparkles,
     Scale,
 } from "lucide-react";
 import {
@@ -49,13 +46,12 @@ const navItems = [
     {title: "Lançamentos", url: "/lancamentos", icon: FileText},
 ];
 
-const cadastrosItems = [
+const cadastrosItems: NavItem[] = [
     {title: "Clientes/Fornecedores", url: "/cadastros/parceiros", icon: UserCheck},
     {title: "Contas Bancárias", url: "/cadastros/contas-bancarias", icon: Landmark},
     {title: "Plano de Contas", url: "/cadastros/plano-contas", icon: Briefcase},
     {title: "Metas Financeiras", url: "/cadastros/metas", icon: Target},
     {title: "Departamentos", url: "/cadastros/departamentos", icon: Building2},
-
 ];
 
 const relatoriosItems = [
@@ -102,6 +98,9 @@ export function AppSidebar() {
         (item) => !("permission" in item && item.permission) || hasPermission((item as NavItem).permission!),
     );
     const visibleRelatorios = relatoriosItems.filter(
+        (item) => !item.permission || hasPermission(item.permission),
+    );
+    const visibleCadastros = cadastrosItems.filter(
         (item) => !item.permission || hasPermission(item.permission),
     );
 
@@ -225,7 +224,7 @@ export function AppSidebar() {
                             {renderCollapsibleSection({
                                 title: "Cadastros",
                                 icon: FolderOpen,
-                                items: cadastrosItems
+                                items: visibleCadastros
                             }, true)}
                             {renderCollapsibleSection({
                                 title: "Relatórios",

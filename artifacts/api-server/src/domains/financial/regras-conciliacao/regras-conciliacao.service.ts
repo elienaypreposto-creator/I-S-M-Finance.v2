@@ -19,7 +19,6 @@ export const regrasConciliacaoService = {
     async list(query: ListRegrasConciliacaoQuery) {
         const conditions = [];
         if (query.conta_id) {
-            // Regra específica da conta OU regra global (conta_id nulo) - RN-C2.
             conditions.push(or(eq(regrasConciliacaoTable.conta_id, query.conta_id), isNull(regrasConciliacaoTable.conta_id)));
         }
         if (query.natureza) conditions.push(eq(regrasConciliacaoTable.natureza, query.natureza));
@@ -109,17 +108,16 @@ export const regrasConciliacaoService = {
     },
 
     async remove(id: number) {
-        await db.delete(regrasConciliacaoTable).where(eq(regrasConciliacaoTable.id, id));
+        const [item] = await db
+            .delete(regrasConciliacaoTable)
+            .where(eq(regrasConciliacaoTable.id, id))
+            .returning({id: regrasConciliacaoTable.id});
+        if (!item) {
+            throw new AppError(404, "NOT_FOUND", "Regra de conciliação não encontrada.");
+        }
         return {deleted: true};
     },
 
-    /**
-     * Usado pelo motor de matching na importação (routes/conciliacoes.ts).
-     * Retorna as regras ATIVAS que valem para a conta informada (específicas
-     * da conta OU globais, conta_id nulo) já ordenadas por prioridade
-     * decrescente e, em empate, pela mais recente primeiro (RN-C: critério de
-     * desempate documentado - ajustar aqui se o cliente definir outro).
-     */
     async listarAtivasParaMatch(contaId: number) {
         return db
             .select()

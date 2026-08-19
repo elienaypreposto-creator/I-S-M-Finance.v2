@@ -19,7 +19,7 @@ const regraConciliacaoBaseSchema = z
     .object({
         conta_id: nullableId,
         texto_gatilho: z.string().trim().min(1, "Informe o texto que dispara a regra."),
-        tipo_match: z.enum(["contem", "inicia", "regex"]).default("contem"),
+        tipo_match: z.enum(["contem", "inicia", "regex", "exato"]).default("contem"),
         natureza: z.enum(["entrada", "saida"]),
         plano_conta_id: nullableId,
         parceiro_id: nullableId,
@@ -31,8 +31,6 @@ const regraConciliacaoBaseSchema = z
         ativo: z.boolean().default(true),
     })
     .superRefine((data, ctx) => {
-        // RN-C: regex inválida não pode ser cadastrada (evita crash silencioso no
-        // motor de matching, que descartaria a regra em runtime sem avisar ninguém).
         if (data.tipo_match === "regex") {
             try {
                 new RegExp(data.texto_gatilho);

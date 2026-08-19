@@ -55,9 +55,9 @@ function num(v: number | null | undefined) {
 
 /** DD/MM/YYYY */
 function formatDatePt(dateString: string | null | undefined): string {
-    if (!dateString) return "—";
+    if (!dateString) return "-";
     const date = new Date(dateString);
-    if (Number.isNaN(date.getTime())) return "—";
+    if (Number.isNaN(date.getTime())) return "-";
     return new Intl.DateTimeFormat("pt-BR", {
         day: "2-digit",
         month: "2-digit",
@@ -68,9 +68,9 @@ function formatDatePt(dateString: string | null | undefined): string {
 
 /** DD/MM/YYYY HH:mm */
 function formatDateTimePt(dateString: string | null | undefined): string {
-    if (!dateString) return "—";
+    if (!dateString) return "-";
     const date = new Date(dateString);
-    if (Number.isNaN(date.getTime())) return "—";
+    if (Number.isNaN(date.getTime())) return "-";
     const parts = new Intl.DateTimeFormat("pt-BR", {
         day: "2-digit",
         month: "2-digit",
@@ -101,7 +101,7 @@ function statusStyles(status: string) {
 }
 
 /** Enquanto o extrato não estiver 100% conciliado, o rótulo exibido é sempre
- *  "pendente" — não expomos o estado intermediário "parcial" na listagem
+ *  "pendente" - não expomos o estado intermediário "parcial" na listagem
  *  (ver print: só existem os badges PENDENTE e CONCILIADO). A cor já é a
  *  mesma para os dois em statusStyles, então só precisamos normalizar o
  *  texto mostrado. */
@@ -110,8 +110,8 @@ function statusLabel(status: string): string {
 }
 
 function formatAgenciaConta(row: ConciliacaoListItem): string {
-    const agencia = [row.conta_agencia, row.conta_digito_agencia].filter(Boolean).join("") || "—";
-    const contaBase = row.conta_numero ?? "—";
+    const agencia = [row.conta_agencia, row.conta_digito_agencia].filter(Boolean).join("") || "-";
+    const contaBase = row.conta_numero ?? "-";
     const conta = row.conta_digito ? `${contaBase}-${row.conta_digito}` : contaBase;
     return `Agência:${agencia} | Conta:${conta}`;
 }
@@ -271,7 +271,7 @@ export default function ConciliacaoList() {
                         <thead className="bg-black/25 text-muted-foreground border-b border-white/5 sticky top-0 z-10">
                         <tr>
                             <th className="px-4 py-3 font-semibold">STATUS</th>
-                            <th className="px-4 py-3 font-semibold">DATA</th>
+                            <th className="px-4 py-3 font-semibold">IMPORTADO EM</th>
                             <th className="px-4 py-3 font-semibold">BANCO</th>
                             <th className="px-4 py-3 font-semibold">PERÍODO</th>
                             <th className="px-4 py-3 font-semibold text-right">CONCILIADOS</th>
@@ -341,7 +341,7 @@ export default function ConciliacaoList() {
                                     </td>
                                     <td className="px-4 py-3 min-w-[180px]">
                                         <p className="text-white font-semibold truncate" title={row.conta_nome ?? ""}>
-                                            {row.conta_nome ?? "—"}
+                                            {row.conta_nome ?? "-"}
                                         </p>
                                         <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
                                             {formatAgenciaConta(row)}
@@ -350,7 +350,7 @@ export default function ConciliacaoList() {
                                     <td className="px-4 py-3 text-white/70 whitespace-nowrap">
                                         {row.periodo_inicio && row.periodo_fim
                                             ? `De ${formatDatePt(row.periodo_inicio)} à ${formatDatePt(row.periodo_fim)}`
-                                            : "—"}
+                                            : "-"}
                                     </td>
                                     <td className="px-4 py-3 text-right text-emerald-300/90 font-semibold tabular-nums">
                                         {num(row.resumo_conciliados)}
