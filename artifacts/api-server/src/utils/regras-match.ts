@@ -1,9 +1,4 @@
-/**
- * Card 48 / FEAT-03 — matching puro de regras de conciliação.
- * Ordenação por prioridade fica a cargo de `listarAtivasParaMatch` (DESC).
- */
-
-export type TipoMatchRegra = "contem" | "inicia" | "regex";
+export type TipoMatchRegra = "contem" | "inicia" | "regex" | "exato";
 export type NaturezaRegra = "entrada" | "saida";
 
 export type RegraParaMatch = {
@@ -33,6 +28,8 @@ export function regraCasaTexto(
     const gatilho = regra.texto_gatilho;
 
     switch (regra.tipo_match) {
+        case "exato":
+            return texto.trim().toLowerCase() === gatilho.trim().toLowerCase();
         case "contem":
             return texto.toLowerCase().includes(gatilho.toLowerCase());
         case "inicia":
@@ -49,10 +46,6 @@ export function regraCasaTexto(
     }
 }
 
-/**
- * Primeira regra que casa (lista já ordenada por prioridade DESC, created_at DESC).
- * Natureza nunca cruza (entrada × saída).
- */
 export function encontrarRegraParaLinha(
     regras: RegraParaMatch[],
     linha: { tipo_movimento: "credito" | "debito"; descricao: string | null | undefined },

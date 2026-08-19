@@ -53,11 +53,11 @@ export const statusExtratoEnum = pgEnum("status_extrato", [
 
 export const statusCadastroEnum = pgEnum("status_cadastro", ["ativo", "bloqueado"]);
 
-// Card 48/FEAT-03: motor de regras de conciliação
 export const tipoMatchRegraConciliacaoEnum = pgEnum("tipo_match_regra_conciliacao", [
     "contem",
     "inicia",
     "regex",
+    "exato",
 ]);
 
 export const naturezaRegraConciliacaoEnum = pgEnum("natureza_regra_conciliacao", [
