@@ -67,6 +67,13 @@ const lancamentoBaseSchema = z.object({
     parceiro_id: nullableId,
     descricao: z.string().trim().min(1).nullable().optional(),
     valor: z.union([z.string(), z.number()]).transform((v) => String(v)),
+    // Ajustam o valor líquido do título (editáveis no fluxo de edição da aba
+    // Lançamentos) sem alterar o valor de face (`valor`) acima. Sem essas
+    // duas linhas, o Zod descarta silenciosamente `desconto`/`juros` do
+    // body antes de chegar no service - o valor enviado pelo front nunca
+    // era persistido e a coluna sempre ficava no default "0" do banco.
+    desconto: z.union([z.string(), z.number()]).transform((v) => String(v)).optional(),
+    juros: z.union([z.string(), z.number()]).transform((v) => String(v)).optional(),
     status: lancamentoStatusEnum.optional(),
     plano_conta_id: nullableId,
     departamento_id: nullableId,

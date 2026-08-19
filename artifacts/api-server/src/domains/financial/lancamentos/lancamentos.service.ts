@@ -61,6 +61,11 @@ export const lancamentosService = {
                 parceiro_nome: parceirosTable.nome,
                 descricao: lancamentosTable.descricao,
                 valor: lancamentosTable.valor,
+                // Ajustam o valor líquido exibido na tabela (ver map abaixo) -
+                // sem selecioná-los aqui, a listagem sempre mostrava o valor
+                // de face puro, mesmo depois de editar Desconto/Juros no modal.
+                desconto: lancamentosTable.desconto,
+                juros: lancamentosTable.juros,
                 status: lancamentosTable.status,
                 plano_conta_id: lancamentosTable.plano_conta_id,
                 plano_conta_nome: planoContasTable.subcategoria,
@@ -86,10 +91,21 @@ export const lancamentosService = {
             .offset(offset);
 
         return {
-            items: items.map((item) => ({
-                ...item,
-                valor: Number(item.valor ?? 0),
-            })),
+            items: items.map((item) => {
+                const valorBruto = Number(item.valor ?? 0);
+                const desconto = Number(item.desconto ?? 0);
+                const juros = Number(item.juros ?? 0);
+                return {
+                    ...item,
+                    // Valor líquido (Bruto - Desconto + Juros) - é o que a
+                    // coluna "R$ Valor" da tabela de Lançamentos exibe, então
+                    // precisa refletir qualquer edição feita no modal.
+                    valor: Math.max(valorBruto - desconto + juros, 0),
+                    valor_bruto: valorBruto,
+                    desconto,
+                    juros,
+                };
+            }),
             meta: {total: totalResult.count, page, limit},
         };
     },
@@ -109,6 +125,8 @@ export const lancamentosService = {
                 parceiro_id: payload.parceiro_id ?? null,
                 descricao: payload.descricao ?? null,
                 valor: payload.valor,
+                desconto: payload.desconto ?? "0",
+                juros: payload.juros ?? "0",
                 status: payload.status ?? "pendente",
                 plano_conta_id: payload.plano_conta_id ?? null,
                 departamento_id: departamentoFinal ?? null,
@@ -162,4 +180,3 @@ export const lancamentosService = {
         return {deleted: true};
     },
 };
-

@@ -78,6 +78,14 @@ type VinculacaoDetalhe = {
     juros_multa?: string | number;
     vencimento?: string | null;
     residuo_pendente?: { valor: string | number } | null;
+    /** Residual JÁ criado (pós-Salvar) a partir deste título - somente leitura. */
+    residuo_gerado?: {
+        id: number;
+        descricao: string | null;
+        valor: string | number;
+        status: string;
+        vencimento: string | null;
+    } | null;
     _local?: boolean;
 };
 
@@ -532,6 +540,31 @@ function CardLancamento({
                     <span className="truncate">
                         Residual de {formatCurrency(Number(v.residuo_pendente.valor) || 0)} será criado ao Salvar/Conciliar
                     </span>
+                </div>
+            )}
+
+            {/* Card 76 (follow-up): residual JÁ criado a partir deste título -
+                somente leitura, não é uma vinculação desta linha (o título
+                novo está pendente, aguardando sua própria conciliação futura).
+                Resolve o "sumiço" reportado: antes só existia visão disso na
+                aba Lançamentos. */}
+            {v.residuo_gerado && (
+                <div className="rounded-lg bg-sky-500/10 border border-sky-500/25 px-2 py-1.5 mt-1 space-y-0.5">
+                    <div className="flex items-center gap-1.5 text-[10px] font-semibold text-sky-300">
+                        <Copy className="w-3 h-3 shrink-0"/>
+                        <span className="truncate">
+                            Lançamento residual criado · #{v.residuo_gerado.id}
+                        </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                        <span className="truncate">
+                            {v.residuo_gerado.vencimento ? formatDate(v.residuo_gerado.vencimento) : "-"} ·{" "}
+                            <span className="uppercase text-[9px]">{v.residuo_gerado.status}</span>
+                        </span>
+                        <span className="font-bold text-sky-300">
+                            {formatCurrency(Number(v.residuo_gerado.valor) || 0)}
+                        </span>
+                    </div>
                 </div>
             )}
         </li>

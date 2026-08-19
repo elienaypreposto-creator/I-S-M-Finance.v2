@@ -581,27 +581,46 @@ function LancamentoModal({
         0
     );
 
+    // Bug (Desconto/Juros não atualizam ao editar): a linha vinda da
+    // LISTAGEM (`editItem`, tipo `Lancamento`) não traz os campos
+    // `desconto`/`acrescimo` - eles só existem no endpoint de detalhe
+    // (GET /lancamentos/:id). Sem buscar o registro completo aqui, o
+    // formulário nunca tinha esses valores pra hidratar. `staleTime: 0`
+    // garante refetch a cada abertura, mesmo reabrindo o mesmo item logo
+    // após salvar (junto com a invalidação feita no onSuccess da mutation).
+    const {data: editItemFull} = useQuery<LancamentoEditItem>({
+        queryKey: ["lancamento-edit", editItem?.id],
+        queryFn: async () => {
+            const res = await fetch(`${API_URL}/lancamentos/${editItem!.id}`);
+            if (!res.ok) throw new Error("Erro ao buscar lançamento");
+            return res.json();
+        },
+        enabled: !!editItem?.id,
+        staleTime: 0,
+    });
+
     useEffect(() => {
-        if (editItem && (editItem as any).desconto) {
-            setValue(
-                "descontoBr" as any,
-                Number((editItem as any).desconto).toLocaleString("pt-BR", {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                })
-            );
-        }
-        if (editItem && (editItem as any).acrescimo) {
-            setValue(
-                "acrescimoBr" as any,
-                Number((editItem as any).acrescimo).toLocaleString("pt-BR", {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                })
-            );
-        }
+        if (!editItemFull) return;
+        // Sempre hidrata (inclusive limpando quando o valor é zero/ausente) -
+        // um `if (valor)` deixaria o campo "herdar" o valor do item editado
+        // anteriormente ao trocar de um lançamento COM desconto/juros para
+        // um SEM eles.
+        const desconto = Number((editItemFull as any).desconto ?? 0);
+        const acrescimo = Number((editItemFull as any).acrescimo ?? 0);
+        setValue(
+            "descontoBr" as any,
+            desconto > 0
+                ? desconto.toLocaleString("pt-BR", {minimumFractionDigits: 2, maximumFractionDigits: 2})
+                : ""
+        );
+        setValue(
+            "acrescimoBr" as any,
+            acrescimo > 0
+                ? acrescimo.toLocaleString("pt-BR", {minimumFractionDigits: 2, maximumFractionDigits: 2})
+                : ""
+        );
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [editItem]);
+    }, [editItemFull]);
 
     useEffect(() => {
         if (!editItem?.riscos?.length) return;
@@ -767,6 +786,12 @@ function LancamentoModal({
         },
         onSuccess: () => {
             void queryClient.invalidateQueries({queryKey: ["lancamentos"]});
+            // Invalida o cache do fetch-por-ID também - sem isso, reabrir o
+            // MESMO lançamento logo em seguida poderia reutilizar dados
+            // desatualizados (Desconto/Juros antigos) antes do refetch.
+            if (editItem?.id) {
+                void queryClient.invalidateQueries({queryKey: ["lancamento-edit", editItem.id]});
+            }
             toast({title: "Sucesso", description: editItem ? "Lançamento atualizado." : "Lançamento criado."});
             onSaved();
         },

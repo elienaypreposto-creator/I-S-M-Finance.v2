@@ -1523,6 +1523,38 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
                 .where(inArray(itensConciliacaoLancamentosTable.item_conciliacao_id, itemIds))
             : [];
 
+        // Card 76 (follow-up): o residual já nasce em `lancamentosTable` no
+        // momento do Salvar (persistirVinculo), mas nunca é inserido em
+        // itens_conciliacao_lancamentos (ele não está "pago" nesta linha do
+        // extrato - é um título novo, ainda pendente, que só será conciliado
+        // no futuro em outra linha/extrato). Sem esta busca, ele fica
+        // "invisível" para quem está na tela de conciliação, obrigando a
+        // navegar até Lançamentos para confirmar que foi criado. Buscamos
+        // aqui só para exibir como informação (somente leitura) junto do
+        // título de origem - não é um vínculo desta linha.
+        const lancamentoOrigemIds = vinculos.map((v) => v.lancamento_id);
+        const residuosGerados = lancamentoOrigemIds.length > 0
+            ? await db
+                .select({
+                    id: lancamentosTable.id,
+                    lancamento_origem_id: lancamentosTable.lancamento_origem_id,
+                    descricao: lancamentosTable.descricao,
+                    valor: lancamentosTable.valor,
+                    status: lancamentosTable.status,
+                    vencimento: lancamentosTable.vencimento,
+                })
+                .from(lancamentosTable)
+                .where(
+                    and(
+                        eq(lancamentosTable.is_residuo_parcial, true),
+                        inArray(lancamentosTable.lancamento_origem_id, lancamentoOrigemIds),
+                    ),
+                )
+            : [];
+        const residuoGeradoPorOrigemId = new Map(
+            residuosGerados.map((r) => [r.lancamento_origem_id, r]),
+        );
+
         const linhasDetalhadas = linhas.map((linha) => ({
             linha_id: linha.linha_id,
             tipo_movimento: linha.tipo_movimento,
@@ -1559,6 +1591,21 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
                     residuo_pendente: v.eh_origem_residuo
                         ? {valor: toDecimal(v.residuo_valor_pendente ?? "0")}
                         : null,
+                    // Card 76 (follow-up): residual JÁ criado (pós-Salvar) a
+                    // partir deste título - somente leitura, não é uma vinculação
+                    // desta linha (o título novo ainda está pendente/em aberto).
+                    residuo_gerado: (() => {
+                        const r = residuoGeradoPorOrigemId.get(v.lancamento_id);
+                        return r
+                            ? {
+                                  id: r.id,
+                                  descricao: r.descricao,
+                                  valor: toDecimal(r.valor),
+                                  status: r.status,
+                                  vencimento: r.vencimento,
+                              }
+                            : null;
+                    })(),
                 })),
         }));
 
