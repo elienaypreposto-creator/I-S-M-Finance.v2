@@ -1,4 +1,4 @@
-import {useEffect, useState} from "react";
+import {useEffect, useRef, useState} from "react";
 import {createPortal} from "react-dom";
 import {
     useForm,
@@ -33,6 +33,7 @@ import {
     mapModalFormToApiBody,
     pagamentoItemDefault,
     apiValorToValorBr,
+    brMoneyDisplayToApiString,
     type LancamentoApiBody,
     type LancamentoEditItem,
     type LancamentoModalFormValues,
@@ -81,6 +82,14 @@ function buildDefaultValuesFromPrefill(prefill: LancamentoPrefill): LancamentoMo
         valorBr: apiValorToValorBr(prefill.valor),
         descricao: prefill.descricao ?? "",
     };
+}
+
+// Converte uma string mascarada em pt-BR ("1.234,56") para number (1234.56).
+// Usado apenas para o cálculo em tempo real do "Valor Atual" (Bruto - Desconto + Juros).
+function parseValorBrToNumber(display: string | undefined | null): number {
+    const api = brMoneyDisplayToApiString(display ?? "");
+    const n = parseFloat(api);
+    return isNaN(n) ? 0 : n;
 }
 
 // Modal de confirmação genérico e reutilizável, seguindo o padrão visual usado
@@ -736,6 +745,22 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     type ParceiroSubModal = { mode: "create" } | { mode: "edit"; data: ParceiroRow };
     const [parceiroSubModal, setParceiroSubModal] = useState<ParceiroSubModal | null>(null);
 
+    // Só é edição de um lançamento já existente quando `editItem` foi passado
+    // (criação nova e criação via prefill de conciliação NÃO mostram
+    // Desconto/Juros — esses campos só fazem sentido para ajustar um título
+    // já lançado, na aba Lançamentos).
+    const isEditing = !!editItem;
+
+    // Garante que o `reset()` vindo do fetch completo (`editItemFull`) só
+    // sobrescreve o formulário quando uma busca REALMENTE NOVA chegou (não a
+    // cada re-render). Guardamos pelo timestamp da busca (`dataUpdatedAt`),
+    // não pelo id: guardar só pelo id quebra a reabertura do MESMO
+    // lançamento, porque o React Query mostra primeiro o valor antigo em
+    // cache (mesmo id) e só depois chega a versão atualizada do servidor -
+    // um guard "por id" bloquearia essa segunda atualização e o formulário
+    // ficaria preso no Desconto/Juros salvos antes da última edição.
+    const hydratedAtRef = useRef<number>(0);
+
     function buildInitialValues(): LancamentoModalFormValues {
         if (editItem) return getLancamentoModalDefaultValues(editItem);
         if (prefill) return buildDefaultValuesFromPrefill(prefill);
@@ -757,11 +782,14 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
         formState: {errors, isDirty},
     } = form;
 
-    const {data: editItemFull} = useQuery<LancamentoEditItem>({
+    const {data: editItemFull, dataUpdatedAt} = useQuery<LancamentoEditItem>({
         queryKey: ["lancamento-edit", editItem?.id],
         queryFn: () => fetchApiData<LancamentoEditItem>(`/lancamentos/${editItem!.id}`),
         enabled: !!editItem?.id,
         staleTime: 0,
+        // Evita que um refetch automático (ex.: ao voltar o foco pra
+        // aba/janela) dispare o reset() abaixo enquanto o usuário edita.
+        refetchOnWindowFocus: false,
     });
 
     const vencimento = watch("vencimento");
@@ -770,6 +798,15 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     const riscos = watch("riscos");
     const departamento_id = watch("departamento_id");
     const isCP = tipo === "CP";
+
+    // ── Valor Bruto / Desconto / Juros → Valor Atual (calculado em tempo real) ──
+    const valorBr = watch("valorBr");
+    const descontoBr = watch("descontoBr") ?? "";
+    const jurosBr = watch("jurosBr") ?? "";
+    const valorAtual = Math.max(
+        parseValorBrToNumber(valorBr) - parseValorBrToNumber(descontoBr) + parseValorBrToNumber(jurosBr),
+        0
+    );
 
     const {fields: pagamentosFields, append: appendPagamento, remove: removePagamento} = useFieldArray({
         control,
@@ -809,6 +846,9 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     // ou dados de pré-preenchimento vindos da Conciliação)
     useEffect(() => {
         reset(buildInitialValues());
+        // Libera a hidratação do editItemFull para o próximo lançamento
+        // aberto (ver useEffect abaixo).
+        hydratedAtRef.current = 0;
         setNivelRisco(0);
         setRiskLevels(BASE_RISK_LEVELS);
         setShowAddTag(false);
@@ -816,11 +856,21 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [editItem, prefill, reset]);
 
+    // Hidrata o formulário com os dados completos (`editItemFull`, incluindo
+    // dados_pagamento) assim que uma busca NOVA chegar do servidor — tanto a
+    // primeira quanto qualquer uma vinda de uma invalidação explícita (ex.:
+    // depois de salvar). Usar `dataUpdatedAt` em vez do id evita dois
+    // problemas opostos: (1) reabrir o MESMO lançamento não fica preso nos
+    // dados antigos que o React Query mostra primeiro a partir do cache, e
+    // (2) um refetch por foco de janela no meio da edição não sobrescreve o
+    // que o usuário digitou (isso já está coberto por `refetchOnWindowFocus:
+    // false` acima, então aqui só filtramos re-renders sem busca nova).
     useEffect(() => {
-        if (editItemFull) {
+        if (editItemFull && dataUpdatedAt !== hydratedAtRef.current) {
             reset(getLancamentoModalDefaultValues(editItemFull));
+            hydratedAtRef.current = dataUpdatedAt;
         }
-    }, [editItemFull, reset]);
+    }, [editItemFull, dataUpdatedAt, reset]);
 
     // Sincroniza status ao mudar tipo
 
@@ -887,6 +937,12 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
         },
         onSuccess: (resp) => {
             void queryClient.invalidateQueries({queryKey: ["lancamentos"]});
+            // Invalida o cache do fetch-por-ID também - sem isso, reabrir o
+            // MESMO lançamento logo em seguida poderia (dependendo do
+            // timing) reutilizar dados desatualizados antes do refetch.
+            if (editItem?.id) {
+                void queryClient.invalidateQueries({queryKey: ["lancamento-edit", editItem.id]});
+            }
             toast({title: "Sucesso", description: editItem ? "Lançamento atualizado." : "Lançamento criado."});
             onSaved(editItem ? undefined : resp);
         },
@@ -979,10 +1035,25 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                             </h2>
                             <p className="text-xs text-muted-foreground">Preencha os dados financeiros detalhados</p>
                         </div>
-                        <button type="button" onClick={handleRequestClose}
-                                className="p-2 hover:bg-white/5 rounded-xl text-muted-foreground hover:text-white transition-all group">
-                            <X className="w-5 h-5 group-hover:rotate-90 transition-transform"/>
-                        </button>
+                        <div className="flex items-center gap-4">
+                            {/* Valor Atual - fixo durante toda a edição (Bruto - Desconto + Juros) */}
+                            {isEditing && (
+                                <div className="text-right">
+                                    <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">Valor
+                                        Atual</p>
+                                    <p className="text-xl font-black text-primary leading-tight">
+                                        {valorAtual.toLocaleString("pt-BR", {
+                                            minimumFractionDigits: 2,
+                                            maximumFractionDigits: 2
+                                        })}
+                                    </p>
+                                </div>
+                            )}
+                            <button type="button" onClick={handleRequestClose}
+                                    className="p-2 hover:bg-white/5 rounded-xl text-muted-foreground hover:text-white transition-all group">
+                                <X className="w-5 h-5 group-hover:rotate-90 transition-transform"/>
+                            </button>
+                        </div>
                     </div>
 
                     <form onSubmit={handleSubmit(onSubmit)} className="p-6 space-y-6 overflow-y-auto">
@@ -1158,6 +1229,50 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                         {errors.status && <p className={errorCls}>{errors.status.message}</p>}
                                     </div>
                                 </div>
+
+                                {/* Desconto / Juros - só na EDIÇÃO de um lançamento já existente.
+                                    Ajustam o valor líquido do título (Valor Atual, exibido no
+                                    cabeçalho do modal) sem alterar o Valor Previsto/de face acima. */}
+                                {isEditing && (
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className={labelCls}>Desconto (R$)</label>
+                                            <Controller name="descontoBr" control={control} render={({field}) => (
+                                                <input
+                                                    type="text"
+                                                    inputMode="numeric"
+                                                    autoComplete="off"
+                                                    value={field.value ?? ""}
+                                                    onChange={(e) => field.onChange(formatValorBrInput(e.target.value))}
+                                                    onBlur={field.onBlur}
+                                                    name={field.name}
+                                                    ref={field.ref}
+                                                    className={cn(inputCls, "text-green-400")}
+                                                    placeholder="0,00"
+                                                />
+                                            )}/>
+                                            {errors.descontoBr && <p className={errorCls}>{errors.descontoBr.message}</p>}
+                                        </div>
+                                        <div>
+                                            <label className={labelCls}>Juros / Acréscimo (R$)</label>
+                                            <Controller name="jurosBr" control={control} render={({field}) => (
+                                                <input
+                                                    type="text"
+                                                    inputMode="numeric"
+                                                    autoComplete="off"
+                                                    value={field.value ?? ""}
+                                                    onChange={(e) => field.onChange(formatValorBrInput(e.target.value))}
+                                                    onBlur={field.onBlur}
+                                                    name={field.name}
+                                                    ref={field.ref}
+                                                    className={cn(inputCls, "text-red-400")}
+                                                    placeholder="0,00"
+                                                />
+                                            )}/>
+                                            {errors.jurosBr && <p className={errorCls}>{errors.jurosBr.message}</p>}
+                                        </div>
+                                    </div>
+                                )}
 
                                 {/* Centro de Custo (filtrado por departamento) */}
                                 <div>

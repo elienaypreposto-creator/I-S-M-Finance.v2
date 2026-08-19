@@ -212,6 +212,17 @@ type LinhaEfetiva = LinhaDetalhe & {
     _ignorarVinculosReais: boolean;
 };
 
+/** Remove acentos/diacríticos e normaliza para minúsculas - usado no filtro
+ *  de busca por descrição, para "pix" encontrar "PIX" e "café" encontrar
+ *  "cafe" (e vice-versa) independente de acentuação. */
+function normalizarTextoBusca(texto: string): string {
+    return texto
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .trim();
+}
+
 function centsFromReais(v: string | number | null | undefined): number {
     return Math.round(Math.abs(Number(v) || 0) * 100);
 }
@@ -891,17 +902,33 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     // mesclados). Sem paginação: a lista inteira fica dentro de um
     // contêiner com overflow-y-auto (scroll).
     const linhasFiltradas = useMemo(() => {
-        return linhasEfetivas.filter((linha) => {
-            if (filtrosAplicados.tipo !== "todos" && linha.tipo_movimento !== filtrosAplicados.tipo) return false;
-            if (filtrosAplicados.status !== "todos" && linha.status !== filtrosAplicados.status) return false;
-            if (filtrosAplicados.busca) {
-                const alvo = (linha.descricao ?? "").toLowerCase();
-                if (!alvo.includes(filtrosAplicados.busca.toLowerCase())) return false;
-            }
-            return true;
-        });
-    }, [linhasEfetivas, filtrosAplicados]);
+    return linhasEfetivas.filter((linha) => {
+        if (
+            filtrosAplicados.tipo !== "todos" &&
+            linha.tipo_movimento !== filtrosAplicados.tipo
+        ) {
+            return false;
+        }
 
+        if (
+            filtrosAplicados.status !== "todos" &&
+            linha.status !== filtrosAplicados.status
+        ) {
+            return false;
+        }
+
+        if (filtrosAplicados.busca) {
+            const alvo = normalizarTextoBusca(linha.descricao ?? "");
+            const termo = normalizarTextoBusca(filtrosAplicados.busca);
+
+            if (!alvo.includes(termo)) {
+                return false;
+            }
+        }
+
+        return true;
+    });
+}, [linhasEfetivas, filtrosAplicados]);
     // Card 73: só renderiza as primeiras N linhas filtradas — o resto só
     // entra quando o usuário clicar em "Role para carregar mais" (ver botão
     // no fim da lista), em vez de um observer invisível de scroll.

@@ -80,6 +80,13 @@ function formatarValor(raw: string): string {
     return num.toLocaleString("pt-BR", {minimumFractionDigits: 2, maximumFractionDigits: 2});
 }
 
+// Converte uma string mascarada em pt-BR ("1.234,56") para number (1234.56)
+function parseValorBr(v?: string): number {
+    if (!v) return 0;
+    const n = parseFloat(v.replace(/\./g, "").replace(",", "."));
+    return isNaN(n) ? 0 : n;
+}
+
 // ─── Bank badge helpers ───────────────────────────────────────────────────────
 
 const BANK_MAP: Record<string, { abbr: string; color: string; bg: string }> = {
@@ -564,6 +571,38 @@ function LancamentoModal({
     const formaPagamento = watch("forma_pagamento") ?? "";
     const isCP = tipo === "CP";
 
+    // ── Desconto / Acréscimo (juros) ─────────────────────────────────────────
+    // Campos "extras" no mesmo padrão do nivelRisco, até serem formalizados no schema Zod.
+    const descontoBr = (watch as any)("descontoBr") ?? "";
+    const acrescimoBr = (watch as any)("acrescimoBr") ?? "";
+    const valorBrutoNum = parseValorBr(watch("valorBr"));
+    const valorFinal = Math.max(
+        valorBrutoNum - parseValorBr(descontoBr) + parseValorBr(acrescimoBr),
+        0
+    );
+
+    useEffect(() => {
+        if (editItem && (editItem as any).desconto) {
+            setValue(
+                "descontoBr" as any,
+                Number((editItem as any).desconto).toLocaleString("pt-BR", {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                })
+            );
+        }
+        if (editItem && (editItem as any).acrescimo) {
+            setValue(
+                "acrescimoBr" as any,
+                Number((editItem as any).acrescimo).toLocaleString("pt-BR", {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                })
+            );
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [editItem]);
+
     useEffect(() => {
         if (!editItem?.riscos?.length) return;
         for (const [lvStr, lvData] of Object.entries(BASE_RISK_LEVELS)) {
@@ -736,9 +775,14 @@ function LancamentoModal({
     });
 
     const onSubmit = (data: LancamentoModalFormValues) => {
-        const payload = mapModalFormToApiBody(data);
-        const valorNum = parseFloat(String(payload.valor));
-        if (isNaN(valorNum) || valorNum <= 0) {
+        const payload: any = mapModalFormToApiBody(data);
+
+        const valorBruto = parseValorBr((data as any).valorBr);
+        const desconto = parseValorBr((data as any).descontoBr);
+        const acrescimo = parseValorBr((data as any).acrescimoBr);
+        const valorFinalCalc = Math.max(valorBruto - desconto + acrescimo, 0);
+
+        if (isNaN(valorBruto) || valorBruto <= 0) {
             toast({
                 variant: "destructive",
                 title: "Valor inválido",
@@ -746,6 +790,14 @@ function LancamentoModal({
             });
             return;
         }
+
+        // O valor final (já com desconto/acréscimo aplicados) é o que é persistido
+        // como valor do lançamento — igual ao comportamento do sistema de referência.
+        payload.valor_bruto = valorBruto;
+        payload.desconto = desconto;
+        payload.acrescimo = acrescimo;
+        payload.valor = valorFinalCalc;
+
         mutation.mutate(payload);
     };
 
@@ -1062,10 +1114,10 @@ function LancamentoModal({
                                 <FieldError message={(errors as any).departamento_id?.message}/>
                             </div>
 
-                            {/* Valor + Status */}
+                            {/* Valor Bruto + Status */}
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label className={labelCls}>Valor Previsto (R$) *</label>
+                                    <label className={labelCls}>Valor Bruto (R$) *</label>
                                     <Controller name="valorBr" control={control} render={({field}) => (
                                         <input type="text" inputMode="decimal" value={field.value}
                                                onChange={(e) => field.onChange(formatarValor(e.target.value))}
@@ -1089,6 +1141,43 @@ function LancamentoModal({
                                     </select>
                                     <FieldError message={errors.status?.message}/>
                                 </div>
+                            </div>
+
+                            {/* Desconto / Acréscimo (Juros) */}
+                            <div className="space-y-3">
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className={labelCls}>Desconto (R$)</label>
+                                        <Controller name={"descontoBr" as any} control={control} render={({field}) => (
+                                            <input type="text" inputMode="decimal" value={field.value ?? ""}
+                                                   onChange={(e) => field.onChange(formatarValor(e.target.value))}
+                                                   className={cn(inputCls(false), "text-green-400")}
+                                                   placeholder="0,00"/>
+                                        )}/>
+                                    </div>
+                                    <div>
+                                        <label className={labelCls}>Acréscimo / Juros (R$)</label>
+                                        <Controller name={"acrescimoBr" as any} control={control} render={({field}) => (
+                                            <input type="text" inputMode="decimal" value={field.value ?? ""}
+                                                   onChange={(e) => field.onChange(formatarValor(e.target.value))}
+                                                   className={cn(inputCls(false), "text-red-400")}
+                                                   placeholder="0,00"/>
+                                        )}/>
+                                    </div>
+                                </div>
+
+                                {(descontoBr || acrescimoBr) && (
+                                    <div
+                                        className="flex items-center justify-between px-4 py-2.5 rounded-xl bg-primary/10 border border-primary/20 animate-in fade-in">
+                                        <span className="text-[10px] font-bold text-primary uppercase tracking-widest">Valor Final</span>
+                                        <span className="text-base font-black text-primary">
+                                            {valorFinal.toLocaleString("pt-BR", {
+                                                minimumFractionDigits: 2,
+                                                maximumFractionDigits: 2
+                                            })}
+                                        </span>
+                                    </div>
+                                )}
                             </div>
 
                             {/* ── Risco Cascata - apenas CP ── */}

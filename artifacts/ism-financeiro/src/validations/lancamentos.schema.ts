@@ -56,6 +56,16 @@ export const lancamentoApiBodySchema = z.object({
             const n = Number(v);
             return !isNaN(n) && isFinite(n);
         }, "Valor numérico inválido."),
+    // Editáveis apenas no fluxo de edição do lançamento (aba Lançamentos):
+    // ajustam o valor líquido do título sem alterar o valor de face (`valor`).
+    desconto: z
+        .union([z.string(), z.number()])
+        .transform((v) => String(v))
+        .optional(),
+    juros: z
+        .union([z.string(), z.number()])
+        .transform((v) => String(v))
+        .optional(),
     status: lancamentoStatusEnum.optional(),
     plano_conta_id: z.number().int().positive().nullable().optional(),
     departamento_id: z.number().int().positive().nullable().optional(),
@@ -253,6 +263,12 @@ export const lancamentoModalFormSchema = z.object({
             "O valor deve ser maior que R$ 0,00.",
         ),
 
+    // Desconto / Juros-Multa - só exibidos no fluxo de EDIÇÃO (aba
+    // Lançamentos). Ajustam o valor líquido do título sem alterar o valor
+    // de face (`valorBr`). Opcionais: "" equivale a "0,00".
+    descontoBr: z.string().optional(),
+    jurosBr: z.string().optional(),
+
     status: lancamentoStatusEnum,
     plano_conta_id: optionalIdSelect,
     departamento_id: optionalIdSelect,
@@ -276,6 +292,11 @@ export type LancamentoEditItem = {
     parceiro_id: number | null;
     descricao: string | null;
     valor: string | number;
+    /** Desconto já aplicado ao título (colunas `desconto`/`juros` da tabela
+     *  lancamentos - também usadas no fluxo de conciliação bancária). */
+    desconto?: string | number | null;
+    /** Juros/multa já aplicados ao título. */
+    juros?: string | number | null;
     status: string;
     plano_conta_id: number | null;
     departamento_id?: number | null;
@@ -356,6 +377,8 @@ function normalizeDadosPagamentoParaForm(
  * (modo edição), converte os campos da API para o formato interno do formulário:
  *
  * • `valor` (number da API) -> `valorBr` (máscara BR, ex: "1.234,56")
+ * • `desconto` / `juros` (number da API) -> `descontoBr` / `jurosBr` (máscara BR),
+ *   usados apenas para exibir e editar o valor líquido no fluxo de edição
  * • `riscos` (string[]) -> copiado para o form - sem conversão, apenas spread
  *   defensivo para evitar mutação do array original e garantir que nunca é
  *   `undefined` (o que causaria Data Loss ao salvar: tags seriam apagadas)
@@ -364,9 +387,10 @@ function normalizeDadosPagamentoParaForm(
  * • IDs numéricos -> strings ("42") para os `<select>` controlados
  * • `competencia` ISO -> "MM/YYYY" para o `CompetenciaPicker`
  *
- * ATENÇÃO: o `editItem` passado inicialmente vem da lista (sem `dados_pagamento`).
- * O `lancamento-modal.tsx` faz um segundo `reset()` assim que o `useQuery` de
- * fetch-por-ID completa, garantindo a hidratação dos pagamentos.
+ * ATENÇÃO: o `editItem` passado inicialmente vem da lista (sem `dados_pagamento`
+ * e possivelmente sem `desconto`/`juros`, dependendo do que o endpoint de
+ * listagem retorna). O `lancamento-modal.tsx` faz um segundo `reset()` assim
+ * que o `useQuery` de fetch-por-ID completa, garantindo a hidratação completa.
  */
 export function getLancamentoModalDefaultValues(editItem?: LancamentoEditItem | null): LancamentoModalFormValues {
     const base: LancamentoModalFormValues = {
@@ -377,6 +401,8 @@ export function getLancamentoModalDefaultValues(editItem?: LancamentoEditItem | 
         conta_id: "",
         descricao: "",
         valorBr: "",
+        descontoBr: "",
+        jurosBr: "",
         status: "pendente",
         plano_conta_id: "",
         departamento_id: "",
@@ -396,6 +422,8 @@ export function getLancamentoModalDefaultValues(editItem?: LancamentoEditItem | 
         conta_id: editItem.conta_id != null ? String(editItem.conta_id) : "",
         descricao: editItem.descricao ?? "",
         valorBr: apiValorToValorBr(editItem.valor),
+        descontoBr: editItem.desconto != null ? apiValorToValorBr(editItem.desconto) : "",
+        jurosBr: editItem.juros != null ? apiValorToValorBr(editItem.juros) : "",
         status: normalizeStatusForForm(editItem.tipo, editItem.status),
         plano_conta_id: editItem.plano_conta_id != null ? String(editItem.plano_conta_id) : "",
         departamento_id: editItem.departamento_id != null ? String(editItem.departamento_id) : "",
@@ -470,6 +498,9 @@ function buildDadosPagamentoArray(pagamentos: PagamentoItemFormValues[]): DadosP
  *
  * • `valorBr` (string mascarada) -> `valor` (string decimal para o backend aceitar
  *    `z.union([z.string(), z.number()])`)
+ * • `descontoBr` / `jurosBr` (string mascarada) -> `desconto` / `juros` (string
+ *    decimal). Vazio equivale a "0.00" — o valor de face (`valor`) nunca é
+ *    recalculado aqui; desconto/juros ficam em colunas próprias.
  * • `pagamentos[]` (useFieldArray) -> `dados_pagamento[]` (métodos de transação,
  *    sem valor individual) - via `buildDadosPagamentoArray`
  * • Selects de ID ("" | "42") -> number | null
@@ -492,6 +523,8 @@ export function mapModalFormToApiBody(values: LancamentoModalFormValues): Lancam
         parceiro_id: values.parceiro_id === "" ? null : Number(values.parceiro_id),
         descricao: values.descricao?.trim() || null,
         valor: brMoneyDisplayToApiString(values.valorBr),
+        desconto: brMoneyDisplayToApiString(values.descontoBr ?? "") || "0.00",
+        juros: brMoneyDisplayToApiString(values.jurosBr ?? "") || "0.00",
         status: values.status,
         plano_conta_id: values.plano_conta_id === "" ? null : Number(values.plano_conta_id),
         departamento_id: values.departamento_id === "" ? null : Number(values.departamento_id),

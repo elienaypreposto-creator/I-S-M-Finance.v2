@@ -233,7 +233,7 @@ function KanbanColumn({
 
     return (
         <div
-            className="w-[85vw] max-w-80 sm:w-80 flex-shrink-0 flex flex-col h-full max-h-full rounded-xl overflow-hidden"
+            className="flex-1 min-w-[280px] flex flex-col h-full max-h-full rounded-xl overflow-hidden"
             style={{backgroundColor: isConcluido ? undefined : COLORS.colunas}}
         >
             <div
@@ -497,7 +497,7 @@ export default function Kanban() {
 
     // ── Render ────────────────────────────────────────────────────────────────
     return (
-        <div className="h-[calc(100vh-8rem)] h-[calc(100dvh-8rem)] flex flex-col">
+        <div className="h-[calc(100dvh-8rem)] min-h-0 min-w-0 flex flex-col">
 
             <div className="flex items-center justify-between mb-4 px-1">
                 <div>
@@ -575,8 +575,8 @@ export default function Kanban() {
                     onDragStart={handleDragStart}
                     onDragEnd={handleDragEnd}
                 >
-                    <div className="flex-1 overflow-x-auto pb-4">
-                        <div className="flex gap-4 h-full min-w-max">
+                    <div className="flex-1 min-h-0 min-w-0 overflow-x-auto overflow-y-hidden pb-4 custom-scrollbar">
+                    <div className="flex gap-4 h-full w-max min-w-full">
                             {COLUMNS.map(col => (
                                 <KanbanColumn
                                     key={col.id}
