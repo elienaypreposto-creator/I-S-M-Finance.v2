@@ -271,14 +271,12 @@ function VincularFormBody({
 
     const showGapExtrato =
         restanteCents != null && restanteCents > 0 && selectedItens.length > 0;
-    /** Só informativo (sem checkbox) quando já é uma quitação multi-linha em andamento. */
+    /** Quitação multi-linha em andamento: ainda pode concluir sem residual. */
     const showModoBParcial =
         restanteCents != null && restanteCents < 0 && selectedItens.length === 1 && emQuitacaoMultiLinha;
-    /** Oferece o checkbox de residual com 2+ lançamentos OU com 1 lançamento "fresco" (1º vínculo). */
+    /** Checkbox de residual: títulos > extrato (Δ < 0), 1 ou N lançamentos. */
     const showResidual =
-        restanteCents != null &&
-        restanteCents < 0 &&
-        (selectedItens.length >= 2 || (selectedItens.length === 1 && !emQuitacaoMultiLinha));
+        deltaCents != null && deltaCents < 0 && selectedItens.length > 0;
     const showExcedente = showGapExtrato;
     const valoresBatendo = selectedItens.length > 0 && restanteCents === 0;
 
@@ -706,16 +704,6 @@ function VincularFormBody({
                         <CheckCircle2 className="w-4 h-4 text-emerald-300 shrink-0"/>
                         <p className="text-sm font-semibold text-emerald-200">
                             ✓ Restante zerado — valores batem
-                        </p>
-                    </div>
-                ) : showModoBParcial ? (
-                    <div className="rounded-lg bg-sky-500/10 border border-sky-500/30 px-3 py-2 space-y-1">
-                        <p className="text-sm font-semibold text-sky-200 text-center">
-                            Pagamento parcial do título — ainda faltam{" "}
-                            {formatCurrency(toMoney(Math.abs(restanteCents ?? 0)))}
-                        </p>
-                        <p className="text-[11px] text-muted-foreground text-center leading-snug">
-                            Confirme este vínculo e continue nas outras linhas do extrato (Modo B).
                         </p>
                     </div>
                 ) : showResidual ? (
