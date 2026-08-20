@@ -1955,6 +1955,11 @@ async function persistirVinculo(
                 parcela_atual: origem.parcela_atual,
                 total_parcelas: origem.total_parcelas,
                 riscos: origem.riscos ?? [],
+                // Clona forma de pagamento do título de origem - sem isso o
+                // residual nascia sem PIX/TED/Boleto (campo obrigatório em
+                // telas que dependem dele, ex. baixa manual do residual).
+                forma_pagamento: origem.forma_pagamento,
+                dados_pagamento: origem.dados_pagamento,
                 is_residuo_parcial: true,
                 lancamento_origem_id: origem.id,
                 criado_por: usuarioId,
