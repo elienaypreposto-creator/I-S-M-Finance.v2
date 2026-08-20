@@ -10,6 +10,8 @@ import {
 } from "@workspace/db/schema";
 import {AppError} from "../../../utils/app-error";
 import type {CreateLancamentoBody, ListLancamentosQuery, UpdateLancamentoBody} from "./schemas";
+import {statusAbertoPorVencimento} from "../../../utils/conciliacao-vincular";
+import {hojeIsoLocal} from "../../../utils/date-civil";
 
 const resolveDepartamentoCentroByParceiro = async (parceiroId?: number | null) => {
     if (!parceiroId) {
@@ -127,7 +129,13 @@ export const lancamentosService = {
                 valor: payload.valor,
                 desconto: payload.desconto ?? "0",
                 juros: payload.juros ?? "0",
-                status: payload.status ?? "pendente",
+                status:
+                    payload.status === "pago" ||
+                    payload.status === "recebido" ||
+                    payload.status === "pago_parcial" ||
+                    payload.status === "cancelado"
+                        ? payload.status
+                        : statusAbertoPorVencimento(payload.vencimento, hojeIsoLocal()),
                 plano_conta_id: payload.plano_conta_id ?? null,
                 departamento_id: departamentoFinal ?? null,
                 centro_custo_id: centroCustoFinal ?? null,

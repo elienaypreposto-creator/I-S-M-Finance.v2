@@ -1551,9 +1551,12 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
                     ),
                 )
             : [];
-        const residuoGeradoPorOrigemId = new Map(
-            residuosGerados.map((r) => [r.lancamento_origem_id, r]),
-        );
+        const residuosPorOrigem = new Map<number | null, typeof residuosGerados>();
+        for (const r of residuosGerados) {
+            const lista = residuosPorOrigem.get(r.lancamento_origem_id) ?? [];
+            lista.push(r);
+            residuosPorOrigem.set(r.lancamento_origem_id, lista);
+        }
 
         const linhasDetalhadas = linhas.map((linha) => ({
             linha_id: linha.linha_id,
@@ -1586,25 +1589,32 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
                     /** @deprecated alias - usar juros_multa */
                     acrescimo: toDecimal(v.juros_multa),
                     vencimento: v.lancamento_vencimento,
-                    // Card 76: enquanto não finalizar, o residual é só uma promessa -
-                    // ainda não existe como lançamento em lancamentosTable.
-                    residuo_pendente: v.eh_origem_residuo
-                        ? {valor: toDecimal(v.residuo_valor_pendente ?? "0")}
-                        : null,
-                    // Card 76 (follow-up): residual JÁ criado (pós-Salvar) a
-                    // partir deste título - somente leitura, não é uma vinculação
-                    // desta linha (o título novo ainda está pendente/em aberto).
-                    residuo_gerado: (() => {
-                        const r = residuoGeradoPorOrigemId.get(v.lancamento_id);
-                        return r
-                            ? {
-                                  id: r.id,
-                                  descricao: r.descricao,
-                                  valor: toDecimal(r.valor),
-                                  status: r.status,
-                                  vencimento: r.vencimento,
-                              }
+                    residuo_pendente: (() => {
+                        const lista = residuosPorOrigem.get(v.lancamento_id) ?? [];
+                        const alvoCents = v.residuo_valor_pendente != null ? toCents(v.residuo_valor_pendente) : null;
+                        const jaGerado = alvoCents != null
+                            ? lista.some((x) => toCents(x.valor) === alvoCents)
+                            : lista.length === 1;
+                        if (jaGerado) return null;
+                        return v.eh_origem_residuo
+                            ? {valor: toDecimal(v.residuo_valor_pendente ?? "0")}
                             : null;
+                    })(),
+                    residuo_gerado: (() => {
+                        const lista = residuosPorOrigem.get(v.lancamento_id) ?? [];
+                        if (lista.length === 0) return null;
+                        const alvoCents = v.residuo_valor_pendente != null ? toCents(v.residuo_valor_pendente) : null;
+                        const r = alvoCents != null
+                            ? (lista.find((x) => toCents(x.valor) === alvoCents) ?? (lista.length === 1 ? lista[0] : undefined))
+                            : (lista.length === 1 ? lista[0] : undefined);
+                        if (!r) return null;
+                        return {
+                            id: r.id,
+                            descricao: r.descricao,
+                            valor: toDecimal(r.valor),
+                            status: r.status,
+                            vencimento: r.vencimento,
+                        };
                     })(),
                 })),
         }));
@@ -1947,7 +1957,9 @@ async function persistirVinculo(
                     descricaoOrigem: origem.descricao,
                 }),
                 valor: centsToDecimalString(decision.residual.valorCents),
-                status: "pendente",
+                // Residual é saldo em aberto: só pendente ou atrasado — nunca
+                // herda pago_parcial do título de origem.
+                status: statusAbertoPorVencimento(origem.vencimento, hojeIsoLocal()),
                 origem: "residuo_parcial",
                 plano_conta_id: origem.plano_conta_id,
                 departamento_id: origem.departamento_id,
@@ -1975,6 +1987,13 @@ async function persistirVinculo(
             valor_vinculado: centsToDecimalString(v.valorVinculadoCents),
             desconto: centsToDecimalString(v.descontoCents),
             juros_multa: centsToDecimalString(v.jurosMultaCents),
+            eh_origem_residuo: Boolean(
+                decision.residual && v.lancamento_id === decision.residual.origemLancamentoId,
+            ),
+            residuo_valor_pendente:
+                decision.residual && v.lancamento_id === decision.residual.origemLancamentoId
+                    ? centsToDecimalString(decision.residual.valorCents)
+                    : null,
         })),
     );
 
@@ -2728,7 +2747,7 @@ async function persistirFinalizacao(tx: any, conciliacao: { id: number; conta_id
                                 descricaoOrigem: origem.descricao,
                             }),
                             valor: pendente.valorPendente,
-                            status: "pendente",
+                            status: statusAbertoPorVencimento(origem.vencimento, hojeIsoLocal()),
                             origem: "residuo_parcial",
                             plano_conta_id: origem.plano_conta_id,
                             departamento_id: origem.departamento_id,

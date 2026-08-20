@@ -152,8 +152,10 @@ function decidirModoBUmLancamento(input: VincularDecisionInput): VincularDecisio
 
     if (deltaCents < 0) {
         const faltaCents = -deltaCents;
-        // Em quitação multi-linha, a falta é o que ainda virá em outras linhas - sem residual.
-        const podeResidual = gerarParcial && !quitacaoMultiLinha;
+        // Residual = falta DEPOIS deste vínculo (título − quitado anterior − linha).
+        // Cada requisição do Modo B gera o seu residual com o saldo já decrescido;
+        // não se agrupa num único título “fundido” das outras linhas.
+        const podeResidual = gerarParcial;
         const residual = podeResidual
             ? {origemLancamentoId: l.lancamento_id, valorCents: faltaCents}
             : null;

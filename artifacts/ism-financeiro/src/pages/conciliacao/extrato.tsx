@@ -276,6 +276,47 @@ function mergeLinhaComDraft(linha: LinhaDetalhe, draft: DraftAcao[] | undefined)
     };
 }
 
+/** Remove só o lançamento indicado do rascunho da linha; residual das demais ações fica intacto. */
+function removerLancamentoDoRascunho(
+    prev: Record<number, DraftAcao[]>,
+    linhaId: number,
+    lancamentoId: number,
+): Record<number, DraftAcao[]> {
+    const acoes = prev[linhaId];
+    if (!acoes) return prev;
+
+    const novas: DraftAcao[] = [];
+    for (const acao of acoes) {
+        if (acao.tipo !== "vincular") {
+            novas.push(acao);
+            continue;
+        }
+        const itens = acao.draft.itens.filter((i) => i.lancamento_id !== lancamentoId);
+        if (itens.length === 0) continue;
+
+        const residual =
+            acao.draft.residual?.lancamentoOrigemId === lancamentoId ? null : acao.draft.residual;
+        novas.push({
+            tipo: "vincular",
+            draft: {
+                ...acao.draft,
+                itens,
+                residual,
+                payload: {
+                    ...acao.draft.payload,
+                    lancamentos: acao.draft.payload.lancamentos.filter((l) => l.lancamento_id !== lancamentoId),
+                },
+            },
+        });
+    }
+
+    if (novas.length === 0) {
+        const {[linhaId]: _drop, ...resto} = prev;
+        return resto;
+    }
+    return {...prev, [linhaId]: novas};
+}
+
 /**
  * Card de lançamento (coluna direita): Desconto / Juros-Multa editáveis (RN-G7).
  * Residual parcial: vencimento = origem, **não editável** (Decisão nº 3).
@@ -600,7 +641,11 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     } | null>(null);
     const [ignorarLinhaId, setIgnorarLinhaId] = useState<number | null>(null);
     const [reverterLinhaId, setReverterLinhaId] = useState<number | null>(null);
-    const [desfazerLinhaId, setDesfazerLinhaId] = useState<number | null>(null);
+    const [desfazerAlvo, setDesfazerAlvo] = useState<{
+        linhaId: number;
+        lancamentoId: number;
+        isLocal: boolean;
+    } | null>(null);
     const [finalizarOpen, setFinalizarOpen] = useState(false);
     const [editarLancamentoId, setEditarLancamentoId] = useState<number | null>(null);
 
@@ -1007,25 +1052,38 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                 descarta o rascunho. Se já há vínculo real (de um Save anterior), 
                 rascunha um "desfazer" para reverter no Salvar. */}
             <ConfirmDialog
-                open={desfazerLinhaId != null}
-                title="Desfazer vínculos?"
-                description="Os lançamentos vinculados voltarão ao status anterior e a linha do extrato ficará pendente novamente."
-                confirmLabel="Desfazer vínculos"
+                open={desfazerAlvo != null}
+                title={desfazerAlvo?.isLocal ? "Remover este vínculo?" : "Desfazer vínculos?"}
+                description={
+                    desfazerAlvo?.isLocal
+                        ? "Apenas este lançamento será desvinculado desta linha. Os demais vínculos e o residual dos outros lançamentos permanecem."
+                        : "Os lançamentos vinculados voltarão ao status anterior e a linha do extrato ficará pendente novamente."
+                }
+                confirmLabel={desfazerAlvo?.isLocal ? "Remover vínculo" : "Desfazer vínculos"}
                 variant="destructive"
                 icon={Unlink}
-                onCancel={() => setDesfazerLinhaId(null)}
+                onCancel={() => setDesfazerAlvo(null)}
                 onConfirm={() => {
-                    if (desfazerLinhaId == null) return;
-                    const linhaId = desfazerLinhaId;
-                    const linhaServidor = linhas.find((l) => l.linha_id === linhaId);
+                    if (desfazerAlvo == null) return;
+                    const alvo = desfazerAlvo;
+                    if (alvo.isLocal) {
+                        setDraftsPorLinha((prev) => removerLancamentoDoRascunho(prev, alvo.linhaId, alvo.lancamentoId));
+                        setDesfazerAlvo(null);
+                        toast({
+                            title: "Vínculo removido (rascunho)",
+                            description: "Ainda não foi salvo - clique em Salvar/Conciliar para confirmar.",
+                        });
+                        return;
+                    }
+                    const linhaServidor = linhas.find((l) => l.linha_id === alvo.linhaId);
                     setDraftsPorLinha((prev) => {
                         if (linhaServidor?.status === "vinculado") {
-                            return {...prev, [linhaId]: [{tipo: "desfazer"}]};
+                            return {...prev, [alvo.linhaId]: [{tipo: "desfazer"}]};
                         }
-                        const {[linhaId]: _removido, ...resto} = prev;
+                        const {[alvo.linhaId]: _removido, ...resto} = prev;
                         return resto;
                     });
-                    setDesfazerLinhaId(null);
+                    setDesfazerAlvo(null);
                     toast({
                         title: "Vínculos removidos (rascunho)",
                         description: "Ainda não foi salvo - clique em Salvar/Conciliar para confirmar.",
@@ -1340,7 +1398,11 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                                 canEditarLancamento={canEditarLancamento}
                                                                 canDesfazer={canDesfazer}
                                                                 onEditarLancamento={() => setEditarLancamentoId(v.lancamento_id)}
-                                                                onRemoverVinculo={() => setDesfazerLinhaId(linha.linha_id)}
+                                                                onRemoverVinculo={() => setDesfazerAlvo({
+                                                                    linhaId: linha.linha_id,
+                                                                    lancamentoId: v.lancamento_id,
+                                                                    isLocal: Boolean(v._local),
+                                                                })}
                                                             />
                                                         ))}
                                                     </ul>

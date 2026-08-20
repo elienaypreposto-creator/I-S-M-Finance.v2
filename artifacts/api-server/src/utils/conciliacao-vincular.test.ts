@@ -141,7 +141,7 @@ describe("decidirVincular - T1–T7 (auditoria)", () => {
         );
     });
 
-    it("T3b: Modo B passo 2+ com flag NÃO cria residual (quitacaoMultiLinha)", () => {
+    it("T3b: Modo B passo 2+ com flag gera residual do saldo já decrescido", () => {
         const d = decidirVincular({
             extratoCents: toCents(1000),
             lancamentos: [
@@ -159,8 +159,37 @@ describe("decidirVincular - T1–T7 (auditoria)", () => {
         if (!d.ok) return;
         assert.equal(d.quitacaoMultiLinha, true);
         assert.equal(d.ramo, "falta");
-        assert.equal(d.residual, null);
+        assert.ok(d.residual);
+        assert.equal(d.residual!.valorCents, toCents(2000));
         assert.equal(d.itens[0]!.valorQuitadoNesteVinculoCents, 100000);
+    });
+
+    it("T3b2: Modo B 12000+15000 sobre 200000 gera dois residuais decrescentes (188000 e 173000)", () => {
+        const titulo = toCents(200000);
+        const d1 = decidirVincular({
+            extratoCents: toCents(12000),
+            lancamentos: [{lancamento_id: 1, valorCents: titulo, descontoCents: 0, jurosMultaCents: 0}],
+            gerarParcial: true,
+        });
+        assert.equal(d1.ok, true);
+        if (!d1.ok) return;
+        assert.equal(d1.residual!.valorCents, toCents(188000));
+
+        const d2 = decidirVincular({
+            extratoCents: toCents(15000),
+            lancamentos: [{
+                lancamento_id: 1,
+                valorCents: titulo,
+                descontoCents: 0,
+                jurosMultaCents: 0,
+                quitadoAnteriorCents: toCents(12000),
+            }],
+            gerarParcial: true,
+        });
+        assert.equal(d2.ok, true);
+        if (!d2.ok) return;
+        assert.equal(d2.residual!.valorCents, toCents(173000));
+        assert.notEqual(d1.residual!.valorCents, d2.residual!.valorCents);
     });
 
     it("T3c: Modo B 5º vínculo -> Δ=+1000 juros, nunca residual mesmo com flag", () => {
