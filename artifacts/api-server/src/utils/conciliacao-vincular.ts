@@ -9,9 +9,8 @@
  *
  * >0 gap (sem juros explícitos, N>1) -> "Falta cobrir extrato"; juros só com alocação explícita
  *      (ou 1:1 inequívoco no endpoint); <0 FALTA -> residual opcional; =0 EXATO.
- * Residual no Modo B: a falta após ESTE vínculo (título − quitadoAnterior −
- * linha). Quem decide se materializa agora ou só no último vínculo do lote
- * é o POST /salvar (look-ahead). Sem gerarParcial, a falta fica no título.
+ * Residual NÃO é oferecido quando o título já está em quitação multi-linha
+ * (quitadoAnterior > 0) - evita fantasma no meio do Modo B.
  */
 
 import {diferencaConciliacaoCents, sumCents} from "./money.js";
@@ -153,14 +152,15 @@ function decidirModoBUmLancamento(input: VincularDecisionInput): VincularDecisio
 
     if (deltaCents < 0) {
         const faltaCents = -deltaCents;
-        // Residual = falta DEPOIS deste vínculo (escopo da linha + quitado anterior).
-        // No meio do Modo B o POST /salvar adia a materialização
-        // para o último vínculo do mesmo título no lote - aqui só calculamos.
-        const residual = gerarParcial
+        // Residual = falta DEPOIS deste vínculo (título − quitado anterior − linha).
+        // Cada requisição do Modo B gera o seu residual com o saldo já decrescido;
+        // não se agrupa num único título “fundido” das outras linhas.
+        const podeResidual = gerarParcial;
+        const residual = podeResidual
             ? {origemLancamentoId: l.lancamento_id, valorCents: faltaCents}
             : null;
 
-        if (gerarParcial && base < faltaCents) {
+        if (podeResidual && base < faltaCents) {
             return {
                 ok: false,
                 status: 400,
@@ -455,24 +455,6 @@ export function statusAbertoPorVencimento(
             ? vencimento.slice(0, 10)
             : vencimento.toISOString().slice(0, 10);
     return vencIso < hojeIso ? "atrasado" : "pendente";
-}
-
-const STATUS_CICLO_FECHADO = new Set(["pago", "recebido", "pago_parcial", "cancelado"]);
-
-/**
- * Status na CRIAÇÃO de um lançamento. Se o vencimento já passou, o título
- * aberto nasce `atrasado` - mesmo que o cliente tenha enviado `pendente`.
- * Quitação/cancelamento explícitos não são sobrescritos.
- */
-export function statusNaCriacao(
-    vencimento: string | Date | null | undefined,
-    hojeIso: string,
-    statusSolicitado?: string | null,
-): "pendente" | "atrasado" | "pago" | "recebido" | "pago_parcial" | "cancelado" {
-    if (statusSolicitado && STATUS_CICLO_FECHADO.has(statusSolicitado)) {
-        return statusSolicitado as "pago" | "recebido" | "pago_parcial" | "cancelado";
-    }
-    return statusAbertoPorVencimento(vencimento, hojeIso);
 }
 
 const STATUS_QUITACAO = new Set(["pago", "recebido", "pago_parcial"]);

@@ -210,11 +210,8 @@ function reaisFromCents(cents: number): number {
     return cents / 100;
 }
 
-function somaItensLocaisCents(rounds: DraftVincular[]): number {
-    return rounds.reduce(
-        (acc, r) => acc + r.itens.reduce((s, i) => s + centsFromReais(i.valor_vinculado), 0),
-        0,
-    );
+function somaRoundsNovoCents(rounds: DraftVincular[], realBaseCents: number): number {
+    return rounds.reduce((acc, r) => acc + Math.round(r.totalConciliado * 100) - realBaseCents, 0);
 }
 
 function mergeLinhaComDraft(linha: LinhaDetalhe, draft: DraftAcao[] | undefined): LinhaEfetiva {
@@ -241,7 +238,7 @@ function mergeLinhaComDraft(linha: LinhaDetalhe, draft: DraftAcao[] | undefined)
 
     const extratoTotalCents = centsFromReais(linha.valor);
     const realBaseCents = resetaBaseReal ? 0 : centsFromReais(linha.valor_vinculado_total);
-    const localNovoCents = somaItensLocaisCents(rounds);
+    const localNovoCents = somaRoundsNovoCents(rounds, realBaseCents);
     const totalEfetivoCents = realBaseCents + localNovoCents;
     const saldoEfetivoCents = Math.max(0, extratoTotalCents - totalEfetivoCents);
 
@@ -279,17 +276,14 @@ function mergeLinhaComDraft(linha: LinhaDetalhe, draft: DraftAcao[] | undefined)
     };
 }
 
-/** Remove UM lançamento do rascunho da linha - as demais rodadas/itens ficam. */
+/** Remove só o lançamento indicado do rascunho da linha; residual das demais ações fica intacto. */
 function removerLancamentoDoRascunho(
     prev: Record<number, DraftAcao[]>,
     linhaId: number,
     lancamentoId: number,
 ): Record<number, DraftAcao[]> {
     const acoes = prev[linhaId];
-    if (!acoes || acoes.length === 0) {
-        const {[linhaId]: _drop, ...resto} = prev;
-        return resto;
-    }
+    if (!acoes) return prev;
 
     const novas: DraftAcao[] = [];
     for (const acao of acoes) {
@@ -311,8 +305,6 @@ function removerLancamentoDoRascunho(
                 payload: {
                     ...acao.draft.payload,
                     lancamentos: acao.draft.payload.lancamentos.filter((l) => l.lancamento_id !== lancamentoId),
-                    gerar_parcial: residual != null,
-                    residuo_lancamento_id: residual ? acao.draft.payload.residuo_lancamento_id : undefined,
                 },
             },
         });
@@ -652,7 +644,6 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     const [desfazerAlvo, setDesfazerAlvo] = useState<{
         linhaId: number;
         lancamentoId: number;
-        vinculoId?: number;
         isLocal: boolean;
     } | null>(null);
     const [finalizarOpen, setFinalizarOpen] = useState(false);
@@ -972,29 +963,8 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                     onClose={() => setVincularLinha(null)}
                     onDraftVincular={(draft) => {
                         setDraftsPorLinha((prev) => {
-                            const ids = new Set(draft.itens.map((i) => i.lancamento_id));
-                            const next: Record<number, DraftAcao[]> = {};
-                            for (const [linhaIdStr, acoes] of Object.entries(prev)) {
-                                const linhaId = Number(linhaIdStr);
-                                if (linhaId === draft.linhaId) {
-                                    next[linhaId] = acoes;
-                                    continue;
-                                }
-                                next[linhaId] = acoes.map((acao) => {
-                                    if (acao.tipo !== "vincular") return acao;
-                                    if (!acao.draft.itens.some((i) => ids.has(i.lancamento_id))) return acao;
-                                    return {
-                                        ...acao,
-                                        draft: {
-                                            ...acao.draft,
-                                            residual: null,
-                                            payload: {...acao.draft.payload, gerar_parcial: false},
-                                        },
-                                    };
-                                });
-                            }
-                            const atual = next[draft.linhaId] ?? [];
-                            return {...next, [draft.linhaId]: [...atual, {tipo: "vincular", draft}]};
+                            const atual = prev[draft.linhaId] ?? [];
+                            return {...prev, [draft.linhaId]: [...atual, {tipo: "vincular", draft}]};
                         });
                     }}
                 />
@@ -1077,13 +1047,19 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                 }}
             />
 
-            {/* Remove UM lançamento da linha (rascunho local ou vínculo já persistido).
-                Não desfaz os demais da mesma linha. */}
+            {/* se os vínculos atuais são só rascunho local
+                (linha ainda "pendente" de fato no banco), desfazer apenas
+                descarta o rascunho. Se já há vínculo real (de um Save anterior), 
+                rascunha um "desfazer" para reverter no Salvar. */}
             <ConfirmDialog
                 open={desfazerAlvo != null}
-                title="Remover este vínculo?"
-                description="Apenas este lançamento será desvinculado desta linha. Os demais vínculos permanecem."
-                confirmLabel="Remover vínculo"
+                title={desfazerAlvo?.isLocal ? "Remover este vínculo?" : "Desfazer vínculos?"}
+                description={
+                    desfazerAlvo?.isLocal
+                        ? "Apenas este lançamento será desvinculado desta linha. Os demais vínculos e o residual dos outros lançamentos permanecem."
+                        : "Os lançamentos vinculados voltarão ao status anterior e a linha do extrato ficará pendente novamente."
+                }
+                confirmLabel={desfazerAlvo?.isLocal ? "Remover vínculo" : "Desfazer vínculos"}
                 variant="destructive"
                 icon={Unlink}
                 onCancel={() => setDesfazerAlvo(null)}
@@ -1099,32 +1075,19 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                         });
                         return;
                     }
-                    if (!alvo.vinculoId) {
-                        setDesfazerAlvo(null);
-                        toast({
-                            variant: "destructive",
-                            title: "Não foi possível remover",
-                            description: "Este vínculo ainda não tem identificador individual.",
-                        });
-                        return;
-                    }
-                    void fetchApiData(`/conciliacoes/vinculos/${alvo.vinculoId}`, {method: "DELETE"})
-                        .then(() => {
-                            void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
-                            setDraftsPorLinha((prev) => removerLancamentoDoRascunho(prev, alvo.linhaId, alvo.lancamentoId));
-                            toast({
-                                title: "Vínculo removido",
-                                description: "Somente este lançamento foi desvinculado."
-                            });
-                        })
-                        .catch((e: unknown) => {
-                            toast({
-                                variant: "destructive",
-                                title: "Não foi possível remover o vínculo",
-                                description: e instanceof Error ? e.message : String(e),
-                            });
-                        })
-                        .finally(() => setDesfazerAlvo(null));
+                    const linhaServidor = linhas.find((l) => l.linha_id === alvo.linhaId);
+                    setDraftsPorLinha((prev) => {
+                        if (linhaServidor?.status === "vinculado") {
+                            return {...prev, [alvo.linhaId]: [{tipo: "desfazer"}]};
+                        }
+                        const {[alvo.linhaId]: _removido, ...resto} = prev;
+                        return resto;
+                    });
+                    setDesfazerAlvo(null);
+                    toast({
+                        title: "Vínculos removidos (rascunho)",
+                        description: "Ainda não foi salvo - clique em Salvar/Conciliar para confirmar.",
+                    });
                 }}
             />
 
@@ -1438,7 +1401,6 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                                 onRemoverVinculo={() => setDesfazerAlvo({
                                                                     linhaId: linha.linha_id,
                                                                     lancamentoId: v.lancamento_id,
-                                                                    vinculoId: v.vinculo_id,
                                                                     isLocal: Boolean(v._local),
                                                                 })}
                                                             />

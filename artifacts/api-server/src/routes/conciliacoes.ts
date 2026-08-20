@@ -2,7 +2,7 @@ import {createHash} from "crypto";
 import {Router} from "express";
 import {z} from "zod";
 import multer from "multer";
-import {and, asc, count, desc, eq, gte, ilike, inArray, isNull, lt, lte, ne, notInArray, or, sql} from "drizzle-orm";
+import {and, asc, count, desc, eq, gte, ilike, inArray, isNull, lt, lte, notInArray, or, sql} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {
     conciliacoesTable,
@@ -30,7 +30,6 @@ import {
     statusAbertoPorVencimento,
     statusAposDesfazerVinculo,
     statusAposQuitacao,
-    statusNaCriacao,
 } from "../utils/conciliacao-vincular";
 import {hashLinhaExtrato} from "../utils/extrato-hash";
 import {encontrarRegraParaLinha, type RegraParaMatch} from "../utils/regras-match";
@@ -138,7 +137,7 @@ function formatDateBr(iso: string): string {
 /**
  * Monta a descrição do lançamento residual gerado após pagamento parcial, no
  * padrão "Parcela Residual conciliação: {descrição do lançamento de origem}
- * R$ {valor} {data}," - deixando explícito de qual lançamento este residual
+ * R$ {valor} {data}," — deixando explícito de qual lançamento este residual
  * foi clonado.
  */
 function descreverResiduoParcial(params: {
@@ -508,7 +507,7 @@ router.get("/conciliacoes", withPermission(PERM.CONCILIACAO_ACESSAR), async (req
     }
 });
 
-/** Exclui extrato + conciliação ainda não finalizada (lista principal - lixeira). */
+/** Exclui extrato + conciliação ainda não finalizada (lista principal — lixeira). */
 router.delete(
     "/conciliacoes/:extrato_id",
     withPermission(PERM.CONCILIACAO_IMPORTAR),
@@ -1552,9 +1551,12 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
                     ),
                 )
             : [];
-        const residuoGeradoPorOrigemId = new Map(
-            residuosGerados.map((r) => [r.lancamento_origem_id, r]),
-        );
+        const residuosPorOrigem = new Map<number | null, typeof residuosGerados>();
+        for (const r of residuosGerados) {
+            const lista = residuosPorOrigem.get(r.lancamento_origem_id) ?? [];
+            lista.push(r);
+            residuosPorOrigem.set(r.lancamento_origem_id, lista);
+        }
 
         const linhasDetalhadas = linhas.map((linha) => ({
             linha_id: linha.linha_id,
@@ -1587,29 +1589,32 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
                     /** @deprecated alias - usar juros_multa */
                     acrescimo: toDecimal(v.juros_multa),
                     vencimento: v.lancamento_vencimento,
-                    // Card 76: enquanto não finalizar, o residual é só uma promessa -
-                    // ainda não existe como lançamento em lancamentosTable.
-                    residuo_pendente: v.eh_origem_residuo
-                        ? {valor: toDecimal(v.residuo_valor_pendente ?? "0")}
-                        : null,
-                    // Card 76 (follow-up): residual JÁ criado (pós-Salvar) a
-                    // partir deste título - somente leitura, não é uma vinculação
-                    // desta linha (o título novo ainda está pendente/em aberto).
-                    residuo_gerado: (() => {
-                        // Só a linha que originou o residual (eh_origem_residuo)
-                        // enxerga o título gerado - evita o "super residual"
-                        // aparecer nas outras linhas do Modo B.
-                        if (!v.eh_origem_residuo) return null;
-                        const r = residuoGeradoPorOrigemId.get(v.lancamento_id);
-                        return r
-                            ? {
-                                id: r.id,
-                                descricao: r.descricao,
-                                valor: toDecimal(r.valor),
-                                status: r.status,
-                                vencimento: r.vencimento,
-                            }
+                    residuo_pendente: (() => {
+                        const lista = residuosPorOrigem.get(v.lancamento_id) ?? [];
+                        const alvoCents = v.residuo_valor_pendente != null ? toCents(v.residuo_valor_pendente) : null;
+                        const jaGerado = alvoCents != null
+                            ? lista.some((x) => toCents(x.valor) === alvoCents)
+                            : lista.length === 1;
+                        if (jaGerado) return null;
+                        return v.eh_origem_residuo
+                            ? {valor: toDecimal(v.residuo_valor_pendente ?? "0")}
                             : null;
+                    })(),
+                    residuo_gerado: (() => {
+                        const lista = residuosPorOrigem.get(v.lancamento_id) ?? [];
+                        if (lista.length === 0) return null;
+                        const alvoCents = v.residuo_valor_pendente != null ? toCents(v.residuo_valor_pendente) : null;
+                        const r = alvoCents != null
+                            ? (lista.find((x) => toCents(x.valor) === alvoCents) ?? (lista.length === 1 ? lista[0] : undefined))
+                            : (lista.length === 1 ? lista[0] : undefined);
+                        if (!r) return null;
+                        return {
+                            id: r.id,
+                            descricao: r.descricao,
+                            valor: toDecimal(r.valor),
+                            status: r.status,
+                            vencimento: r.vencimento,
+                        };
                     })(),
                 })),
         }));
@@ -1660,23 +1665,13 @@ async function validarIgnorar(executor: typeof db, linhaId: number) {
         .limit(1);
 
     if (!item) {
-        return {
-            ok: false as const,
-            status: 404,
-            code: "NOT_FOUND",
-            message: "Linha de extrato não encontrada para conciliação."
-        };
+        return {ok: false as const, status: 404, code: "NOT_FOUND", message: "Linha de extrato não encontrada para conciliação."};
     }
     if (item.status === "ignorado") {
         return {ok: false as const, status: 400, code: "VALIDATION_ERROR", message: "A linha já está ignorada."};
     }
     if (item.status === "vinculado") {
-        return {
-            ok: false as const,
-            status: 400,
-            code: "VALIDATION_ERROR",
-            message: "Desfaça o vínculo antes de ignorar."
-        };
+        return {ok: false as const, status: 400, code: "VALIDATION_ERROR", message: "Desfaça o vínculo antes de ignorar."};
     }
 
     const [conciliacao] = await executor
@@ -1769,7 +1764,6 @@ router.post(
         }
     },
 );
-
 /**
  * Lê e decide (regra de negócio pura, via decidirVincular) o resultado de um
  * vincular, SEM gravar nada. Reaproveitado tanto pelo preview (Regra de
@@ -1795,20 +1789,10 @@ async function calcularVinculo(
         .limit(1);
 
     if (!item) {
-        return {
-            ok: false as const,
-            status: 404,
-            code: "NOT_FOUND",
-            message: "Linha de extrato não encontrada para conciliação."
-        };
+        return {ok: false as const, status: 404, code: "NOT_FOUND", message: "Linha de extrato não encontrada para conciliação."};
     }
     if (item.status === "ignorado") {
-        return {
-            ok: false as const,
-            status: 400,
-            code: "VALIDATION_ERROR",
-            message: "Reverta o ignorar antes de vincular."
-        };
+        return {ok: false as const, status: 400, code: "VALIDATION_ERROR", message: "Reverta o ignorar antes de vincular."};
     }
 
     const vinculosExistentesReais = await executor
@@ -1874,12 +1858,7 @@ async function calcularVinculo(
         .where(inArray(lancamentosTable.id, idsNovos));
 
     if (lancamentos.length !== idsNovos.length) {
-        return {
-            ok: false as const,
-            status: 400,
-            code: "VALIDATION_ERROR",
-            message: "Um ou mais lançamentos informados são inválidos."
-        };
+        return {ok: false as const, status: 400, code: "VALIDATION_ERROR", message: "Um ou mais lançamentos informados são inválidos."};
     }
 
     const payloadMap = new Map(lancamentosPayload.map((l) => [l.lancamento_id, l]));
@@ -1955,100 +1934,50 @@ async function persistirVinculo(
         usuarioId?: number;
     },
 ) {
-    const {
-        item,
-        conciliacao,
-        lancamentoById,
-        decision,
-        extratoTotalCents,
-        totalConciliadoCents,
-        valorSaldoFinalCents
-    } = calc;
+    const {item, conciliacao, lancamentoById, decision, extratoTotalCents, totalConciliadoCents, valorSaldoFinalCents} = calc;
     const {linhaId, lancamentosPayload, gerarParcial, residuoLancamentoId, usuarioId} = params;
 
     let residuoCriado: { lancamento_id: number; valor: number } | null = null;
-    const origemResiduoId = decision.residual?.origemLancamentoId ?? null;
-
     if (decision.residual) {
         const origem = lancamentoById.get(decision.residual.origemLancamentoId);
         if (!origem) {
             throw new Error("Não foi possível identificar lançamento de origem para o residual.");
         }
-
-        const [residuoAberto] = await tx
-            .select({id: lancamentosTable.id})
-            .from(lancamentosTable)
-            .where(
-                and(
-                    eq(lancamentosTable.is_residuo_parcial, true),
-                    eq(lancamentosTable.lancamento_origem_id, origem.id),
-                    inArray(lancamentosTable.status, ["pendente", "atrasado"]),
-                ),
-            )
-            .limit(1);
-
-        const statusResiduo = statusNaCriacao(origem.vencimento, hojeIsoLocal());
-        const valorResiduo = centsToDecimalString(decision.residual.valorCents);
-
-        if (residuoAberto) {
-            await tx
-                .update(lancamentosTable)
-                .set({
-                    valor: valorResiduo,
-                    status: statusResiduo,
-                    descricao: descreverResiduoParcial({
-                        valorCents: decision.residual.valorCents,
-                        vencimento: origem.vencimento,
-                        descricaoOrigem: origem.descricao,
-                    }),
-                    updated_at: new Date(),
-                })
-                .where(eq(lancamentosTable.id, residuoAberto.id));
-            residuoCriado = {lancamento_id: residuoAberto.id, valor: fromCents(decision.residual.valorCents)};
-        } else {
-            const [novoResiduo] = await tx
-                .insert(lancamentosTable)
-                .values({
-                    tipo: origem.tipo,
+        const [novoResiduo] = await tx
+            .insert(lancamentosTable)
+            .values({
+                tipo: origem.tipo,
+                vencimento: origem.vencimento,
+                competencia: origem.competencia,
+                conta_id: origem.conta_id ?? conciliacao.conta_id,
+                parceiro_id: origem.parceiro_id,
+                descricao: descreverResiduoParcial({
+                    valorCents: decision.residual.valorCents,
                     vencimento: origem.vencimento,
-                    competencia: origem.competencia,
-                    conta_id: origem.conta_id ?? conciliacao.conta_id,
-                    parceiro_id: origem.parceiro_id,
-                    descricao: descreverResiduoParcial({
-                        valorCents: decision.residual.valorCents,
-                        vencimento: origem.vencimento,
-                        descricaoOrigem: origem.descricao,
-                    }),
-                    valor: valorResiduo,
-                    status: statusResiduo,
-                    origem: "residuo_parcial",
-                    plano_conta_id: origem.plano_conta_id,
-                    departamento_id: origem.departamento_id,
-                    centro_custo_id: origem.centro_custo_id,
-                    parcela_atual: origem.parcela_atual,
-                    total_parcelas: origem.total_parcelas,
-                    riscos: origem.riscos ?? [],
-                    forma_pagamento: origem.forma_pagamento,
-                    dados_pagamento: origem.dados_pagamento,
-                    is_residuo_parcial: true,
-                    lancamento_origem_id: origem.id,
-                    criado_por: usuarioId,
-                })
-                .returning();
-            residuoCriado = {lancamento_id: novoResiduo.id, valor: fromCents(decision.residual.valorCents)};
-        }
-
-        // Residual pertence só a ESTA linha. Demais vínculos do mesmo título
-        // (Modo B) não devem exibir o mesmo residual "fundido".
-        await tx
-            .update(itensConciliacaoLancamentosTable)
-            .set({eh_origem_residuo: false, residuo_valor_pendente: null, updated_at: new Date()})
-            .where(
-                and(
-                    eq(itensConciliacaoLancamentosTable.lancamento_id, origem.id),
-                    ne(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id),
-                ),
-            );
+                    descricaoOrigem: origem.descricao,
+                }),
+                valor: centsToDecimalString(decision.residual.valorCents),
+                // Residual é saldo em aberto: só pendente ou atrasado — nunca
+                // herda pago_parcial do título de origem.
+                status: statusAbertoPorVencimento(origem.vencimento, hojeIsoLocal()),
+                origem: "residuo_parcial",
+                plano_conta_id: origem.plano_conta_id,
+                departamento_id: origem.departamento_id,
+                centro_custo_id: origem.centro_custo_id,
+                parcela_atual: origem.parcela_atual,
+                total_parcelas: origem.total_parcelas,
+                riscos: origem.riscos ?? [],
+                // Clona forma de pagamento do título de origem - sem isso o
+                // residual nascia sem PIX/TED/Boleto (campo obrigatório em
+                // telas que dependem dele, ex. baixa manual do residual).
+                forma_pagamento: origem.forma_pagamento,
+                dados_pagamento: origem.dados_pagamento,
+                is_residuo_parcial: true,
+                lancamento_origem_id: origem.id,
+                criado_por: usuarioId,
+            })
+            .returning();
+        residuoCriado = {lancamento_id: novoResiduo.id, valor: fromCents(decision.residual.valorCents)};
     }
 
     await tx.insert(itensConciliacaoLancamentosTable).values(
@@ -2058,9 +1987,11 @@ async function persistirVinculo(
             valor_vinculado: centsToDecimalString(v.valorVinculadoCents),
             desconto: centsToDecimalString(v.descontoCents),
             juros_multa: centsToDecimalString(v.jurosMultaCents),
-            eh_origem_residuo: origemResiduoId != null && v.lancamento_id === origemResiduoId,
+            eh_origem_residuo: Boolean(
+                decision.residual && v.lancamento_id === decision.residual.origemLancamentoId,
+            ),
             residuo_valor_pendente:
-                origemResiduoId != null && v.lancamento_id === origemResiduoId && decision.residual
+                decision.residual && v.lancamento_id === decision.residual.origemLancamentoId
                     ? centsToDecimalString(decision.residual.valorCents)
                     : null,
         })),
@@ -2511,328 +2442,325 @@ async function contarPendentes(executor: typeof db, conciliacaoId: number): Prom
  * e evita perder qualquer residual de uma conciliação criada antes deste
  * deploy). Só chamar depois de confirmar que não há linhas pendentes.
  */
-async function persistirFinalizacao(tx: any, conciliacao: {
-    id: number;
-    conta_id: number | null
-}, extratoId: number, usuarioId?: number) {
+async function persistirFinalizacao(tx: any, conciliacao: { id: number; conta_id: number | null }, extratoId: number, usuarioId?: number) {
     const dataConciliacao = hojeIsoLocal();
 
-    await tx
-        .update(extratosTable)
-        .set({status: "conciliado", updated_at: new Date()})
-        .where(eq(extratosTable.id, extratoId));
+                await tx
+                    .update(extratosTable)
+                    .set({status: "conciliado", updated_at: new Date()})
+                    .where(eq(extratosTable.id, extratoId));
 
-    await tx
-        .update(conciliacoesTable)
-        .set({
-            status: "conciliado",
-            data_conciliacao: dataConciliacao,
-            updated_at: new Date(),
-        })
-        .where(eq(conciliacoesTable.id, conciliacao.id));
+                await tx
+                    .update(conciliacoesTable)
+                    .set({
+                        status: "conciliado",
+                        data_conciliacao: dataConciliacao,
+                        updated_at: new Date(),
+                    })
+                    .where(eq(conciliacoesTable.id, conciliacao.id));
 
-    // Espelha data nos itens ainda sem data (FEAT-08)
-    await tx
-        .update(itensConciliacaoTable)
-        .set({data_conciliacao: dataConciliacao, updated_at: new Date()})
-        .where(
-            and(
-                eq(itensConciliacaoTable.conciliacao_id, conciliacao.id),
-                isNull(itensConciliacaoTable.data_conciliacao),
-            ),
-        );
+                // Espelha data nos itens ainda sem data (FEAT-08)
+                await tx
+                    .update(itensConciliacaoTable)
+                    .set({data_conciliacao: dataConciliacao, updated_at: new Date()})
+                    .where(
+                        and(
+                            eq(itensConciliacaoTable.conciliacao_id, conciliacao.id),
+                            isNull(itensConciliacaoTable.data_conciliacao),
+                        ),
+                    );
 
-    // agrega a auxiliar N:N e grava no título
-    // (valor_quitado / juros / desconto / conta_id / status / data_quitacao).
-    const vinculosFinalizar = await tx
-        .select({
-            lancamento_id: itensConciliacaoLancamentosTable.lancamento_id,
-            valor_vinculado: itensConciliacaoLancamentosTable.valor_vinculado,
-            juros_multa: itensConciliacaoLancamentosTable.juros_multa,
-            desconto_vinculo: itensConciliacaoLancamentosTable.desconto,
-            data_movimento: extratoLinhasTable.data_movimento,
-            data_compensacao: extratoLinhasTable.data_compensacao,
-            tipo: lancamentosTable.tipo,
-            valor: lancamentosTable.valor,
-            valor_quitado: lancamentosTable.valor_quitado,
-            juros: lancamentosTable.juros,
-            desconto: lancamentosTable.desconto,
-            data_quitacao: lancamentosTable.data_quitacao,
-        })
-        .from(itensConciliacaoLancamentosTable)
-        .innerJoin(
-            itensConciliacaoTable,
-            eq(
-                itensConciliacaoLancamentosTable.item_conciliacao_id,
-                itensConciliacaoTable.id,
-            ),
-        )
-        .innerJoin(
-            extratoLinhasTable,
-            eq(itensConciliacaoTable.extrato_linha_id, extratoLinhasTable.id),
-        )
-        .innerJoin(
-            lancamentosTable,
-            eq(itensConciliacaoLancamentosTable.lancamento_id, lancamentosTable.id),
-        )
-        .where(
-            and(
-                eq(itensConciliacaoTable.conciliacao_id, conciliacao.id),
-                eq(itensConciliacaoTable.status, "vinculado"),
-            ),
-        );
+                // agrega a auxiliar N:N e grava no título
+                // (valor_quitado / juros / desconto / conta_id / status / data_quitacao).
+                const vinculosFinalizar = await tx
+                    .select({
+                        lancamento_id: itensConciliacaoLancamentosTable.lancamento_id,
+                        valor_vinculado: itensConciliacaoLancamentosTable.valor_vinculado,
+                        juros_multa: itensConciliacaoLancamentosTable.juros_multa,
+                        desconto_vinculo: itensConciliacaoLancamentosTable.desconto,
+                        data_movimento: extratoLinhasTable.data_movimento,
+                        data_compensacao: extratoLinhasTable.data_compensacao,
+                        tipo: lancamentosTable.tipo,
+                        valor: lancamentosTable.valor,
+                        valor_quitado: lancamentosTable.valor_quitado,
+                        juros: lancamentosTable.juros,
+                        desconto: lancamentosTable.desconto,
+                        data_quitacao: lancamentosTable.data_quitacao,
+                    })
+                    .from(itensConciliacaoLancamentosTable)
+                    .innerJoin(
+                        itensConciliacaoTable,
+                        eq(
+                            itensConciliacaoLancamentosTable.item_conciliacao_id,
+                            itensConciliacaoTable.id,
+                        ),
+                    )
+                    .innerJoin(
+                        extratoLinhasTable,
+                        eq(itensConciliacaoTable.extrato_linha_id, extratoLinhasTable.id),
+                    )
+                    .innerJoin(
+                        lancamentosTable,
+                        eq(itensConciliacaoLancamentosTable.lancamento_id, lancamentosTable.id),
+                    )
+                    .where(
+                        and(
+                            eq(itensConciliacaoTable.conciliacao_id, conciliacao.id),
+                            eq(itensConciliacaoTable.status, "vinculado"),
+                        ),
+                    );
 
-    type AggQuitacao = {
-        tipo: string;
-        valor: unknown;
-        valor_quitado_atual: unknown;
-        juros_atual: unknown;
-        desconto_atual: unknown;
-        data_quitacao: unknown;
-        sumVinculadoCents: number;
-        sumJurosCents: number;
-        sumDescontoCents: number;
-        data_movimento_candidatas: string[];
-    };
-    const porLancamento = new Map<number, AggQuitacao>();
+                type AggQuitacao = {
+                    tipo: string;
+                    valor: unknown;
+                    valor_quitado_atual: unknown;
+                    juros_atual: unknown;
+                    desconto_atual: unknown;
+                    data_quitacao: unknown;
+                    sumVinculadoCents: number;
+                    sumJurosCents: number;
+                    sumDescontoCents: number;
+                    data_movimento_candidatas: string[];
+                };
+                const porLancamento = new Map<number, AggQuitacao>();
 
-    for (const row of vinculosFinalizar) {
-        const dataLinha =
-            toDateIso(row.data_movimento) ??
-            toDateIso(row.data_compensacao) ??
-            dataConciliacao;
-        const existente = porLancamento.get(row.lancamento_id);
-        if (!existente) {
-            porLancamento.set(row.lancamento_id, {
-                tipo: row.tipo,
-                valor: row.valor,
-                valor_quitado_atual: row.valor_quitado,
-                juros_atual: row.juros,
-                desconto_atual: row.desconto,
-                data_quitacao: row.data_quitacao,
-                sumVinculadoCents: toCents(row.valor_vinculado),
-                sumJurosCents: toCents(row.juros_multa),
-                sumDescontoCents: toCents(row.desconto_vinculo),
-                data_movimento_candidatas: [dataLinha],
-            });
-        } else {
-            existente.sumVinculadoCents += toCents(row.valor_vinculado);
-            existente.sumJurosCents += toCents(row.juros_multa);
-            existente.sumDescontoCents += toCents(row.desconto_vinculo);
-            existente.data_movimento_candidatas.push(dataLinha);
-        }
-    }
+                for (const row of vinculosFinalizar) {
+                    const dataLinha =
+                        toDateIso(row.data_movimento) ??
+                        toDateIso(row.data_compensacao) ??
+                        dataConciliacao;
+                    const existente = porLancamento.get(row.lancamento_id);
+                    if (!existente) {
+                        porLancamento.set(row.lancamento_id, {
+                            tipo: row.tipo,
+                            valor: row.valor,
+                            valor_quitado_atual: row.valor_quitado,
+                            juros_atual: row.juros,
+                            desconto_atual: row.desconto,
+                            data_quitacao: row.data_quitacao,
+                            sumVinculadoCents: toCents(row.valor_vinculado),
+                            sumJurosCents: toCents(row.juros_multa),
+                            sumDescontoCents: toCents(row.desconto_vinculo),
+                            data_movimento_candidatas: [dataLinha],
+                        });
+                    } else {
+                        existente.sumVinculadoCents += toCents(row.valor_vinculado);
+                        existente.sumJurosCents += toCents(row.juros_multa);
+                        existente.sumDescontoCents += toCents(row.desconto_vinculo);
+                        existente.data_movimento_candidatas.push(dataLinha);
+                    }
+                }
 
-    const lancamentoIdsFinalizar = [...porLancamento.keys()];
-    type SomaVinculos = {
-        vinculadoCents: number;
-        jurosCents: number;
-        descontoCents: number;
-    };
-    const somasFinalizados = new Map<number, SomaVinculos>();
-    const somasRascunhos = new Map<number, SomaVinculos>();
+                const lancamentoIdsFinalizar = [...porLancamento.keys()];
+                type SomaVinculos = {
+                    vinculadoCents: number;
+                    jurosCents: number;
+                    descontoCents: number;
+                };
+                const somasFinalizados = new Map<number, SomaVinculos>();
+                const somasRascunhos = new Map<number, SomaVinculos>();
 
-    if (lancamentoIdsFinalizar.length > 0) {
-        const vinculosLedger = await tx
-            .select({
-                lancamento_id: itensConciliacaoLancamentosTable.lancamento_id,
-                valor_vinculado: itensConciliacaoLancamentosTable.valor_vinculado,
-                juros_multa: itensConciliacaoLancamentosTable.juros_multa,
-                desconto: itensConciliacaoLancamentosTable.desconto,
-                conciliacao_id: conciliacoesTable.id,
-                conciliacao_status: conciliacoesTable.status,
-            })
-            .from(itensConciliacaoLancamentosTable)
-            .innerJoin(
-                itensConciliacaoTable,
-                eq(
-                    itensConciliacaoLancamentosTable.item_conciliacao_id,
-                    itensConciliacaoTable.id,
-                ),
-            )
-            .innerJoin(
-                conciliacoesTable,
-                eq(itensConciliacaoTable.conciliacao_id, conciliacoesTable.id),
-            )
-            .where(
-                inArray(
-                    itensConciliacaoLancamentosTable.lancamento_id,
-                    lancamentoIdsFinalizar,
-                ),
-            );
+                if (lancamentoIdsFinalizar.length > 0) {
+                    const vinculosLedger = await tx
+                        .select({
+                            lancamento_id: itensConciliacaoLancamentosTable.lancamento_id,
+                            valor_vinculado: itensConciliacaoLancamentosTable.valor_vinculado,
+                            juros_multa: itensConciliacaoLancamentosTable.juros_multa,
+                            desconto: itensConciliacaoLancamentosTable.desconto,
+                            conciliacao_id: conciliacoesTable.id,
+                            conciliacao_status: conciliacoesTable.status,
+                        })
+                        .from(itensConciliacaoLancamentosTable)
+                        .innerJoin(
+                            itensConciliacaoTable,
+                            eq(
+                                itensConciliacaoLancamentosTable.item_conciliacao_id,
+                                itensConciliacaoTable.id,
+                            ),
+                        )
+                        .innerJoin(
+                            conciliacoesTable,
+                            eq(itensConciliacaoTable.conciliacao_id, conciliacoesTable.id),
+                        )
+                        .where(
+                            inArray(
+                                itensConciliacaoLancamentosTable.lancamento_id,
+                                lancamentoIdsFinalizar,
+                            ),
+                        );
 
-        const acc = (map: Map<number, SomaVinculos>, id: number, v: SomaVinculos) => {
-            const prev = map.get(id) ?? {vinculadoCents: 0, jurosCents: 0, descontoCents: 0};
-            map.set(id, {
-                vinculadoCents: prev.vinculadoCents + v.vinculadoCents,
-                jurosCents: prev.jurosCents + v.jurosCents,
-                descontoCents: prev.descontoCents + v.descontoCents,
-            });
-        };
+                    const acc = (map: Map<number, SomaVinculos>, id: number, v: SomaVinculos) => {
+                        const prev = map.get(id) ?? {vinculadoCents: 0, jurosCents: 0, descontoCents: 0};
+                        map.set(id, {
+                            vinculadoCents: prev.vinculadoCents + v.vinculadoCents,
+                            jurosCents: prev.jurosCents + v.jurosCents,
+                            descontoCents: prev.descontoCents + v.descontoCents,
+                        });
+                    };
 
-        for (const row of vinculosLedger) {
-            // Esta conciliação entra via sumDesta (porLancamento), não nos mapas.
-            // (Status já pode estar "conciliado" neste ponto da transaction.)
-            if (row.conciliacao_id === conciliacao.id) continue;
+                    for (const row of vinculosLedger) {
+                        // Esta conciliação entra via sumDesta (porLancamento), não nos mapas.
+                        // (Status já pode estar "conciliado" neste ponto da transaction.)
+                        if (row.conciliacao_id === conciliacao.id) continue;
 
-            const parcela = {
-                vinculadoCents: toCents(row.valor_vinculado),
-                jurosCents: toCents(row.juros_multa),
-                descontoCents: toCents(row.desconto),
-            };
-            if (row.conciliacao_status === "conciliado") {
-                acc(somasFinalizados, row.lancamento_id, parcela);
-            } else {
-                acc(somasRascunhos, row.lancamento_id, parcela);
-            }
-        }
-    }
+                        const parcela = {
+                            vinculadoCents: toCents(row.valor_vinculado),
+                            jurosCents: toCents(row.juros_multa),
+                            descontoCents: toCents(row.desconto),
+                        };
+                        if (row.conciliacao_status === "conciliado") {
+                            acc(somasFinalizados, row.lancamento_id, parcela);
+                        } else {
+                            acc(somasRascunhos, row.lancamento_id, parcela);
+                        }
+                    }
+                }
 
-    for (const [lancamentoId, agg] of porLancamento) {
-        if (agg.sumVinculadoCents <= 0) continue;
+                for (const [lancamentoId, agg] of porLancamento) {
+                    if (agg.sumVinculadoCents <= 0) continue;
 
-        const fin = somasFinalizados.get(lancamentoId) ?? {
-            vinculadoCents: 0,
-            jurosCents: 0,
-            descontoCents: 0,
-        };
-        const rascOutros = somasRascunhos.get(lancamentoId) ?? {
-            vinculadoCents: 0,
-            jurosCents: 0,
-            descontoCents: 0,
-        };
+                    const fin = somasFinalizados.get(lancamentoId) ?? {
+                        vinculadoCents: 0,
+                        jurosCents: 0,
+                        descontoCents: 0,
+                    };
+                    const rascOutros = somasRascunhos.get(lancamentoId) ?? {
+                        vinculadoCents: 0,
+                        jurosCents: 0,
+                        descontoCents: 0,
+                    };
 
-        // Idempotente: strip inclui esta conciliação (legado já embutiu no título).
-        const {quitadoCents, jurosCents, descontoCents} = martelarQuitacaoNoFinalizar({
-            valorQuitadoTituloCents: toCents(agg.valor_quitado_atual),
-            jurosTituloCents: toCents(agg.juros_atual),
-            descontoTituloCents: toCents(agg.desconto_atual),
-            sumVinculadoDestaCents: agg.sumVinculadoCents,
-            sumJurosDestaCents: agg.sumJurosCents,
-            sumDescontoDestaCents: agg.sumDescontoCents,
-            sumVinculadoFinalizadosCents: fin.vinculadoCents,
-            sumJurosFinalizadosCents: fin.jurosCents,
-            sumDescontoFinalizadosCents: fin.descontoCents,
-            sumVinculadoRascunhosCents: rascOutros.vinculadoCents + agg.sumVinculadoCents,
-            sumJurosRascunhosCents: rascOutros.jurosCents + agg.sumJurosCents,
-            sumDescontoRascunhosCents: rascOutros.descontoCents + agg.sumDescontoCents,
-        });
+                    // Idempotente: strip inclui esta conciliação (legado já embutiu no título).
+                    const {quitadoCents, jurosCents, descontoCents} = martelarQuitacaoNoFinalizar({
+                        valorQuitadoTituloCents: toCents(agg.valor_quitado_atual),
+                        jurosTituloCents: toCents(agg.juros_atual),
+                        descontoTituloCents: toCents(agg.desconto_atual),
+                        sumVinculadoDestaCents: agg.sumVinculadoCents,
+                        sumJurosDestaCents: agg.sumJurosCents,
+                        sumDescontoDestaCents: agg.sumDescontoCents,
+                        sumVinculadoFinalizadosCents: fin.vinculadoCents,
+                        sumJurosFinalizadosCents: fin.jurosCents,
+                        sumDescontoFinalizadosCents: fin.descontoCents,
+                        sumVinculadoRascunhosCents: rascOutros.vinculadoCents + agg.sumVinculadoCents,
+                        sumJurosRascunhosCents: rascOutros.jurosCents + agg.sumJurosCents,
+                        sumDescontoRascunhosCents: rascOutros.descontoCents + agg.sumDescontoCents,
+                    });
 
-        const tipoExtrato = agg.tipo === "CR" ? "credito" : "debito";
-        const novoStatus = statusAposQuitacao({
-            tipoExtrato,
-            valorLancamentoCents: toCents(agg.valor),
-            valorQuitadoAcumuladoCents: quitadoCents,
-            descontoAcumuladoCents: descontoCents,
-        });
+                    const tipoExtrato = agg.tipo === "CR" ? "credito" : "debito";
+                    const novoStatus = statusAposQuitacao({
+                        tipoExtrato,
+                        valorLancamentoCents: toCents(agg.valor),
+                        valorQuitadoAcumuladoCents: quitadoCents,
+                        descontoAcumuladoCents: descontoCents,
+                    });
 
-        const dataQuitacao =
-            toDateIso(agg.data_quitacao) ??
-            agg.data_movimento_candidatas.sort()[0] ??
-            dataConciliacao;
+                    const dataQuitacao =
+                        toDateIso(agg.data_quitacao) ??
+                        agg.data_movimento_candidatas.sort()[0] ??
+                        dataConciliacao;
 
-        await tx
-            .update(lancamentosTable)
-            .set({
-                status: novoStatus,
-                data_quitacao: dataQuitacao,
-                conta_id: conciliacao.conta_id,
-                valor_quitado: centsToDecimalString(quitadoCents),
-                juros: centsToDecimalString(jurosCents),
-                desconto: centsToDecimalString(descontoCents),
-                updated_at: new Date(),
-            })
-            .where(eq(lancamentosTable.id, lancamentoId));
-    }
+                    await tx
+                        .update(lancamentosTable)
+                        .set({
+                            status: novoStatus,
+                            data_quitacao: dataQuitacao,
+                            conta_id: conciliacao.conta_id,
+                            valor_quitado: centsToDecimalString(quitadoCents),
+                            juros: centsToDecimalString(jurosCents),
+                            desconto: centsToDecimalString(descontoCents),
+                            updated_at: new Date(),
+                        })
+                        .where(eq(lancamentosTable.id, lancamentoId));
+                }
 
-    // Card 76: só agora (Salvar/Conciliar confirmado) os residuais
-    // parciais marcados durante o vincular nascem de fato em
-    // lancamentosTable - até aqui existiam só como "promessa"
-    // (eh_origem_residuo/residuo_valor_pendente) no vínculo.
-    const residuaisPendentes = await tx
-        .select({
-            origemLancamentoId: itensConciliacaoLancamentosTable.lancamento_id,
-            valorPendente: itensConciliacaoLancamentosTable.residuo_valor_pendente,
-        })
-        .from(itensConciliacaoLancamentosTable)
-        .innerJoin(
-            itensConciliacaoTable,
-            eq(itensConciliacaoLancamentosTable.item_conciliacao_id, itensConciliacaoTable.id),
-        )
-        .where(
-            and(
-                eq(itensConciliacaoTable.conciliacao_id, conciliacao.id),
-                eq(itensConciliacaoLancamentosTable.eh_origem_residuo, true),
-            ),
-        );
+                // Card 76: só agora (Salvar/Conciliar confirmado) os residuais
+                // parciais marcados durante o vincular nascem de fato em
+                // lancamentosTable - até aqui existiam só como "promessa"
+                // (eh_origem_residuo/residuo_valor_pendente) no vínculo.
+                const residuaisPendentes = await tx
+                    .select({
+                        origemLancamentoId: itensConciliacaoLancamentosTable.lancamento_id,
+                        valorPendente: itensConciliacaoLancamentosTable.residuo_valor_pendente,
+                    })
+                    .from(itensConciliacaoLancamentosTable)
+                    .innerJoin(
+                        itensConciliacaoTable,
+                        eq(itensConciliacaoLancamentosTable.item_conciliacao_id, itensConciliacaoTable.id),
+                    )
+                    .where(
+                        and(
+                            eq(itensConciliacaoTable.conciliacao_id, conciliacao.id),
+                            eq(itensConciliacaoLancamentosTable.eh_origem_residuo, true),
+                        ),
+                    );
 
-    if (residuaisPendentes.length > 0) {
-        type OrigemResiduo = {
-            id: number;
-            tipo: string;
-            vencimento: string | null;
-            competencia: string | null;
-            conta_id: number | null;
-            parceiro_id: number | null;
-            descricao: string | null;
-            plano_conta_id: number | null;
-            departamento_id: number | null;
-            centro_custo_id: number | null;
-            parcela_atual: number | null;
-            total_parcelas: number | null;
-            riscos: unknown;
-        };
-        const origemIds = residuaisPendentes.map((r) => r.origemLancamentoId);
-        const origens: OrigemResiduo[] = await tx
-            .select({
-                id: lancamentosTable.id,
-                tipo: lancamentosTable.tipo,
-                vencimento: lancamentosTable.vencimento,
-                competencia: lancamentosTable.competencia,
-                conta_id: lancamentosTable.conta_id,
-                parceiro_id: lancamentosTable.parceiro_id,
-                descricao: lancamentosTable.descricao,
-                plano_conta_id: lancamentosTable.plano_conta_id,
-                departamento_id: lancamentosTable.departamento_id,
-                centro_custo_id: lancamentosTable.centro_custo_id,
-                parcela_atual: lancamentosTable.parcela_atual,
-                total_parcelas: lancamentosTable.total_parcelas,
-                riscos: lancamentosTable.riscos,
-            })
-            .from(lancamentosTable)
-            .where(inArray(lancamentosTable.id, origemIds));
-        const origemById = new Map<number, OrigemResiduo>(origens.map((o) => [o.id, o]));
+                if (residuaisPendentes.length > 0) {
+                    type OrigemResiduo = {
+                        id: number;
+                        tipo: string;
+                        vencimento: string | null;
+                        competencia: string | null;
+                        conta_id: number | null;
+                        parceiro_id: number | null;
+                        descricao: string | null;
+                        plano_conta_id: number | null;
+                        departamento_id: number | null;
+                        centro_custo_id: number | null;
+                        parcela_atual: number | null;
+                        total_parcelas: number | null;
+                        riscos: unknown;
+                    };
+                    const origemIds = residuaisPendentes.map((r) => r.origemLancamentoId);
+                    const origens: OrigemResiduo[] = await tx
+                        .select({
+                            id: lancamentosTable.id,
+                            tipo: lancamentosTable.tipo,
+                            vencimento: lancamentosTable.vencimento,
+                            competencia: lancamentosTable.competencia,
+                            conta_id: lancamentosTable.conta_id,
+                            parceiro_id: lancamentosTable.parceiro_id,
+                            descricao: lancamentosTable.descricao,
+                            plano_conta_id: lancamentosTable.plano_conta_id,
+                            departamento_id: lancamentosTable.departamento_id,
+                            centro_custo_id: lancamentosTable.centro_custo_id,
+                            parcela_atual: lancamentosTable.parcela_atual,
+                            total_parcelas: lancamentosTable.total_parcelas,
+                            riscos: lancamentosTable.riscos,
+                        })
+                        .from(lancamentosTable)
+                        .where(inArray(lancamentosTable.id, origemIds));
+                    const origemById = new Map<number, OrigemResiduo>(origens.map((o) => [o.id, o]));
 
-        for (const pendente of residuaisPendentes) {
-            const origem = origemById.get(pendente.origemLancamentoId);
-            if (!origem || pendente.valorPendente == null) continue;
+                    for (const pendente of residuaisPendentes) {
+                        const origem = origemById.get(pendente.origemLancamentoId);
+                        if (!origem || pendente.valorPendente == null) continue;
 
-            await tx.insert(lancamentosTable).values({
-                tipo: origem.tipo,
-                vencimento: origem.vencimento,
-                competencia: origem.competencia,
-                conta_id: origem.conta_id ?? conciliacao.conta_id,
-                parceiro_id: origem.parceiro_id,
-                descricao: descreverResiduoParcial({
-                    valorCents: toCents(pendente.valorPendente),
-                    vencimento: origem.vencimento,
-                    descricaoOrigem: origem.descricao,
-                }),
-                valor: pendente.valorPendente,
-                status: statusNaCriacao(origem.vencimento, hojeIsoLocal()),
-                origem: "residuo_parcial",
-                plano_conta_id: origem.plano_conta_id,
-                departamento_id: origem.departamento_id,
-                centro_custo_id: origem.centro_custo_id,
-                parcela_atual: origem.parcela_atual,
-                total_parcelas: origem.total_parcelas,
-                riscos: origem.riscos ?? [],
-                is_residuo_parcial: true,
-                lancamento_origem_id: origem.id,
-                criado_por: usuarioId,
-            });
-        }
-    }
+                        await tx.insert(lancamentosTable).values({
+                            tipo: origem.tipo,
+                            vencimento: origem.vencimento,
+                            competencia: origem.competencia,
+                            conta_id: origem.conta_id ?? conciliacao.conta_id,
+                            parceiro_id: origem.parceiro_id,
+                            descricao: descreverResiduoParcial({
+                                valorCents: toCents(pendente.valorPendente),
+                                vencimento: origem.vencimento,
+                                descricaoOrigem: origem.descricao,
+                            }),
+                            valor: pendente.valorPendente,
+                            status: statusAbertoPorVencimento(origem.vencimento, hojeIsoLocal()),
+                            origem: "residuo_parcial",
+                            plano_conta_id: origem.plano_conta_id,
+                            departamento_id: origem.departamento_id,
+                            centro_custo_id: origem.centro_custo_id,
+                            parcela_atual: origem.parcela_atual,
+                            total_parcelas: origem.total_parcelas,
+                            riscos: origem.riscos ?? [],
+                            is_residuo_parcial: true,
+                            lancamento_origem_id: origem.id,
+                            criado_por: usuarioId,
+                        });
+                    }
+                }
 
     await tx.insert(historicoConciliacaoTable).values({
         conciliacao_id: conciliacao.id,
@@ -2912,27 +2840,6 @@ const salvarBodySchema = z.object({
     finalizar: z.boolean().default(false),
 });
 
-type AcaoRascunho = z.infer<typeof acaoRascunhoSchema>;
-
-/**
- * Modo B: se o mesmo lançamento ainda vai ser vinculado em ações seguintes
- * do lote, NÃO materializa residual agora (evita o "super residual" da 1ª
- * linha). No último vínculo daquele título, reaproveita gerar_parcial de
- * qualquer ação do lote que o tenha pedido, com a falta já descontada.
- */
-function gerarParcialEfetivoNoLote(acoes: AcaoRascunho[], indice: number): boolean {
-    const atual = acoes[indice];
-    if (!atual || atual.tipo !== "vincular") return false;
-    const ids = new Set(atual.lancamentos.map((l) => l.lancamento_id));
-    const aindaVem = acoes.slice(indice + 1).some(
-        (a) => a.tipo === "vincular" && a.lancamentos.some((l) => ids.has(l.lancamento_id)),
-    );
-    if (aindaVem) return false;
-    return acoes.slice(0, indice + 1).some(
-        (a) => a.tipo === "vincular" && a.gerar_parcial && a.lancamentos.some((l) => ids.has(l.lancamento_id)),
-    );
-}
-
 router.post(
     "/conciliacoes/:extrato_id/salvar",
     withPermission(PERM.CONCILIACAO_VINCULAR),
@@ -2973,14 +2880,12 @@ router.post(
             let finalizado = false;
 
             await db.transaction(async (tx) => {
-                for (let i = 0; i < body.acoes.length; i++) {
-                    const acao = body.acoes[i]!;
+                for (const acao of body.acoes) {
                     if (acao.tipo === "vincular") {
-                        const gerarParcial = gerarParcialEfetivoNoLote(body.acoes, i);
                         const calc = await calcularVinculo(tx, {
                             linhaId: acao.linha_id,
                             lancamentosPayload: acao.lancamentos,
-                            gerarParcial,
+                            gerarParcial: acao.gerar_parcial,
                             residuoLancamentoId: acao.residuo_lancamento_id ?? null,
                         });
                         if (!calc.ok) {
@@ -2989,7 +2894,7 @@ router.post(
                         const resultado = await persistirVinculo(tx, calc, {
                             linhaId: acao.linha_id,
                             lancamentosPayload: acao.lancamentos,
-                            gerarParcial,
+                            gerarParcial: acao.gerar_parcial,
                             residuoLancamentoId: acao.residuo_lancamento_id ?? null,
                             usuarioId,
                         });
@@ -3018,10 +2923,7 @@ router.post(
                         if (!validado.ok) {
                             throw errorComStatus(validado.status, validado.code, `Linha ${acao.linha_id}: ${validado.message}`);
                         }
-                        const resultado = await persistirReverterIgnorar(tx, validado, {
-                            linhaId: acao.linha_id,
-                            usuarioId
-                        });
+                        const resultado = await persistirReverterIgnorar(tx, validado, {linhaId: acao.linha_id, usuarioId});
                         resultadoPorLinha.push(resultado);
                     }
                 }
@@ -3252,12 +3154,7 @@ async function validarDesfazer(executor: typeof db, linhaId: number) {
         .limit(1);
 
     if (!item) {
-        return {
-            ok: false as const,
-            status: 404,
-            code: "NOT_FOUND",
-            message: "Linha de extrato não encontrada para conciliação."
-        };
+        return {ok: false as const, status: 404, code: "NOT_FOUND", message: "Linha de extrato não encontrada para conciliação."};
     }
     if (item.status !== "vinculado") {
         return {ok: false as const, status: 400, code: "VALIDATION_ERROR", message: "A linha não está vinculada."};
@@ -3357,9 +3254,7 @@ async function persistirDesfazer(tx: any, ctx: DesfazerCtx, params: { linhaId: n
     }
 
     if (residuos.length > 0) {
-        await tx.delete(lancamentosTable).where(inArray(lancamentosTable.id, residuos.map((r: {
-            id: number
-        }) => r.id)));
+        await tx.delete(lancamentosTable).where(inArray(lancamentosTable.id, residuos.map((r: { id: number }) => r.id)));
     }
 
     await tx.delete(itensConciliacaoLancamentosTable).where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id));
@@ -3400,10 +3295,7 @@ router.delete(
                 return errorResponse(res, validado.status, validado.code, validado.message);
             }
 
-            const resultado = await db.transaction((tx) => persistirDesfazer(tx, validado, {
-                linhaId,
-                usuarioId: req.user?.id
-            }));
+            const resultado = await db.transaction((tx) => persistirDesfazer(tx, validado, {linhaId, usuarioId: req.user?.id}));
 
             return successResponse(res, resultado);
         } catch (e) {
@@ -3420,12 +3312,7 @@ async function validarReverterIgnorar(executor: typeof db, linhaId: number) {
         .limit(1);
 
     if (!item) {
-        return {
-            ok: false as const,
-            status: 404,
-            code: "NOT_FOUND",
-            message: "Linha de extrato não encontrada para conciliação."
-        };
+        return {ok: false as const, status: 404, code: "NOT_FOUND", message: "Linha de extrato não encontrada para conciliação."};
     }
     if (item.status !== "ignorado") {
         return {ok: false as const, status: 400, code: "VALIDATION_ERROR", message: "A linha não está ignorada."};
@@ -3446,22 +3333,13 @@ async function validarReverterIgnorar(executor: typeof db, linhaId: number) {
 type ReverterIgnorarCtx = Extract<Awaited<ReturnType<typeof validarReverterIgnorar>>, { ok: true }>;
 
 /** Persiste o reverter-ignorar (mesma lógica usada pela rota individual e pelo Salvar em lote). */
-async function persistirReverterIgnorar(tx: any, ctx: ReverterIgnorarCtx, params: {
-    linhaId: number;
-    usuarioId?: number
-}) {
+async function persistirReverterIgnorar(tx: any, ctx: ReverterIgnorarCtx, params: { linhaId: number; usuarioId?: number }) {
     const {item, conciliacao} = ctx;
     const {linhaId, usuarioId} = params;
 
     await tx
         .update(itensConciliacaoTable)
-        .set({
-            status: "pendente",
-            motivo_ignorar: null,
-            motivo_ignorar_codigo: null,
-            data_conciliacao: null,
-            updated_at: new Date()
-        })
+        .set({status: "pendente", motivo_ignorar: null, motivo_ignorar_codigo: null, data_conciliacao: null, updated_at: new Date()})
         .where(eq(itensConciliacaoTable.id, item.id));
 
     await tx.insert(historicoConciliacaoTable).values({
@@ -3489,10 +3367,7 @@ router.post(
                 return errorResponse(res, validado.status, validado.code, validado.message);
             }
 
-            const resultado = await db.transaction((tx) => persistirReverterIgnorar(tx, validado, {
-                linhaId,
-                usuarioId: req.user?.id
-            }));
+            const resultado = await db.transaction((tx) => persistirReverterIgnorar(tx, validado, {linhaId, usuarioId: req.user?.id}));
 
             return successResponse(res, resultado);
         } catch (e) {
