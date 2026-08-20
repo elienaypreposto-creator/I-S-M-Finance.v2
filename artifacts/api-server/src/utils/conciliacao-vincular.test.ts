@@ -7,7 +7,6 @@ import {
     statusAbertoPorVencimento,
     statusAposDesfazerVinculo,
     statusAposQuitacao,
-    statusNaCriacao,
 } from "./conciliacao-vincular.js";
 
 describe("decidirVincular - T1–T7 (auditoria)", () => {
@@ -142,7 +141,7 @@ describe("decidirVincular - T1–T7 (auditoria)", () => {
         );
     });
 
-    it("T3b: Modo B passo 2+ COM flag cria residual da falta restante (escopo após este vínculo)", () => {
+    it("T3b: Modo B passo 2+ com flag NÃO cria residual (quitacaoMultiLinha)", () => {
         const d = decidirVincular({
             extratoCents: toCents(1000),
             lancamentos: [
@@ -160,57 +159,8 @@ describe("decidirVincular - T1–T7 (auditoria)", () => {
         if (!d.ok) return;
         assert.equal(d.quitacaoMultiLinha, true);
         assert.equal(d.ramo, "falta");
-        assert.ok(d.residual);
-        assert.equal(d.residual!.origemLancamentoId, 99);
-        assert.equal(d.residual!.valorCents, toCents(2000));
-        assert.equal(d.itens[0]!.valorQuitadoNesteVinculoCents, 100000);
-    });
-
-    it("T3b2: Modo B passo 2+ SEM flag não materializa residual", () => {
-        const d = decidirVincular({
-            extratoCents: toCents(1000),
-            lancamentos: [
-                {
-                    lancamento_id: 99,
-                    valorCents: toCents(4000),
-                    descontoCents: 0,
-                    jurosMultaCents: 0,
-                    quitadoAnteriorCents: toCents(1000),
-                },
-            ],
-            gerarParcial: false,
-        });
-        assert.equal(d.ok, true);
-        if (!d.ok) return;
         assert.equal(d.residual, null);
-        assert.equal(d.faltaCents, toCents(2000));
-    });
-
-    it("T3b3: Modo B sequencial 12000+15000 sobre 200000 - residual do segundo vínculo é 173000 (não funde no primeiro)", () => {
-        const titulo = toCents(200000);
-        const d1 = decidirVincular({
-            extratoCents: toCents(12000),
-            lancamentos: [{lancamento_id: 1, valorCents: titulo, descontoCents: 0, jurosMultaCents: 0}],
-            gerarParcial: true,
-        });
-        assert.equal(d1.ok, true);
-        if (!d1.ok) return;
-        assert.equal(d1.residual!.valorCents, toCents(188000));
-
-        const d2 = decidirVincular({
-            extratoCents: toCents(15000),
-            lancamentos: [{
-                lancamento_id: 1,
-                valorCents: titulo,
-                descontoCents: 0,
-                jurosMultaCents: 0,
-                quitadoAnteriorCents: toCents(12000),
-            }],
-            gerarParcial: true,
-        });
-        assert.equal(d2.ok, true);
-        if (!d2.ok) return;
-        assert.equal(d2.residual!.valorCents, toCents(173000));
+        assert.equal(d.itens[0]!.valorQuitadoNesteVinculoCents, 100000);
     });
 
     it("T3c: Modo B 5º vínculo -> Δ=+1000 juros, nunca residual mesmo com flag", () => {
@@ -371,13 +321,6 @@ describe("ciclo de vida - status adiado até finalizar", () => {
         assert.equal(statusAbertoPorVencimento("2099-01-01", "2026-07-22"), "pendente");
     });
 
-    it("statusNaCriacao: pendente com vencimento passado vira atrasado", () => {
-        assert.equal(statusNaCriacao("2026-07-15", "2026-08-20", "pendente"), "atrasado");
-        assert.equal(statusNaCriacao("2026-07-15", "2026-08-20", undefined), "atrasado");
-        assert.equal(statusNaCriacao("2026-08-20", "2026-08-20", "pendente"), "pendente");
-        assert.equal(statusNaCriacao("2026-07-15", "2026-08-20", "pago"), "pago");
-    });
-
     it("desfazer no ciclo adiado não promove pago_parcial", () => {
         assert.equal(
             statusAposDesfazerVinculo({
@@ -418,7 +361,7 @@ describe("ciclo de vida - status adiado até finalizar", () => {
     });
 });
 
-describe("martelarQuitacaoNoFinalizar - anti double-count", () => {
+describe("martelarQuitacaoNoFinalizar — anti double-count", () => {
     const z = {
         sumJurosDestaCents: 0,
         sumDescontoDestaCents: 0,

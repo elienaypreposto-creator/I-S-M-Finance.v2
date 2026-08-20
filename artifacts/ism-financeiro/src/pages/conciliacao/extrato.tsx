@@ -210,11 +210,8 @@ function reaisFromCents(cents: number): number {
     return cents / 100;
 }
 
-function somaItensLocaisCents(rounds: DraftVincular[]): number {
-    return rounds.reduce(
-        (acc, r) => acc + r.itens.reduce((s, i) => s + centsFromReais(i.valor_vinculado), 0),
-        0,
-    );
+function somaRoundsNovoCents(rounds: DraftVincular[], realBaseCents: number): number {
+    return rounds.reduce((acc, r) => acc + Math.round(r.totalConciliado * 100) - realBaseCents, 0);
 }
 
 function mergeLinhaComDraft(linha: LinhaDetalhe, draft: DraftAcao[] | undefined): LinhaEfetiva {
@@ -241,7 +238,7 @@ function mergeLinhaComDraft(linha: LinhaDetalhe, draft: DraftAcao[] | undefined)
 
     const extratoTotalCents = centsFromReais(linha.valor);
     const realBaseCents = resetaBaseReal ? 0 : centsFromReais(linha.valor_vinculado_total);
-    const localNovoCents = somaItensLocaisCents(rounds);
+    const localNovoCents = somaRoundsNovoCents(rounds, realBaseCents);
     const totalEfetivoCents = realBaseCents + localNovoCents;
     const saldoEfetivoCents = Math.max(0, extratoTotalCents - totalEfetivoCents);
 
@@ -277,52 +274,6 @@ function mergeLinhaComDraft(linha: LinhaDetalhe, draft: DraftAcao[] | undefined)
         _jaVinculadoLocalCents: localNovoCents,
         _ignorarVinculosReais: primeiro.tipo === "desfazer",
     };
-}
-
-/** Remove UM lançamento do rascunho da linha - as demais rodadas/itens ficam. */
-function removerLancamentoDoRascunho(
-    prev: Record<number, DraftAcao[]>,
-    linhaId: number,
-    lancamentoId: number,
-): Record<number, DraftAcao[]> {
-    const acoes = prev[linhaId];
-    if (!acoes || acoes.length === 0) {
-        const {[linhaId]: _drop, ...resto} = prev;
-        return resto;
-    }
-
-    const novas: DraftAcao[] = [];
-    for (const acao of acoes) {
-        if (acao.tipo !== "vincular") {
-            novas.push(acao);
-            continue;
-        }
-        const itens = acao.draft.itens.filter((i) => i.lancamento_id !== lancamentoId);
-        if (itens.length === 0) continue;
-
-        const residual =
-            acao.draft.residual?.lancamentoOrigemId === lancamentoId ? null : acao.draft.residual;
-        novas.push({
-            tipo: "vincular",
-            draft: {
-                ...acao.draft,
-                itens,
-                residual,
-                payload: {
-                    ...acao.draft.payload,
-                    lancamentos: acao.draft.payload.lancamentos.filter((l) => l.lancamento_id !== lancamentoId),
-                    gerar_parcial: residual != null,
-                    residuo_lancamento_id: residual ? acao.draft.payload.residuo_lancamento_id : undefined,
-                },
-            },
-        });
-    }
-
-    if (novas.length === 0) {
-        const {[linhaId]: _drop, ...resto} = prev;
-        return resto;
-    }
-    return {...prev, [linhaId]: novas};
 }
 
 /**
@@ -649,12 +600,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
     } | null>(null);
     const [ignorarLinhaId, setIgnorarLinhaId] = useState<number | null>(null);
     const [reverterLinhaId, setReverterLinhaId] = useState<number | null>(null);
-    const [desfazerAlvo, setDesfazerAlvo] = useState<{
-        linhaId: number;
-        lancamentoId: number;
-        vinculoId?: number;
-        isLocal: boolean;
-    } | null>(null);
+    const [desfazerLinhaId, setDesfazerLinhaId] = useState<number | null>(null);
     const [finalizarOpen, setFinalizarOpen] = useState(false);
     const [editarLancamentoId, setEditarLancamentoId] = useState<number | null>(null);
 
@@ -972,29 +918,8 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                     onClose={() => setVincularLinha(null)}
                     onDraftVincular={(draft) => {
                         setDraftsPorLinha((prev) => {
-                            const ids = new Set(draft.itens.map((i) => i.lancamento_id));
-                            const next: Record<number, DraftAcao[]> = {};
-                            for (const [linhaIdStr, acoes] of Object.entries(prev)) {
-                                const linhaId = Number(linhaIdStr);
-                                if (linhaId === draft.linhaId) {
-                                    next[linhaId] = acoes;
-                                    continue;
-                                }
-                                next[linhaId] = acoes.map((acao) => {
-                                    if (acao.tipo !== "vincular") return acao;
-                                    if (!acao.draft.itens.some((i) => ids.has(i.lancamento_id))) return acao;
-                                    return {
-                                        ...acao,
-                                        draft: {
-                                            ...acao.draft,
-                                            residual: null,
-                                            payload: {...acao.draft.payload, gerar_parcial: false},
-                                        },
-                                    };
-                                });
-                            }
-                            const atual = next[draft.linhaId] ?? [];
-                            return {...next, [draft.linhaId]: [...atual, {tipo: "vincular", draft}]};
+                            const atual = prev[draft.linhaId] ?? [];
+                            return {...prev, [draft.linhaId]: [...atual, {tipo: "vincular", draft}]};
                         });
                     }}
                 />
@@ -1077,54 +1002,34 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                 }}
             />
 
-            {/* Remove UM lançamento da linha (rascunho local ou vínculo já persistido).
-                Não desfaz os demais da mesma linha. */}
+            {/* se os vínculos atuais são só rascunho local
+                (linha ainda "pendente" de fato no banco), desfazer apenas
+                descarta o rascunho. Se já há vínculo real (de um Save anterior), 
+                rascunha um "desfazer" para reverter no Salvar. */}
             <ConfirmDialog
-                open={desfazerAlvo != null}
-                title="Remover este vínculo?"
-                description="Apenas este lançamento será desvinculado desta linha. Os demais vínculos permanecem."
-                confirmLabel="Remover vínculo"
+                open={desfazerLinhaId != null}
+                title="Desfazer vínculos?"
+                description="Os lançamentos vinculados voltarão ao status anterior e a linha do extrato ficará pendente novamente."
+                confirmLabel="Desfazer vínculos"
                 variant="destructive"
                 icon={Unlink}
-                onCancel={() => setDesfazerAlvo(null)}
+                onCancel={() => setDesfazerLinhaId(null)}
                 onConfirm={() => {
-                    if (desfazerAlvo == null) return;
-                    const alvo = desfazerAlvo;
-                    if (alvo.isLocal) {
-                        setDraftsPorLinha((prev) => removerLancamentoDoRascunho(prev, alvo.linhaId, alvo.lancamentoId));
-                        setDesfazerAlvo(null);
-                        toast({
-                            title: "Vínculo removido (rascunho)",
-                            description: "Ainda não foi salvo - clique em Salvar/Conciliar para confirmar.",
-                        });
-                        return;
-                    }
-                    if (!alvo.vinculoId) {
-                        setDesfazerAlvo(null);
-                        toast({
-                            variant: "destructive",
-                            title: "Não foi possível remover",
-                            description: "Este vínculo ainda não tem identificador individual.",
-                        });
-                        return;
-                    }
-                    void fetchApiData(`/conciliacoes/vinculos/${alvo.vinculoId}`, {method: "DELETE"})
-                        .then(() => {
-                            void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
-                            setDraftsPorLinha((prev) => removerLancamentoDoRascunho(prev, alvo.linhaId, alvo.lancamentoId));
-                            toast({
-                                title: "Vínculo removido",
-                                description: "Somente este lançamento foi desvinculado."
-                            });
-                        })
-                        .catch((e: unknown) => {
-                            toast({
-                                variant: "destructive",
-                                title: "Não foi possível remover o vínculo",
-                                description: e instanceof Error ? e.message : String(e),
-                            });
-                        })
-                        .finally(() => setDesfazerAlvo(null));
+                    if (desfazerLinhaId == null) return;
+                    const linhaId = desfazerLinhaId;
+                    const linhaServidor = linhas.find((l) => l.linha_id === linhaId);
+                    setDraftsPorLinha((prev) => {
+                        if (linhaServidor?.status === "vinculado") {
+                            return {...prev, [linhaId]: [{tipo: "desfazer"}]};
+                        }
+                        const {[linhaId]: _removido, ...resto} = prev;
+                        return resto;
+                    });
+                    setDesfazerLinhaId(null);
+                    toast({
+                        title: "Vínculos removidos (rascunho)",
+                        description: "Ainda não foi salvo - clique em Salvar/Conciliar para confirmar.",
+                    });
                 }}
             />
 
@@ -1435,12 +1340,7 @@ export default function ConciliacaoExtratoDetalhe({extratoId}: { extratoId: stri
                                                                 canEditarLancamento={canEditarLancamento}
                                                                 canDesfazer={canDesfazer}
                                                                 onEditarLancamento={() => setEditarLancamentoId(v.lancamento_id)}
-                                                                onRemoverVinculo={() => setDesfazerAlvo({
-                                                                    linhaId: linha.linha_id,
-                                                                    lancamentoId: v.lancamento_id,
-                                                                    vinculoId: v.vinculo_id,
-                                                                    isLocal: Boolean(v._local),
-                                                                })}
+                                                                onRemoverVinculo={() => setDesfazerLinhaId(linha.linha_id)}
                                                             />
                                                         ))}
                                                     </ul>
