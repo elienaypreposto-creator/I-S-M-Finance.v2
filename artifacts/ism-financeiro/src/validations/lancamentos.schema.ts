@@ -324,7 +324,7 @@ function normalizeStatusForForm(tipo: string, status: string): z.infer<typeof la
  *
  * Recebe `dados_pagamento` (array da API / BD) e devolve o array
  * `pagamentos` do `useFieldArray`. Cada item é validado via
- * `dadosPagamentoItemApiSchema.safeParse()` antes do mapeamento —
+ * `dadosPagamentoItemApiSchema.safeParse()` antes do mapeamento -
  * registros com estrutura obsoleta ou corrompida na BD são descartados
  * silenciosamente, em vez de provocar erros em runtime.
  */
@@ -499,7 +499,7 @@ function buildDadosPagamentoArray(pagamentos: PagamentoItemFormValues[]): DadosP
  * • `valorBr` (string mascarada) -> `valor` (string decimal para o backend aceitar
  *    `z.union([z.string(), z.number()])`)
  * • `descontoBr` / `jurosBr` (string mascarada) -> `desconto` / `juros` (string
- *    decimal). Vazio equivale a "0.00" — o valor de face (`valor`) nunca é
+ *    decimal). Vazio equivale a "0.00" - o valor de face (`valor`) nunca é
  *    recalculado aqui; desconto/juros ficam em colunas próprias.
  * • `pagamentos[]` (useFieldArray) -> `dados_pagamento[]` (métodos de transação,
  *    sem valor individual) - via `buildDadosPagamentoArray`
@@ -509,6 +509,25 @@ function buildDadosPagamentoArray(pagamentos: PagamentoItemFormValues[]): DadosP
  * Apenas lançamentos do tipo "CP" (Contas a Pagar) geram `dados_pagamento`;
  * para "CR" o campo é enviado como `null`.
  */
+function hojeIsoCivilLocal(): string {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+}
+
+const STATUS_CICLO_FECHADO = new Set(["pago", "recebido", "pago_parcial", "cancelado"]);
+
+function statusNaCriacaoFront(
+    vencimento: string,
+    statusSolicitado: LancamentoModalFormValues["status"],
+): LancamentoModalFormValues["status"] {
+    if (STATUS_CICLO_FECHADO.has(statusSolicitado)) return statusSolicitado;
+    const vencIso = vencimento.trim().slice(0, 10);
+    return vencIso && vencIso < hojeIsoCivilLocal() ? "atrasado" : "pendente";
+}
+
 export function mapModalFormToApiBody(values: LancamentoModalFormValues): LancamentoApiBody {
     const dadosPagamento =
         values.tipo === "CP" && values.pagamentos.length > 0
@@ -525,7 +544,7 @@ export function mapModalFormToApiBody(values: LancamentoModalFormValues): Lancam
         valor: brMoneyDisplayToApiString(values.valorBr),
         desconto: brMoneyDisplayToApiString(values.descontoBr ?? "") || "0.00",
         juros: brMoneyDisplayToApiString(values.jurosBr ?? "") || "0.00",
-        status: values.status,
+        status: statusNaCriacaoFront(values.vencimento, values.status),
         plano_conta_id: values.plano_conta_id === "" ? null : Number(values.plano_conta_id),
         departamento_id: values.departamento_id === "" ? null : Number(values.departamento_id),
         centro_custo_id: values.centro_custo_id === "" ? null : Number(values.centro_custo_id),

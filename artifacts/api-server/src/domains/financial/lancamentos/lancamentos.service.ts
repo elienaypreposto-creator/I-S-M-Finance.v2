@@ -10,6 +10,8 @@ import {
 } from "@workspace/db/schema";
 import {AppError} from "../../../utils/app-error";
 import type {CreateLancamentoBody, ListLancamentosQuery, UpdateLancamentoBody} from "./schemas";
+import {statusNaCriacao} from "../../../utils/conciliacao-vincular";
+import {hojeIsoLocal} from "../../../utils/date-civil";
 
 const resolveDepartamentoCentroByParceiro = async (parceiroId?: number | null) => {
     if (!parceiroId) {
@@ -127,7 +129,7 @@ export const lancamentosService = {
                 valor: payload.valor,
                 desconto: payload.desconto ?? "0",
                 juros: payload.juros ?? "0",
-                status: payload.status ?? "pendente",
+                status: statusNaCriacao(payload.vencimento, hojeIsoLocal(), payload.status),
                 plano_conta_id: payload.plano_conta_id ?? null,
                 departamento_id: departamentoFinal ?? null,
                 centro_custo_id: centroCustoFinal ?? null,

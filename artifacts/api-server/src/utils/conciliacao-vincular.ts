@@ -9,8 +9,9 @@
  *
  * >0 gap (sem juros explícitos, N>1) -> "Falta cobrir extrato"; juros só com alocação explícita
  *      (ou 1:1 inequívoco no endpoint); <0 FALTA -> residual opcional; =0 EXATO.
- * Residual NÃO é oferecido quando o título já está em quitação multi-linha
- * (quitadoAnterior > 0) - evita fantasma no meio do Modo B.
+ * Residual no Modo B: a falta após ESTE vínculo (título − quitadoAnterior −
+ * linha). Quem decide se materializa agora ou só no último vínculo do lote
+ * é o POST /salvar (look-ahead). Sem gerarParcial, a falta fica no título.
  */
 
 import {diferencaConciliacaoCents, sumCents} from "./money.js";
@@ -152,13 +153,14 @@ function decidirModoBUmLancamento(input: VincularDecisionInput): VincularDecisio
 
     if (deltaCents < 0) {
         const faltaCents = -deltaCents;
-        // Em quitação multi-linha, a falta é o que ainda virá em outras linhas - sem residual.
-        const podeResidual = gerarParcial && !quitacaoMultiLinha;
-        const residual = podeResidual
+        // Residual = falta DEPOIS deste vínculo (escopo da linha + quitado anterior).
+        // No meio do Modo B o POST /salvar adia a materialização
+        // para o último vínculo do mesmo título no lote - aqui só calculamos.
+        const residual = gerarParcial
             ? {origemLancamentoId: l.lancamento_id, valorCents: faltaCents}
             : null;
 
-        if (podeResidual && base < faltaCents) {
+        if (gerarParcial && base < faltaCents) {
             return {
                 ok: false,
                 status: 400,
@@ -453,6 +455,24 @@ export function statusAbertoPorVencimento(
             ? vencimento.slice(0, 10)
             : vencimento.toISOString().slice(0, 10);
     return vencIso < hojeIso ? "atrasado" : "pendente";
+}
+
+const STATUS_CICLO_FECHADO = new Set(["pago", "recebido", "pago_parcial", "cancelado"]);
+
+/**
+ * Status na CRIAÇÃO de um lançamento. Se o vencimento já passou, o título
+ * aberto nasce `atrasado` - mesmo que o cliente tenha enviado `pendente`.
+ * Quitação/cancelamento explícitos não são sobrescritos.
+ */
+export function statusNaCriacao(
+    vencimento: string | Date | null | undefined,
+    hojeIso: string,
+    statusSolicitado?: string | null,
+): "pendente" | "atrasado" | "pago" | "recebido" | "pago_parcial" | "cancelado" {
+    if (statusSolicitado && STATUS_CICLO_FECHADO.has(statusSolicitado)) {
+        return statusSolicitado as "pago" | "recebido" | "pago_parcial" | "cancelado";
+    }
+    return statusAbertoPorVencimento(vencimento, hojeIso);
 }
 
 const STATUS_QUITACAO = new Set(["pago", "recebido", "pago_parcial"]);
