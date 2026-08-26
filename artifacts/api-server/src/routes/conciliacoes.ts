@@ -136,23 +136,27 @@ function formatDateBr(iso: string): string {
 
 /**
  * Monta a descrição do lançamento residual gerado após pagamento parcial, no
- * padrão "Parcela Residual conciliação: {descrição do lançamento de origem}
- * R$ {valor} {data}," — deixando explícito de qual lançamento este residual
- * foi clonado.
+ * padrão "Pagamento DO(A) {PARCEIRO} NO VALOR R$ {valor} (PARCELA {atual/total
+ * ou UNICA} NO DIA {dia})" — deixando explícito de qual lançamento (parceiro,
+ * valor e parcela) este residual foi clonado (Card 01).
  */
 function descreverResiduoParcial(params: {
     valorCents: number;
     vencimento: string | null;
-    descricaoOrigem: string | null;
+    parceiroNome: string | null;
+    parcelaAtual: number | null;
+    totalParcelas: number | null;
 }): string {
-    const {valorCents, vencimento, descricaoOrigem} = params;
+    const {valorCents, vencimento, parceiroNome, parcelaAtual, totalParcelas} = params;
 
-    const base = descricaoOrigem ?? "Lançamento";
-    const dataFormatada = vencimento ? formatDateBr(vencimento) : null;
+    const nome = (parceiroNome ?? "PARCEIRO NÃO INFORMADO").toUpperCase();
+    const parcelaTexto =
+        totalParcelas && totalParcelas > 1
+            ? `PARCELA ${parcelaAtual ?? "?"}/${totalParcelas}`
+            : "PARCELA UNICA";
+    const dia = vencimento ? String(Number(vencimento.split("-")[2])) : "?";
 
-    return `Parcela Residual conciliação: ${base} R$ ${centsToBrDecimal(valorCents)}${
-        dataFormatada ? ` ${dataFormatada}` : ""
-    },`;
+    return `Pagamento DO(A) ${nome} NO VALOR R$ ${centsToBrDecimal(valorCents)} (${parcelaTexto} NO DIA ${dia})`;
 }
 
 const vincularBodySchema = z.object({
@@ -1943,6 +1947,15 @@ async function persistirVinculo(
         if (!origem) {
             throw new Error("Não foi possível identificar lançamento de origem para o residual.");
         }
+        let parceiroNomeOrigem: string | null = null;
+        if (origem.parceiro_id) {
+            const [parceiro] = await tx
+                .select({nome: parceirosTable.nome})
+                .from(parceirosTable)
+                .where(eq(parceirosTable.id, origem.parceiro_id))
+                .limit(1);
+            parceiroNomeOrigem = parceiro?.nome ?? null;
+        }
         const [novoResiduo] = await tx
             .insert(lancamentosTable)
             .values({
@@ -1954,7 +1967,9 @@ async function persistirVinculo(
                 descricao: descreverResiduoParcial({
                     valorCents: decision.residual.valorCents,
                     vencimento: origem.vencimento,
-                    descricaoOrigem: origem.descricao,
+                    parceiroNome: parceiroNomeOrigem,
+                    parcelaAtual: origem.parcela_atual,
+                    totalParcelas: origem.total_parcelas,
                 }),
                 valor: centsToDecimalString(decision.residual.valorCents),
                 // Residual é saldo em aberto: só pendente ou atrasado — nunca
@@ -2709,6 +2724,7 @@ async function persistirFinalizacao(tx: any, conciliacao: { id: number; conta_id
                         parcela_atual: number | null;
                         total_parcelas: number | null;
                         riscos: unknown;
+                        parceiro_nome: string | null;
                     };
                     const origemIds = residuaisPendentes.map((r) => r.origemLancamentoId);
                     const origens: OrigemResiduo[] = await tx
@@ -2726,8 +2742,10 @@ async function persistirFinalizacao(tx: any, conciliacao: { id: number; conta_id
                             parcela_atual: lancamentosTable.parcela_atual,
                             total_parcelas: lancamentosTable.total_parcelas,
                             riscos: lancamentosTable.riscos,
+                            parceiro_nome: parceirosTable.nome,
                         })
                         .from(lancamentosTable)
+                        .leftJoin(parceirosTable, eq(parceirosTable.id, lancamentosTable.parceiro_id))
                         .where(inArray(lancamentosTable.id, origemIds));
                     const origemById = new Map<number, OrigemResiduo>(origens.map((o) => [o.id, o]));
 
@@ -2744,7 +2762,9 @@ async function persistirFinalizacao(tx: any, conciliacao: { id: number; conta_id
                             descricao: descreverResiduoParcial({
                                 valorCents: toCents(pendente.valorPendente),
                                 vencimento: origem.vencimento,
-                                descricaoOrigem: origem.descricao,
+                                parceiroNome: origem.parceiro_nome,
+                                parcelaAtual: origem.parcela_atual,
+                                totalParcelas: origem.total_parcelas,
                             }),
                             valor: pendente.valorPendente,
                             status: statusAbertoPorVencimento(origem.vencimento, hojeIsoLocal()),
