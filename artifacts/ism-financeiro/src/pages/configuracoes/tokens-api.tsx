@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -12,8 +12,6 @@ import {
   Code,
   Key,
   Trash2,
-  ToggleLeft,
-  ToggleRight,
   Loader2,
   AlertCircle,
   ShieldOff,
@@ -22,18 +20,27 @@ import {
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { fetchApiData } from "@/lib/api-config";
+import { TableSkeleton } from "@/components/shared/table-skeleton";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { useConfirm } from "@/hooks/use-confirm";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+  EmptyContent,
+} from "@/components/ui/empty";
 
 // ─── Tipos ─────────────────────────────────────────────────────────────────────
 type TokenRow = {
   id: number;
-  /** aliased from `descricao` in the backend SELECT */
   nome: string;
   ativo: boolean;
   created_at: string;
 };
 
 type CreatedToken = TokenRow & {
-  /** raw hex token — devolvido APENAS no response do POST */
   token: string;
 };
 
@@ -97,7 +104,6 @@ function NovoTokenModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
       <div className="bg-card border border-white/10 rounded-2xl w-full max-w-md shadow-2xl">
-        {/* Header */}
         <div className="flex items-center justify-between p-4 sm:p-6 border-b border-white/5">
           <h2 className="text-base sm:text-lg font-bold text-white">
             {createdToken ? "Token Gerado" : "Gerar Novo Token"}
@@ -107,7 +113,6 @@ function NovoTokenModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
 
-        {/* Step 1 — formulário */}
         {!createdToken ? (
           <form onSubmit={handleSubmit((v) => createMutation.mutate(v))}>
             <div className="p-4 sm:p-6 space-y-4">
@@ -148,7 +153,6 @@ function NovoTokenModal({ onClose }: { onClose: () => void }) {
             </div>
           </form>
         ) : (
-          /* Step 2 — revelar token */
           <div className="p-4 sm:p-6 space-y-4">
             <div className="text-center py-2">
               <CheckCircle className="w-10 h-10 text-success mx-auto mb-2" />
@@ -165,11 +169,7 @@ function NovoTokenModal({ onClose }: { onClose: () => void }) {
               onClick={copyToken}
               className="w-full flex items-center justify-center gap-2 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-sm text-white transition-colors border border-white/10"
             >
-              {copied ? (
-                <CheckCircle className="w-4 h-4 text-success" />
-              ) : (
-                <Copy className="w-4 h-4" />
-              )}
+              {copied ? <CheckCircle className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
               {copied ? "Copiado!" : "Copiar Token"}
             </button>
             <button
@@ -192,6 +192,7 @@ export default function TokensApi() {
   const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
   const [tab, setTab] = useState<"tokens" | "docs">("tokens");
+  const { confirm, ConfirmDialogProps } = useConfirm();
 
   const { data: tokens = [], isLoading, isError } = useQuery<TokenRow[]>({
     queryKey: ["tokens-api"],
@@ -205,14 +206,9 @@ export default function TokensApi() {
         method: "PATCH",
         body: JSON.stringify({ ativo }),
       }),
-    onSuccess: () =>
-      void queryClient.invalidateQueries({ queryKey: ["tokens-api"] }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["tokens-api"] }),
     onError: (err: Error) =>
-      toast({
-        title: "Erro ao atualizar token",
-        description: err.message,
-        variant: "destructive",
-      }),
+      toast({ title: "Erro ao atualizar token", description: err.message, variant: "destructive" }),
   });
 
   // ── Deletar ─────────────────────────────────────────────────────────────────
@@ -227,10 +223,24 @@ export default function TokensApi() {
       toast({ title: "Erro ao remover token", description: err.message, variant: "destructive" }),
   });
 
+  const handleDelete = async (token: TokenRow) => {
+    const ok = await confirm({
+      title: `Excluir token "${token.nome}"?`,
+      description: "Integrações que usam este token perderão acesso imediatamente.",
+      confirmLabel: "Excluir",
+      cancelLabel: "Cancelar",
+      variant: "destructive",
+    });
+    if (ok) deleteMutation.mutate(token.id);
+  };
+
   const ativos = tokens.filter((t) => t.ativo).length;
 
   return (
     <div className="space-y-4 sm:space-y-6">
+      {/* Dialog de confirmação de exclusão */}
+      <ConfirmDialog {...ConfirmDialogProps} />
+
       {showModal && <NovoTokenModal onClose={() => setShowModal(false)} />}
 
       <PageHeader
@@ -282,13 +292,8 @@ export default function TokensApi() {
             </p>
           </div>
 
-          {/* Loading */}
-          {isLoading && (
-            <div className="flex items-center justify-center h-32 gap-3 text-muted-foreground">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              <span className="text-sm">Carregando tokens…</span>
-            </div>
-          )}
+          {/* Loading — skeleton */}
+          {isLoading && <TableSkeleton rows={4} columns={3} showHeader={false} />}
 
           {/* Erro */}
           {isError && !isLoading && (
@@ -310,13 +315,27 @@ export default function TokensApi() {
               </div>
 
               {tokens.length === 0 ? (
-                <div className="py-12 text-center text-muted-foreground">
-                  <Key className="w-10 h-10 mx-auto mb-3 opacity-20" />
-                  <p className="text-sm">Nenhum token criado ainda.</p>
-                  <p className="text-xs mt-1 opacity-70">
-                    Clique em "Gerar Token" para criar o primeiro.
-                  </p>
-                </div>
+                <Empty>
+                  <EmptyHeader>
+                    <EmptyMedia variant="icon">
+                      <Key className="text-muted-foreground/40" />
+                    </EmptyMedia>
+                    <EmptyTitle className="text-white">Nenhum token criado</EmptyTitle>
+                    <EmptyDescription>
+                      Gere um token para conectar integrações externas como Power BI ou ERPs.
+                    </EmptyDescription>
+                  </EmptyHeader>
+                  <EmptyContent>
+                    <button
+                      type="button"
+                      onClick={() => setShowModal(true)}
+                      className="flex items-center gap-2 px-4 py-2.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Gerar Token
+                    </button>
+                  </EmptyContent>
+                </Empty>
               ) : (
                 <div className="divide-y divide-white/5">
                   {tokens.map((t) => (
@@ -336,7 +355,6 @@ export default function TokensApi() {
                             </span>
                           </div>
 
-                          {/* Preview: sem token_preview no GET — mostramos só o placeholder */}
                           <div className="flex items-center gap-2 bg-black/30 rounded-xl px-3 py-2 font-mono text-xs text-muted-foreground mb-2">
                             <span className="flex-1 truncate">
                               {"•".repeat(20)}{" "}
@@ -374,7 +392,7 @@ export default function TokensApi() {
                             type="button"
                             title="Excluir token"
                             disabled={deleteMutation.isPending}
-                            onClick={() => deleteMutation.mutate(t.id)}
+                            onClick={() => handleDelete(t)}
                             className="p-2 hover:bg-destructive/20 rounded-lg transition-colors disabled:opacity-40"
                           >
                             <Trash2 className="w-4 h-4 text-destructive" />

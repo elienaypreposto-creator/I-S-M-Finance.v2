@@ -1,33 +1,26 @@
 /**
  * Rotas de Usuários
  *
- * GET    /usuarios                — Lista paginada
- * POST   /usuarios                — Cria utilizador + envia OTP por e-mail
- * PUT    /usuarios/:id            — Atualização
- * GET    /usuarios/:id/permissoes — Leitura de permissões
- * PUT    /usuarios/:id/permissoes — Substituição de permissões
+ * GET    /usuarios                - Lista paginada
+ * POST   /usuarios                - Cria utilizador + envia OTP por e-mail
+ * PUT    /usuarios/:id            - Atualização
+ * GET    /usuarios/:id/permissoes - Leitura de permissões
+ * PUT    /usuarios/:id/permissoes - Substituição de permissões
  *
- * Fluxo de onboarding:
- *   1. Admin cria utilizador (sem senha) → OTP enviado por e-mail.
- *   2. Utilizador chama POST /auth/verify-otp → recebe setupToken.
- *   3. Utilizador chama POST /auth/setup-password → define senha permanente.
- *
- * Segurança:
- *   - senha_hash e campos OTP nunca retornados nas respostas.
- *   - Payloads validados e purgados por Zod via validateBody (anti-mass assignment).
- *   - Criação atómica: se o envio de e-mail falhar, o hash OTP é revertido.
- *   - Edição: sessões revogadas imediatamente quando a conta é bloqueada
- *     ou quando o admin define uma nova senha.
+ * Validações no POST /usuarios:
+ *   - Parceiro com flag "Cliente" ou "Fornecedor" ativa -> 422 com mensagem clara
+ *   - Parceiro já vinculado a um usuário -> 422 com mensagem clara
+ *   - Perfil base obrigatório -> validado no schema Zod
  */
 
 import {Router} from "express";
 import {z} from "zod";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
-import {and, count, eq, ilike} from "drizzle-orm";
+import {and, count, eq, ilike, ne} from "drizzle-orm";
 import {db} from "@workspace/db";
-import {permissoesTable, usuariosTable} from "@workspace/db/schema";
-import {sendWelcomeEmail} from "../services/email.service";
+import {parceirosTable, permissoesTable, usuariosTable} from "@workspace/db/schema";
+import {sendWelcomeEmail, sendAdminCreatedAccountEmail} from "../services/email.service";
 import {revokeAllTokensForUser} from "../services/session.service";
 import {generateOtp} from "../services/token.service";
 import {errorResponse, successResponse} from "../utils/response";
@@ -38,23 +31,37 @@ import {validateBody} from "../middlewares/validate";
 // Schemas de validação
 // ---------------------
 
+const senhaForteSchema = z
+    .string()
+    .min(8, "A senha deve ter pelo menos 8 caracteres.")
+    .regex(/[A-Z]/, "A senha deve conter ao menos 1 letra maiúscula.")
+    .regex(/[0-9]/, "A senha deve conter ao menos 1 número.");
+
 const createUsuarioBodySchema = z.object({
     nome: z.string().trim().min(2, "Nome deve ter pelo menos 2 caracteres."),
     email: z.string().trim().email("E-mail inválido.").toLowerCase(),
+    perfil_base: z.string().trim().min(1, "Perfil base é obrigatório."),
     cargo: z.string().trim().min(1).optional(),
-    perfil_base: z.string().trim().min(1).optional(),
     telefone: z.string().trim().min(1).optional(),
     celular: z.string().trim().min(1).optional(),
+    senha: z.preprocess(
+        (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+        senhaForteSchema.optional(),
+    ),
 });
 
 const updateUsuarioBodySchema = z.object({
     nome: z.string().trim().min(2, "Nome deve ter pelo menos 2 caracteres.").optional(),
+    email: z.string().trim().email("E-mail inválido.").toLowerCase().optional(),
     cargo: z.string().trim().min(1).optional(),
     perfil_base: z.string().trim().min(1).optional(),
     telefone: z.string().trim().min(1).optional(),
     celular: z.string().trim().min(1).optional(),
     bloqueado: z.boolean().optional(),
-    senha: z.string().min(8, "A senha deve ter pelo menos 8 caracteres.").optional(),
+    senha: z.preprocess(
+        (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+        senhaForteSchema.optional(),
+    ),
 });
 
 const updatePermissoesBodySchema = z.object({
@@ -66,6 +73,9 @@ type UpdateUsuarioBody = z.infer<typeof updateUsuarioBodySchema>;
 type UpdatePermissoesBody = z.infer<typeof updatePermissoesBodySchema>;
 
 const BCRYPT_SALT_ROUNDS = 12;
+
+// Flags que impedem o cadastro de um parceiro como usuário
+const FLAGS_BLOQUEADAS = ["Cliente", "Fornecedor"];
 
 /** Projeção pública reutilizada. */
 const USUARIO_PUBLIC_COLS = {
@@ -121,16 +131,62 @@ router.post(
     validateBody(createUsuarioBodySchema),
     async (req, res) => {
         try {
-            const {nome, email, cargo, perfil_base, telefone, celular} = req.body as CreateUsuarioBody;
+            const {nome, email, cargo, perfil_base, telefone, celular, senha} = req.body as CreateUsuarioBody;
 
-            const otp = generateOtp();
-            const otpHash = await bcrypt.hash(otp, BCRYPT_SALT_ROUNDS);
+            const frontendUrl = process.env.FRONTEND_URL ?? "http://localhost:5173";
+            if (!frontendUrl) {
+                console.error("[CONFIG] FRONTEND_URL não definido — criação de utilizador bloqueada.");
+                return errorResponse(res, 500, "CONFIGURATION_ERROR", "Serviço temporariamente indisponível. Contacte o administrador.");
+            }
 
-            // Placeholder indevassável — substituído em /auth/setup-password
-            const placeholderHash = await bcrypt.hash(
-                crypto.randomBytes(32).toString("hex"),
-                BCRYPT_SALT_ROUNDS,
-            );
+            const [usuarioExistente] = await db
+                .select({id: usuariosTable.id})
+                .from(usuariosTable)
+                .where(eq(usuariosTable.email, email))
+                .limit(1);
+
+            if (usuarioExistente) {
+                return errorResponse(
+                    res,
+                    422,
+                    "EMAIL_JA_CADASTRADO",
+                    "Já existe um utilizador cadastrado com este e-mail.",
+                );
+            }
+
+            const [parceiro] = await db
+                .select({id: parceirosTable.id, tipos: parceirosTable.tipos})
+                .from(parceirosTable)
+                .where(ilike(parceirosTable.nome, nome.trim()))
+                .limit(1);
+
+            if (parceiro) {
+                const tipos = (parceiro.tipos ?? []) as string[];
+                const flagsAtivas = tipos.filter((t) => FLAGS_BLOQUEADAS.includes(t));
+                if (flagsAtivas.length > 0) {
+                    return errorResponse(
+                        res,
+                        422,
+                        "PARCEIRO_FLAG_BLOQUEADA",
+                        `Utilizador não pode ser cadastrado, pois a flag ${flagsAtivas.map((f) => `"${f}"`).join(" e ")} está habilitada. Desabilite essa flag para prosseguir.`,
+                    );
+                }
+            }
+
+            // Fluxo A: admin definiu senha -> login directo sem OTP
+            // Fluxo B: sem senha -> gera OTP de primeiro acesso
+            const adminDefineSenha = typeof senha === "string" && senha.length >= 8;
+
+            const senhaHash = adminDefineSenha
+                ? await bcrypt.hash(senha!, BCRYPT_SALT_ROUNDS)
+                : await bcrypt.hash(crypto.randomBytes(32).toString("hex"), BCRYPT_SALT_ROUNDS);
+
+            let otp: string | null = null;
+            let otpHash: string | null = null;
+            if (!adminDefineSenha) {
+                otp = generateOtp();
+                otpHash = await bcrypt.hash(otp, BCRYPT_SALT_ROUNDS);
+            }
 
             const novoUsuario = await db.transaction(async (tx) => {
                 const [user] = await tx
@@ -142,7 +198,7 @@ router.post(
                         perfil_base,
                         telefone,
                         celular,
-                        senha_hash: placeholderHash,
+                        senha_hash: senhaHash,
                         senha_unica_hash: otpHash,
                         senha_unica_utilizada: false,
                         bloqueado: false,
@@ -151,11 +207,14 @@ router.post(
                 return user;
             });
 
-            // E-mail fora da transacção DB - se falhar, reverte o hash OTP para forçar retry
             try {
-                const originUrl = process.env.FRONTEND_URL ?? "http://localhost:5173";
-                await sendWelcomeEmail(email, nome, otp, originUrl);
+                if (adminDefineSenha) {
+                    await sendAdminCreatedAccountEmail(email, nome, frontendUrl);
+                } else {
+                    await sendWelcomeEmail(email, nome, otp!, frontendUrl);
+                }
             } catch (emailErr) {
+                // Reverte o OTP para não deixar um hash inutilizável gravado
                 await db
                     .update(usuariosTable)
                     .set({senha_unica_hash: null})
@@ -166,11 +225,15 @@ router.post(
                     res,
                     503,
                     "EMAIL_ERROR",
-                    "Utilizador criado, mas o e-mail de boas-vindas falhou. Tente reenviar o OTP.",
+                    "Utilizador criado, mas o e-mail de boas-vindas falhou. Verifique as configurações SMTP.",
                 );
             }
 
-            return successResponse(res, novoUsuario, {message: "OTP enviado para o e-mail."}, 201);
+            const meta = adminDefineSenha
+                ? {message: "Conta criada. E-mail de confirmação enviado."}
+                : {message: "Conta criada. Código de activação enviado por e-mail."};
+
+            return successResponse(res, novoUsuario, meta, 201);
         } catch (e: unknown) {
             return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao criar usuário.", String(e));
         }
@@ -188,11 +251,38 @@ router.put(
                 return errorResponse(res, 400, "VALIDATION_ERROR", "ID de usuário inválido.");
             }
 
-            const {nome, cargo, perfil_base, telefone, celular, bloqueado, senha} = req.body as UpdateUsuarioBody;
+            const {
+                nome,
+                email,
+                cargo,
+                perfil_base,
+                telefone,
+                celular,
+                bloqueado,
+                senha
+            } = req.body as UpdateUsuarioBody;
+
+            if (email !== undefined) {
+                const [conflito] = await db
+                    .select({id: usuariosTable.id})
+                    .from(usuariosTable)
+                    .where(and(eq(usuariosTable.email, email), ne(usuariosTable.id, id)))
+                    .limit(1);
+
+                if (conflito) {
+                    return errorResponse(
+                        res,
+                        422,
+                        "EMAIL_JA_CADASTRADO",
+                        "Já existe um utilizador cadastrado com este e-mail.",
+                    );
+                }
+            }
 
             type UsuarioUpdate = {
                 updated_at: Date;
                 nome?: string;
+                email?: string;
                 cargo?: string;
                 perfil_base?: string;
                 telefone?: string;
@@ -203,6 +293,7 @@ router.put(
 
             const updateData: UsuarioUpdate = {updated_at: new Date()};
             if (nome !== undefined) updateData.nome = nome;
+            if (email !== undefined) updateData.email = email;
             if (cargo !== undefined) updateData.cargo = cargo;
             if (perfil_base !== undefined) updateData.perfil_base = perfil_base;
             if (telefone !== undefined) updateData.telefone = telefone;
@@ -220,8 +311,7 @@ router.put(
 
             if (!item) return errorResponse(res, 404, "NOT_FOUND", "Utilizador não encontrado.");
 
-            // Revogação de sessões: bloqueio ou troca de senha invalidam tokens activos
-            if (bloqueado === true || senha !== undefined) {
+            if (bloqueado === true || senha !== undefined || email !== undefined) {
                 await revokeAllTokensForUser(id);
             }
 

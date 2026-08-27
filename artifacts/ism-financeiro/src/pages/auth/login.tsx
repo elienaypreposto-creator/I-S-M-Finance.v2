@@ -1,15 +1,26 @@
 import {useState} from "react";
 import {useLocation} from "wouter";
 import {fetchApi} from "@/lib/api-config";
-import { useAuth, type User } from "@/contexts/auth-context";
+import {useAuth, type AuthUser} from "@/hooks/use-auth";
 import {useToast} from "@/hooks/use-toast";
-import {Loader2, Lock, Mail} from "lucide-react";
+import {Loader2, Lock, Mail, KeyRound} from "lucide-react";
 
 type LoginResponse = {
-    data: {
+    data:
+        | {
+        // Login normal concluído
         accessToken: string;
         refreshToken: string;
-        user: User;
+        user: AuthUser;
+        permissoes?: string[];
+        primeiroAcesso?: never;
+    }
+        | {
+        // Primeiro acesso detectado - força troca de senha
+        primeiroAcesso: true;
+        setupToken: string;
+        email: string;
+        accessToken?: never;
     };
 };
 
@@ -31,13 +42,27 @@ export default function Login() {
                 body: JSON.stringify({email: email.trim(), senha}),
             });
 
-            const {accessToken, refreshToken, user} = res.data;
+            // Primeiro acesso com senha definida pelo admin -> forçar troca de senha
+            if (res.data.primeiroAcesso && res.data.setupToken) {
+                const params = new URLSearchParams({
+                    email: res.data.email,
+                    setupToken: res.data.setupToken,
+                });
+                toast({
+                    title: "Primeiro acesso detectado",
+                    description: "Por favor, defina uma nova senha antes de continuar.",
+                });
+                setTimeout(() => setLocation(`/definir-senha?${params.toString()}`), 100);
+                return;
+            }
+
+            const {accessToken, refreshToken, user, permissoes} = res.data;
 
             if (!accessToken || !refreshToken || !user) {
                 throw new Error("Resposta do servidor inválida.");
             }
 
-            login(accessToken, refreshToken, user);
+            login(accessToken, refreshToken, user, Array.isArray(permissoes) ? permissoes : []);
             toast({title: "Sucesso", description: "Login realizado com sucesso!"});
             setTimeout(() => setLocation("/"), 100);
         } catch (err: unknown) {
@@ -104,6 +129,16 @@ export default function Login() {
                     >
                         {loading ? <Loader2 className="w-5 h-5 animate-spin"/> : "Entrar no Sistema"}
                     </button>
+
+                    <div className="pt-1 flex justify-center">
+                        <a
+                            href="/primeiro-acesso"
+                            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors"
+                        >
+                            <KeyRound className="w-3.5 h-3.5"/>
+                            Primeiro acesso? Insira seu código aqui
+                        </a>
+                    </div>
                 </form>
             </div>
         </div>

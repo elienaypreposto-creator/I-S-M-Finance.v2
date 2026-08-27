@@ -1,10 +1,10 @@
-import { Switch, Route, Router as WouterRouter, Redirect } from "wouter";
-import { QueryClient, QueryClientProvider, QueryCache, MutationCache } from "@tanstack/react-query";
-import { Toaster } from "@/components/ui/toaster";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { toast } from "sonner";
-import { AppLayout } from "./components/layout/app-layout";
-import { ErrorBoundary } from "./components/error-boundary";
+import {Switch, Route, Router as WouterRouter, Redirect} from "wouter";
+import {QueryClient, QueryClientProvider, QueryCache, MutationCache} from "@tanstack/react-query";
+import {Toaster} from "@/components/ui/toaster";
+import {TooltipProvider} from "@/components/ui/tooltip";
+import {toast} from "sonner";
+import {AppLayout} from "./components/layout/app-layout";
+import {ErrorBoundary} from "./components/error-boundary";
 import NotFound from "@/pages/not-found";
 
 // Pages
@@ -27,6 +27,7 @@ import ContabilFiscal from "./pages/relatorios/contabil-fiscal";
 import DreGerencial from "./pages/relatorios/dre-FINANCEIRO-ISM";
 import FluxoCaixa from "./pages/relatorios/fluxo-caixa-FINANCEIRO-ISM";
 import MetasRelatorio from "./pages/relatorios/metas-relatorio";
+import RelatorioConciliacao from "./pages/relatorios/relatorio-conciliacao";
 
 // Configurações
 import Usuarios from "./pages/configuracoes/usuarios";
@@ -34,116 +35,217 @@ import Filiais from "./pages/configuracoes/filiais";
 import TokensApi from "./pages/configuracoes/tokens-api";
 import Login from "./pages/auth/login";
 import PrimeiroAcesso from "./pages/auth/primeiro-acesso";
-import { authStorage } from "./lib/api-config";
+import DefinirSenha from "./pages/auth/definir-senha";
+import {authStorage} from "./lib/api-config";
+import {useAuth} from "./hooks/use-auth";
+import {PERM} from "./lib/permissoes";
 
 // ─── QueryClient com tratativa global de erros
 const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      retry: 1,
-      refetchOnWindowFocus: false,
+    defaultOptions: {
+        queries: {
+            retry: 1,
+            refetchOnWindowFocus: false,
+        },
     },
-  },
-  // Toast vermelho para qualquer query que falhar (exceto 401 — já tratado no fetchApi)
-  queryCache: new QueryCache({
-    onError: (error: unknown) => {
-      const message = error instanceof Error ? error.message : "Erro na requisição.";
-      // Não exibe toast para erros de sessão expirada (já redireciona para /login)
-      if (message.toLowerCase().includes("sessão expirada")) return;
-      toast.error(message);
-    },
-  }),
-  // Toast vermelho para qualquer mutation que falhar
-  mutationCache: new MutationCache({
-    onError: (error: unknown) => {
-      const message = error instanceof Error ? error.message : "Erro ao salvar.";
-      if (message.toLowerCase().includes("sessão expirada")) return;
-      toast.error(message);
-    },
-  }),
+    // Toast vermelho para qualquer query que falhar (exceto 401 — já tratado no fetchApi)
+    queryCache: new QueryCache({
+        onError: (error: unknown) => {
+            const message = error instanceof Error ? error.message : "Erro na requisição.";
+            // Não exibe toast para erros de sessão expirada (já redireciona para /login)
+            if (message.toLowerCase().includes("sessão expirada")) return;
+            toast.error(message);
+        },
+    }),
+    // Toast vermelho para qualquer mutation que falhar
+    mutationCache: new MutationCache({
+        onError: (error: unknown) => {
+            const message = error instanceof Error ? error.message : "Erro ao salvar.";
+            if (message.toLowerCase().includes("sessão expirada")) return;
+            toast.error(message);
+        },
+    }),
 });
 
 // ─── Mapa de dependências de cache
-// Ao invalidar uma chave, todas as chaves listadas também são invalidadas.
-// Ex: um novo lançamento deve forçar refetch do dashboard, DRE e fluxo de caixa.
+//
+// IMPORTANTE: os valores aqui são PREFIXOS de queryKey, não chaves exatas.
+// Ao invalidar uma chave "gatilho", todas as queries cujo primeiro elemento
+// da queryKey COMEÇA COM algum dos prefixos listados também são invalidadas
+// (via `predicate`, não por match exato de array).
+//
+// Isso resolve dois problemas que uma lista de chaves exatas não resolve:
+// 1) Uma página pode ter várias queries sob o mesmo "namespace"
+//    (ex: dashboard-kpis, dashboard-fluxo, dashboard-projecao-mes, ...).
+//    Um prefixo "dashboard" cobre todas de uma vez, hoje e no futuro.
+// 2) Queries novas criadas depois (ex: dashboard-nova-metrica) já entram
+//    automaticamente na invalidação, sem precisar lembrar de atualizar
+//    este mapa toda vez que uma query nova for adicionada.
+//
+// Regra de nomenclatura que este mapa assume (e que já é seguida no projeto):
+// toda queryKey de uma "família" deve começar com o mesmo prefixo textual
+// (ex: tudo relacionado ao dashboard começa com "dashboard").
+//
+// @example
+// // Em qualquer mutation de lançamento:
+// onSuccess: () => invalidateRelated(queryClient, "lancamentos")
+// // -> invalida ["lancamentos"] exato + tudo que comece com "dashboard" ou "relatorio" + ["conciliacoes-list"]
 const QUERY_DEPENDENCIES: Record<string, string[]> = {
-  "lancamentos":  ["dashboard", "fluxo-caixa", "dre", "conciliacao"],
-  "kanban-cards": ["dashboard"],
-  "conciliacao":  ["dashboard", "lancamentos"],
-  "metas":        ["dashboard"],
+    "lancamentos": ["dashboard", "relatorio", "conciliacoes-list"],
+    "kanban-cards": ["dashboard"],
+    "conciliacoes-list": ["dashboard", "lancamentos"],
+    "plano-contas": ["dashboard", "relatorio", "lancamentos"],
+    "parceiros": ["lancamentos"], // combobox de parceiro no modal de lançamento
+    "metas": ["dashboard"],
 };
 
 /**
  * Função utilitária global para invalidar uma chave de cache e todas as suas dependentes.
  *
+ * Invalida:
+ * 1. A própria chave, por match exato (["key"] casa com ["key", ...args]).
+ * 2. Todas as queries cujo primeiro elemento da queryKey comece com algum
+ *    dos prefixos listados em QUERY_DEPENDENCIES[key].
+ *
  * @example
- * // Em qualquer mutation de lançamento:
  * onSuccess: () => invalidateRelated(queryClient, "lancamentos")
- * // → invalida: lancamentos, dashboard, fluxo-caixa, dre, conciliacao
  */
 export function invalidateRelated(qc: QueryClient, key: string) {
-  const keys = [key, ...(QUERY_DEPENDENCIES[key] ?? [])];
-  keys.forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+    // 1. Invalidação exata da própria chave (cobre ["lancamentos", filtros...])
+    void qc.invalidateQueries({queryKey: [key]});
+
+    // 2. Invalidação por prefixo de todas as chaves dependentes
+    const prefixes = QUERY_DEPENDENCIES[key] ?? [];
+    if (prefixes.length === 0) return;
+
+    void qc.invalidateQueries({
+        predicate: (query) => {
+            const first = query.queryKey[0];
+            if (typeof first !== "string") return false;
+            return prefixes.some((prefix) => first.startsWith(prefix));
+        },
+    });
 }
 
 // Exportar queryClient para uso externo (ex: kanban.tsx, lancamentos.tsx)
-export { queryClient };
+export {queryClient};
 
-import { ProtectedRoute } from "./components/auth/protected-route";
-import { AuthProvider } from "./contexts/auth-context";
+// Rota privada (JWT + permissão opcional FEAT-09)
+function PrivateRoute({
+                          component: Component,
+                          path,
+                          permission,
+                      }: {
+    component: any;
+    path: string;
+    permission?: string;
+}) {
+    const token = authStorage.getToken();
+    const {hasPermission, loading} = useAuth();
+
+    if (!token) {
+        return <Redirect to="/login"/>;
+    }
+
+    if (permission) {
+        if (loading) {
+            return (
+                <Route path={path}>
+                    {() => (
+                        <AppLayout>
+                            <div className="p-8 text-sm text-muted-foreground">Carregando permissões…</div>
+                        </AppLayout>
+                    )}
+                </Route>
+            );
+        }
+        if (!hasPermission(permission)) {
+            return (
+                <Route path={path}>
+                    {() => (
+                        <AppLayout>
+                            <div className="p-8 text-sm text-destructive">
+                                Sem permissão para acessar este módulo.
+                            </div>
+                        </AppLayout>
+                    )}
+                </Route>
+            );
+        }
+    }
+
+    return (
+        <Route path={path}>
+            {(params) => (
+                <AppLayout>
+                    <Component {...params} />
+                </AppLayout>
+            )}
+        </Route>
+    );
+}
 
 function Router() {
-  return (
-    <Switch>
-      <Route path="/login" component={Login} />
-      <Route path="/primeiro-acesso" component={PrimeiroAcesso} />
-      <ProtectedRoute path="/" component={Dashboard} />
-      <ProtectedRoute path="/kanban" component={Kanban} />
-      <ProtectedRoute path="/lancamentos" component={Lancamentos} requiredPermission="financeiro:lancamentos:listar" />
-      <ProtectedRoute path="/conciliacao" component={ConciliacaoList} requiredPermission="financeiro:conciliacao:acessar" />
-      <ProtectedRoute path="/conciliacao/extrato/:extratoId" component={ConciliacaoExtratoDetalhe} requiredPermission="financeiro:conciliacao:acessar" />
+    return (
+        <Switch>
+            <Route path="/login" component={Login}/>
+            <Route path="/primeiro-acesso" component={PrimeiroAcesso}/>
+            <Route path="/definir-senha" component={DefinirSenha}/>
+            <PrivateRoute path="/" component={Dashboard}/>
 
-      {/* Cadastros */}
-      <ProtectedRoute path="/cadastros/parceiros" component={Parceiros} requiredPermission="financeiro:parceiros:listar" />
-      <ProtectedRoute path="/cadastros/plano-contas" component={PlanoContas} requiredPermission="configuracoes:plano-contas:listar" />
-      <ProtectedRoute path="/cadastros/contas-bancarias" component={ContasBancarias} requiredPermission="configuracoes:contas-bancarias:listar" />
-      <ProtectedRoute path="/cadastros/metas" component={Metas} requiredPermission="financeiro:metas:listar" />
-      <ProtectedRoute path="/cadastros/categorias" component={PlanoContas} requiredPermission="configuracoes:categorias:listar" />
-      <ProtectedRoute path="/cadastros/departamentos" component={Departamentos} requiredPermission="configuracoes:plano-contas:listar" />
+            <PrivateRoute path="/kanban" component={Kanban}/>
+            <PrivateRoute path="/lancamentos" component={Lancamentos}/>
+            <PrivateRoute path="/conciliacao" component={ConciliacaoList} permission={PERM.CONCILIACAO_ACESSAR}/>
+            <PrivateRoute
+                path="/conciliacao/extrato/:extratoId"
+                component={ConciliacaoExtratoDetalhe}
+                permission={PERM.CONCILIACAO_ACESSAR}
+            />
 
-      {/* Relatórios */}
-      <ProtectedRoute path="/relatorios/fechamento-mensal" component={FechamentoMensal} requiredPermission="financeiro:fechamentos:listar" />
-      <ProtectedRoute path="/relatorios/contabil-fiscal" component={ContabilFiscal} requiredPermission="relatorios:financeiro" />
-      <ProtectedRoute path="/relatorios/dre" component={DreGerencial} requiredPermission="relatorios:dre" />
-      <ProtectedRoute path="/relatorios/fluxo-caixa" component={FluxoCaixa} requiredPermission="relatorios:fluxo-caixa-mensal" />
-      <ProtectedRoute path="/relatorios/metas" component={MetasRelatorio} requiredPermission="relatorios:metas" />
+            {/* Cadastros */}
+            <PrivateRoute path="/cadastros/parceiros" component={Parceiros}/>
+            <PrivateRoute path="/cadastros/plano-contas" component={PlanoContas}/>
+            <PrivateRoute path="/cadastros/contas-bancarias" component={ContasBancarias}/>
+            <PrivateRoute path="/cadastros/metas" component={Metas}/>
+            <PrivateRoute path="/cadastros/departamentos" component={Departamentos}/>
 
-      {/* Configurações */}
-      <ProtectedRoute path="/configuracoes/usuarios" component={Usuarios} requiredPermission="admin:usuarios:listar" />
-      <ProtectedRoute path="/configuracoes/filiais" component={Filiais} requiredPermission="admin:usuarios:listar" />
-      <ProtectedRoute path="/configuracoes/tokens-api" component={TokensApi} requiredPermission="admin:tokens-api:listar" />
 
-      <Route component={NotFound} />
-    </Switch>
-  );
+            {/* Relatórios */}
+            <PrivateRoute path="/relatorios/fechamento-mensal" component={FechamentoMensal}/>
+            <PrivateRoute path="/relatorios/contabil-fiscal" component={ContabilFiscal}/>
+            <PrivateRoute path="/relatorios/dre" component={DreGerencial}/>
+            <PrivateRoute path="/relatorios/fluxo-caixa" component={FluxoCaixa}/>
+            <PrivateRoute path="/relatorios/metas" component={MetasRelatorio}/>
+            <PrivateRoute
+                path="/relatorios/conciliacao"
+                component={RelatorioConciliacao}
+                permission={PERM.RELATORIOS_CONCILIACAO}
+            />
+
+            {/* Configurações */}
+            <PrivateRoute path="/configuracoes/usuarios" component={Usuarios}/>
+            <PrivateRoute path="/configuracoes/filiais" component={Filiais}/>
+            <PrivateRoute path="/configuracoes/tokens-api" component={TokensApi}/>
+
+            <Route component={NotFound}/>
+        </Switch>
+    );
 }
 
 // ─── App root
 export function App() {
-  return (
-    <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
-        <AuthProvider>
-          <TooltipProvider>
-            <WouterRouter base={import.meta.env.BASE_URL?.replace(/\/$/, "") || ""}>
-              <Router />
-            </WouterRouter>
-            <Toaster />
-          </TooltipProvider>
-        </AuthProvider>
-      </QueryClientProvider>
-    </ErrorBoundary>
-  );
+    return (
+        <ErrorBoundary>
+            <QueryClientProvider client={queryClient}>
+                <TooltipProvider>
+                    <WouterRouter base={import.meta.env.BASE_URL?.replace(/\/$/, "") || ""}>
+                        <Router/>
+                    </WouterRouter>
+                    <Toaster/>
+                </TooltipProvider>
+            </QueryClientProvider>
+        </ErrorBoundary>
+    );
 }
 
 export default App;

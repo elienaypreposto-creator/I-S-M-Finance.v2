@@ -6,6 +6,8 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  --breakpoint-md: 992px;
+
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
   --color-border: hsl(var(--border));
@@ -214,7 +216,7 @@
   }
 
   /*Tabelas Responsivas*/
-  @media (max-width: 640px) {
+  @media (max-width: 991px) {
     .table-to-cards thead {
       @apply hidden;
     }
@@ -244,7 +246,7 @@
     }
   }
 
-  @media (max-width: 1024px) {
+  @media (max-width: 991px) {
     button:not(.touch-target-exempt),
     [role="button"]:not(.touch-target-exempt),
     a:not(.touch-target-exempt),
@@ -261,7 +263,7 @@
     min-height: 100svh;
   }
 
-  @media (min-width: 768px) {
+  @media (min-width: 992px) {
     .sidebar-layout {
       grid-template-columns: 240px 1fr;
     }
@@ -283,22 +285,21 @@
     gap: var(--space-sm);
   }
 
-  @media (min-width: 640px) {
+  @media (min-width: 992px) {
     .stack-to-row {
       flex-direction: row;
       align-items: center;
     }
   }
 
-
   .hide-mobile  { display: none; }
-  @media (min-width: 640px)  { .hide-mobile  { display: revert; } }
+  @media (min-width: 992px)  { .hide-mobile  { display: revert; } }
 
   .hide-tablet  { display: revert; }
-  @media (min-width: 768px) and (max-width: 1023px) { .hide-tablet { display: none; } }
+  @media (min-width: 992px) and (max-width: 1279px) { .hide-tablet { display: none; } }
 
   .show-mobile-only { display: revert; }
-  @media (min-width: 640px) { .show-mobile-only { display: none; } }
+  @media (min-width: 992px) { .show-mobile-only { display: none; } }
 
   
   .content-max {

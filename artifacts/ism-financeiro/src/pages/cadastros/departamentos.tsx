@@ -7,7 +7,17 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { fetchApiData } from "@/lib/api-config";
 import { departamentoFormSchema, type DepartamentoFormValues } from "@/validations/cadastros.schema";
-import { RequiresPermission } from "@/components/auth/requires-permission";
+import { CardsSkeleton } from "@/components/shared/table-skeleton";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { useConfirm } from "@/hooks/use-confirm";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+  EmptyContent,
+} from "@/components/ui/empty";
 
 type DepartamentoRow = {
   id: number;
@@ -111,6 +121,7 @@ function DeptModal({ onClose, initialData, isPending, onSave }: DeptModalProps) 
 export default function Departamentos() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { confirm, ConfirmDialogProps } = useConfirm();
 
   const [expanded, setExpanded] = useState<number[]>([]);
   const [editingItem, setEditingItem] = useState<DepartamentoRow | null>(null);
@@ -207,18 +218,24 @@ export default function Departamentos() {
     }
   };
 
-  const isSavePending = createMutation.isPending || updateMutation.isPending;
+  const handleDelete = async (dept: DepartamentoRow) => {
+    const ok = await confirm({
+      title: `Excluir "${dept.nome}"?`,
+      description: "Departamentos com lançamentos ou parceiros vinculados não podem ser removidos.",
+      confirmLabel: "Excluir",
+      cancelLabel: "Cancelar",
+      variant: "destructive",
+    });
+    if (ok) deleteMutation.mutate(dept.id);
+  };
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
-  }
+  const isSavePending = createMutation.isPending || updateMutation.isPending;
 
   return (
     <div className="space-y-6">
+      {/* Dialog de confirmação */}
+      <ConfirmDialog {...ConfirmDialogProps} />
+
       {(showCreate || editingItem) && (
         <DeptModal
           key={modalKey}
@@ -236,15 +253,13 @@ export default function Departamentos() {
         title="Departamentos & Centros de Custo"
         description="Estrutura organizacional e centros de custo da empresa"
         actions={
-          <RequiresPermission permission="configuracoes:departamentos:criar">
-            <button
-              type="button"
-              onClick={openCreate}
-              className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25"
-            >
-              <Plus className="w-4 h-4" /> Novo Departamento
-            </button>
-          </RequiresPermission>
+          <button
+            type="button"
+            onClick={openCreate}
+            className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25"
+          >
+            <Plus className="w-4 h-4" /> Novo Departamento
+          </button>
         }
       />
 
@@ -262,23 +277,37 @@ export default function Departamentos() {
         ))}
       </div>
 
-      {departamentos.length === 0 ? (
-        <div className="glass-panel rounded-2xl py-16 text-center border-dashed border-2 border-white/10">
-          <Building2 className="w-12 h-12 text-muted-foreground/30 mx-auto mb-4" />
-          <p className="text-muted-foreground text-sm font-medium">
-            Nenhum departamento cadastrado ainda.
-          </p>
-          <RequiresPermission permission="configuracoes:departamentos:criar">
-            <button
-              type="button"
-              onClick={openCreate}
-              className="text-primary text-sm font-bold hover:underline mt-2 block mx-auto"
-            >
-              Criar primeiro departamento
-            </button>
-          </RequiresPermission>
+      {/* Loading — skeleton de cards */}
+      {isLoading && <CardsSkeleton cards={4} />}
+
+      {/* Empty state */}
+      {!isLoading && departamentos.length === 0 && (
+        <div className="glass-panel rounded-2xl border border-white/5">
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <Building2 className="text-muted-foreground/40" />
+              </EmptyMedia>
+              <EmptyTitle className="text-white">Nenhum departamento cadastrado</EmptyTitle>
+              <EmptyDescription>
+                Crie departamentos para organizar sua estrutura e classificar lançamentos.
+              </EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent>
+              <button
+                type="button"
+                onClick={openCreate}
+                className="flex items-center gap-2 px-4 py-2.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25"
+              >
+                <Plus className="w-4 h-4" /> Novo Departamento
+              </button>
+            </EmptyContent>
+          </Empty>
         </div>
-      ) : (
+      )}
+
+      {/* Lista */}
+      {!isLoading && departamentos.length > 0 && (
         <div className="space-y-3">
           {departamentos.map((dept) => {
             const cor = getColor(dept.id);
@@ -311,34 +340,27 @@ export default function Departamentos() {
                   </button>
 
                   <div className="flex items-center gap-1 shrink-0">
-                    <RequiresPermission permission="configuracoes:departamentos:criar">
-                      <button
-                        type="button"
-                        onClick={() => openEdit(dept)}
-                        className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-                        title="Editar"
-                      >
-                        <Pencil className="w-4 h-4 text-muted-foreground" />
-                      </button>
-                    </RequiresPermission>
-                    <RequiresPermission permission="configuracoes:departamentos:deletar">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          confirm(`Excluir departamento "${dept.nome}"?`) &&
-                          deleteMutation.mutate(dept.id)
-                        }
-                        disabled={deleteMutation.isPending}
-                        className="p-2 hover:bg-destructive/20 rounded-lg transition-colors disabled:opacity-50"
-                        title="Excluir"
-                      >
-                        {deleteMutation.isPending ? (
-                          <Loader2 className="w-4 h-4 animate-spin text-destructive" />
-                        ) : (
-                          <Trash2 className="w-4 h-4 text-muted-foreground" />
-                        )}
-                      </button>
-                    </RequiresPermission>
+                    <button
+                      type="button"
+                      onClick={() => openEdit(dept)}
+                      className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                      title="Editar"
+                    >
+                      <Pencil className="w-4 h-4 text-muted-foreground" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(dept)}
+                      disabled={deleteMutation.isPending}
+                      className="p-2 hover:bg-destructive/20 rounded-lg transition-colors disabled:opacity-50"
+                      title="Excluir"
+                    >
+                      {deleteMutation.isPending ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-destructive" />
+                      ) : (
+                        <Trash2 className="w-4 h-4 text-muted-foreground" />
+                      )}
+                    </button>
                     <button
                       type="button"
                       onClick={() => toggle(dept.id)}
