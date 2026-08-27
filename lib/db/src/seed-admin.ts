@@ -1,10 +1,12 @@
 /**
- * Seed — Usuário Administrador Padrão + Mapeamento Completo de Permissões
+ * Seed CLI - Usuário Administrador Padrão + Mapeamento Completo de Permissões
  *
  * Execução:
  *   cd lib/db
  *   tsx --env-file=../../.env src/seed-admin.ts
  *
+ * As permissões dos admins de sistema são sincronizadas no boot
+ * da API via `syncAdminPermissionsOnBoot` (sem necessidade de CLI).
  *
  * O script é idempotente: se o usuário já existir, apenas sincroniza as permissões.
  */
@@ -12,52 +14,13 @@
 import bcrypt from "bcryptjs";
 import {eq, sql} from "drizzle-orm";
 import {db, pool} from "./index";
-import {usuariosTable, usuarioPermissoesTable} from "./schema";
+import {usuariosTable} from "./schema";
+import {PERMISSOES_ADMIN, syncAdminPermissionsOnBoot} from "./sync-admin-permissions";
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
 const ADMIN_NOME = process.env.ADMIN_NOME;
 const ADMIN_SENHA = process.env.ADMIN_SENHA;
 const BCRYPT_ROUNDS = 12;
-
-const PERMISSOES_ADMIN: string[] = [
-    "financeiro:lancamentos:criar",
-    "financeiro:lancamentos:editar",
-    "financeiro:lancamentos:deletar",
-
-    "financeiro:parceiros:criar",
-    "financeiro:parceiros:editar",
-    "financeiro:parceiros:deletar",
-
-    "financeiro:metas:editar",
-
-    "configuracoes:contas-bancarias:criar",
-    "configuracoes:contas-bancarias:editar",
-    "configuracoes:contas-bancarias:deletar",
-
-    "configuracoes:plano-contas:criar",
-    "configuracoes:plano-contas:editar",
-    "configuracoes:plano-contas:deletar",
-
-    "configuracoes:filiais:criar",
-    "configuracoes:filiais:editar",
-    "configuracoes:filiais:deletar",
-
-    "configuracoes:departamentos:criar",
-    "configuracoes:departamentos:editar",
-    "configuracoes:departamentos:deletar",
-
-    "admin:usuarios:listar",
-    "admin:usuarios:criar",
-    "admin:usuarios:editar",
-    "admin:migrate-passwords",
-
-    "admin:tokens-api:listar",
-    "admin:tokens-api:criar",
-    "admin:tokens-api:editar",
-    "admin:tokens-api:deletar",
-
-    "admin:auditoria:listar",
-];
 
 /**
  * Mascara a senha e parte do host da DATABASE_URL para log seguro.
@@ -134,7 +97,15 @@ async function verificarTabelas(): Promise<void> {
     }
 }
 
-async function upsertAdmin(): Promise<number> {
+/** Cria o admin de ADMIN_EMAIL se ainda não existir (CLI apenas - exige ADMIN_SENHA). */
+async function upsertAdmin(): Promise<void> {
+    if (!ADMIN_EMAIL?.trim()) {
+        throw new Error("ADMIN_EMAIL não configurado no ambiente.");
+    }
+    if (!ADMIN_NOME?.trim() || !ADMIN_SENHA) {
+        throw new Error("ADMIN_NOME e ADMIN_SENHA são obrigatórios para criar o usuário admin via CLI.");
+    }
+
     process.stdout.write(`\n[3/4] Criando/verificando usuário admin (${ADMIN_EMAIL})...\n`);
 
     const [existente] = await db
@@ -146,7 +117,7 @@ async function upsertAdmin(): Promise<number> {
     if (existente) {
         process.stdout.write(`    Usuário já existe - id=${existente.id}, email=${existente.email}\n`);
         process.stdout.write(`    Pulando criação. Permissões serão resincronizadas.\n`);
-        return existente.id;
+        return;
     }
 
     process.stdout.write(`    Gerando bcrypt hash (rounds=${BCRYPT_ROUNDS})... `);
@@ -160,6 +131,7 @@ async function upsertAdmin(): Promise<number> {
             email: ADMIN_EMAIL,
             senha_hash: senhaHash,
             bloqueado: false,
+            perfil_base: "Admin",
         })
         .returning({
             id: usuariosTable.id,
@@ -177,42 +149,6 @@ async function upsertAdmin(): Promise<number> {
     process.stdout.write(`\n    Usuário Admin gravado com ID ${criado.id}\n`);
     process.stdout.write(`    nome  : ${criado.nome}\n`);
     process.stdout.write(`    email : ${criado.email}\n`);
-
-    return criado.id;
-}
-
-async function sincronizarPermissoes(adminId: number): Promise<void> {
-    process.stdout.write(`\n[4/4] Sincronizando ${PERMISSOES_ADMIN.length} permissões para id=${adminId}...\n`);
-
-    const deletadas = await db
-        .delete(usuarioPermissoesTable)
-        .where(eq(usuarioPermissoesTable.usuario_id, adminId));
-
-    process.stdout.write(`    Permissões antigas removidas: ${(deletadas as { rowCount?: number }).rowCount ?? "?"}\n`);
-
-    await db.insert(usuarioPermissoesTable).values(
-        PERMISSOES_ADMIN.map((p) => ({
-            usuario_id: adminId,
-            codigo_permissao: p,
-        })),
-    );
-
-    process.stdout.write(`    ${PERMISSOES_ADMIN.length} permissões inseridas com sucesso.\n`);
-
-    // Confirmação de leitura — garante que as permissões foram de facto persistidas
-    const gravadas = await db
-        .select({codigo: usuarioPermissoesTable.codigo_permissao})
-        .from(usuarioPermissoesTable)
-        .where(eq(usuarioPermissoesTable.usuario_id, adminId));
-
-    if (gravadas.length !== PERMISSOES_ADMIN.length) {
-        throw new Error(
-            `Inconsistência pós-insert: esperado ${PERMISSOES_ADMIN.length} permissões, ` +
-            `encontrado ${gravadas.length} no banco.`,
-        );
-    }
-
-    process.stdout.write(`    Verificação de leitura: ${gravadas.length}/${PERMISSOES_ADMIN.length} permissões confirmadas no banco.\n`);
 }
 
 async function seedAdmin(): Promise<void> {
@@ -223,8 +159,17 @@ async function seedAdmin(): Promise<void> {
     try {
         await verificarConexao();
         await verificarTabelas();
-        const adminId = await upsertAdmin();
-        await sincronizarPermissoes(adminId);
+        await upsertAdmin();
+
+        process.stdout.write(
+            `\n[4/4] Sincronizando ${PERMISSOES_ADMIN.length} permissões nos admins de sistema...\n`,
+        );
+        const result = await syncAdminPermissionsOnBoot();
+        process.stdout.write(
+            `    Sincronizados: ${result.sincronizados}/${result.emailsAlvo}` +
+            (result.ausentes.length ? ` (ausentes: ${result.ausentes.join(", ")})` : "") +
+            "\n",
+        );
 
         process.stdout.write("\n═══════════════════════════════════════════════\n");
         process.stdout.write("    Seed concluído com sucesso!\n");

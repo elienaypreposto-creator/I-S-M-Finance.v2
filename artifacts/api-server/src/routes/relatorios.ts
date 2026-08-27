@@ -1,27 +1,50 @@
 import {Router} from "express";
-import {and, eq, gte, inArray, lte, sql} from "drizzle-orm";
+import {and, eq, gte, lte, sql, desc, type SQLWrapper} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {
+    conciliacoesTable,
     contasBancariasTable,
+    extratosTable,
     lancamentosTable,
     metasTable,
     parceirosTable,
     planoContasTable,
 } from "@workspace/db/schema";
 import {errorResponse, successResponse} from "../utils/response";
+import {fromCents, realizadoSemJurosCents, toCents} from "../utils/money";
+import {sqlLancamentosDaConta} from "../utils/lancamentos-conta";
+import {contasBancariasService} from "../domains/financial/contas-bancarias/contas-bancarias.service";
+import {withPermission} from "../middlewares/withPermission";
+import {PERM} from "../constants/permissoes";
 
 const router = Router();
 
-const STATUS_QUITADO = ["pago", "recebido"] as const;
+/**
+ * Quitados efetivos (FEAT-10 / conciliação).
+ * SQL cru: `inArray` com strings falha silenciosamente contra enum Postgres `status_lancamento`
+ * (mesmo workaround de contas-bancarias.service.ts).
+ */
+const STATUS_QUITADO_SQL = sql`${lancamentosTable.status}
+IN ('pago', 'recebido', 'pago_parcial')`;
 const toNumber = (value: unknown) => Number(value ?? 0);
 const monthKey = (month: number) => String(month).padStart(2, "0");
 const MONTH_NAMES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+
+const extractMonth = (col: SQLWrapper) => sql<number>`EXTRACT(MONTH FROM
+${col}
+)`;
+const extractYearEq = (col: SQLWrapper, ano: number) =>
+    sql`EXTRACT(YEAR FROM
+    ${col}
+    )
+    =
+    ${ano}`;
 
 // ---------------------------------------------------------------------------
 // GET /relatorios/fechamento-mensal
 // ---------------------------------------------------------------------------
 
-router.get("/relatorios/fechamento-mensal", async (req, res) => {
+router.get("/relatorios/fechamento-mensal", withPermission(PERM.RELATORIOS_FECHAMENTO), async (req, res) => {
     try {
         const mes = parseInt(req.query.mes as string);
         const ano = parseInt(req.query.ano as string);
@@ -31,39 +54,68 @@ router.get("/relatorios/fechamento-mensal", async (req, res) => {
 
         const mesStr = String(mes).padStart(2, "0");
         const dataInicio = `${ano}-${mesStr}-01`;
-        const dataFim = new Date(ano, mes, 0).toISOString().split("T")[0];
+        const lastDay = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+        const dataFim = `${ano}-${mesStr}-${String(lastDay).padStart(2, "0")}`;
 
-        const soma = sql<number>`COALESCE(SUM(
-        ${lancamentosTable.valor}
-        :
-        :
-        numeric
-        ),
-        0
-        )`;
+        // FEAT-10: realizado por data_quitacao; juros fora do resultado (RN-G5).
+        const lancamentosMes = await db
+            .select({
+                tipo: lancamentosTable.tipo,
+                valor_quitado: lancamentosTable.valor_quitado,
+                valor: lancamentosTable.valor,
+                juros: lancamentosTable.juros,
+            })
+            .from(lancamentosTable)
+            .where(
+                and(
+                    sql`${lancamentosTable.data_quitacao}
+                    IS NOT NULL`,
+                    gte(lancamentosTable.data_quitacao, dataInicio),
+                    lte(lancamentosTable.data_quitacao, dataFim),
+                    STATUS_QUITADO_SQL,
+                ),
+            );
 
-        const [[totalCR], [totalCP]] = await Promise.all([
-            db.select({total: soma}).from(lancamentosTable).where(
-                and(eq(lancamentosTable.tipo, "CR"), gte(lancamentosTable.vencimento, dataInicio), lte(lancamentosTable.vencimento, dataFim)),
-            ),
-            db.select({total: soma}).from(lancamentosTable).where(
-                and(eq(lancamentosTable.tipo, "CP"), gte(lancamentosTable.vencimento, dataInicio), lte(lancamentosTable.vencimento, dataFim)),
-            ),
-        ]);
+        let realizadoReceberCents = 0;
+        let realizadoGastarCents = 0;
+        let jurosCents = 0;
+        for (const l of lancamentosMes) {
+            const quitado = toCents(l.valor_quitado ?? l.valor ?? 0);
+            const juros = toCents(l.juros ?? 0);
+            const parcela = realizadoSemJurosCents(quitado, juros);
+            jurosCents += juros;
+            if (l.tipo === "CR") realizadoReceberCents += parcela;
+            else realizadoGastarCents += parcela;
+        }
 
         const metas = await db
-            .select()
+            .select({
+                valor_projetado: metasTable.valor_projetado,
+                tipo_plano: planoContasTable.tipo,
+            })
             .from(metasTable)
+            .leftJoin(planoContasTable, eq(metasTable.plano_conta_id, planoContasTable.id))
             .where(and(eq(metasTable.ano, ano), eq(metasTable.mes, mes)));
-        const planejadoReceber = metas.reduce((acc, m) => acc + Number(m.valor_projetado), 0);
+
+        let planejadoReceberCents = 0;
+        let planejadoGastarCents = 0;
+        for (const m of metas) {
+            const v = toCents(m.valor_projetado);
+            const tipo = (m.tipo_plano ?? "").toLowerCase();
+            if (tipo === "receita") planejadoReceberCents += v;
+            else planejadoGastarCents += v;
+        }
 
         return successResponse(res, {
             mes,
             ano,
-            planejado_receber: planejadoReceber,
-            realizado_receber: toNumber(totalCR?.total),
-            planejado_gastar: planejadoReceber,
-            realizado_gastar: toNumber(totalCP?.total),
+            planejado_receber: fromCents(planejadoReceberCents),
+            realizado_receber: fromCents(realizadoReceberCents),
+            planejado_gastar: fromCents(planejadoGastarCents),
+            realizado_gastar: fromCents(realizadoGastarCents),
+            /** Juros do período — fora do resultado operacional. */
+            juros: fromCents(jurosCents),
+            criterio: "data_quitacao",
         });
     } catch (e) {
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar fechamento mensal.", String(e));
@@ -77,51 +129,31 @@ router.get("/relatorios/fechamento-mensal", async (req, res) => {
 // Regime de caixa -> data_quitacao, apenas status pago/recebido.
 // ---------------------------------------------------------------------------
 
-router.get("/relatorios/dre", async (req, res) => {
+router.get("/relatorios/dre", withPermission(PERM.RELATORIOS_DRE), async (req, res) => {
     try {
         const ano = parseInt(req.query.ano as string) || new Date().getFullYear();
         const regime = (req.query.regime as string) === "caixa" ? "caixa" : "competencia";
 
         const isCaixa = regime === "caixa";
 
-        const mesExpr = isCaixa
-            ? sql`EXTRACT(MONTH FROM
-                ${lancamentosTable.data_quitacao}
-                :
-                :
-                date
-                )`
-            : sql`EXTRACT(MONTH FROM COALESCE(
-                ${lancamentosTable.competencia},
-                ${lancamentosTable.vencimento}
-                )
-                :
-                :
-                date
-                )`;
-
+        const dataCaixa = lancamentosTable.data_quitacao;
+        const dataCompetencia = sql`COALESCE(
+        ${lancamentosTable.competencia},
+        ${lancamentosTable.vencimento}
+        )`;
+        const mesExpr = isCaixa ? extractMonth(dataCaixa) : sql<number>`EXTRACT(MONTH FROM
+        ${dataCompetencia}
+        )`;
         const anoFilter = isCaixa
-            ? sql`EXTRACT(YEAR FROM
-                ${lancamentosTable.data_quitacao}
-                :
-                :
-                date
-                )
-                =
-                ${ano}`
-            : sql`EXTRACT(YEAR FROM COALESCE(
-                ${lancamentosTable.competencia},
-                ${lancamentosTable.vencimento}
-                )
-                :
-                :
-                date
+            ? extractYearEq(dataCaixa, ano)
+            : sql`EXTRACT(YEAR FROM
+                ${dataCompetencia}
                 )
                 =
                 ${ano}`;
 
         const statusFilter = isCaixa
-            ? inArray(lancamentosTable.status, STATUS_QUITADO as unknown as string[])
+            ? STATUS_QUITADO_SQL
             : sql`${lancamentosTable.status}
                 != 'cancelado'`;
 
@@ -132,9 +164,6 @@ router.get("/relatorios/dre", async (req, res) => {
                 categoria: planoContasTable.categoria,
                 total: sql<number>`COALESCE(SUM(
                 ${lancamentosTable.valor}
-                :
-                :
-                numeric
                 ),
                 0
                 )`,
@@ -151,23 +180,23 @@ router.get("/relatorios/dre", async (req, res) => {
 
         for (const row of rows) {
             const m = Number(row.mes);
-            const valor = toNumber(row.total);
+            const valorCents = toCents(row.total);
             const categoria = (row.categoria ?? "").toLowerCase();
-            if (row.tipo === "CR") receitaBruta.set(m, (receitaBruta.get(m) ?? 0) + valor);
-            else if (categoria.includes("imposto")) impostos.set(m, (impostos.get(m) ?? 0) + valor);
-            else if (categoria.includes("custo")) custos.set(m, (custos.get(m) ?? 0) + valor);
-            else despesas.set(m, (despesas.get(m) ?? 0) + valor);
+            if (row.tipo === "CR") receitaBruta.set(m, (receitaBruta.get(m) ?? 0) + valorCents);
+            else if (categoria.includes("imposto")) impostos.set(m, (impostos.get(m) ?? 0) + valorCents);
+            else if (categoria.includes("custo")) custos.set(m, (custos.get(m) ?? 0) + valorCents);
+            else despesas.set(m, (despesas.get(m) ?? 0) + valorCents);
         }
 
         const montarLinha = (codigo: string, descricao: string, formula: (m: number) => number) => {
             const valores: Record<string, number> = {};
-            let total = 0;
+            let totalCents = 0;
             for (let m = 1; m <= 12; m++) {
-                const v = Number(formula(m).toFixed(2));
-                valores[monthKey(m)] = v;
-                total += v;
+                const cents = formula(m);
+                valores[monthKey(m)] = fromCents(cents);
+                totalCents += cents;
             }
-            return {codigo, descricao, valores, total: Number(total.toFixed(2))};
+            return {codigo, descricao, valores, total: fromCents(totalCents)};
         };
 
         const rb = (m: number) => receitaBruta.get(m) ?? 0;
@@ -198,19 +227,15 @@ router.get("/relatorios/dre", async (req, res) => {
 // (com fallback para valor quando valor_quitado for nulo).
 // ---------------------------------------------------------------------------
 
-router.get("/relatorios/fluxo-caixa", async (req, res) => {
+router.get("/relatorios/fluxo-caixa", withPermission(PERM.RELATORIOS_FLUXO_CAIXA), async (req, res) => {
     try {
         const ano = parseInt(req.query.ano as string) || new Date().getFullYear();
         const meses = Array.from({length: 12}, (_, i) => i + 1);
 
+        const mesExpr = extractMonth(lancamentosTable.data_quitacao);
         const rows = await db
             .select({
-                mes: sql<number>`EXTRACT(MONTH FROM
-                ${lancamentosTable.data_quitacao}
-                :
-                :
-                date
-                )`,
+                mes: mesExpr,
                 tipo: lancamentosTable.tipo,
                 categoria: planoContasTable.categoria,
                 transferencia_grupo_id: lancamentosTable.transferencia_grupo_id,
@@ -218,33 +243,15 @@ router.get("/relatorios/fluxo-caixa", async (req, res) => {
                 ${lancamentosTable.valor_quitado},
                 ${lancamentosTable.valor}
                 )
-                :
-                :
-                numeric
                 ),
                 0
                 )`,
             })
             .from(lancamentosTable)
             .leftJoin(planoContasTable, eq(lancamentosTable.plano_conta_id, planoContasTable.id))
-            .where(and(
-                sql`EXTRACT(YEAR FROM
-                ${lancamentosTable.data_quitacao}
-                :
-                :
-                date
-                )
-                =
-                ${ano}`,
-                inArray(lancamentosTable.status, STATUS_QUITADO as unknown as string[]),
-            ))
+            .where(and(extractYearEq(lancamentosTable.data_quitacao, ano), STATUS_QUITADO_SQL))
             .groupBy(
-                sql`EXTRACT(MONTH FROM
-                ${lancamentosTable.data_quitacao}
-                :
-                :
-                date
-                )`,
+                mesExpr,
                 lancamentosTable.tipo,
                 planoContasTable.categoria,
                 lancamentosTable.transferencia_grupo_id,
@@ -257,31 +264,31 @@ router.get("/relatorios/fluxo-caixa", async (req, res) => {
 
         for (const row of rows) {
             const mes = Number(row.mes);
-            const valor = toNumber(row.total);
+            const valorCents = toCents(row.total);
             const categoria = row.categoria ?? "Sem Categoria";
             const ehTransferencia = Boolean(row.transferencia_grupo_id);
 
             if (ehTransferencia) {
-                if (row.tipo === "CR") transferenciasCredito.set(mes, (transferenciasCredito.get(mes) ?? 0) + valor);
-                else transferenciasDebito.set(mes, (transferenciasDebito.get(mes) ?? 0) + valor);
+                if (row.tipo === "CR") transferenciasCredito.set(mes, (transferenciasCredito.get(mes) ?? 0) + valorCents);
+                else transferenciasDebito.set(mes, (transferenciasDebito.get(mes) ?? 0) + valorCents);
                 continue;
             }
 
             const target = row.tipo === "CR" ? entradasPorCategoria : saidasPorCategoria;
             if (!target.has(categoria)) target.set(categoria, new Map());
             const mMap = target.get(categoria)!;
-            mMap.set(mes, (mMap.get(mes) ?? 0) + valor);
+            mMap.set(mes, (mMap.get(mes) ?? 0) + valorCents);
         }
 
         const linhaCategoria = (codigo: string, descricao: string, source: Map<number, number>, sinal = 1) => {
             const valores: Record<string, number> = {};
-            let total = 0;
+            let totalCents = 0;
             for (const m of meses) {
-                const value = Number(((source.get(m) ?? 0) * sinal).toFixed(2));
-                valores[monthKey(m)] = value;
-                total += value;
+                const cents = (source.get(m) ?? 0) * sinal;
+                valores[monthKey(m)] = fromCents(cents);
+                totalCents += cents;
             }
-            return {codigo, descricao, valores, total: Number(total.toFixed(2))};
+            return {codigo, descricao, valores, total: fromCents(totalCents)};
         };
 
         const entradas = Array.from(entradasPorCategoria.entries()).map(([cat, map], i) =>
@@ -311,18 +318,16 @@ router.get("/relatorios/fluxo-caixa", async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /relatorios/metas
+// GET /relatorios/metas  (FEAT-10)
 //
-// Returns each meta for the year alongside the actual realized value,
-// computed in a single aggregation query (zero N+1).
+// Realizado = (valor_quitado − juros) por data_quitacao (RN-G5; não vencimento/competência).
+// Juros ficam em campo separado e NÃO entram no valor_realizado.
 // ---------------------------------------------------------------------------
 
-router.get("/relatorios/metas", async (req, res) => {
+router.get("/relatorios/metas", withPermission(PERM.RELATORIOS_METAS), async (req, res) => {
     try {
         const ano = parseInt(req.query.ano as string) || new Date().getFullYear();
 
-        // Query 1: all metas for the year + plano conta label
-        // Query 2: realized sums from lancamentos for the same year (single GROUP BY)
         const [metasRows, realizadosRows] = await Promise.all([
             db
                 .select({
@@ -338,66 +343,82 @@ router.get("/relatorios/metas", async (req, res) => {
             db
                 .select({
                     plano_conta_id: lancamentosTable.plano_conta_id,
-                    mes: sql<number>`EXTRACT(MONTH FROM COALESCE(
-                    ${lancamentosTable.competencia},
-                    ${lancamentosTable.vencimento}
-                    )
-                    :
-                    :
-                    date
-                    )`,
-                    valor: sql<number>`COALESCE(SUM(COALESCE(
-                    ${lancamentosTable.valor_quitado},
-                    ${lancamentosTable.valor}
-                    )
-                    :
-                    :
-                    numeric
-                    ),
-                    0
-                    )`,
+                    categoria: planoContasTable.categoria,
+                    mes: extractMonth(lancamentosTable.data_quitacao),
+                    valor_quitado: lancamentosTable.valor_quitado,
+                    valor: lancamentosTable.valor,
+                    juros: lancamentosTable.juros,
                 })
                 .from(lancamentosTable)
-                .where(and(
-                    sql`EXTRACT(YEAR FROM COALESCE(
-                    ${lancamentosTable.competencia},
-                    ${lancamentosTable.vencimento}
-                    )
-                    :
-                    :
-                    date
-                    )
-                    =
-                    ${ano}`,
-                    inArray(lancamentosTable.status, STATUS_QUITADO as unknown as string[]),
-                ))
-                .groupBy(
-                    lancamentosTable.plano_conta_id,
-                    sql`EXTRACT(MONTH FROM COALESCE(
-                    ${lancamentosTable.competencia},
-                    ${lancamentosTable.vencimento}
-                    )
-                    :
-                    :
-                    date
-                    )`,
+                .leftJoin(planoContasTable, eq(lancamentosTable.plano_conta_id, planoContasTable.id))
+                .where(
+                    and(
+                        sql`${lancamentosTable.data_quitacao}
+                        IS NOT NULL`,
+                        extractYearEq(lancamentosTable.data_quitacao, ano),
+                        STATUS_QUITADO_SQL,
+                    ),
                 ),
         ]);
 
-        // Build a lookup key: "plano_conta_id_mes"
-        const realizadoMap = new Map(
-            realizadosRows.map((r) => [`${r.plano_conta_id}_${r.mes}`, toNumber(r.valor)]),
-        );
+        // Agrega em centavos (DEF-06 / FEAT-10).
+        // valor_quitado inclui juros embutidos (ex.: 6838 + 1162 = 8000).
+        // Realizado da meta = parcela quitada SEM juros (RN-G5 / Card 62).
+        const realizadoMap = new Map<string, number>();
+        const jurosMap = new Map<string, number>();
+        const categoriaPorPlano = new Map<number, string | null>();
+        for (const r of realizadosRows) {
+            if (r.plano_conta_id == null || r.mes == null) continue;
+            const mesNum = Number(r.mes);
+            const key = `${r.plano_conta_id}_${mesNum}`;
+            const quitadoCents = toCents(r.valor_quitado ?? r.valor ?? 0);
+            const jurosCents = toCents(r.juros ?? 0);
+            const parcelaCents = realizadoSemJurosCents(quitadoCents, jurosCents);
+            realizadoMap.set(key, (realizadoMap.get(key) ?? 0) + parcelaCents);
+            jurosMap.set(key, (jurosMap.get(key) ?? 0) + jurosCents);
+            if (!categoriaPorPlano.has(r.plano_conta_id)) {
+                categoriaPorPlano.set(r.plano_conta_id, r.categoria ?? null);
+            }
+        }
 
-        return successResponse(
-            res,
-            metasRows.map((m) => ({
+        const metaKeys = new Set(metasRows.map((m) => `${m.plano_conta_id}_${m.mes}`));
+        const rows = metasRows.map((m) => {
+            const key = `${m.plano_conta_id}_${m.mes}`;
+            const projetado = toNumber(m.valor_projetado);
+            const realizado = fromCents(realizadoMap.get(key) ?? 0);
+            const juros = fromCents(jurosMap.get(key) ?? 0);
+            const atingimento_pct =
+                projetado > 0 ? Math.round((realizado / projetado) * 10000) / 100 : null;
+            return {
                 ...m,
-                valor_projetado: toNumber(m.valor_projetado),
-                valor_realizado: realizadoMap.get(`${m.plano_conta_id}_${m.mes}`) ?? 0,
-            })),
-            {ano},
-        );
+                valor_projetado: projetado,
+                valor_realizado: realizado,
+                juros,
+                atingimento_pct,
+            };
+        });
+
+        for (const [key, realizadoCents] of realizadoMap) {
+            if (metaKeys.has(key)) continue;
+            const [planoStr, mesStr] = key.split("_");
+            const plano_conta_id = Number(planoStr);
+            const mes = Number(mesStr);
+            const realizado = fromCents(realizadoCents);
+            const juros = fromCents(jurosMap.get(key) ?? 0);
+            rows.push({
+                plano_conta_id,
+                categoria: categoriaPorPlano.get(plano_conta_id) ?? null,
+                mes,
+                valor_projetado: 0,
+                valor_realizado: realizado,
+                juros,
+                atingimento_pct: null,
+            });
+        }
+
+        rows.sort((a, b) => a.mes - b.mes || a.plano_conta_id - b.plano_conta_id);
+
+        return successResponse(res, rows, {ano, criterio: "data_quitacao"});
     } catch (e) {
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar relatório de metas.", String(e));
     }
@@ -407,15 +428,15 @@ router.get("/relatorios/metas", async (req, res) => {
 // GET /relatorios/contabil-fiscal
 // ---------------------------------------------------------------------------
 
-router.get("/relatorios/contabil-fiscal", async (req, res) => {
+router.get("/relatorios/contabil-fiscal", withPermission(PERM.RELATORIOS_CONTABIL), async (req, res) => {
     try {
         const {data_inicio, data_fim, conta_id, tipo = "ambos"} = req.query;
 
         const conditions = [
-            inArray(lancamentosTable.status, STATUS_QUITADO as unknown as string[]),
+            STATUS_QUITADO_SQL,
             data_inicio ? gte(lancamentosTable.data_quitacao, String(data_inicio)) : undefined,
             data_fim ? lte(lancamentosTable.data_quitacao, String(data_fim)) : undefined,
-            conta_id ? eq(lancamentosTable.conta_id, parseInt(String(conta_id))) : undefined,
+            conta_id ? sqlLancamentosDaConta(parseInt(String(conta_id))) : undefined,
             tipo !== "ambos" ? eq(lancamentosTable.tipo, String(tipo)) : undefined,
         ].filter(Boolean) as ReturnType<typeof eq>[];
 
@@ -447,6 +468,198 @@ router.get("/relatorios/contabil-fiscal", async (req, res) => {
         );
     } catch (e) {
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar relatório contábil/fiscal.", String(e));
+    }
+});
+
+// ---------------------------------------------------------------------------
+// GET /relatorios/conciliacao  (FEAT-10 / Card 62)
+//
+// Relatório por conta + período: saldo inicial/final sistema, movimentações
+// quitadas (sem juros no resultado), extratos do período e confronto sistema × banco.
+// ---------------------------------------------------------------------------
+
+router.get("/relatorios/conciliacao", withPermission(PERM.RELATORIOS_CONCILIACAO), async (req, res) => {
+    try {
+        const contaId = parseInt(String(req.query.conta_id ?? ""), 10);
+        let dataInicio = typeof req.query.data_inicio === "string" ? req.query.data_inicio : undefined;
+        let dataFim = typeof req.query.data_fim === "string" ? req.query.data_fim : undefined;
+
+        const mesQ = req.query.mes ? parseInt(String(req.query.mes), 10) : NaN;
+        const anoQ = req.query.ano ? parseInt(String(req.query.ano), 10) : NaN;
+        if (!Number.isNaN(mesQ) && !Number.isNaN(anoQ) && mesQ >= 1 && mesQ <= 12) {
+            dataInicio = dataInicio ?? `${anoQ}-${String(mesQ).padStart(2, "0")}-01`;
+            const last = new Date(Date.UTC(anoQ, mesQ, 0)).getUTCDate();
+            dataFim = dataFim ?? `${anoQ}-${String(mesQ).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
+        }
+
+        if (!contaId || Number.isNaN(contaId)) {
+            return errorResponse(res, 400, "VALIDATION_ERROR", "Parâmetro obrigatório: conta_id.");
+        }
+        if (!dataInicio || !dataFim) {
+            return errorResponse(
+                res,
+                400,
+                "VALIDATION_ERROR",
+                "Informe data_inicio e data_fim, ou mes e ano.",
+            );
+        }
+
+        const [conta] = await db
+            .select({
+                id: contasBancariasTable.id,
+                nome: contasBancariasTable.nome,
+                banco: contasBancariasTable.banco,
+            })
+            .from(contasBancariasTable)
+            .where(eq(contasBancariasTable.id, contaId))
+            .limit(1);
+
+        if (!conta) {
+            return errorResponse(res, 404, "NOT_FOUND", "Conta bancária não encontrada.");
+        }
+
+        // Dia anterior ao início = saldo de abertura do período
+        const diaAntes = new Date(dataInicio + "T12:00:00Z");
+        diaAntes.setUTCDate(diaAntes.getUTCDate() - 1);
+        const dataAbertura = diaAntes.toISOString().slice(0, 10);
+
+        const [saldoAbertura, saldoFechamento] = await Promise.all([
+            contasBancariasService.saldoNaData(contaId, dataAbertura),
+            contasBancariasService.saldoNaData(contaId, dataFim),
+        ]);
+
+        const movs = await db
+            .select({
+                tipo: lancamentosTable.tipo,
+                valor_quitado: lancamentosTable.valor_quitado,
+                valor: lancamentosTable.valor,
+                juros: lancamentosTable.juros,
+            })
+            .from(lancamentosTable)
+            .where(
+                and(
+                    sqlLancamentosDaConta(contaId),
+                    gte(lancamentosTable.data_quitacao, dataInicio),
+                    lte(lancamentosTable.data_quitacao, dataFim),
+                    STATUS_QUITADO_SQL,
+                ),
+            );
+
+        let creditosCents = 0;
+        let debitosCents = 0;
+        let jurosCreditoCents = 0;
+        let jurosDebitoCents = 0;
+        for (const m of movs) {
+            const quitado = toCents(m.valor_quitado ?? m.valor ?? 0);
+            const juros = toCents(m.juros ?? 0);
+            // RN-G5 / Card 62: totais operacionais sem juros embutidos no quitado.
+            const parcela = realizadoSemJurosCents(quitado, juros);
+            if (m.tipo === "CR") {
+                creditosCents += parcela;
+                jurosCreditoCents += juros;
+            } else {
+                debitosCents += parcela;
+                jurosDebitoCents += juros;
+            }
+        }
+
+        // Identidade caixa: abertura + créditos − débitos + juros_CR − juros_CP = fechamento
+        // (créditos/débitos já sem juros; juros separados por natureza).
+        const jurosNetCents = jurosCreditoCents - jurosDebitoCents;
+        const liquidoCaixaCents = creditosCents - debitosCents + jurosNetCents;
+
+        const extratosPeriodo = await db
+            .select({
+                conciliacao_id: conciliacoesTable.id,
+                extrato_id: extratosTable.id,
+                arquivo_nome: extratosTable.arquivo_nome,
+                periodo_inicio: conciliacoesTable.periodo_inicio,
+                periodo_fim: conciliacoesTable.periodo_fim,
+                data_conciliacao: conciliacoesTable.data_conciliacao,
+                status: extratosTable.status,
+                resumo_conciliados: conciliacoesTable.resumo_conciliados,
+                resumo_ignorados: conciliacoesTable.resumo_ignorados,
+                resumo_pendentes: conciliacoesTable.resumo_pendentes,
+                resumo_total: conciliacoesTable.resumo_total,
+                saldo_final_banco: extratosTable.saldo_final_banco,
+                saldo_banco_data: extratosTable.saldo_banco_data,
+            })
+            .from(conciliacoesTable)
+            .innerJoin(extratosTable, eq(conciliacoesTable.extrato_id, extratosTable.id))
+            .where(
+                and(
+                    eq(conciliacoesTable.conta_id, contaId),
+                    lte(conciliacoesTable.periodo_inicio, dataFim),
+                    gte(conciliacoesTable.periodo_fim, dataInicio),
+                ),
+            )
+            .orderBy(desc(conciliacoesTable.periodo_fim));
+
+        const extratosDetalhe = [];
+        for (const e of extratosPeriodo) {
+            const ref = e.periodo_fim ?? dataFim;
+            const saldoSistema = await contasBancariasService.saldoNaData(contaId, ref);
+            const bancoCents = e.saldo_final_banco != null ? toCents(e.saldo_final_banco) : null;
+            const sistemaCents = toCents(saldoSistema.saldo_decimal);
+            const diferencaCents = bancoCents != null ? sistemaCents - bancoCents : null;
+            extratosDetalhe.push({
+                ...e,
+                saldo_sistema: fromCents(sistemaCents),
+                saldo_banco: bancoCents != null ? fromCents(bancoCents) : null,
+                diferenca: diferencaCents != null ? fromCents(diferencaCents) : null,
+                bate: diferencaCents === 0,
+            });
+        }
+
+        const ultimoComBanco = [...extratosDetalhe].reverse().find((e) => e.saldo_banco != null);
+        const saldoInicialSistemaCents = toCents(saldoAbertura.saldo_decimal);
+        const saldoFinalSistemaCents = toCents(saldoFechamento.saldo_decimal);
+        const saldoBancoCents = ultimoComBanco ? toCents(ultimoComBanco.saldo_banco!) : null;
+        const diferencaFinalCents =
+            saldoBancoCents != null ? saldoFinalSistemaCents - saldoBancoCents : null;
+
+        const totaisResumo = {
+            extratos: extratosDetalhe.length,
+            linhas_total: extratosDetalhe.reduce((s, e) => s + Number(e.resumo_total ?? 0), 0),
+            vinculadas: extratosDetalhe.reduce((s, e) => s + Number(e.resumo_conciliados ?? 0), 0),
+            ignoradas: extratosDetalhe.reduce((s, e) => s + Number(e.resumo_ignorados ?? 0), 0),
+            pendentes: extratosDetalhe.reduce((s, e) => s + Number(e.resumo_pendentes ?? 0), 0),
+        };
+
+        return successResponse(res, {
+            conta,
+            periodo: {inicio: dataInicio, fim: dataFim},
+            saldo_inicial_sistema: fromCents(saldoInicialSistemaCents),
+            saldo_final_sistema: fromCents(saldoFinalSistemaCents),
+            movimentacoes: {
+                creditos_quitados: fromCents(creditosCents),
+                debitos_quitados: fromCents(debitosCents),
+                /** Juros CR (entrada no caixa) — fora do resultado operacional da meta. */
+                juros_credito: fromCents(jurosCreditoCents),
+                /** Juros CP (saída no caixa). */
+                juros_debito: fromCents(jurosDebitoCents),
+                /** Total absoluto (compat UI). */
+                juros: fromCents(jurosCreditoCents + jurosDebitoCents),
+                /** Operacional sem juros: créditos − débitos. */
+                liquido: fromCents(creditosCents - debitosCents),
+                /**
+                 * Identidade caixa:
+                 * saldo_inicial + liquido_caixa ≈ saldo_final
+                 * (créditos − débitos + juros_CR − juros_CP).
+                 */
+                liquido_caixa: fromCents(liquidoCaixaCents),
+            },
+            confronto: {
+                saldo_sistema: fromCents(saldoFinalSistemaCents),
+                saldo_banco: saldoBancoCents != null ? fromCents(saldoBancoCents) : null,
+                diferenca: diferencaFinalCents != null ? fromCents(diferencaFinalCents) : null,
+                bate: diferencaFinalCents === 0,
+            },
+            extratos: extratosDetalhe,
+            totais: totaisResumo,
+        });
+    } catch (e) {
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar relatório de conciliação.", String(e));
     }
 });
 

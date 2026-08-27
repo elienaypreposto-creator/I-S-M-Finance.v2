@@ -1,14 +1,14 @@
 /**
  * Token Service — emissão e verificação de tokens JWT.
  *
- * Access Token  → JWE (dir / A256GCM, 15 min): payload criptografado com
+ * Access Token  -> JWE (dir / A256GCM, 15 min): payload criptografado com
  *   permissions[] embutidas, permitindo autorização stateless sem I/O de banco.
  *
- * Refresh Token → JWS (HS256, 7 dias): payload mínimo { sub, email }.
+ * Refresh Token -> JWS (HS256, 7 dias): payload mínimo { sub, email }.
  *   Permissões são re-consultadas no banco a cada /auth/refresh para garantir
  *   frescor quando há alterações de papel após a emissão do token.
  *
- * Purpose Tokens → JWS (HS256, 1 h): tokens de uso único para fluxos de
+ * Purpose Tokens -> JWS (HS256, 1 h): tokens de uso único para fluxos de
  *   configuração de senha (setup) e recuperação (reset). O audience encoda o
  *   propósito para prevenir reutilização cross-flow.
  */

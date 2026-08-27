@@ -98,25 +98,15 @@ router.get("/cards", async (req, res) => {
                 created_at: kanbanCardsTable.created_at,
                 updated_at: kanbanCardsTable.updated_at,
                 responsavel: {id: usuariosTable.id, nome: usuariosTable.nome},
-                comentarios_count: sql<number>`count(distinct
-                ${kanbanComentariosTable.id}
-                )
-                :
-                :
-                int`,
-                anexos_count: sql<number>`count(distinct
-                ${kanbanAnexosTable.id}
-                )
-                :
-                :
-                int`,
+                comentarios_count: sql<number>`count(distinct ${kanbanComentariosTable.id})::int`,
+                anexos_count: sql<number>`count(distinct ${kanbanAnexosTable.id})::int`,
             })
             .from(kanbanCardsTable)
             .leftJoin(usuariosTable, eq(kanbanCardsTable.responsavel_id, usuariosTable.id))
             .leftJoin(kanbanComentariosTable, eq(kanbanCardsTable.id, kanbanComentariosTable.card_id))
             .leftJoin(kanbanAnexosTable, eq(kanbanCardsTable.id, kanbanAnexosTable.card_id))
             .where(conditions.length > 0 ? and(...conditions) : undefined)
-            .groupBy(kanbanCardsTable.id, usuariosTable.id)
+            .groupBy(kanbanCardsTable.id, usuariosTable.id, usuariosTable.nome)
             .orderBy(desc(kanbanCardsTable.created_at));
 
         const cards = data.map((card) => ({
@@ -163,15 +153,13 @@ router.patch(
     validateBody(patchCardBodySchema),
     async (req, res) => {
         try {
-            const id = parseInt(req.params.id, 10);
+            const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
             if (isNaN(id)) {
                 return errorResponse(res, 400, "VALIDATION_ERROR", "ID inválido.");
             }
 
             const updates = req.body as PatchCardBody;
 
-            // Zod strips unknown keys; se todos os campos do body eram inválidos/ausentes,
-            // o objeto chega vazio — não há nada a persistir.
             if (Object.keys(updates).length === 0) {
                 return errorResponse(res, 400, "VALIDATION_ERROR", "Nenhum campo válido para atualizar.");
             }
@@ -188,9 +176,8 @@ router.patch(
                 if (updates.coluna) {
                     await tx.insert(kanbanHistoricoTable).values({
                         card_id: id,
-                        coluna_anterior: card.coluna,
-                        coluna_nova: updates.coluna,
                         comentario: `Movido para ${updates.coluna}`,
+                        coluna_nova: updates.coluna,
                     });
                 }
 
@@ -207,6 +194,38 @@ router.patch(
         }
     },
 );
+
+router.delete("/cards/:id", async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) {
+            return errorResponse(res, 400, "VALIDATION_ERROR", "ID inválido.");
+        }
+
+        const deleted = await db.transaction(async (tx) => {
+            // Deleta registros filhos antes para não violar FK constraint
+            await tx.delete(kanbanHistoricoTable).where(eq(kanbanHistoricoTable.card_id, id));
+            await tx.delete(kanbanComentariosTable).where(eq(kanbanComentariosTable.card_id, id));
+            await tx.delete(kanbanAnexosTable).where(eq(kanbanAnexosTable.card_id, id));
+
+            const [removed] = await tx
+                .delete(kanbanCardsTable)
+                .where(eq(kanbanCardsTable.id, id))
+                .returning();
+
+            return removed;
+        });
+
+        if (!deleted) {
+            return errorResponse(res, 404, "NOT_FOUND", "Card não encontrado.");
+        }
+
+        return successResponse(res, { id });
+    } catch (error) {
+        console.error("❌ ERRO DELETE KANBAN:", error);
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao excluir card do kanban.");
+    }
+});
 
 router.get("/usuarios", async (_req, res) => {
     try {

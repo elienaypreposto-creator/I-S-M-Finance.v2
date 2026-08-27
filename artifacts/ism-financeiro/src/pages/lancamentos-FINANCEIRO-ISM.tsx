@@ -6,9 +6,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Search, Filter, Download, Loader2, AlertCircle, Calendar, Pencil, Trash2 } from "lucide-react";
 import { ApiEnvelope, fetchApi, fetchApiData } from "@/lib/api-config";
-import { exportToExcel, fmtBRL, fmtDate as fmtDateExport } from "@/lib/export";
-import { RequiresPermission } from "@/components/auth/requires-permission";
 import { LancamentoModal } from "@/components/lancamentos/lancamento-modal";
+import { exportToExcel, fmtBRL, fmtDate as fmtDateExport } from "@/lib/export";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { useConfirm } from "@/hooks/use-confirm";
+import { invalidateRelated } from "@/App";
 
 type Lancamento = {
   id: number;
@@ -53,6 +55,21 @@ const BANK_MAP: Record<string, { abbr: string; color: string; bg: string }> = {
   "--": { abbr: "?", color: "#6B7280", bg: "rgba(107,114,128,0.15)" },
 };
 
+// ── Tags de risco: paleta semântica por nível de severidade ─────────────────
+const RISCO_OPTIONS: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  "em_cartorio":     { label: "Em Cartório",     color: "#F87171", bg: "rgba(248,113,113,0.15)", border: "rgba(248,113,113,0.35)" },
+  "serasa":          { label: "Serasa/SPC",       color: "#FB923C", bg: "rgba(251,146,60,0.15)",  border: "rgba(251,146,60,0.35)"  },
+  "inadimplente":    { label: "Inadimplente",     color: "#FBBF24", bg: "rgba(251,191,36,0.15)",  border: "rgba(251,191,36,0.35)"  },
+  "em_negociacao":   { label: "Em Negociação",    color: "#60A5FA", bg: "rgba(96,165,250,0.15)",  border: "rgba(96,165,250,0.35)"  },
+  "acordo_firmado":  { label: "Acordo Firmado",   color: "#34D399", bg: "rgba(52,211,153,0.15)",  border: "rgba(52,211,153,0.35)"  },
+  "boleto_vencido":  { label: "Boleto Vencido",   color: "#F472B6", bg: "rgba(244,114,182,0.15)", border: "rgba(244,114,182,0.35)" },
+  "acao_judicial":   { label: "Ação Judicial",    color: "#C084FC", bg: "rgba(192,132,252,0.15)", border: "rgba(192,132,252,0.35)" },
+};
+
+function getRiscoStyle(key: string) {
+  return RISCO_OPTIONS[key] ?? { label: key, color: "#94A3B8", bg: "rgba(148,163,184,0.15)", border: "rgba(148,163,184,0.3)" };
+}
+
 function getBankBadge(contaNome: string | null) {
   if (!contaNome) return BANK_MAP["a identificar"];
   const lower = contaNome.toLowerCase();
@@ -74,6 +91,7 @@ export default function Lancamentos() {
   const [editItem, setEditItem] = useState<Lancamento | null>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { confirm, ConfirmDialogProps } = useConfirm();
   const limit = 25;
 
   const handleSearchChange = (value: string) => {
@@ -103,7 +121,10 @@ export default function Lancamentos() {
   const deleteMutation = useMutation({
     mutationFn: (id: number) => fetchApiData<{ deleted: boolean }>(`/lancamentos/${id}`, { method: "DELETE" }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["lancamentos"] });
+      // FIX: antes invalidava só ["lancamentos"] direto — excluir um
+      // lançamento não refletia no dashboard nem no DRE sem F5. Agora
+      // propaga via invalidateRelated (dashboard-*, relatorio-*, conciliacoes-list).
+      invalidateRelated(queryClient, "lancamentos");
       toast({ title: "Excluído", description: "Lançamento removido com sucesso." });
     },
     onError: (e: unknown) => {
@@ -111,6 +132,32 @@ export default function Lancamentos() {
       toast({ variant: "destructive", title: "Erro", description: msg });
     },
   });
+
+  // Confirmação estilizada antes de excluir (substitui o window.confirm nativo)
+  const handleDelete = async (l: Lancamento) => {
+    const label = l.descricao ? `"${l.descricao.toUpperCase()}"` : `lançamento #${l.id}`;
+    const ok = await confirm({
+      title: `Excluir ${label}?`,
+      description: "Esta ação não pode ser desfeita. O lançamento será removido permanentemente.",
+      confirmLabel: "Excluir",
+      cancelLabel: "Cancelar",
+      variant: "destructive",
+    });
+    if (ok) deleteMutation.mutate(l.id);
+  };
+
+  // Confirmação estilizada antes de abrir o formulário de edição
+  const handleEdit = async (l: Lancamento) => {
+    const label = l.descricao ? `"${l.descricao.toUpperCase()}"` : `lançamento #${l.id}`;
+    const ok = await confirm({
+      title: `Editar ${label}?`,
+      description: "Você será direcionado ao formulário de edição deste lançamento.",
+      confirmLabel: "Editar",
+      cancelLabel: "Cancelar",
+      variant: "default",
+    });
+    if (ok) setEditItem(l);
+  };
 
   const lancamentos = data?.items ?? [];
   const total = data?.total ?? 0;
@@ -128,6 +175,7 @@ export default function Lancamentos() {
     { header: "Conta",      key: "conta_nome",     width: 24 },
     { header: "Valor (R$)", key: "valor_fmt",      width: 18 },
     { header: "Status",     key: "status",         width: 14 },
+    { header: "Riscos",     key: "riscos_fmt",     width: 30 },
   ];
 
   async function handleExportLancamentos() {
@@ -144,6 +192,7 @@ export default function Lancamentos() {
       const rows = envelope.data.map((l) => ({
         ...l,
         valor_fmt: fmtBRL(Number(l.valor)),
+        riscos_fmt: (l.riscos ?? []).map((r) => getRiscoStyle(r).label).join(", ") || "—",
       })) as Record<string, unknown>[];
       const suffix = activeTab !== "todos" ? `_${activeTab.toUpperCase()}` : "";
       exportToExcel(`Lancamentos${suffix}_${new Date().toISOString().split("T")[0]}`, rows, EXPORT_COLUMNS_LANC);
@@ -162,6 +211,8 @@ export default function Lancamentos() {
 
   return (
     <div className="flex flex-col gap-2 h-full">
+      <ConfirmDialog {...ConfirmDialogProps} />
+
       {(modalOpen || editItem) && (
         <LancamentoModal
           onClose={() => {
@@ -183,25 +234,21 @@ export default function Lancamentos() {
           <p className="text-xs text-muted-foreground">Gerencie suas contas a pagar e a receber</p>
         </div>
         <div className="flex items-center gap-2">
-          <RequiresPermission permission="financeiro:lancamentos:listar">
-            <button
-              onClick={handleExportLancamentos}
-              disabled={isExporting || total === 0}
-              title="Exportar XLSX"
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-              {isExporting ? "Exportando…" : "Exportar XLSX"}
-            </button>
-          </RequiresPermission>
-          <RequiresPermission permission="financeiro:lancamentos:criar">
-            <button
-              onClick={() => setModalOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-xs font-medium transition-all shadow-md shadow-primary/30">
-              <Plus className="w-3.5 h-3.5" />
-              Novo Lançamento
-            </button>
-          </RequiresPermission>
+          <button
+            onClick={handleExportLancamentos}
+            disabled={isExporting || total === 0}
+            title="Exportar XLSX"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+            {isExporting ? "Exportando…" : "Exportar XLSX"}
+          </button>
+          <button
+            onClick={() => setModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-xs font-medium transition-all shadow-md shadow-primary/30">
+            <Plus className="w-3.5 h-3.5" />
+            Novo Lançamento
+          </button>
         </div>
       </div>
 
@@ -267,6 +314,7 @@ export default function Lancamentos() {
                 <th className="px-3 py-3 font-semibold">Parceiro</th>
                 <th className="px-3 py-3 font-semibold">Descrição</th>
                 <th className="px-3 py-3 font-semibold">Categoria</th>
+                <th className="px-3 py-3 font-semibold">Riscos</th>
                 <th className="px-3 py-3 font-semibold text-right">R$ Valor</th>
                 <th className="px-3 py-3 font-semibold text-center">Status</th>
                 <th className="px-3 py-3 font-semibold text-right w-16">Ações</th>
@@ -274,26 +322,27 @@ export default function Lancamentos() {
             </thead>
             <tbody className="divide-y divide-white/5">
               {isLoading ? (
-                <tr><td colSpan={9} className="py-16 text-center">
+                <tr><td colSpan={10} className="py-16 text-center">
                   <div className="flex flex-col items-center gap-2 text-muted-foreground">
                     <Loader2 className="w-7 h-7 animate-spin text-primary" />
                     <span className="text-xs">Carregando...</span>
                   </div>
                 </td></tr>
               ) : isError ? (
-                <tr><td colSpan={9} className="py-16 text-center">
+                <tr><td colSpan={10} className="py-16 text-center">
                   <div className="flex flex-col items-center gap-2 text-destructive">
                     <AlertCircle className="w-7 h-7" />
                     <span className="text-xs">Erro ao carregar dados. Verifique se o servidor está ativo.</span>
                   </div>
                 </td></tr>
               ) : lancamentos.length === 0 ? (
-                <tr><td colSpan={9} className="py-16 text-center text-muted-foreground text-xs">
+                <tr><td colSpan={10} className="py-16 text-center text-muted-foreground text-xs">
                   Nenhum lançamento encontrado.
                 </td></tr>
               ) : lancamentos.map((l) => {
                 const bank = getBankBadge(l.conta_nome);
                 const isCR = l.tipo === "CR";
+                const riscos = l.riscos ?? [];
                 return (
                   <tr key={l.id} className="hover:bg-white/[0.04] transition-colors group">
                     {/* Tipo CP/CR badge */}
@@ -341,6 +390,29 @@ export default function Lancamentos() {
                         : <span className="text-white/25 italic text-[10px]">Sem cat.</span>}
                     </td>
 
+                    {/* ── Riscos ── */}
+                    <td className="px-3 py-2.5">
+                      {riscos.length === 0 ? (
+                        <span className="text-white/20 italic text-[10px]">—</span>
+                      ) : (
+                        <div className="flex gap-1 flex-wrap">
+                          {riscos.map((r) => {
+                            const s = getRiscoStyle(r);
+                            return (
+                              <span
+                                key={r}
+                                title={s.label}
+                                className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                                style={{ color: s.color, background: s.bg, border: `1px solid ${s.border}` }}
+                              >
+                                {s.label}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </td>
+
                     {/* Valor - sem $ na frente */}
                     <td className={`px-3 py-2.5 text-right font-bold ${isCR ? "text-teal-300" : "text-white/90"}`}>
                       {isCR ? "" : "- "}
@@ -355,24 +427,18 @@ export default function Lancamentos() {
                     {/* Ações - sempre visível */}
                     <td className="px-3 py-2.5">
                       <div className="flex items-center justify-end gap-1">
-                        <RequiresPermission permission="financeiro:lancamentos:criar">
-                          <button
-                            onClick={() => setEditItem(l)}
-                            className="p-1 rounded hover:bg-white/10 text-muted-foreground hover:text-primary transition-colors"
-                            title="Editar">
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                        </RequiresPermission>
-                        <RequiresPermission permission="financeiro:lancamentos:deletar">
-                          <button
-                            onClick={() => {
-                              if (confirm("Deseja excluir este lançamento?")) deleteMutation.mutate(l.id);
-                            }}
-                            className="p-1 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
-                            title="Excluir">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </RequiresPermission>
+                        <button
+                          onClick={() => handleEdit(l)}
+                          className="p-1 rounded hover:bg-white/10 text-muted-foreground hover:text-primary transition-colors"
+                          title="Editar">
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(l)}
+                          className="p-1 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
+                          title="Excluir">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </td>
                   </tr>

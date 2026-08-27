@@ -15,6 +15,55 @@
       "when": 1779886428894,
       "tag": "0001_overconfident_green_goblin",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782224516052,
+      "tag": "0002_opposite_hedge_knight",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784749800000,
+      "tag": "0003_conciliacao_juros_multa",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784751000000,
+      "tag": "0004_extrato_dedupe_saldo",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1784895600000,
+      "tag": "0005_fase5_operacao",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787092900000,
+      "tag": "0006_regras_conciliacao",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787092904860,
+      "tag": "0007_residuo_pendente",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787160500000,
+      "tag": "0008_tipo_match_exato",
+      "breakpoints": true
     }
   ]
 }
