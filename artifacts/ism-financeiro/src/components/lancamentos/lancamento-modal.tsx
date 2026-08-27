@@ -677,33 +677,6 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
 
     return createPortal(
         <>
-            {/* Sub-modal de parceiro - z-[60] sobrepõe o modal de lançamentos */}
-            {parceiroSubModal && (
-                <NovoParceiroModal
-                    key={parceiroSubModal.mode === "edit" ? parceiroSubModal.data.id : "new-parceiro"}
-                    initialData={parceiroSubModal.mode === "edit" ? parceiroSubModal.data : null}
-                    onClose={() => setParceiroSubModal(null)}
-                    onSaved={() => {
-                        void queryClient.invalidateQueries({queryKey: ["parceiros-modal"]});
-                    }}
-                />
-            )}
-
-            {/* Confirmação de cancelamento - só aparece se o formulário tiver alterações não salvas */}
-            <ConfirmDialog
-                open={showCancelConfirm}
-                tone="warning"
-                title="Cancelar cadastro?"
-                description="As informações preenchidas serão perdidas. Deseja realmente cancelar?"
-                confirmLabel="Sim, cancelar"
-                cancelLabel="Não, continuar"
-                onCancel={() => setShowCancelConfirm(false)}
-                onConfirm={() => {
-                    setShowCancelConfirm(false);
-                    onClose();
-                }}
-            />
-
             <div
                 className="fixed inset-0 z-[65] flex items-start justify-center bg-black/70 backdrop-blur-md p-4 pt-16 overflow-hidden">
                 <div
@@ -1336,6 +1309,33 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                     </form>
                 </div>
             </div>
+
+            {/* Confirmação de cancelamento - só aparece se o formulário tiver alterações não salvas */}
+            <ConfirmDialog
+                open={showCancelConfirm}
+                tone="warning"
+                title="Cancelar cadastro?"
+                description="As informações preenchidas serão perdidas. Deseja realmente cancelar?"
+                confirmLabel="Sim, cancelar"
+                cancelLabel="Não, continuar"
+                onCancel={() => setShowCancelConfirm(false)}
+                onConfirm={() => {
+                    setShowCancelConfirm(false);
+                    onClose();
+                }}
+            />
+
+            {/* Sub-modal de parceiro: portal próprio em z-[80], acima deste lançamento (z-[65]). */}
+            {parceiroSubModal && (
+                <NovoParceiroModal
+                    key={parceiroSubModal.mode === "edit" ? parceiroSubModal.data.id : "new-parceiro"}
+                    initialData={parceiroSubModal.mode === "edit" ? parceiroSubModal.data : null}
+                    onClose={() => setParceiroSubModal(null)}
+                    onSaved={() => {
+                        void queryClient.invalidateQueries({queryKey: ["parceiros-modal"]});
+                    }}
+                />
+            )}
         </>,
         document.body,
     );

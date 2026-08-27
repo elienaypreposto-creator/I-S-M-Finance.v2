@@ -1,4 +1,5 @@
 import {useEffect, useMemo, useRef, useState} from "react";
+import {createPortal} from "react-dom";
 import {
     useForm,
     useWatch,
@@ -240,7 +241,7 @@ function parceiroFormToApiBody(values: ParceiroFormValues, statusAtual?: { ativo
 
 function ConfirmacaoCancelModal({onConfirm, onDismiss}: { onConfirm: () => void; onDismiss: () => void }) {
     return (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[90] flex items-center justify-center p-4">
             <div className="bg-card border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl p-6 text-center">
                 <AlertTriangle className="w-10 h-10 text-warning mx-auto mb-3"/>
                 <h3 className="font-bold text-white text-lg mb-1">Cancelar cadastro?</h3>
@@ -770,7 +771,9 @@ export function NovoParceiroModal({onClose, initialData, onSaved}: {
             hasError ? "border-destructive/60 focus:border-destructive" : "border-white/10"
         }`;
 
-    return (
+    // Portal no body + z-[80]: precisa ficar acima do Novo Lançamento (z-[65])
+    // e do Vincular (z-[60]) na conciliação; o confirm de cancelar usa z-[90].
+    return createPortal(
         <>
             {showConfirmCancel && (
                 <ConfirmacaoCancelModal
@@ -781,7 +784,7 @@ export function NovoParceiroModal({onClose, initialData, onSaved}: {
                     onDismiss={() => setShowConfirmCancel(false)}
                 />
             )}
-            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[80] flex items-center justify-center p-4">
                 <div
                     className="bg-card border border-white/10 rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
                     <div
@@ -994,7 +997,8 @@ export function NovoParceiroModal({onClose, initialData, onSaved}: {
                     </form>
                 </div>
             </div>
-        </>
+        </>,
+        document.body,
     );
 }
 
