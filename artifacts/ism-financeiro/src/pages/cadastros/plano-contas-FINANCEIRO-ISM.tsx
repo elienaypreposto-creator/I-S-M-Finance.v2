@@ -1,9 +1,9 @@
-import {useState} from "react";
+import {useState, useRef, useEffect} from "react";
 import {useForm} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {z} from "zod";
 import {PageHeader} from "@/components/shared/page-header";
-import {Plus, Edit, Trash2, Lock, ChevronDown, ChevronUp} from "lucide-react";
+import {Plus, Edit, Trash2, Lock, ChevronDown, ChevronUp, X} from "lucide-react";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
@@ -207,6 +207,29 @@ export default function PlanoContas() {
     });
     const [catsAbertas, setCatsAbertas] = useState<Record<string, boolean>>({});
 
+    // ── Banner de sucesso (topo, 3s, com botão de fechar) ──────────────────
+    // Usado apenas para a mensagem de cadastro de categoria/subcategoria,
+    // sem afetar o sistema de toast global (bottom-right) usado no resto do app.
+    const [successMessage, setSuccessMessage] = useState<string | null>(null);
+    const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const showSuccessBanner = (message: string) => {
+        if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
+        setSuccessMessage(message);
+        successTimeoutRef.current = setTimeout(() => setSuccessMessage(null), 3000);
+    };
+
+    const closeSuccessBanner = () => {
+        if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
+        setSuccessMessage(null);
+    };
+
+    useEffect(() => {
+        return () => {
+            if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
+        };
+    }, []);
+
     const {data: contas = [], isLoading} = useQuery<PlanoConta[]>({
         queryKey: ['plano-contas'],
         queryFn: () => fetchApiData("/plano-contas")
@@ -224,7 +247,7 @@ export default function PlanoContas() {
         onSuccess: () => {
             queryClient.invalidateQueries({queryKey: ['plano-contas']});
             setModal(prev => ({...prev, open: false, data: null}));
-            toast({title: 'Sucesso', description: 'Categoria salva com sucesso.'});
+            showSuccessBanner('Categoria salva com sucesso.');
         },
         onError: (error) => {
             toast({variant: 'destructive', title: 'Erro', description: error.message});
@@ -456,6 +479,24 @@ export default function PlanoContas() {
     return (
         <div className="space-y-6">
             <ConfirmDialog {...ConfirmDialogProps} />
+
+            {successMessage && (
+                <div className="fixed top-0 right-0 z-[100] w-full max-w-[420px] p-4 animate-in fade-in slide-in-from-top-full">
+                    <div className="group pointer-events-auto relative flex w-full items-center justify-between space-x-4 overflow-hidden rounded-md border bg-background text-foreground p-6 pr-8 shadow-lg">
+                        <div className="grid gap-1">
+                            <p className="text-sm font-semibold">Sucesso</p>
+                            <p className="text-sm opacity-90">{successMessage}</p>
+                        </div>
+                        <button
+                            onClick={closeSuccessBanner}
+                            className="absolute right-2 top-2 rounded-md p-1 text-foreground/50 opacity-100 transition-opacity hover:text-foreground focus:outline-none focus:ring-2"
+                            aria-label="Fechar"
+                        >
+                            <X className="h-4 w-4"/>
+                        </button>
+                    </div>
+                </div>
+            )}
 
             <PageHeader
                 title="Plano de Contas"
