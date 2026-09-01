@@ -23,6 +23,8 @@ import { fetchApiData } from "@/lib/api-config";
 import { TableSkeleton } from "@/components/shared/table-skeleton";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { useConfirm } from "@/hooks/use-confirm";
+import { DISCARD_PROMPT, useEscapeClose } from "@/hooks/use-escape-close";
+import { ViewportOverlay } from "@/components/shared/viewport-overlay";
 import {
   Empty,
   EmptyHeader,
@@ -73,11 +75,12 @@ function NovoTokenModal({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
   const [createdToken, setCreatedToken] = useState<CreatedToken | null>(null);
   const [copied, setCopied] = useState(false);
+  const { confirm, ConfirmDialogProps } = useConfirm();
 
   const {
     register,
     handleSubmit,
-    formState: { errors },
+    formState: { errors, isDirty },
   } = useForm<TokenFormValues>({ resolver: zodResolver(tokenFormSchema) });
 
   const createMutation = useMutation({
@@ -94,6 +97,30 @@ function NovoTokenModal({ onClose }: { onClose: () => void }) {
       toast({ title: "Erro ao criar token", description: err.message, variant: "destructive" }),
   });
 
+  async function handleRequestClose() {
+    if (createdToken && !copied) {
+      const ok = await confirm({
+        title: "Fechar sem copiar o token?",
+        description: "O token não será exibido novamente. Copie-o antes de sair.",
+        confirmLabel: "Sair mesmo assim",
+        cancelLabel: "Voltar",
+        variant: "destructive",
+      });
+      if (!ok) return;
+      onClose();
+      return;
+    }
+    if (!createdToken && isDirty) {
+      const ok = await confirm(DISCARD_PROMPT);
+      if (!ok) return;
+    }
+    onClose();
+  }
+
+  useEscapeClose(!ConfirmDialogProps.open, () => {
+    void handleRequestClose();
+  });
+
   const copyToken = async () => {
     if (!createdToken) return;
     await navigator.clipboard.writeText(createdToken.token);
@@ -102,13 +129,13 @@ function NovoTokenModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
+    <ViewportOverlay className="p-3 sm:p-4">
       <div className="bg-card border border-white/10 rounded-2xl w-full max-w-md shadow-2xl">
         <div className="flex items-center justify-between p-4 sm:p-6 border-b border-white/5">
           <h2 className="text-base sm:text-lg font-bold text-white">
             {createdToken ? "Token Gerado" : "Gerar Novo Token"}
           </h2>
-          <button type="button" onClick={onClose} className="p-1.5 hover:bg-white/5 rounded-lg">
+          <button type="button" onClick={() => void handleRequestClose()} className="p-1.5 hover:bg-white/5 rounded-lg">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -137,7 +164,7 @@ function NovoTokenModal({ onClose }: { onClose: () => void }) {
             <div className="flex gap-3 p-4 sm:p-6 pt-0">
               <button
                 type="button"
-                onClick={onClose}
+                onClick={() => void handleRequestClose()}
                 className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium"
               >
                 Cancelar
@@ -158,7 +185,7 @@ function NovoTokenModal({ onClose }: { onClose: () => void }) {
               <CheckCircle className="w-10 h-10 text-success mx-auto mb-2" />
               <p className="font-bold text-white">Token "{createdToken.nome}" criado!</p>
               <p className="text-xs text-destructive mt-1 font-semibold">
-                ⚠ Copie agora — não será exibido novamente.
+                ⚠ Copie agora - não será exibido novamente.
               </p>
             </div>
             <div className="bg-black/40 rounded-xl p-4 font-mono text-xs text-success break-all border border-success/20 select-all leading-relaxed">
@@ -182,7 +209,8 @@ function NovoTokenModal({ onClose }: { onClose: () => void }) {
           </div>
         )}
       </div>
-    </div>
+      <ConfirmDialog {...ConfirmDialogProps} />
+    </ViewportOverlay>
   );
 }
 
@@ -292,7 +320,7 @@ export default function TokensApi() {
             </p>
           </div>
 
-          {/* Loading — skeleton */}
+          {/* Loading - skeleton */}
           {isLoading && <TableSkeleton rows={4} columns={3} showHeader={false} />}
 
           {/* Erro */}

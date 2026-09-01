@@ -46,6 +46,7 @@ import {
 import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
+import {useEscapeClose} from "@/hooks/use-escape-close";
 import {
     Empty,
     EmptyHeader,
@@ -240,6 +241,7 @@ function parceiroFormToApiBody(values: ParceiroFormValues, statusAtual?: { ativo
 }
 
 function ConfirmacaoCancelModal({onConfirm, onDismiss}: { onConfirm: () => void; onDismiss: () => void }) {
+    useEscapeClose(true, onDismiss, 90);
     return (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[90] flex items-center justify-center p-4">
             <div className="bg-card border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl p-6 text-center">
@@ -766,6 +768,8 @@ export function NovoParceiroModal({onClose, initialData, onSaved}: {
         else onClose();
     };
 
+    useEscapeClose(!showConfirmCancel, handleCancel, 80);
+
     const fieldCls = (hasError?: boolean) =>
         `w-full bg-white/5 border rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors ${
             hasError ? "border-destructive/60 focus:border-destructive" : "border-white/10"
@@ -790,7 +794,7 @@ export function NovoParceiroModal({onClose, initialData, onSaved}: {
                     <div
                         className="flex items-center justify-between p-6 border-b border-white/5 sticky top-0 bg-card z-10">
                         <h2 className="text-lg font-bold text-white">
-                            {isEdit ? "Editar Cadastro" : "Novo Cadastro"} — Clientes/Fornecedores
+                            {isEdit ? "Editar Cadastro" : "Novo Cadastro"} - Clientes/Fornecedores
                         </h2>
                         <button type="button" onClick={handleCancel} className="p-1.5 hover:bg-white/5 rounded-lg">
                             <X className="w-5 h-5"/>
@@ -1123,7 +1127,7 @@ export default function Parceiros() {
     };
 
     const getDocDisplay = (p: ParceiroRow) => {
-        if (!p.cpf_cnpj) return "—";
+        if (!p.cpf_cnpj) return "-";
         const tipo = (p.tipo_pessoa === "PF" ? "PF" : "PJ") as "PF" | "PJ";
         return mascararDocumento(String(p.cpf_cnpj).replace(/\D/g, ""), tipo);
     };
@@ -1142,8 +1146,8 @@ export default function Parceiros() {
             tipo_pessoa: p.tipo_pessoa,
             nome: p.nome,
             cpf_cnpj_fmt: getDocDisplay(p),
-            tipos_fmt: tiposArray(p.tipos).join(", ") || "—",
-            dept_nome: p.departamento_id ? (deptNomeById.get(p.departamento_id) ?? "—") : "—",
+            tipos_fmt: tiposArray(p.tipos).join(", ") || "-",
+            dept_nome: p.departamento_id ? (deptNomeById.get(p.departamento_id) ?? "-") : "-",
             status_fmt: resolveStatus(p) === "ativo" ? "Ativo" : "Inativo",
         })) as Record<string, unknown>[];
 
@@ -1256,7 +1260,7 @@ export default function Parceiros() {
                             {parceirosLista.map((p) => {
                                 const tipoUi = p.tipo_pessoa === "PJ" ? "PJ" : "PF";
                                 const isAtivo = resolveStatus(p) === "ativo";
-                                const lotacao = p.departamento_id ? deptNomeById.get(p.departamento_id) ?? "—" : "—";
+                                const lotacao = p.departamento_id ? deptNomeById.get(p.departamento_id) ?? "-" : "-";
                                 const tipos = tiposArray(p.tipos);
                                 return (
                                     <tr key={p.id} className="hover:bg-white/5 transition-colors group">
@@ -1271,7 +1275,7 @@ export default function Parceiros() {
                                         <td className="px-5 py-4">
                                             <div className="flex gap-1 flex-wrap">
                                                 {tipos.length === 0 ? (
-                                                    <span className="text-muted-foreground text-xs">—</span>
+                                                    <span className="text-muted-foreground text-xs">-</span>
                                                 ) : (
                                                     tipos.map((t) => {
                                                         const s = getTipoStyle(t);

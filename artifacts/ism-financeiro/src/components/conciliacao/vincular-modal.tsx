@@ -13,6 +13,9 @@ import {
     type VincularFormValues,
 } from "@/validations/conciliacao-vincular.schema";
 import {formatValorBrInput, brMoneyDisplayToApiString} from "@/validations/lancamentos.schema";
+import {ConfirmDialog} from "@/components/shared/confirm-dialog";
+import {useConfirm} from "@/hooks/use-confirm";
+import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
 import {Loader2, X, Link2, AlertCircle, CheckCircle2, Pencil, Search} from "lucide-react";
 import {useAuth} from "@/hooks/use-auth";
 import {PERM} from "@/lib/permissoes";
@@ -133,6 +136,7 @@ function VincularFormBody({
                               onBuscarMais,
                               buscandoMais,
                               podeBuscarMais,
+                              bindRequestClose,
                           }: {
     extratoId: string;
     linhaId: number;
@@ -146,6 +150,7 @@ function VincularFormBody({
     onBuscarMais: () => void;
     buscandoMais: boolean;
     podeBuscarMais: boolean;
+    bindRequestClose?: (fn: () => void) => void;
 }) {
     const {toast} = useToast();
     const queryClient = useQueryClient();
@@ -247,6 +252,27 @@ function VincularFormBody({
         () => watchedItens.filter((i) => i.selecionado),
         [watchedItens],
     );
+
+    const {confirm, ConfirmDialogProps} = useConfirm();
+
+    async function handleRequestClose() {
+        const dirty = selectedItens.length > 0 || Boolean(gerarParcial) || form.formState.isDirty;
+        if (dirty) {
+            const ok = await confirm(DISCARD_PROMPT);
+            if (!ok) return;
+        }
+        onClose();
+    }
+
+    useEffect(() => {
+        bindRequestClose?.(() => {
+            void handleRequestClose();
+        });
+    });
+
+    useEscapeClose(editarId == null && !ConfirmDialogProps.open, () => {
+        void handleRequestClose();
+    }, 60);
 
     // RN-E1: mesma fórmula usada na validação (buildVincularFormSchema) -
     // Modo A (2+) ou Modo B (1, considerando valor_quitado anterior).
@@ -454,7 +480,7 @@ function VincularFormBody({
                 String(formErrors.itens.message)) ||
             formErrors.residuo_lancamento_id?.message ||
             formErrors.gerar_parcial?.message ||
-            "Revise os campos do vínculo — a validação impediu o envio.";
+            "Revise os campos do vínculo - a validação impediu o envio.";
         toast({
             variant: "destructive",
             title: "Não foi possível confirmar",
@@ -476,7 +502,7 @@ function VincularFormBody({
             onSubmit={handleSubmit(onSubmit, (errs) => onInvalid(errs))}
             className="flex flex-col flex-1 min-h-0 overflow-hidden"
         >
-            {/* Lista: único filho que cresce e rola — precisa de min-h-0 no flex. */}
+            {/* Lista: único filho que cresce e rola - precisa de min-h-0 no flex. */}
             <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5">
                 <div className="space-y-2 py-4">
                     {fields.map((field, index) => {
@@ -524,7 +550,7 @@ function VincularFormBody({
                                                     <p
                                                         className="text-sm text-white font-medium mt-1 truncate"
                                                         title={l.descricao ?? ""}>
-                                                        {l.descricao ?? "—"}
+                                                        {l.descricao ?? "-"}
                                                     </p>
                                                     {l.parceiro_nome && (
                                                         <p className="text-[11px] text-muted-foreground truncate">
@@ -688,7 +714,7 @@ function VincularFormBody({
                                             : "text-amber-300",
                             )}>
                             {selectedItens.length === 0 || restanteCents === null
-                                ? "—"
+                                ? "-"
                                 : formatCurrency(toMoney(Math.abs(restanteCents)))}
                         </p>
                     </div>
@@ -703,7 +729,7 @@ function VincularFormBody({
                         className="flex items-center justify-center gap-2 rounded-lg bg-emerald-500/15 border border-emerald-500/30 px-3 py-2">
                         <CheckCircle2 className="w-4 h-4 text-emerald-300 shrink-0"/>
                         <p className="text-sm font-semibold text-emerald-200">
-                            ✓ Restante zerado — valores batem
+                            ✓ Restante zerado - valores batem
                         </p>
                     </div>
                 ) : showResidual ? (
@@ -729,7 +755,7 @@ function VincularFormBody({
                                         <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
                                             Cria lançamento pendente de{" "}
                                             {formatCurrency(toMoney(Math.abs(restanteCents ?? 0)))}{" "}
-                                            (pagamento parcial), com vencimento da origem — não
+                                            (pagamento parcial), com vencimento da origem - não
                                             editável.
                                         </p>
                                     </div>
@@ -768,7 +794,7 @@ function VincularFormBody({
                                                     <option
                                                         key={i.lancamento_id}
                                                         value={i.lancamento_id}>
-                                                        #{i.lancamento_id} · {l?.descricao ?? "—"} ·{" "}
+                                                        #{i.lancamento_id} · {l?.descricao ?? "-"} ·{" "}
                                                         {formatCurrency(Number(l?.valor ?? 0))}
                                                     </option>
                                                 );
@@ -793,8 +819,8 @@ function VincularFormBody({
                     <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2 space-y-2">
                         <p className="text-sm font-semibold text-amber-200 text-center">
                             {somaJurosCents > 0 && restanteCents === 0
-                                ? "Excedente alocado em Juros/Multa — valores batem"
-                                : `Falta ${formatCurrency(toMoney(restanteCents ?? 0))} para cobrir o extrato — você pode vincular agora e completar depois`}
+                                ? "Excedente alocado em Juros/Multa - valores batem"
+                                : `Falta ${formatCurrency(toMoney(restanteCents ?? 0))} para cobrir o extrato - você pode vincular agora e completar depois`}
                         </p>
                         {selectedItens.length === 1 && restanteCents !== 0 && (
                             <label className="flex items-start gap-3 cursor-pointer group">
@@ -845,7 +871,7 @@ function VincularFormBody({
             <div className="flex gap-3 p-5 border-t border-white/5 shrink-0">
                 <button
                     type="button"
-                    onClick={onClose}
+                    onClick={() => void handleRequestClose()}
                     className="flex-1 py-2.5 rounded-xl border border-white/10 text-sm font-medium text-white hover:bg-white/5">
                     Cancelar
                 </button>
@@ -880,6 +906,7 @@ function VincularFormBody({
                     });
                 }}
             />
+            <ConfirmDialog {...ConfirmDialogProps} />
         </form>
     );
 }
@@ -920,6 +947,7 @@ export function VincularModal({
     // passo extra manual. Essa função morava no botão [+] da tela de
     // conciliação e foi movida para dentro deste modal.
     const [novoLancamentoOpen, setNovoLancamentoOpen] = useState(false);
+    const requestCloseRef = useRef(onClose);
 
     // Reseta a janela/busca sempre que uma linha diferente é aberta.
     useEffect(() => {
@@ -1025,10 +1053,13 @@ export function VincularModal({
                 variant: "destructive",
                 title: "Lançamento criado, mas não foi possível vincular",
                 description: e instanceof Error
-                    ? `${e.message} — vincule manualmente pela lista abaixo.`
+                    ? `${e.message} - vincule manualmente pela lista abaixo.`
                     : "Vincule manualmente pela lista abaixo.",
             }),
     });
+
+    const showingFormBody = open && !isLoading && lancamentos.length > 0;
+    useEscapeClose(open && !novoLancamentoOpen && !showingFormBody, onClose, 60);
 
     if (!open) return null;
 
@@ -1045,15 +1076,10 @@ export function VincularModal({
     };
 
     return createPortal(
-        <div className="fixed inset-0 z-[60]">
-            {/* DialogOverlay: cobre a tela inteira, sempre fixed ao viewport. */}
-            <div className="fixed inset-0 bg-black/75 backdrop-blur-md"/>
-            {/* DialogContent: fixed + left-50%/-translate-x-50% (centraliza
-                horizontalmente) e top-[5%]/md:top-[10%] com translate-y-0
-                (NÃO usar top-1/2 -translate-y-1/2, que centralizaria
-                verticalmente) - abre quase no topo da tela. */}
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/75 backdrop-blur-md"/>
             <div
-                className="fixed left-[50%] top-[5%] md:top-[10%] -translate-x-[50%] translate-y-0 bg-[#121417] border border-white/10 rounded-2xl w-[calc(100%-2rem)] max-w-2xl max-h-[90vh] min-h-0 shadow-2xl flex flex-col overflow-hidden">
+                className="relative bg-[#121417] border border-white/10 rounded-2xl w-full max-w-2xl max-h-[90vh] min-h-0 shadow-2xl flex flex-col overflow-hidden">
                 {/* Cabeçalho com flex-wrap: em telas estreitas o bloco de ações
                     (Novo + fechar) quebra para a linha de baixo em vez de
                     espremer o título. */}
@@ -1079,7 +1105,7 @@ export function VincularModal({
                         </button>
                         <button
                             type="button"
-                            onClick={onClose}
+                            onClick={() => (showingFormBody ? requestCloseRef.current() : onClose())}
                             className="p-2 rounded-xl text-muted-foreground hover:bg-white/5 hover:text-white transition-colors">
                             <X className="w-5 h-5"/>
                         </button>
@@ -1215,6 +1241,9 @@ export function VincularModal({
                         valorExtratoAbs={valorExtratoAbs}
                         lancamentos={lancamentos}
                         onClose={onClose}
+                        bindRequestClose={(fn) => {
+                            requestCloseRef.current = fn;
+                        }}
                         onDraftVincular={onDraftVincular}
                         jaVinculadoLocalCents={jaVinculadoLocalCents}
                         quitadoLocalPorLancamento={quitadoLocalPorLancamento}

@@ -5,6 +5,7 @@ import {DateRangePicker} from "@/components/shared/date-range-picker";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {Popover, PopoverContent, PopoverTrigger} from "@/components/ui/popover";
+import {filterPlanoContas} from "@/components/shared/plano-conta-combobox";
 import {Calendar as CalendarPicker} from "@/components/ui/calendar";
 import {format as formatBtn, parseISO} from "date-fns";
 import {ptBR} from "date-fns/locale";
@@ -336,39 +337,10 @@ function PlanoContaCombobox({
 }) {
     const [open, setOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState("");
-    const [debouncedSearch, setDebouncedSearch] = useState("");
 
-    // Debounce de 200ms
-    useEffect(() => {
-        const t = setTimeout(() => setDebouncedSearch(searchTerm.trim()), 200);
-        return () => clearTimeout(t);
-    }, [searchTerm]);
-
-    const shouldSearchServer = debouncedSearch.length >= 3;
-
-    const {data: searchResults, isFetching} = useQuery<PlanoConta[]>({
-        queryKey: ["plano-contas-search", debouncedSearch],
-        queryFn: async () => {
-            try {
-                const res = await fetch(`${API_URL}/plano-contas?search=${encodeURIComponent(debouncedSearch)}`);
-                if (!res.ok) return [];
-                const json = await res.json();
-                return Array.isArray(json) ? json : (json.data ?? []);
-            } catch {
-                return [];
-            }
-        },
-        enabled: shouldSearchServer,
-    });
-
-    const localFiltered = searchTerm.trim().length === 0
-        ? planoContas
-        : planoContas.filter((p) => {
-            const haystack = `${p.categoria} ${p.subcategoria ?? ""}`.toLowerCase();
-            return haystack.includes(searchTerm.trim().toLowerCase());
-        });
-
-    const options = shouldSearchServer ? (searchResults ?? []) : localFiltered;
+    // Sempre local: GET /plano-contas ignora ?search=, e o ramo server
+    // a partir da 3ª letra escondia resultados válidos.
+    const options = filterPlanoContas(planoContas, searchTerm);
     const grupos = groupPlanoContasPorCategoria(options);
     const selected = planoContas.find((p) => String(p.id) === value);
 
@@ -395,7 +367,7 @@ function PlanoContaCombobox({
                     >
             <span className="truncate">
               {selected
-                  ? `${selected.categoria}${selected.subcategoria ? ` — ${selected.subcategoria}` : ""}`
+                  ? `${selected.categoria}${selected.subcategoria ? ` - ${selected.subcategoria}` : ""}`
                   : "Indique a categoria contábil..."}
             </span>
                         <Search className="w-4 h-4 text-muted-foreground shrink-0"/>
@@ -433,13 +405,7 @@ function PlanoContaCombobox({
                             Indique a categoria contábil...
                         </button>
 
-                        {shouldSearchServer && isFetching ? (
-                            <div
-                                className="px-4 py-6 flex items-center justify-center gap-2 text-muted-foreground text-xs">
-                                <Loader2 className="w-3.5 h-3.5 animate-spin"/>
-                                Buscando...
-                            </div>
-                        ) : grupos.length === 0 ? (
+                        {grupos.length === 0 ? (
                             <div className="px-4 py-6 text-center text-muted-foreground text-xs">
                                 Nenhuma categoria encontrada.
                             </div>
@@ -817,7 +783,7 @@ function LancamentoModal({
         }
 
         // O valor final (já com desconto/acréscimo aplicados) é o que é persistido
-        // como valor do lançamento — igual ao comportamento do sistema de referência.
+        // como valor do lançamento - igual ao comportamento do sistema de referência.
         payload.valor_bruto = valorBruto;
         payload.desconto = desconto;
         payload.acrescimo = acrescimo;
@@ -1011,7 +977,7 @@ function LancamentoModal({
                                                     : "border-white/5 bg-white/5 text-muted-foreground hover:border-white/10"
                                             )}
                                         >
-                                            —
+                                            -
                                         </button>
                                         {FORMAS_PAGAMENTO.map((fp) => {
                                             const s = FP_STYLE[fp] ?? {color: "#94A3B8", bg: "rgba(148,163,184,0.12)"};
@@ -1102,8 +1068,8 @@ function LancamentoModal({
                                         className="mt-3 px-4 py-3 bg-black/20 border border-white/5 rounded-xl animate-in fade-in">
                                         <p className="text-[10px] text-muted-foreground">
                                             {formaPagamento === "Boleto"
-                                                ? "Pagamento via boleto bancário — nenhum dado adicional necessário."
-                                                : "Pagamento via cheque — nenhum dado adicional necessário."}
+                                                ? "Pagamento via boleto bancário - nenhum dado adicional necessário."
+                                                : "Pagamento via cheque - nenhum dado adicional necessário."}
                                         </p>
                                     </div>
                                 )}
@@ -1596,11 +1562,11 @@ export default function Lancamentos() {
                                     </td>
                                     <td className="px-3 py-2.5 font-medium text-white max-w-[160px] truncate"
                                         title={l.parceiro_nome || ""} data-label="Parceiro">
-                                        {l.parceiro_nome || <span className="text-white/30 italic">—</span>}
+                                        {l.parceiro_nome || <span className="text-white/30 italic">-</span>}
                                     </td>
                                     <td className="px-3 py-2.5 text-white/60 max-w-[200px] truncate"
                                         title={l.descricao || ""} data-label="Descrição">
-                                        {l.descricao || "—"}
+                                        {l.descricao || "-"}
                                     </td>
                                     <td className="px-3 py-2.5 max-w-[140px] truncate" data-label="Categoria">
                                         {l.plano_conta_nome
@@ -1610,7 +1576,7 @@ export default function Lancamentos() {
                                     </td>
                                     <td className="px-3 py-2.5" data-label="Riscos">
                                         {riscos.length === 0 ? (
-                                            <span className="text-white/20 italic text-[10px]">—</span>
+                                            <span className="text-white/20 italic text-[10px]">-</span>
                                         ) : (
                                             <div className="flex gap-1 flex-wrap">
                                                 {riscos.map((r) => {

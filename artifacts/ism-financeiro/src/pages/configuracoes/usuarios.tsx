@@ -24,6 +24,8 @@ import {fetchApiData} from "@/lib/api-config";
 import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
+import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
+import {ViewportOverlay} from "@/components/shared/viewport-overlay";
 import {
     Empty,
     EmptyHeader,
@@ -249,6 +251,7 @@ function getInitials(nome: string): string {
 function PermissoesModal({usuario, onClose}: { usuario: UsuarioRow; onClose: () => void }) {
     const {toast} = useToast();
     const queryClient = useQueryClient();
+    const {confirm, ConfirmDialogProps} = useConfirm();
     const [selecionadas, setSelecionadas] = useState<string[]>([]);
     const [expandidos, setExpandidos] = useState<string[]>([permissoesGranulares[0].grupo]);
     const [busca, setBusca] = useState("");
@@ -301,18 +304,34 @@ function PermissoesModal({usuario, onClose}: { usuario: UsuarioRow; onClose: () 
             .filter((g) => g.itens.length > 0)
         : permissoesGranulares;
 
+    const isDirty = fetchedPerms
+        ? [...selecionadas].sort().join("|") !== [...fetchedPerms].sort().join("|")
+        : false;
+
+    async function handleRequestClose() {
+        if (isDirty) {
+            const ok = await confirm(DISCARD_PROMPT);
+            if (!ok) return;
+        }
+        onClose();
+    }
+
+    useEscapeClose(!ConfirmDialogProps.open, () => {
+        void handleRequestClose();
+    }, 60);
+
     return (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+        <ViewportOverlay className="z-[60] bg-black/70">
             <div
                 className="bg-card border border-white/10 rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] flex flex-col">
                 <div className="flex items-center justify-between p-4 sm:p-5 border-b border-white/5">
                     <div>
-                        <h3 className="font-bold text-white text-sm sm:text-base">Permissões — {usuario.nome}</h3>
+                        <h3 className="font-bold text-white text-sm sm:text-base">Permissões - {usuario.nome}</h3>
                         <p className="text-xs text-muted-foreground">
                             {selecionadas.length} de {todasPermissoes.length} permissões ativas
                         </p>
                     </div>
-                    <button type="button" onClick={onClose} className="p-1.5 hover:bg-white/5 rounded-lg">
+                    <button type="button" onClick={() => void handleRequestClose()} className="p-1.5 hover:bg-white/5 rounded-lg">
                         <X className="w-5 h-5"/>
                     </button>
                 </div>
@@ -405,7 +424,7 @@ function PermissoesModal({usuario, onClose}: { usuario: UsuarioRow; onClose: () 
                 </div>
 
                 <div className="flex gap-3 p-4 sm:p-5 border-t border-white/5">
-                    <button type="button" onClick={onClose}
+                    <button type="button" onClick={() => void handleRequestClose()}
                             className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">
                         Cancelar
                     </button>
@@ -420,7 +439,8 @@ function PermissoesModal({usuario, onClose}: { usuario: UsuarioRow; onClose: () 
                     </button>
                 </div>
             </div>
-        </div>
+            <ConfirmDialog {...ConfirmDialogProps} />
+        </ViewportOverlay>
     );
 }
 
@@ -554,12 +574,13 @@ interface UserModalProps {
 function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
     const isEdit = !!initialData;
     const schema = isEdit ? editarUsuarioSchema : criarUsuarioSchema;
+    const {confirm, ConfirmDialogProps} = useConfirm();
 
     // [NOVO] Controla se há um parceiro selecionado via lista no autocomplete.
     // No modo edição não é necessário - campo fica desabilitado.
     const [parceiroSelecionadoId, setParceiroSelecionadoId] = useState<number | null>(null);
 
-    const {register, handleSubmit, setValue, control, formState: {errors}} = useForm<UsuarioFormValues>({
+    const {register, handleSubmit, setValue, control, formState: {errors, isDirty}} = useForm<UsuarioFormValues>({
         resolver: zodResolver(schema),
         defaultValues: {
             nome: initialData?.nome ?? "",
@@ -569,6 +590,18 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
             telefone: initialData?.telefone ?? "",
             celular: initialData?.celular ?? "",
         } as UsuarioFormValues,
+    });
+
+    async function handleRequestClose() {
+        if (isDirty) {
+            const ok = await confirm(DISCARD_PROMPT);
+            if (!ok) return;
+        }
+        onClose();
+    }
+
+    useEscapeClose(!ConfirmDialogProps.open, () => {
+        void handleRequestClose();
     });
 
     const e = errors as any;
@@ -584,7 +617,7 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
     const submitDisabled = isPending || (!isEdit && parceiroSelecionadoId === null);
 
     return (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <ViewportOverlay>
             <div
                 className="bg-card border border-white/10 rounded-2xl w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto">
                 <div
@@ -592,7 +625,7 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
                     <h2 className="text-base sm:text-lg font-bold text-white">
                         {isEdit ? "Editar Usuário" : "Novo Usuário"}
                     </h2>
-                    <button type="button" onClick={onClose} className="p-1.5 hover:bg-white/5 rounded-lg">
+                    <button type="button" onClick={() => void handleRequestClose()} className="p-1.5 hover:bg-white/5 rounded-lg">
                         <X className="w-5 h-5"/>
                     </button>
                 </div>
@@ -708,7 +741,7 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
                     </div>
 
                     <div className="flex gap-3 p-4 sm:p-6 pt-0">
-                        <button type="button" onClick={onClose}
+                        <button type="button" onClick={() => void handleRequestClose()}
                                 className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">Cancelar
                         </button>
                         <button
@@ -722,7 +755,8 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
                     </div>
                 </form>
             </div>
-        </div>
+            <ConfirmDialog {...ConfirmDialogProps} />
+        </ViewportOverlay>
     );
 }
 
@@ -991,7 +1025,7 @@ export default function Usuarios() {
                                                                 {u.celular && <p>{u.celular}</p>}
                                                             </div>
                                                         ) : (
-                                                            <span className="opacity-40">—</span>
+                                                            <span className="opacity-40">-</span>
                                                         )}
                                                     </td>
                                                     <td className="px-5 py-4 text-center">
@@ -1008,7 +1042,7 @@ export default function Usuarios() {
                                                         )}
                                                     </td>
                                                     <td className="px-5 py-4 text-center text-xs text-muted-foreground">
-                                                        {u.ultimo_acesso ? new Date(u.ultimo_acesso).toLocaleDateString("pt-BR") : "—"}
+                                                        {u.ultimo_acesso ? new Date(u.ultimo_acesso).toLocaleDateString("pt-BR") : "-"}
                                                     </td>
                                                     <td className="px-5 py-4 text-right">
                                                         <div className="flex justify-end gap-1">

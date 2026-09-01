@@ -13,6 +13,9 @@ import {fetchApiData} from "@/lib/api-config";
 import {useAuth} from "@/hooks/use-auth";
 import {PERM} from "@/lib/permissoes";
 import {Loader2, Pencil} from "lucide-react";
+import {ConfirmDialog} from "@/components/shared/confirm-dialog";
+import {useConfirm} from "@/hooks/use-confirm";
+import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
 
 type LancamentoEditavel = {
     id: number;
@@ -33,6 +36,7 @@ export function EditarLancamentoConciliacaoModal({open, lancamentoId, onClose, o
     const {toast} = useToast();
     const queryClient = useQueryClient();
     const {hasPermission} = useAuth();
+    const {confirm, ConfirmDialogProps} = useConfirm();
     const canAlterarValor = hasPermission(PERM.LANCAMENTOS_ALTERAR_VALOR);
 
     const [descricao, setDescricao] = useState("");
@@ -78,11 +82,26 @@ export function EditarLancamentoConciliacaoModal({open, lancamentoId, onClose, o
         },
     });
 
+    async function handleRequestClose() {
+        if (data) {
+            const dirty =
+                descricao !== (data.descricao ?? "") ||
+                vencimento !== (data.vencimento?.slice(0, 10) ?? "") ||
+                (canAlterarValor && valor !== String(data.valor ?? ""));
+            if (dirty) {
+                const ok = await confirm(DISCARD_PROMPT);
+                if (!ok) return;
+            }
+        }
+        onClose();
+    }
+
     return (
+        <>
         <AlertDialog
             open={open}
             onOpenChange={(v) => {
-                if (!v) onClose();
+                if (!v) void handleRequestClose();
             }}
         >
             <AlertDialogContent className="sm:max-w-md bg-card border border-white/10 text-white rounded-2xl">
@@ -134,7 +153,7 @@ export function EditarLancamentoConciliacaoModal({open, lancamentoId, onClose, o
                             />
                             {!canAlterarValor && (
                                 <span className="block mt-1 text-[10px] text-amber-300/80 normal-case tracking-normal">
-                                    Sem permissão para alterar valor — demais campos liberados.
+                                    Sem permissão para alterar valor - demais campos liberados.
                                 </span>
                             )}
                         </label>
@@ -144,7 +163,7 @@ export function EditarLancamentoConciliacaoModal({open, lancamentoId, onClose, o
                 <AlertDialogFooter className="gap-2 flex-row">
                     <button
                         type="button"
-                        onClick={onClose}
+                        onClick={() => void handleRequestClose()}
                         className="flex-1 px-3 py-2.5 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-xs font-semibold"
                     >
                         Cancelar
@@ -160,5 +179,7 @@ export function EditarLancamentoConciliacaoModal({open, lancamentoId, onClose, o
                 </AlertDialogFooter>
             </AlertDialogContent>
         </AlertDialog>
+        <ConfirmDialog {...ConfirmDialogProps} />
+        </>
     );
 }
