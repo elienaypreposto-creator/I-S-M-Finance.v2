@@ -6,6 +6,10 @@ import {z} from "zod";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
 import {Loader2, Upload, X, FileSpreadsheet} from "lucide-react";
+import {ConfirmDialog} from "@/components/shared/confirm-dialog";
+import {useConfirm} from "@/hooks/use-confirm";
+import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
+import {ViewportOverlay} from "@/components/shared/viewport-overlay";
 
 type ContaBancariaOption = {
     id: number;
@@ -54,6 +58,7 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
     const queryClient = useQueryClient();
     const [preAnalise, setPreAnalise] = useState<PreAnaliseResponse | null>(null);
     const [pendingForm, setPendingForm] = useState<ImportExtratoForm | null>(null);
+    const {confirm, ConfirmDialogProps} = useConfirm();
 
     const {
         register,
@@ -61,6 +66,7 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
         setValue,
         watch,
         reset,
+        getValues,
         formState: {errors},
     } = useForm<ImportExtratoForm>({
         resolver: zodResolver(importExtratoSchema),
@@ -138,6 +144,19 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
         },
     });
 
+    async function handleRequestClose() {
+        const dirty = Boolean(getValues("arquivo")) || Boolean(preAnalise);
+        if (dirty) {
+            const ok = await confirm(DISCARD_PROMPT);
+            if (!ok) return;
+        }
+        onClose();
+    }
+
+    useEscapeClose(open && !ConfirmDialogProps.open, () => {
+        void handleRequestClose();
+    });
+
     if (!open) return null;
 
     const onSubmit = (data: ImportExtratoForm) => {
@@ -157,7 +176,7 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
     const errorCls = "text-[10px] text-destructive mt-1 font-medium";
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4">
+        <ViewportOverlay className="bg-black/70 backdrop-blur-md">
             <div className="bg-[#121417] border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl">
                 <div className="flex items-center justify-between p-5 border-b border-white/5">
                     <div>
@@ -166,7 +185,7 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
                     </div>
                     <button
                         type="button"
-                        onClick={onClose}
+                        onClick={() => void handleRequestClose()}
                         className="p-2 rounded-xl text-muted-foreground hover:bg-white/5 hover:text-white transition-colors">
                         <X className="w-5 h-5"/>
                     </button>
@@ -214,7 +233,7 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
                         <div className="flex gap-3 pt-2">
                             <button
                                 type="button"
-                                onClick={onClose}
+                                onClick={() => void handleRequestClose()}
                                 className="flex-1 py-2.5 rounded-xl border border-white/10 text-sm font-medium text-white hover:bg-white/5 transition-colors">
                                 Cancelar
                             </button>
@@ -247,7 +266,7 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
                             )}
                         </p>
                         <p className="text-[11px] text-muted-foreground">
-                            Período {preAnalise.periodo_inicio} — {preAnalise.periodo_fim}
+                            Período {preAnalise.periodo_inicio} - {preAnalise.periodo_fim}
                         </p>
                         <div className="flex flex-col gap-2 pt-2">
                             <button
@@ -269,7 +288,7 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
                             </button>
                             <button
                                 type="button"
-                                onClick={onClose}
+                                onClick={() => void handleRequestClose()}
                                 className="w-full py-2.5 rounded-xl text-sm text-muted-foreground hover:text-white">
                                 Cancelar
                             </button>
@@ -277,6 +296,7 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
                     </div>
                 )}
             </div>
-        </div>
+            <ConfirmDialog {...ConfirmDialogProps} />
+        </ViewportOverlay>
     );
 }

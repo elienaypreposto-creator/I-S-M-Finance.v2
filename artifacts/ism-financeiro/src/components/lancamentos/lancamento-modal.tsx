@@ -18,6 +18,7 @@ import {format as formatBtn, parseISO} from "date-fns";
 import {ptBR} from "date-fns/locale";
 import {cn} from "@/lib/utils";
 import {fetchApiData} from "@/lib/api-config";
+import {useEscapeClose} from "@/hooks/use-escape-close";
 import {
     maskChavePix,
     mascararCodigoBanco,
@@ -118,6 +119,7 @@ function ConfirmDialog({
     onConfirm: () => void;
     onCancel: () => void;
 }) {
+    useEscapeClose(open, onCancel, 70);
     if (!open) return null;
 
     const toneCls: Record<ConfirmDialogTone, { iconBg: string; iconColor: string; confirmBtn: string }> = {
@@ -482,7 +484,6 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     const departamento_id = watch("departamento_id");
     const isCP = tipo === "CP";
 
-    // ── Valor Bruto / Desconto / Juros → Valor Atual (calculado em tempo real) ──
     const valorBr = watch("valorBr");
     const descontoBr = watch("descontoBr") ?? "";
     const jurosBr = watch("jurosBr") ?? "";
@@ -524,6 +525,8 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
             onClose();
         }
     }
+
+    useEscapeClose(!showCancelConfirm && !parceiroSubModal, handleRequestClose, 65);
 
     // Reset ao abrir / mudar item (usa dados da lista - sem pagamentos ainda,
     // ou dados de pré-preenchimento vindos da Conciliação)
@@ -678,7 +681,7 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     return createPortal(
         <>
             <div
-                className="fixed inset-0 z-[65] flex items-start justify-center bg-black/70 backdrop-blur-md p-4 pt-16 overflow-hidden">
+                className="fixed inset-0 z-[65] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 overflow-hidden">
                 <div
                     className="bg-[#121417] border border-white/10 rounded-2xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[90vh]">
 

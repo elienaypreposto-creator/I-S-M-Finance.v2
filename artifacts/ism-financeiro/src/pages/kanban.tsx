@@ -59,7 +59,7 @@ const COLUMNS = [
     {id: "concluido", title: "Concluído", color: "bg-emerald-500"},
 ];
 
-// Prefixo para ids de coluna no DnD — evita colisão com ids numéricos de cards
+// Prefixo para ids de coluna no DnD - evita colisão com ids numéricos de cards
 const COL_PREFIX = "col::";
 
 const QUICK_FILTERS = [
@@ -70,7 +70,7 @@ const QUICK_FILTERS = [
     {id: "vencendo_hoje", label: "Vencendo Hoje"},
 ];
 
-// Campos aceitos pelo backend no PATCH — qualquer campo extra causa 400
+// Campos aceitos pelo backend no PATCH - qualquer campo extra causa 400
 const PATCH_FIELDS = [
     "titulo", "descricao", "prioridade", "coluna",
     "prazo", "departamentos", "checklist", "tags",
@@ -229,19 +229,12 @@ function KanbanColumn({
     onDelete: (card: Card) => void;
     activeId: number | null;
 }) {
-    const isConcluido = column.id === "concluido";
-
     return (
         <div
-            className="flex-1 min-w-[280px] flex flex-col h-full max-h-full rounded-xl overflow-hidden"
-            style={{backgroundColor: isConcluido ? undefined : COLORS.colunas}}
+            className="flex-1 min-w-[280px] flex flex-col h-full max-h-full rounded-xl overflow-hidden border border-white/10"
+            style={{backgroundColor: COLORS.colunas}}
         >
-            <div
-                className={cn(
-                    "p-4 border-b border-white/5 flex items-center justify-between",
-                    isConcluido ? "bg-emerald-900/30" : "bg-[#1A1A1A]"
-                )}
-            >
+            <div className="p-4 border-b border-white/10 flex items-center justify-between bg-[#1A1A1A]">
                 <div className="flex items-center gap-2">
                     <div className={cn("w-2 h-2 rounded-full", column.color)}/>
                     <h3 className="font-semibold text-sm text-white">{column.title}</h3>
@@ -564,13 +557,6 @@ export default function Kanban() {
                 <DndContext
                     sensors={sensors}
                     collisionDetection={rectIntersection}
-                    // FIX: por padrão o DndContext remede continuamente os retângulos
-                    // de todos os droppables (as colunas) a cada mudança de layout,
-                    // inclusive em eventos de scroll — não só durante um drag ativo.
-                    // Com 5 colunas cheias de cards, isso pesava justamente ao
-                    // arrastar a barra de rolagem horizontal do board, travando a UI.
-                    // WhileDragging restringe a medição para acontecer só durante um
-                    // drag de fato.
                     measuring={{droppable: {strategy: MeasuringStrategy.WhileDragging}}}
                     onDragStart={handleDragStart}
                     onDragEnd={handleDragEnd}

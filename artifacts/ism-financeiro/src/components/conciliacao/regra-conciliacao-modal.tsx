@@ -7,6 +7,7 @@ import {cn} from "@/lib/utils";
 import {Loader2, X, Pencil, Trash2} from "lucide-react";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
+import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
 import {RequiresPermission} from "@/components/auth/requires-permission";
 import {PERM} from "@/lib/permissoes";
 import {ParceiroCombobox} from "@/components/shared/parceiro-combobox";
@@ -141,6 +142,43 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
         setDepartamentoId(row.departamento_id != null ? String(row.departamento_id) : "");
         setFormaPagamento(row.forma_pagamento ?? "");
     }
+
+    function isFormDirty() {
+        if (editItem) {
+            return (
+                textoGatilho !== editItem.texto_gatilho ||
+                textoExato !== (editItem.tipo_match === "exato") ||
+                natureza !== editItem.natureza ||
+                planoContaId !== (editItem.plano_conta_id != null ? String(editItem.plano_conta_id) : "") ||
+                parceiroId !== (editItem.parceiro_id != null ? String(editItem.parceiro_id) : "") ||
+                departamentoId !== (editItem.departamento_id != null ? String(editItem.departamento_id) : "") ||
+                formaPagamento !== (editItem.forma_pagamento ?? "")
+            );
+        }
+        const gatilhoInicial = prefill?.texto_gatilho ?? "";
+        const naturezaInicial = prefill?.natureza ?? "saida";
+        return (
+            textoGatilho !== gatilhoInicial ||
+            textoExato ||
+            natureza !== naturezaInicial ||
+            planoContaId !== "" ||
+            parceiroId !== "" ||
+            departamentoId !== "" ||
+            formaPagamento !== ""
+        );
+    }
+
+    async function handleRequestClose() {
+        if (isFormDirty()) {
+            const ok = await confirm(DISCARD_PROMPT);
+            if (!ok) return;
+        }
+        onClose();
+    }
+
+    useEscapeClose(open && !parceiroSubModal && !ConfirmDialogProps.open, () => {
+        void handleRequestClose();
+    }, 60);
 
     useEffect(() => {
         if (!open) return;
@@ -295,15 +333,15 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
     const podeSalvar = textoGatilho.trim().length > 0 && !saveMutation.isPending;
 
     return createPortal(
-        <div className="fixed inset-0 z-[60]">
-            <div className="fixed inset-0 bg-black/75 backdrop-blur-md"/>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/75 backdrop-blur-md"/>
             <div
-                className="fixed left-[50%] top-[4%] -translate-x-[50%] translate-y-0 bg-[#121417] border border-white/10 rounded-2xl w-[calc(100%-2rem)] max-w-6xl shadow-2xl flex flex-col max-h-[92vh]">
+                className="relative bg-[#121417] border border-white/10 rounded-2xl w-full max-w-6xl shadow-2xl flex flex-col max-h-[90vh]">
                 <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 shrink-0">
                     <h2 className="text-base font-bold text-white">Cadastro Texto Conciliação</h2>
                     <button
                         type="button"
-                        onClick={onClose}
+                        onClick={() => void handleRequestClose()}
                         className="p-2 rounded-xl text-muted-foreground hover:bg-white/5 hover:text-white transition-colors"
                     >
                         <X className="w-5 h-5"/>
@@ -477,7 +515,7 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
                     <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/5 shrink-0">
                         <button
                             type="button"
-                            onClick={onClose}
+                            onClick={() => void handleRequestClose()}
                             className="px-6 py-2.5 rounded-xl border border-white/10 text-sm font-medium text-white hover:bg-white/5"
                         >
                             Cancelar
