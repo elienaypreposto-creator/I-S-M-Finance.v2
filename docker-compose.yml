@@ -6,12 +6,10 @@ services:
     restart: always
     environment:
       POSTGRES_USER: ism_user
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?Defina DB_PASSWORD no .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?}
       POSTGRES_DB: ismfinance
     ports:
-      # Publicado só no loopback da VM: acessível por túnel SSH (DBeaver, psql),
-      # nunca pela rede privada nem pela internet.
-      - "127.0.0.1:${DB_PORT:-5434}:5432"
+      - "127.0.0.1:${DB_PORT:-5434}:5432" # Somente loopback; acesso externo via túnel SSH
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
@@ -26,13 +24,12 @@ services:
       - postgres
     environment:
       # Sobrescreve o DATABASE_URL para apontar para o contêiner interno do postgres
-      - DATABASE_URL=postgresql://ism_user:${DB_PASSWORD:?Defina DB_PASSWORD no .env}@postgres:5432/ismfinance
+      - DATABASE_URL=postgresql://ism_user:${DB_PASSWORD:?}@postgres:5432/ismfinance
       - PORT=5000
       - NODE_ENV=production
       - RUN_LOCAL=true
     env_file:
       - .env # Carrega os demais segredos como SMTP e JWT_SECRET
-    # Sem porta publicada: o nginx do serviço "web" acessa api:5000 pela ism_network.
     networks:
       - ism_network
 
@@ -44,8 +41,7 @@ services:
     depends_on:
       - api
     ports:
-      # Mantido em todas as interfaces: o proxy reverso da VM chega por 10.0.0.24:<WEB_PORT>.
-      - "${WEB_PORT:-85}:80"
+      - "${WEB_PORT:-85}:80" # O proxy reverso da VM acessa via 10.0.0.24:WEB_PORT
     networks:
       - ism_network
 
