@@ -21,6 +21,7 @@ import {sendPasswordResetEmail} from "../services/email.service";
 import {revokeAllTokensForUser} from "../services/session.service";
 import {withAuth} from "../middlewares/auth";
 import {withPermission} from "../middlewares/withPermission";
+import {authLimiter, loginLimiter} from "../middlewares/rate-limit";
 import {errorResponse, successResponse} from "../utils/response";
 import {
     generateOtp,
@@ -44,7 +45,7 @@ const fetchPermissions = async (usuarioId: number): Promise<string[]> => {
     return rows.map((r) => r.codigo_permissao);
 };
 
-router.post("/auth/login", async (req, res) => {
+router.post("/auth/login", loginLimiter, async (req, res) => {
     try {
         const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : null;
         const senha = typeof req.body?.senha === "string" ? req.body.senha : null;
@@ -289,7 +290,7 @@ router.get("/auth/me", withAuth, async (req, res) => {
     }
 });
 
-router.post("/auth/verify-otp", async (req, res) => {
+router.post("/auth/verify-otp", authLimiter, async (req, res) => {
     try {
         const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : null;
         const otp = typeof req.body?.otp === "string" ? req.body.otp.trim().toUpperCase() : null;
@@ -467,7 +468,7 @@ router.post("/auth/definir-senha", async (req, res) => {
     }
 });
 
-router.post("/auth/forgot-password", async (req, res) => {
+router.post("/auth/forgot-password", authLimiter, async (req, res) => {
     // Resposta sempre genérica - não revela existência de e-mail nem erros internos
     const GENERIC_OK = {message: "Se este e-mail estiver cadastrado, receberá instruções em breve."};
 
@@ -508,7 +509,7 @@ router.post("/auth/forgot-password", async (req, res) => {
     }
 });
 
-router.post("/auth/reset-password", async (req, res) => {
+router.post("/auth/reset-password", authLimiter, async (req, res) => {
     try {
         const resetToken = typeof req.body?.resetToken === "string" ? req.body.resetToken : null;
         const novaSenha = typeof req.body?.novaSenha === "string" ? req.body.novaSenha : null;

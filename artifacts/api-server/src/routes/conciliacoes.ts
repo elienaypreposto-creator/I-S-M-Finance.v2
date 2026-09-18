@@ -41,7 +41,31 @@ import {withPermission} from "../middlewares/withPermission";
 import {PERM} from "../constants/permissoes";
 
 const router = Router();
-const upload = multer({storage: multer.memoryStorage()});
+
+/**
+ * Upload de extrato bancário (OFX). Teto de 10 MB é generoso para o formato
+ * (texto SGML/XML) mas evita que um arquivo de centenas de MB — proposital ou
+ * não — carregue tudo em memória e derrube o processo (multi-tenant: um único
+ * upload ruim afeta todas as empresas no mesmo processo Node).
+ * `fileFilter` rejeita cedo por extensão, antes de bufferizar, como primeira
+ * linha de defesa; a validação de conteúdo (`parseExtratoUpload`) continua
+ * sendo a fonte da verdade.
+ */
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 10 * 1024 * 1024, // 10 MB
+        files: 1,
+    },
+    fileFilter: (_req, file, cb) => {
+        const ext = file.originalname.split(".").pop()?.toLowerCase() ?? "";
+        if (ext !== "ofx") {
+            cb(new multer.MulterError("LIMIT_UNEXPECTED_FILE", file.fieldname));
+            return;
+        }
+        cb(null, true);
+    },
+});
 
 /**
  * Erro com status/code HTTP explícitos - usado para abortar uma transaction
