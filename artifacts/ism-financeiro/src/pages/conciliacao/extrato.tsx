@@ -75,7 +75,7 @@ type VinculacaoDetalhe = {
     acrescimo?: string | number;
     juros_multa?: string | number;
     vencimento?: string | null;
-    residuo_pendente?: {valor: string | number} | null;
+    residuo_pendente?: { valor: string | number } | null;
     residuo_gerado?: {
         id: number;
         descricao: string | null;
@@ -166,10 +166,10 @@ function corNaturezaTexto(isCredito: boolean) {
     return isCredito ? "text-emerald-300" : "text-red-300";
 }
 
-type DraftAcaoVincular = {tipo: "vincular"; draft: DraftVincular};
-type DraftAcaoIgnorar = {tipo: "ignorar"; motivoCodigo?: string; motivo?: string};
-type DraftAcaoDesfazer = {tipo: "desfazer"};
-type DraftAcaoReverterIgnorar = {tipo: "reverter_ignorar"};
+type DraftAcaoVincular = { tipo: "vincular"; draft: DraftVincular };
+type DraftAcaoIgnorar = { tipo: "ignorar"; motivoCodigo?: string; motivo?: string };
+type DraftAcaoDesfazer = { tipo: "desfazer" };
+type DraftAcaoReverterIgnorar = { tipo: "reverter_ignorar" };
 type DraftAcao = DraftAcaoVincular | DraftAcaoIgnorar | DraftAcaoDesfazer | DraftAcaoReverterIgnorar;
 
 type LinhaEfetiva = LinhaDetalhe & {
@@ -362,14 +362,14 @@ function removerLancamentoDoRascunho(
 }
 
 function CardLancamento({
-    v,
-    extratoId,
-    linhaId,
-    canEditarLancamento,
-    canDesfazer,
-    onEditarLancamento,
-    onRemoverVinculo,
-}: {
+                            v,
+                            extratoId,
+                            linhaId,
+                            canEditarLancamento,
+                            canDesfazer,
+                            onEditarLancamento,
+                            onRemoverVinculo,
+                        }: {
     v: VinculacaoDetalhe;
     extratoId: string;
     linhaId: number;
@@ -474,9 +474,9 @@ function CardLancamento({
 
             const body = {
                 [payload.campo]:
-                    brMoneyDisplayToApiString(
-                        payload.valor,
-                    ) || "0.00",
+                brMoneyDisplayToApiString(
+                    payload.valor,
+                ) || "0.00",
             };
 
             return fetchApiData(
@@ -781,7 +781,8 @@ function CardLancamento({
             </div>
 
             {v.residuo_pendente && (
-                <div className="flex items-center gap-1.5 text-[10px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-1 mt-1">
+                <div
+                    className="flex items-center gap-1.5 text-[10px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-1 mt-1">
                     <CheckCircle2 className="w-3 h-3 shrink-0"/>
                     <span className="truncate">
                         Residual de{" "}
@@ -809,9 +810,9 @@ function CardLancamento({
                         <span className="truncate">
                             {v.residuo_gerado.vencimento
                                 ? formatDate(
-                                      v.residuo_gerado
-                                          .vencimento,
-                                  )
+                                    v.residuo_gerado
+                                        .vencimento,
+                                )
                                 : "-"}{" "}
                             ·{" "}
                             <span className="uppercase text-[9px]">
@@ -840,8 +841,8 @@ const LINHAS_POR_PAGINA = 25;
 const PENDING_RELOAD = "__reload__";
 
 export default function ConciliacaoExtratoDetalhe({
-    extratoId,
-}: {
+                                                      extratoId,
+                                                  }: {
     extratoId: string;
 }) {
     const [location, setLocation] =
@@ -1063,7 +1064,7 @@ export default function ConciliacaoExtratoDetalhe({
                         linha,
                         draftsPorLinha[
                             linha.linha_id
-                        ],
+                            ],
                     ),
                 ),
             [linhas, draftsPorLinha],
@@ -1100,13 +1101,13 @@ export default function ConciliacaoExtratoDetalhe({
                         acao.draft.itens) {
                         mapa[
                             item.lancamento_id
-                        ] =
+                            ] =
                             (mapa[
                                 item.lancamento_id
-                            ] ?? 0) +
+                                ] ?? 0) +
                             Math.round(
                                 item.valor_vinculado *
-                                    100,
+                                100,
                             );
                     }
                 }
@@ -1373,11 +1374,11 @@ export default function ConciliacaoExtratoDetalhe({
                         tipo: "vincular",
                         linha_id: linhaId,
                         lancamentos:
-                            payload.lancamentos,
+                        payload.lancamentos,
                         gerar_parcial:
-                            payload.gerar_parcial,
+                        payload.gerar_parcial,
                         residuo_lancamento_id:
-                            payload.residuo_lancamento_id,
+                        payload.residuo_lancamento_id,
                     });
                 } else if (
                     acao.tipo === "ignorar"
@@ -1386,7 +1387,7 @@ export default function ConciliacaoExtratoDetalhe({
                         tipo: "ignorar",
                         linha_id: linhaId,
                         motivo_codigo:
-                            acao.motivoCodigo,
+                        acao.motivoCodigo,
                         motivo: acao.motivo,
                     });
                 } else if (
@@ -1427,7 +1428,7 @@ export default function ConciliacaoExtratoDetalhe({
                             acoes:
                                 buildAcoesSalvar(),
                             finalizar:
-                                params.finalizar,
+                            params.finalizar,
                         }),
                     },
                 ),
@@ -1519,18 +1520,18 @@ export default function ConciliacaoExtratoDetalhe({
                 (linha) => {
                     if (
                         filtrosAplicados.tipo !==
-                            "todos" &&
+                        "todos" &&
                         linha.tipo_movimento !==
-                            filtrosAplicados.tipo
+                        filtrosAplicados.tipo
                     ) {
                         return false;
                     }
 
                     if (
                         filtrosAplicados.status !==
-                            "todos" &&
+                        "todos" &&
                         linha.status !==
-                            filtrosAplicados.status
+                        filtrosAplicados.status
                     ) {
                         return false;
                     }
@@ -1541,7 +1542,7 @@ export default function ConciliacaoExtratoDetalhe({
                         const alvo =
                             normalizarTextoBusca(
                                 linha.descricao ??
-                                    "",
+                                "",
                             );
 
                         const termo =
@@ -1639,7 +1640,7 @@ export default function ConciliacaoExtratoDetalhe({
                                 const atual =
                                     prev[
                                         draft.linhaId
-                                    ] ?? [];
+                                        ] ?? [];
 
                                 return {
                                     ...prev,
@@ -1735,9 +1736,9 @@ export default function ConciliacaoExtratoDetalhe({
                                     {
                                         tipo: "ignorar",
                                         motivoCodigo:
-                                            payload.motivo_codigo,
+                                        payload.motivo_codigo,
                                         motivo:
-                                            payload.motivo,
+                                        payload.motivo,
                                     },
                                 ],
                             };
@@ -1787,13 +1788,13 @@ export default function ConciliacaoExtratoDetalhe({
                             const atual =
                                 prev[
                                     linhaId
-                                ];
+                                    ];
 
                             if (
                                 atual &&
                                 atual[0]
                                     ?.tipo ===
-                                    "ignorar"
+                                "ignorar"
                             ) {
                                 const {
                                     [linhaId]:
@@ -1994,8 +1995,8 @@ export default function ConciliacaoExtratoDetalhe({
                     </p>
                 </div>
             ) : isError ||
-              !extrato ||
-              !conc ? (
+            !extrato ||
+            !conc ? (
                 <div className="glass-panel rounded-2xl p-10 border border-destructive/30 text-center">
                     <AlertCircle className="w-10 h-10 text-destructive mx-auto mb-3"/>
 
@@ -2017,8 +2018,10 @@ export default function ConciliacaoExtratoDetalhe({
                 </div>
             ) : (
                 <>
-                    <div className="glass-panel rounded-xl border border-white/10 overflow-hidden flex flex-col flex-1 min-h-0 w-full min-w-0 max-w-none">
-                        <div className="flex flex-wrap items-center gap-2 px-3.5 py-2.5 border-b border-white/5 bg-black/10">
+                    <div
+                        className="glass-panel rounded-xl border border-white/10 overflow-hidden flex flex-col flex-1 min-h-0 w-full min-w-0 max-w-none">
+                        <div
+                            className="flex flex-wrap items-center gap-2 px-3.5 py-2.5 border-b border-white/5 bg-black/10">
                             <select
                                 value={
                                     filtroTipo
@@ -2095,7 +2098,7 @@ export default function ConciliacaoExtratoDetalhe({
                                     className={cn(
                                         "w-3.5 h-3.5",
                                         isLoading &&
-                                            "animate-spin",
+                                        "animate-spin",
                                     )}
                                 />
                             </button>
@@ -2114,7 +2117,8 @@ export default function ConciliacaoExtratoDetalhe({
                             <div className="flex-1"/>
 
                             <div className="relative w-full sm:w-64">
-                                <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2"/>
+                                <Search
+                                    className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2"/>
 
                                 <input
                                     type="text"
@@ -2133,7 +2137,7 @@ export default function ConciliacaoExtratoDetalhe({
                                         e,
                                     ) =>
                                         e.key ===
-                                            "Enter" &&
+                                        "Enter" &&
                                         aplicarFiltros()
                                     }
                                     placeholder="Pesquisar (mín. 3 letras)"
@@ -2142,7 +2146,8 @@ export default function ConciliacaoExtratoDetalhe({
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_36px_minmax(0,1fr)] border-b border-white/5 bg-black/20">
+                        <div
+                            className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_36px_minmax(0,1fr)] border-b border-white/5 bg-black/20">
                             <div className="px-3.5 py-2.5 flex items-center justify-center gap-2 flex-wrap">
                                 <Download className="w-3.5 h-3.5 text-primary shrink-0"/>
 
@@ -2161,13 +2166,14 @@ export default function ConciliacaoExtratoDetalhe({
                                             {formatDate(
                                                 extrato.periodo_fim,
                                             )}
-                                        </span>
+                </span>
                                     )}
                             </div>
 
                             <div className="hidden xl:block"/>
 
-                            <div className="px-3.5 py-2.5 flex items-center justify-center gap-2 border-t xl:border-t-0 border-white/5">
+                            <div
+                                className="px-3.5 py-2.5 flex items-center justify-center gap-2 border-t xl:border-t-0 border-white/5">
                                 <Unlink className="w-3.5 h-3.5 text-primary shrink-0"/>
 
                                 <h2 className="text-sm font-bold text-white uppercase tracking-wide">
@@ -2238,27 +2244,28 @@ export default function ConciliacaoExtratoDetalhe({
                                                 className={cn(
                                                     "grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_36px_minmax(0,1fr)] divide-y xl:divide-y-0 xl:divide-x divide-white/5",
                                                     isIgnorado &&
-                                                        "opacity-45 grayscale-[0.35] bg-white/[0.015]",
+                                                    "opacity-45 grayscale-[0.35] bg-white/[0.015]",
                                                 )}
                                             >
                                                 <div className="p-3 space-y-1.5 min-w-0">
                                                     <div className="flex items-center justify-between gap-2 flex-wrap">
                                                         <div className="flex items-center gap-2 min-w-0">
-                                                            <span
-                                                                className={cn(
-                                                                    "text-[10px] font-black px-1.5 py-0.5 rounded border uppercase shrink-0",
-                                                                    corNaturezaBadge(
-                                                                        isCredito,
-                                                                    ),
-                                                                )}
-                                                            >
+                          <span
+                              className={cn(
+                                  "text-[10px] font-black px-1.5 py-0.5 rounded border uppercase shrink-0",
+                                  corNaturezaBadge(
+                                      isCredito,
+                                  ),
+                              )}
+                          >
                                                                 {
                                                                     linha.tipo_movimento
                                                                 }
-                                                            </span>
+                          </span>
 
                                                             {linha.data_movimento && (
-                                                                <span className="text-xs text-muted-foreground truncate">
+                                                                <span
+                                                                    className="text-xs text-muted-foreground truncate">
                                                                     {formatDate(
                                                                         linha.data_movimento,
                                                                     )}
@@ -2341,7 +2348,7 @@ export default function ConciliacaoExtratoDetalhe({
                                                         {formatCurrency(
                                                             valorAbs,
                                                         )}
-                                                    </span>
+                                  </span>
 
                                                     {isVinculado &&
                                                         faltaFechar && (
@@ -2363,9 +2370,9 @@ export default function ConciliacaoExtratoDetalhe({
                                                             linha.regra_criar_lancamento
                                                                 ? "Essa movimentação será criada"
                                                                 : linha.status ===
-                                                                      "pendente"
-                                                                  ? "Classificação sugerida pela regra - revise"
-                                                                  : "Classificada automaticamente pela regra"}
+                                                                "pendente"
+                                                                    ? "Classificação sugerida pela regra - revise"
+                                                                    : "Classificada automaticamente pela regra"}
 
                                                             {linha.regra_texto_gatilho
                                                                 ? ` (“${linha.regra_texto_gatilho}”)`
@@ -2384,16 +2391,16 @@ export default function ConciliacaoExtratoDetalhe({
 
                                                     {linha.saldo_pos_linha !=
                                                         null && (
-                                                        <p className="text-[11px] text-muted-foreground">
-                                                            Saldo
-                                                            pós-linha:{" "}
-                                                            {formatCurrency(
-                                                                Number(
-                                                                    linha.saldo_pos_linha,
-                                                                ),
-                                                            )}
-                                                        </p>
-                                                    )}
+                                                            <p className="text-[11px] text-muted-foreground">
+                                                                Saldo
+                                                                pós-linha:{" "}
+                                                                {formatCurrency(
+                                                                    Number(
+                                                                        linha.saldo_pos_linha,
+                                                                    ),
+                                                                )}
+                                                            </p>
+                                                        )}
                                                 </div>
 
                                                 <div className="flex items-center justify-center py-1.5 xl:py-2">
@@ -2416,7 +2423,7 @@ export default function ConciliacaoExtratoDetalhe({
                                                             ) : (
                                                                 <span className="text-xs font-black">
                                                                     ≠
-                                                                </span>
+                                    </span>
                                                             )}
                                                         </div>
                                                     )}
@@ -2425,7 +2432,7 @@ export default function ConciliacaoExtratoDetalhe({
                                                 <div className="p-3 min-w-0 space-y-1.5">
                                                     {isVinculado &&
                                                         linha.vinculacoes.length >
-                                                            0 && (
+                                                        0 && (
                                                             <ul className="space-y-1.5">
                                                                 {linha.vinculacoes.map(
                                                                     (
@@ -2460,9 +2467,9 @@ export default function ConciliacaoExtratoDetalhe({
                                                                                 setDesfazerAlvo(
                                                                                     {
                                                                                         linhaId:
-                                                                                            linha.linha_id,
+                                                                                        linha.linha_id,
                                                                                         lancamentoId:
-                                                                                            v.lancamento_id,
+                                                                                        v.lancamento_id,
                                                                                         isLocal:
                                                                                             Boolean(
                                                                                                 v._local,
@@ -2485,17 +2492,17 @@ export default function ConciliacaoExtratoDetalhe({
                                                                         {
                                                                             id: linha.linha_id,
                                                                             valorAbs:
-                                                                                saldoAbs,
+                                                                            saldoAbs,
                                                                             tipoMovimento:
-                                                                                linha.tipo_movimento,
+                                                                            linha.tipo_movimento,
                                                                             dataMovimento:
-                                                                                linha.data_movimento,
+                                                                            linha.data_movimento,
                                                                             descricaoLinha:
-                                                                                linha.descricao,
+                                                                            linha.descricao,
                                                                             jaVinculadoLocalCents:
-                                                                                linha._jaVinculadoLocalCents,
+                                                                            linha._jaVinculadoLocalCents,
                                                                             ignorarVinculosReais:
-                                                                                linha._ignorarVinculosReais,
+                                                                            linha._ignorarVinculosReais,
                                                                         },
                                                                     )
                                                                 }
@@ -2523,40 +2530,41 @@ export default function ConciliacaoExtratoDetalhe({
 
                                 {restantesParaCarregar >
                                     0 && (
-                                    <div className="py-4 flex justify-center">
-                                        <button
-                                            type="button"
-                                            onClick={() =>
-                                                setLinhasVisiveisCount(
-                                                    (
-                                                        n,
-                                                    ) =>
-                                                        n +
-                                                        LINHAS_POR_PAGINA,
+                                        <div className="py-4 flex justify-center">
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    setLinhasVisiveisCount(
+                                                        (
+                                                            n,
+                                                        ) =>
+                                                            n +
+                                                            LINHAS_POR_PAGINA,
+                                                    )
+                                                }
+                                                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-muted-foreground hover:text-white transition-colors"
+                                            >
+                                                <ChevronDown className="w-3.5 h-3.5"/>
+                                                Role para
+                                                carregar
+                                                mais (
+                                                {
+                                                    restantesParaCarregar
+                                                }{" "}
+                                                restante
+                                                {restantesParaCarregar ===
+                                                1
+                                                    ? ""
+                                                    : "s"}
                                                 )
-                                            }
-                                            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-muted-foreground hover:text-white transition-colors"
-                                        >
-                                            <ChevronDown className="w-3.5 h-3.5"/>
-                                            Role para
-                                            carregar
-                                            mais (
-                                            {
-                                                restantesParaCarregar
-                                            }{" "}
-                                            restante
-                                            {restantesParaCarregar ===
-                                            1
-                                                ? ""
-                                                : "s"}
-                                            )
-                                        </button>
-                                    </div>
-                                )}
+                                            </button>
+                                        </div>
+                                    )}
                             </div>
                         )}
 
-                        <div className="flex items-center justify-end gap-3 px-4 py-3 border-t border-white/5 bg-black/25">
+                        <div
+                            className="flex items-center justify-end gap-3 px-4 py-3 border-t border-white/5 bg-black/25">
                             {hasPendingChanges && (
                                 <span className="text-[11px] text-amber-300/90 flex items-center gap-1.5">
                                     <AlertCircle className="w-3.5 h-3.5"/>
@@ -2577,7 +2585,7 @@ export default function ConciliacaoExtratoDetalhe({
                                         !hasPendingChanges ||
                                         salvarMutation.isPending ||
                                         extrato.status ===
-                                            "conciliado"
+                                        "conciliado"
                                     }
                                     onClick={() => {
                                         if (
