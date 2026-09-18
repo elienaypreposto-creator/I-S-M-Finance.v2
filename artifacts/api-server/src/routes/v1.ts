@@ -67,7 +67,7 @@ router.get("/bancos", async (_req, res) => {
             items.map((i) => ({...i, saldo_inicial: Number(i.saldo_inicial ?? 0)})),
         );
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar bancos (v1).", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar bancos (v1).", e);
     }
 });
 
@@ -125,7 +125,7 @@ router.get("/contasPagar", async (req, res) => {
             {limit, offset, nextOffset: offset + items.length},
         );
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar contas a pagar (v1).", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar contas a pagar (v1).", e);
     }
 });
 
@@ -183,7 +183,7 @@ router.get("/contasReceber", async (req, res) => {
             {limit, offset, nextOffset: offset + items.length},
         );
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar contas a receber (v1).", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar contas a receber (v1).", e);
     }
 });
 
@@ -195,7 +195,7 @@ router.get("/pessoas", async (_req, res) => {
             .orderBy(parceirosTable.nome);
         return successResponse(res, items, {total: items.length});
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar pessoas/parceiros (v1).", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar pessoas/parceiros (v1).", e);
     }
 });
 
@@ -204,7 +204,7 @@ router.get("/filiais", async (_req, res) => {
         const items = await db.select().from(filiaisTable).orderBy(filiaisTable.nome);
         return successResponse(res, items);
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar filiais (v1).", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar filiais (v1).", e);
     }
 });
 
@@ -216,7 +216,7 @@ router.get("/planoContas", async (_req, res) => {
             .orderBy(planoContasTable.categoria, planoContasTable.subcategoria);
         return successResponse(res, items);
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar plano de contas (v1).", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar plano de contas (v1).", e);
     }
 });
 
@@ -239,7 +239,7 @@ router.get("/categoriaPlanoConta", async (_req, res) => {
             })),
         );
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar categorias do plano de contas (v1).", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar categorias do plano de contas (v1).", e);
     }
 });
 

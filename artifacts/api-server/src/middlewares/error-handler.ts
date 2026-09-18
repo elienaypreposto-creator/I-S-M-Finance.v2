@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import { ZodError } from "zod";
 import { MulterError } from "multer";
 import { AppError } from "../utils/app-error";
+import {clientErrorDetails, logInternalError, requestIdFrom} from "../utils/safe-error";
 
 /** Mensagens amigáveis por código de erro do multer (limits/fileFilter). */
 const MULTER_ERROR_MESSAGES: Partial<Record<MulterError["code"], string>> = {
@@ -18,7 +19,9 @@ function isPayloadTooLargeError(err: unknown): err is Error & { type: string; st
   );
 }
 
-export const errorHandler = (err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+export const errorHandler = (err: unknown, req: Request, res: Response, _next: NextFunction) => {
+  const requestId = requestIdFrom(req);
+
   if (isPayloadTooLargeError(err)) {
     return res.status(413).json({
       data: null,
@@ -49,6 +52,9 @@ export const errorHandler = (err: unknown, _req: Request, res: Response, _next: 
   }
 
   if (err instanceof AppError) {
+    if (err.statusCode >= 500) {
+      logInternalError(requestId, err, err.details);
+    }
     return res.status(err.statusCode).json({
       data: null,
       meta: null,
@@ -56,7 +62,7 @@ export const errorHandler = (err: unknown, _req: Request, res: Response, _next: 
         {
           code: err.code,
           message: err.message,
-          details: err.details ?? null,
+          details: clientErrorDetails(err.statusCode, err.details ?? err, process.env.NODE_ENV, requestId),
         },
       ],
     });
@@ -76,7 +82,7 @@ export const errorHandler = (err: unknown, _req: Request, res: Response, _next: 
     });
   }
 
-  console.error("Unhandled error:", err);
+  logInternalError(requestId, err);
   return res.status(500).json({
     data: null,
     meta: null,
@@ -84,7 +90,7 @@ export const errorHandler = (err: unknown, _req: Request, res: Response, _next: 
       {
         code: "INTERNAL_ERROR",
         message: "Erro interno do servidor.",
-        details: null,
+        details: clientErrorDetails(500, err, process.env.NODE_ENV, requestId),
       },
     ],
   });

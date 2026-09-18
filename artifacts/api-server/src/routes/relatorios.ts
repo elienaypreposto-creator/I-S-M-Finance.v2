@@ -113,12 +113,12 @@ router.get("/relatorios/fechamento-mensal", withPermission(PERM.RELATORIOS_FECHA
             realizado_receber: fromCents(realizadoReceberCents),
             planejado_gastar: fromCents(planejadoGastarCents),
             realizado_gastar: fromCents(realizadoGastarCents),
-            /** Juros do período — fora do resultado operacional. */
+            /** Juros do período - fora do resultado operacional. */
             juros: fromCents(jurosCents),
             criterio: "data_quitacao",
         });
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar fechamento mensal.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar fechamento mensal.", e);
     }
 });
 
@@ -216,7 +216,7 @@ router.get("/relatorios/dre", withPermission(PERM.RELATORIOS_DRE), async (req, r
 
         return successResponse(res, {ano, regime, meses: MONTH_NAMES, linhas});
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar DRE.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar DRE.", e);
     }
 });
 
@@ -313,7 +313,7 @@ router.get("/relatorios/fluxo-caixa", withPermission(PERM.RELATORIOS_FLUXO_CAIXA
             ],
         });
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar fluxo de caixa.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar fluxo de caixa.", e);
     }
 });
 
@@ -420,7 +420,7 @@ router.get("/relatorios/metas", withPermission(PERM.RELATORIOS_METAS), async (re
 
         return successResponse(res, rows, {ano, criterio: "data_quitacao"});
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar relatório de metas.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar relatório de metas.", e);
     }
 });
 
@@ -467,7 +467,7 @@ router.get("/relatorios/contabil-fiscal", withPermission(PERM.RELATORIOS_CONTABI
             {total: items.length},
         );
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar relatório contábil/fiscal.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar relatório contábil/fiscal.", e);
     }
 });
 
@@ -634,7 +634,7 @@ router.get("/relatorios/conciliacao", withPermission(PERM.RELATORIOS_CONCILIACAO
             movimentacoes: {
                 creditos_quitados: fromCents(creditosCents),
                 debitos_quitados: fromCents(debitosCents),
-                /** Juros CR (entrada no caixa) — fora do resultado operacional da meta. */
+                /** Juros CR (entrada no caixa) - fora do resultado operacional da meta. */
                 juros_credito: fromCents(jurosCreditoCents),
                 /** Juros CP (saída no caixa). */
                 juros_debito: fromCents(jurosDebitoCents),
@@ -659,7 +659,7 @@ router.get("/relatorios/conciliacao", withPermission(PERM.RELATORIOS_CONCILIACAO
             totais: totaisResumo,
         });
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar relatório de conciliação.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar relatório de conciliação.", e);
     }
 });
 

@@ -3,9 +3,12 @@ import cors from "cors";
 import router from "./routes";
 import {errorHandler} from "./middlewares/error-handler";
 import {auditLogger} from "./middlewares/logger";
+import {requestId} from "./middlewares/request-id";
 import {globalLimiter} from "./middlewares/rate-limit";
 
 const app: Express = express();
+
+app.use(requestId);
 
 // Necessário para que req.ip reflita o IP real do cliente (via X-Forwarded-For)
 // atrás do proxy da Vercel / reverse proxy, em vez do IP do proxy — do contrário
@@ -16,7 +19,8 @@ app.use(
     cors({
         origin: "*",
         methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-        allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+        allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "X-Request-Id"],
+        exposedHeaders: ["X-Request-Id"],
     })
 );
 // Limite explícito (mesmo valor do default do Express 5) — documenta a

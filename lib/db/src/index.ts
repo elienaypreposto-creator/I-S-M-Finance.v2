@@ -1,7 +1,7 @@
 export {db, pool} from "./client";
 export * from "./schema";
+export {PERMISSOES_ADMIN, type PermissaoCatalogo} from "./permissoes-catalog";
 export {
-    PERMISSOES_ADMIN,
     SYSTEM_ADMIN_EMAILS,
     resolveSystemAdminEmails,
     syncAdminPermissionsOnBoot,

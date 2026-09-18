@@ -1,6 +1,14 @@
 /**
- * FEAT-09 - códigos de permissão da conciliação (padrão dominio:recurso:acao).
+ * Códigos de permissão da API (padrão dominio:recurso:acao).
+ *
+ * O catálogo canónico vive em `@workspace/db/permissoes` e é reexportado aqui
+ * para o schema Zod (`z.enum`) e para withPermission / rotas.
  */
+import {z} from "zod";
+import {PERMISSOES_ADMIN, type PermissaoCatalogo} from "@workspace/db/permissoes";
+
+export {PERMISSOES_ADMIN, type PermissaoCatalogo};
+
 export const PERM = {
     CONCILIACAO_ACESSAR: "financeiro:conciliacao:acessar",
     CONCILIACAO_IMPORTAR: "financeiro:conciliacao:importar",
@@ -24,6 +32,15 @@ export const PERM = {
     REGRAS_CONCILIACAO_CRIAR: "financeiro:regras-conciliacao:criar",
     REGRAS_CONCILIACAO_EDITAR: "financeiro:regras-conciliacao:editar",
     REGRAS_CONCILIACAO_DELETAR: "financeiro:regras-conciliacao:deletar",
+    ADMIN_PERMISSOES_CONCEDER: "admin:permissoes:conceder",
 } as const;
 
 export type PermissaoCodigo = (typeof PERM)[keyof typeof PERM];
+
+/** Tuple não-vazia exigida por `z.enum`. `"*"` não faz parte do catálogo. */
+const PERMISSOES_ENUM_VALUES = PERMISSOES_ADMIN as unknown as [
+    PermissaoCatalogo,
+    ...PermissaoCatalogo[],
+];
+
+export const codigoPermissaoCatalogoSchema = z.enum(PERMISSOES_ENUM_VALUES);

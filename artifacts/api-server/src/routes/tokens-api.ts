@@ -23,8 +23,7 @@ router.get("/tokens-api", withPermission("admin:tokens-api:listar"), async (_req
 
         return successResponse(res, items);
     } catch (error) {
-        console.error("Erro em GET /tokens-api:", error);
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao listar tokens de API.");
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao listar tokens de API.", error);
     }
 });
 
@@ -49,11 +48,10 @@ router.post("/tokens-api", withPermission("admin:tokens-api:criar"), async (req,
                 created_at: tokensApiTable.created_at,
             });
 
-        // O token raw só é retornado uma vez — não é persistido em plaintext
+        // O token raw só é retornado uma vez - não é persistido em plaintext
         return successResponse(res, {...item, token: rawToken}, null, 201);
     } catch (error) {
-        console.error("Erro em POST /tokens-api:", error);
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao criar token de API.");
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao criar token de API.", error);
     }
 });
 
@@ -64,7 +62,7 @@ router.patch("/tokens-api/:id", withPermission("admin:tokens-api:editar"), async
             return errorResponse(res, 400, "VALIDATION_ERROR", "ID inválido.");
         }
 
-        // Único campo mutável nesta rota — ativo/inativo
+        // Único campo mutável nesta rota - ativo/inativo
         const ativo = typeof req.body?.ativo === "boolean" ? req.body.ativo : null;
         if (ativo === null) {
             return errorResponse(res, 400, "VALIDATION_ERROR", "O campo 'ativo' (boolean) é obrigatório.");
@@ -84,8 +82,7 @@ router.patch("/tokens-api/:id", withPermission("admin:tokens-api:editar"), async
         if (!item) return errorResponse(res, 404, "NOT_FOUND", "Token de API não encontrado.");
         return successResponse(res, item);
     } catch (error) {
-        console.error("Erro em PATCH /tokens-api/:id:", error);
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao atualizar token de API.");
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao atualizar token de API.", error);
     }
 });
 
@@ -99,8 +96,7 @@ router.delete("/tokens-api/:id", withPermission("admin:tokens-api:deletar"), asy
         await db.delete(tokensApiTable).where(eq(tokensApiTable.id, id));
         return successResponse(res, {deleted: true});
     } catch (error) {
-        console.error("Erro em DELETE /tokens-api/:id:", error);
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao excluir token de API.");
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao excluir token de API.", error);
     }
 });
 

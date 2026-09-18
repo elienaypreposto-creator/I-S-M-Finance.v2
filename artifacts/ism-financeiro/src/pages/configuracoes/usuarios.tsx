@@ -21,6 +21,8 @@ import {
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
+import {PERM} from "@/lib/permissoes";
+import {useAuth} from "@/hooks/use-auth";
 import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
@@ -206,7 +208,9 @@ const permissoesGranulares = [
         itens: [
             {nome: "Cadastro de Usuários", codigo: "admin:usuarios:criar"},
             {nome: "Consulta de Usuários", codigo: "admin:usuarios:listar"},
+            {nome: "Edição de Usuários", codigo: "admin:usuarios:editar"},
             {nome: "Exclusão de Usuários", codigo: "admin:usuarios:deletar"},
+            {nome: "Conceder permissões a utilizadores", codigo: "admin:permissoes:conceder"},
             {nome: "Cadastro de Token de API", codigo: "admin:tokens-api:criar"},
             {nome: "Consulta de Tokens de API", codigo: "admin:tokens-api:listar"},
             {nome: "Exclusão de Token de API", codigo: "admin:tokens-api:deletar"},
@@ -764,6 +768,8 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
 export default function Usuarios() {
     const {toast} = useToast();
     const queryClient = useQueryClient();
+    const {hasPermission} = useAuth();
+    const canConcederPermissoes = hasPermission(PERM.ADMIN_PERMISSOES_CONCEDER);
     const [showUserModal, setShowUserModal] = useState(false);
     const [editingUsuario, setEditingUsuario] = useState<UsuarioRow | null>(null);
     const [permissoesUsuario, setPermissoesUsuario] = useState<UsuarioRow | null>(null);
@@ -805,7 +811,7 @@ export default function Usuarios() {
                 }),
             }),
         onSuccess: async (createdUser, variables) => {
-            if (variables.perfil_base && perfisBase[variables.perfil_base]) {
+            if (canConcederPermissoes && variables.perfil_base && perfisBase[variables.perfil_base]) {
                 await fetchApiData(`/usuarios/${createdUser.id}/permissoes`, {
                     method: "PUT",
                     body: JSON.stringify({permissoes: perfisBase[variables.perfil_base]}),
@@ -833,7 +839,7 @@ export default function Usuarios() {
                 }),
             }).then((res) => ({user: res, variables: data})),
         onSuccess: async ({user, variables}) => {
-            if (variables.perfil_base && perfisBase[variables.perfil_base]) {
+            if (canConcederPermissoes && variables.perfil_base && perfisBase[variables.perfil_base]) {
                 await fetchApiData(`/usuarios/${user.id}/permissoes`, {
                     method: "PUT",
                     body: JSON.stringify({permissoes: perfisBase[variables.perfil_base]}),
@@ -900,7 +906,7 @@ export default function Usuarios() {
                     onSave={handleSave}
                 />
             )}
-            {permissoesUsuario && (
+            {canConcederPermissoes && permissoesUsuario && (
                 <PermissoesModal usuario={permissoesUsuario} onClose={() => setPermissoesUsuario(null)}/>
             )}
 
@@ -1046,6 +1052,7 @@ export default function Usuarios() {
                                                     </td>
                                                     <td className="px-5 py-4 text-right">
                                                         <div className="flex justify-end gap-1">
+                                                            {canConcederPermissoes && (
                                                             <button
                                                                 type="button"
                                                                 title="Permissões"
@@ -1055,6 +1062,7 @@ export default function Usuarios() {
                                                                 <Shield className="w-3.5 h-3.5 inline mr-1"/>
                                                                 Permissões
                                                             </button>
+                                                            )}
                                                             <button
                                                                 type="button"
                                                                 title="Editar"
@@ -1113,6 +1121,7 @@ export default function Usuarios() {
                                                 </div>
                                                 <div
                                                     className="flex items-center gap-2 mt-3 pt-3 border-t border-white/5">
+                                                    {canConcederPermissoes && (
                                                     <button
                                                         type="button"
                                                         className="flex-1 flex items-center justify-center gap-1.5 py-1.5 hover:bg-primary/10 rounded-lg text-xs text-primary font-medium"
@@ -1120,6 +1129,7 @@ export default function Usuarios() {
                                                     >
                                                         <Shield className="w-3.5 h-3.5"/> Permissões
                                                     </button>
+                                                    )}
                                                     <button type="button" className="p-2 hover:bg-white/10 rounded-lg"
                                                             onClick={() => openEdit(u)}>
                                                         <Pencil className="w-3.5 h-3.5 text-muted-foreground"/>

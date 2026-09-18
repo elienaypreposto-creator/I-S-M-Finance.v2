@@ -116,7 +116,7 @@ router.get("/cards", async (req, res) => {
 
         return successResponse(res, cards);
     } catch (error) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao buscar cards do kanban.");
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao buscar cards do kanban.", error);
     }
 });
 
@@ -143,7 +143,7 @@ router.post(
 
             return successResponse(res, card, null, 201);
         } catch (error) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao criar card do kanban.");
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao criar card do kanban.", error);
         }
     },
 );
@@ -190,7 +190,7 @@ router.patch(
 
             return successResponse(res, card);
         } catch (error) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao atualizar card do kanban.");
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao atualizar card do kanban.", error);
         }
     },
 );
@@ -222,8 +222,7 @@ router.delete("/cards/:id", async (req, res) => {
 
         return successResponse(res, { id });
     } catch (error) {
-        console.error("❌ ERRO DELETE KANBAN:", error);
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao excluir card do kanban.");
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao excluir card do kanban.", error);
     }
 });
 
@@ -235,7 +234,7 @@ router.get("/usuarios", async (_req, res) => {
             .orderBy(usuariosTable.nome);
         return successResponse(res, data);
     } catch (error) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao buscar usuários do kanban.");
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao buscar usuários do kanban.", error);
     }
 });
 

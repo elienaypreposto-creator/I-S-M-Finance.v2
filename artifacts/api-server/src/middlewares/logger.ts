@@ -41,7 +41,7 @@ function sanitize(value: unknown): unknown {
     return out;
 }
 
-function extractIp(req: Request): string | null {
+export function extractIp(req: Request): string | null {
     const forwarded = req.headers["x-forwarded-for"];
     if (forwarded) {
         const first = Array.isArray(forwarded) ? forwarded[0] : forwarded.split(",")[0];
