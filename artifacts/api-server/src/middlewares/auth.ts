@@ -1,7 +1,7 @@
 /**
- * withAuth — middleware de autenticação stateless via JWE.
+ * withAuth - middleware de autenticação stateless via JWE.
  *
- * O(1) — apenas operação criptográfica local, zero I/O de banco por request.
+ * O(1) - apenas operação criptográfica local, zero I/O de banco por request.
  *
  * Trade-off aceito: um utilizador bloqueado após a emissão de um Access Token
  * pode continuar a usá-lo até ao fim do TTL (máx 15 min). Para revogação
@@ -22,6 +22,7 @@ export type AuthUser = {
 declare global {
   namespace Express {
     interface Request {
+      id: string;
       user?: AuthUser;
     }
   }

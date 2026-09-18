@@ -22,4 +22,5 @@ export const PERM = {
     REGRAS_CONCILIACAO_CRIAR: "financeiro:regras-conciliacao:criar",
     REGRAS_CONCILIACAO_EDITAR: "financeiro:regras-conciliacao:editar",
     REGRAS_CONCILIACAO_DELETAR: "financeiro:regras-conciliacao:deletar",
+    ADMIN_PERMISSOES_CONCEDER: "admin:permissoes:conceder",
 } as const;

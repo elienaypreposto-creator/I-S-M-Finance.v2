@@ -41,31 +41,7 @@ import {withPermission} from "../middlewares/withPermission";
 import {PERM} from "../constants/permissoes";
 
 const router = Router();
-
-/**
- * Upload de extrato bancário (OFX). Teto de 10 MB é generoso para o formato
- * (texto SGML/XML) mas evita que um arquivo de centenas de MB — proposital ou
- * não — carregue tudo em memória e derrube o processo (multi-tenant: um único
- * upload ruim afeta todas as empresas no mesmo processo Node).
- * `fileFilter` rejeita cedo por extensão, antes de bufferizar, como primeira
- * linha de defesa; a validação de conteúdo (`parseExtratoUpload`) continua
- * sendo a fonte da verdade.
- */
-const upload = multer({
-    storage: multer.memoryStorage(),
-    limits: {
-        fileSize: 10 * 1024 * 1024, // 10 MB
-        files: 1,
-    },
-    fileFilter: (_req, file, cb) => {
-        const ext = file.originalname.split(".").pop()?.toLowerCase() ?? "";
-        if (ext !== "ofx") {
-            cb(new multer.MulterError("LIMIT_UNEXPECTED_FILE", file.fieldname));
-            return;
-        }
-        cb(null, true);
-    },
-});
+const upload = multer({storage: multer.memoryStorage()});
 
 /**
  * Erro com status/code HTTP explícitos - usado para abortar uma transaction
@@ -161,7 +137,7 @@ function formatDateBr(iso: string): string {
 /**
  * Monta a descrição do lançamento residual gerado após pagamento parcial, no
  * padrão "Pagamento DO(A) {PARCEIRO} NO VALOR R$ {valor} (PARCELA {atual/total
- * ou UNICA} NO DIA {dia})" — deixando explícito de qual lançamento (parceiro,
+ * ou UNICA} NO DIA {dia})" - deixando explícito de qual lançamento (parceiro,
  * valor e parcela) este residual foi clonado (Card 01).
  */
 function descreverResiduoParcial(params: {
@@ -531,11 +507,11 @@ router.get("/conciliacoes", withPermission(PERM.CONCILIACAO_ACESSAR), async (req
 
         return successResponse(res, items, {total: Number(totalResult.count), page, limit});
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar conciliações.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar conciliações.", e);
     }
 });
 
-/** Exclui extrato + conciliação ainda não finalizada (lista principal — lixeira). */
+/** Exclui extrato + conciliação ainda não finalizada (lista principal - lixeira). */
 router.delete(
     "/conciliacoes/:extrato_id",
     withPermission(PERM.CONCILIACAO_IMPORTAR),
@@ -649,7 +625,7 @@ router.delete(
 
             return successResponse(res, {deleted: true, extrato_id: extratoId});
         } catch (e) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao excluir extrato.", String(e));
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao excluir extrato.", e);
         }
     },
 );
@@ -787,7 +763,7 @@ router.get("/conciliacoes/pendencias-mes", withPermission(PERM.CONCILIACAO_ACESS
 
         return successResponse(res, {meses});
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao consultar pendências do mês.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao consultar pendências do mês.", e);
     }
 });
 
@@ -800,7 +776,7 @@ router.get("/conciliacoes/parametros", withPermission(PERM.CONCILIACAO_ACESSAR),
             motivos_predefinidos: MOTIVOS_IGNORAR_PREDEFINIDOS,
         });
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao ler parâmetros.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao ler parâmetros.", e);
     }
 });
 
@@ -827,7 +803,7 @@ router.put(
                 });
             return successResponse(res, {motivo_ignorar_obrigatorio});
         } catch (e) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao atualizar parâmetros.", String(e));
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao atualizar parâmetros.", e);
         }
     });
 
@@ -840,7 +816,7 @@ router.post(
             const result = await promoverLancamentosAtrasados();
             return successResponse(res, result);
         } catch (e) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao promover atrasados.", String(e));
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao promover atrasados.", e);
         }
     });
 
@@ -1455,7 +1431,7 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
             {linha_id: linha.id, tipo_movimento: linha.tipo_movimento, dias_janela: diasJanela},
         );
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao buscar lançamentos para vínculo.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao buscar lançamentos para vínculo.", e);
     }
 });
 
@@ -1675,7 +1651,7 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
             diagnostico,
         });
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao detalhar extrato.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao detalhar extrato.", e);
     }
 });
 
@@ -1788,7 +1764,7 @@ router.post(
 
             return successResponse(res, resultado);
         } catch (e) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao ignorar linha do extrato.", String(e));
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao ignorar linha do extrato.", e);
         }
     },
 );
@@ -1996,7 +1972,7 @@ async function persistirVinculo(
                     totalParcelas: origem.total_parcelas,
                 }),
                 valor: centsToDecimalString(decision.residual.valorCents),
-                // Residual é saldo em aberto: só pendente ou atrasado — nunca
+                // Residual é saldo em aberto: só pendente ou atrasado - nunca
                 // herda pago_parcial do título de origem.
                 status: statusAbertoPorVencimento(origem.vencimento, hojeIsoLocal()),
                 origem: "residuo_parcial",
@@ -2177,7 +2153,7 @@ router.post(
 
             return successResponse(res, resultado);
         } catch (e) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao vincular lançamentos da linha.", String(e));
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao vincular lançamentos da linha.", e);
         }
     },
 );
@@ -2296,7 +2272,7 @@ router.post(
 
             return successResponse(res, {linha_id: linhaId, status: "vinculado", lancamento: resultado}, null, 201);
         } catch (e) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao criar lançamento a partir da linha.", String(e));
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao criar lançamento a partir da linha.", e);
         }
     },
 );
@@ -2408,7 +2384,7 @@ router.patch(
                 vencimento: lancamento.vencimento,
             });
         } catch (e) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao atualizar vínculo.", String(e));
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao atualizar vínculo.", e);
         }
     },
 );
@@ -2458,7 +2434,7 @@ router.patch(
                 saldo_pos_linha: toDecimal(atualizado.saldo_pos_linha),
             });
         } catch (e) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao registrar saldo manual da linha.", String(e));
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao registrar saldo manual da linha.", e);
         }
     },
 );
@@ -2843,7 +2819,7 @@ router.post(
                 data_conciliacao: hojeIsoLocal(),
             });
         } catch (e) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao finalizar extrato.", String(e));
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao finalizar extrato.", e);
         }
     });
 
@@ -2991,7 +2967,7 @@ router.post(
             if (e instanceof ErroComStatus) {
                 return errorResponse(res, e.status, e.code, e.message);
             }
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao salvar alterações da conciliação.", String(e));
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao salvar alterações da conciliação.", e);
         }
     },
 );
@@ -3184,7 +3160,7 @@ router.delete(
                 status: "ok",
             });
         } catch (e) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao desfazer vínculo.", String(e));
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao desfazer vínculo.", e);
         }
     },
 );
@@ -3343,7 +3319,7 @@ router.delete(
 
             return successResponse(res, resultado);
         } catch (e) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao desfazer vínculos da linha.", String(e));
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao desfazer vínculos da linha.", e);
         }
     });
 
@@ -3415,7 +3391,7 @@ router.post(
 
             return successResponse(res, resultado);
         } catch (e) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao reverter ignorar da linha.", String(e));
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao reverter ignorar da linha.", e);
         }
     });
 

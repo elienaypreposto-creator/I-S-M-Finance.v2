@@ -1,10 +1,10 @@
 /**
- * rate-limit — Limitação de requisições contra força bruta e flood.
+ * rate-limit - Limitação de requisições contra força bruta e flood.
  *
- * `globalLimiter`  — 300 req / 15 min por IP, aplicado a toda a árvore /api.
- * `authLimiter`    — 10 req / 15 min por IP, aplicado a /auth/verify-otp,
+ * `globalLimiter`  - 300 req / 15 min por IP, aplicado a toda a árvore /api.
+ * `authLimiter`    - 10 req / 15 min por IP, aplicado a /auth/verify-otp,
  *                     /auth/forgot-password e /auth/reset-password.
- * `loginLimiter`   — 10 req / 15 min por chave composta IP + e-mail,
+ * `loginLimiter`   - 10 req / 15 min por chave composta IP + e-mail,
  *                     aplicado apenas a /auth/login.
  *
  * A chave composta do login evita dois problemas opostos do limite por IP puro:
@@ -18,7 +18,7 @@
  * express-rate-limit, válido para um único processo Node de longa duração
  * (`pnpm run dev` / `dev:direct`). Em deploy serverless (Vercel, ver
  * `api/index.ts`), cada invocação pode rodar numa instância/região diferente
- * e a contagem não é compartilhada entre elas — o limite passa a ser "por
+ * e a contagem não é compartilhada entre elas - o limite passa a ser "por
  * instância fria", não global. Para garantir o limite real em produção
  * serverless é necessário um store externo compartilhado (ex.: Redis via
  * `rate-limit-redis` + Upstash), fora do escopo desta implementação inicial.
@@ -44,6 +44,18 @@ const rateLimitHandler: RateLimitExceededEventHandler = (_req, res) => {
 /** Não pesa a cota de erros de rede/preflight contra o limite. */
 const skipOptions = (req: Request): boolean => req.method === "OPTIONS";
 
+/**
+ * O TST/HML corre atrás do Nginx (`X-Forwarded-For`) com `trust proxy` = 1.
+ * As validações default do express-rate-limit v8 lançam ValidationError e
+ * derrubam o pedido (em alguns setups, o processo) se o header/proxy não
+ * bater exactamente com o que a lib espera. Desligar só essas duas checks
+ * - o IP continua a ser lido via `req.ip` / `ipKeyGenerator`.
+ */
+const proxyValidate = {
+    xForwardedForHeader: false,
+    trustProxy: false,
+} as const;
+
 export const globalLimiter = rateLimit({
     windowMs: FIFTEEN_MINUTES_MS,
     limit: 300,
@@ -51,6 +63,7 @@ export const globalLimiter = rateLimit({
     legacyHeaders: false,
     skip: skipOptions,
     handler: rateLimitHandler,
+    validate: proxyValidate,
 });
 
 export const authLimiter = rateLimit({
@@ -60,7 +73,8 @@ export const authLimiter = rateLimit({
     legacyHeaders: false,
     skip: skipOptions,
     handler: rateLimitHandler,
-    // IP puro — o helper normaliza IPv4/IPv6 (mitiga CVE-2026-30827 de agrupamento IPv6).
+    validate: proxyValidate,
+    // IP puro - o helper normaliza IPv4/IPv6 (mitiga CVE-2026-30827 de agrupamento IPv6).
     keyGenerator: (req) => ipKeyGenerator(req.ip ?? req.socket.remoteAddress ?? "unknown"),
 });
 
@@ -71,6 +85,7 @@ export const loginLimiter = rateLimit({
     legacyHeaders: false,
     skip: skipOptions,
     handler: rateLimitHandler,
+    validate: proxyValidate,
     keyGenerator: (req) => {
         const ip = ipKeyGenerator(req.ip ?? req.socket.remoteAddress ?? "unknown");
         const email =

@@ -1,15 +1,15 @@
 /**
  * Auth Routes
  *
- * POST /auth/login              — Autentica; retorna Access Token JWE + Refresh Token JWS
- * POST /auth/refresh            — Renova tokens com rotação e Token Family Revocation
- * POST /auth/logout             — Revoga o Refresh Token
- * GET  /auth/me                 — Perfil do utilizador autenticado
- * POST /auth/verify-otp         — Valida o OTP de boas-vindas; retorna setupToken
- * POST /auth/setup-password     — Define a senha permanente com setupToken
- * POST /auth/forgot-password    — Solicita recuperação de senha por e-mail
- * POST /auth/reset-password     — Redefine a senha com o resetToken
- * POST /auth/migrate-passwords  — [admin] Diagnóstico de hashes SHA-256 legados
+ * POST /auth/login              - Autentica; retorna Access Token JWE + Refresh Token JWS
+ * POST /auth/refresh            - Renova tokens com rotação e Token Family Revocation
+ * POST /auth/logout             - Revoga o Refresh Token
+ * GET  /auth/me                 - Perfil do utilizador autenticado
+ * POST /auth/verify-otp         - Valida o OTP de boas-vindas; retorna setupToken
+ * POST /auth/setup-password     - Define a senha permanente com setupToken
+ * POST /auth/forgot-password    - Solicita recuperação de senha por e-mail
+ * POST /auth/reset-password     - Redefine a senha com o resetToken
+ * POST /auth/migrate-passwords  - [admin] Diagnóstico de hashes SHA-256 legados
  */
 
 import {Router} from "express";
@@ -148,7 +148,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
         );
     } catch (error: unknown) {
         console.error("Erro no login:", error);
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro no login.", String(error));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro no login.", error);
     }
 });
 
@@ -188,7 +188,7 @@ router.post("/auth/refresh", async (req, res) => {
         if (registro.revogado) {
             await revokeAllTokensForUser(registro.usuario_id);
             console.warn(
-                `[SECURITY] Token reuse detectado — usuario_id=${registro.usuario_id}. Família revogada.`,
+                `[SECURITY] Token reuse detectado - usuario_id=${registro.usuario_id}. Família revogada.`,
             );
             return errorResponse(
                 res,
@@ -242,7 +242,7 @@ router.post("/auth/refresh", async (req, res) => {
         );
     } catch (error: unknown) {
         console.error("Erro no refresh:", error);
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao renovar token.", String(error));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao renovar token.", error);
     }
 });
 
@@ -257,7 +257,7 @@ router.post("/auth/logout", async (req, res) => {
         }
         return successResponse(res, null, {message: "Logout realizado com sucesso."});
     } catch (error: unknown) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro no logout.", String(error));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro no logout.", error);
     }
 });
 
@@ -286,7 +286,7 @@ router.get("/auth/me", withAuth, async (req, res) => {
 
         return successResponse(res, {user: usuario, permissoes: req.user!.permissions});
     } catch (error: unknown) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao obter utilizador autenticado.", String(error));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao obter utilizador autenticado.", error);
     }
 });
 
@@ -349,7 +349,7 @@ router.post("/auth/verify-otp", authLimiter, async (req, res) => {
         );
     } catch (error: unknown) {
         console.error("Erro em verify-otp:", error);
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao verificar OTP.", String(error));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao verificar OTP.", error);
     }
 });
 
@@ -398,7 +398,7 @@ router.post("/auth/setup-password", async (req, res) => {
         return successResponse(res, null, {message: "Senha definida com sucesso. Faça login."});
     } catch (error: unknown) {
         console.error("Erro em setup-password:", error);
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao definir senha.", String(error));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao definir senha.", error);
     }
 });
 
@@ -464,7 +464,7 @@ router.post("/auth/definir-senha", async (req, res) => {
         return successResponse(res, null, {message: "Senha definida com sucesso. Faça login para continuar."});
     } catch (error: unknown) {
         console.error("Erro em definir-senha:", error);
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao definir senha.", String(error));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao definir senha.", error);
     }
 });
 
@@ -480,7 +480,7 @@ router.post("/auth/forgot-password", authLimiter, async (req, res) => {
 
         const frontendUrl = process.env.FRONTEND_URL;
         if (!frontendUrl) {
-            console.error("[CONFIG] FRONTEND_URL não definido — operação de reset de senha bloqueada.");
+            console.error("[CONFIG] FRONTEND_URL não definido - operação de reset de senha bloqueada.");
             return errorResponse(res, 500, "CONFIGURATION_ERROR", "Serviço temporariamente indisponível.");
         }
 
@@ -504,7 +504,7 @@ router.post("/auth/forgot-password", authLimiter, async (req, res) => {
 
         return successResponse(res, null, GENERIC_OK);
     } catch (error: unknown) {
-        console.error("Erro em forgot-password:", error);
+        console.error(`[${req.id}]`, error);
         return successResponse(res, null, GENERIC_OK);
     }
 });
@@ -537,7 +537,7 @@ router.post("/auth/reset-password", authLimiter, async (req, res) => {
 
         const usuarioId = parseInt(tokenPayload.sub, 10);
 
-        // Invalida todas as sessões activas — mudança de senha implica revogação obrigatória
+        // Invalida todas as sessões activas - mudança de senha implica revogação obrigatória
         await revokeAllTokensForUser(usuarioId);
 
         await db
@@ -548,7 +548,7 @@ router.post("/auth/reset-password", authLimiter, async (req, res) => {
         return successResponse(res, null, {message: "Senha redefinida com sucesso. Faça login."});
     } catch (error: unknown) {
         console.error("Erro em reset-password:", error);
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao redefinir senha.", String(error));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao redefinir senha.", error);
     }
 });
 
@@ -579,7 +579,7 @@ router.post(
                 },
             );
         } catch (error: unknown) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro na verificação de migração.", String(error));
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro na verificação de migração.", error);
         }
     },
 );

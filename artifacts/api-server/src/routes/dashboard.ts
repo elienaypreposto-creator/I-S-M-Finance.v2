@@ -160,7 +160,7 @@ router.get("/dashboard/kpis", async (_req, res) => {
             contasPagarAtraso: toNumber(totais?.contas_pagar_atraso),
         });
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular KPIs.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular KPIs.", e);
     }
 });
 
@@ -217,7 +217,7 @@ router.get("/dashboard/projecao-mes", async (_req, res) => {
             totalPagamentos: pp,
         });
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular projeção mensal.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular projeção mensal.", e);
     }
 });
 
@@ -329,7 +329,7 @@ router.get("/dashboard/projecao-dias", async (req, res) => {
             saldo_atual: fromCents(saldoAtualCents),
         });
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular projeção diária.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular projeção diária.", e);
     }
 });
 
@@ -409,7 +409,7 @@ router.get("/dashboard/inadimplencia-clientes", async (req, res) => {
             {tab, limit: limite},
         );
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular inadimplência de clientes.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular inadimplência de clientes.", e);
     }
 });
 
@@ -489,7 +489,7 @@ router.get("/dashboard/inadimplencia-fornecedores", async (req, res) => {
             {tab, limit: limite},
         );
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular inadimplência de fornecedores.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular inadimplência de fornecedores.", e);
     }
 });
 
@@ -539,7 +539,7 @@ router.get("/dashboard/alertas-atraso", async (req, res) => {
 
         return successResponse(res, data, {risco: risco ?? null, limit: limite});
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar alertas de atraso.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar alertas de atraso.", e);
     }
 });
 
@@ -592,7 +592,7 @@ router.get("/dashboard/nivel-risco", async (req, res) => {
             })),
         );
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular nível de risco.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular nível de risco.", e);
     }
 });
 
@@ -631,7 +631,7 @@ router.get("/dashboard/fluxo-caixa-mensal", async (req, res) => {
 
         return successResponse(res, resultado, {ano});
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro no fluxo de caixa mensal do dashboard.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro no fluxo de caixa mensal do dashboard.", e);
     }
 });
 
@@ -668,7 +668,7 @@ router.get("/dashboard/saidas-plano-contas", async (_req, res) => {
 
         return successResponse(res, result);
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao consolidar saídas por plano de contas.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao consolidar saídas por plano de contas.", e);
     }
 });
 
@@ -705,7 +705,7 @@ router.get("/dashboard/entradas-plano-contas", async (_req, res) => {
 
         return successResponse(res, result);
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao consolidar entradas por plano de contas.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao consolidar entradas por plano de contas.", e);
     }
 });
 

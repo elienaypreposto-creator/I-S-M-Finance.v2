@@ -28,10 +28,9 @@ function isAppError(e: unknown): e is AppError {
 /** Centraliza a tradução de AppError -> errorResponse para este router. */
 function handleServiceError(e: unknown, res: Response): Response {
     if (isAppError(e)) {
-        return errorResponse(res, e.statusCode, e.code, e.message);
+        return errorResponse(res, e.statusCode, e.code, e.message, e.statusCode >= 500 ? e : null);
     }
-    console.error("[parceiros] Erro inesperado:", e);
-    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno do servidor.");
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno do servidor.", e);
 }
 
 router.get(

@@ -43,7 +43,7 @@ export const v1AuthMiddleware = async (req: Request, res: Response, next: NextFu
 
     return next();
   } catch (e) {
-    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao validar token da API v1.", String(e));
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao validar token da API v1.", e);
   }
 };
 

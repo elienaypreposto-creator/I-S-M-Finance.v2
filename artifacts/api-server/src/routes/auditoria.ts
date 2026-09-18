@@ -90,7 +90,7 @@ router.get(
 
             return successResponse(res, items, {total: Number(total), page, limit});
         } catch (e) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar logs de auditoria.", String(e));
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar logs de auditoria.", e);
         }
     },
 );

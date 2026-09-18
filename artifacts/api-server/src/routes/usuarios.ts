@@ -6,6 +6,8 @@
  * PUT    /usuarios/:id            - Atualização
  * GET    /usuarios/:id/permissoes - Leitura de permissões
  * PUT    /usuarios/:id/permissoes - Substituição de permissões
+ *         (exige admin:permissoes:conceder; allowlist z.enum; "*" recusado;
+ *          auditoria com detalhes.antes / detalhes.depois)
  *
  * Validações no POST /usuarios:
  *   - Parceiro com flag "Cliente" ou "Fornecedor" ativa -> 422 com mensagem clara
@@ -19,13 +21,16 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import {and, count, eq, ilike, ne} from "drizzle-orm";
 import {db} from "@workspace/db";
-import {parceirosTable, permissoesTable, usuariosTable} from "@workspace/db/schema";
+import {parceirosTable, permissoesTable, usuariosTable, logsAuditoriaTable} from "@workspace/db/schema";
 import {sendWelcomeEmail, sendAdminCreatedAccountEmail} from "../services/email.service";
 import {revokeAllTokensForUser} from "../services/session.service";
 import {generateOtp} from "../services/token.service";
 import {errorResponse, successResponse} from "../utils/response";
 import {withPermission} from "../middlewares/withPermission";
 import {validateBody} from "../middlewares/validate";
+import {validatePermissoesGrant} from "../utils/permissoes-grant";
+import {PERM, codigoPermissaoCatalogoSchema} from "../constants/permissoes";
+import {extractIp} from "../middlewares/logger";
 
 // ---------------------
 // Schemas de validação
@@ -65,7 +70,7 @@ const updateUsuarioBodySchema = z.object({
 });
 
 const updatePermissoesBodySchema = z.object({
-    permissoes: z.array(z.string().trim().min(1)).default([]),
+    permissoes: z.array(codigoPermissaoCatalogoSchema).max(200).default([]),
 });
 
 type CreateUsuarioBody = z.infer<typeof createUsuarioBodySchema>;
@@ -120,7 +125,7 @@ router.get(
 
             return successResponse(res, items, {total: totalResult.count, page, limit});
         } catch (e: unknown) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar usuários.", String(e));
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar usuários.", e);
         }
     },
 );
@@ -135,7 +140,7 @@ router.post(
 
             const frontendUrl = process.env.FRONTEND_URL ?? "http://localhost:5173";
             if (!frontendUrl) {
-                console.error("[CONFIG] FRONTEND_URL não definido — criação de utilizador bloqueada.");
+                console.error("[CONFIG] FRONTEND_URL não definido - criação de utilizador bloqueada.");
                 return errorResponse(res, 500, "CONFIGURATION_ERROR", "Serviço temporariamente indisponível. Contacte o administrador.");
             }
 
@@ -220,12 +225,12 @@ router.post(
                     .set({senha_unica_hash: null})
                     .where(eq(usuariosTable.id, novoUsuario.id));
 
-                console.error("Falha ao enviar e-mail de boas-vindas:", emailErr);
                 return errorResponse(
                     res,
                     503,
                     "EMAIL_ERROR",
                     "Utilizador criado, mas o e-mail de boas-vindas falhou. Verifique as configurações SMTP.",
+                    emailErr,
                 );
             }
 
@@ -235,7 +240,7 @@ router.post(
 
             return successResponse(res, novoUsuario, meta, 201);
         } catch (e: unknown) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao criar usuário.", String(e));
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao criar usuário.", e);
         }
     },
 );
@@ -317,7 +322,7 @@ router.put(
 
             return successResponse(res, item);
         } catch (e: unknown) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao atualizar usuário.", String(e));
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao atualizar usuário.", e);
         }
     },
 );
@@ -339,23 +344,55 @@ router.get(
 
             return successResponse(res, items.map((i) => i.permissao));
         } catch (e: unknown) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar permissões.", String(e));
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar permissões.", e);
         }
     },
 );
 
 router.put(
     "/usuarios/:id/permissoes",
-    withPermission("admin:usuarios:editar"),
+    withPermission(PERM.ADMIN_PERMISSOES_CONCEDER),
     validateBody(updatePermissoesBodySchema),
     async (req, res) => {
         try {
+            if (!req.user) {
+                return errorResponse(res, 401, "UNAUTHORIZED", "Usuário não autenticado.");
+            }
+
             const id = parseInt(req.params.id, 10);
             if (isNaN(id)) {
                 return errorResponse(res, 400, "VALIDATION_ERROR", "ID de usuário inválido.");
             }
 
-            const {permissoes} = req.body as UpdatePermissoesBody;
+            const [alvo] = await db
+                .select({id: usuariosTable.id})
+                .from(usuariosTable)
+                .where(eq(usuariosTable.id, id))
+                .limit(1);
+
+            if (!alvo) {
+                return errorResponse(res, 404, "NOT_FOUND", "Utilizador não encontrado.");
+            }
+
+            const atuais = await db
+                .select({permissao: permissoesTable.codigo_permissao})
+                .from(permissoesTable)
+                .where(eq(permissoesTable.usuario_id, id));
+
+            const {permissoes: requested} = req.body as UpdatePermissoesBody;
+            const grant = validatePermissoesGrant({
+                actorUserId: req.user.id,
+                targetUserId: id,
+                actorPermissions: req.user.permissions,
+                requested,
+                targetCurrentPermissions: atuais.map((row) => row.permissao),
+            });
+
+            if (!grant.ok) {
+                return errorResponse(res, grant.status, grant.code, grant.message);
+            }
+
+            const permissoes = grant.permissoes;
 
             await db.transaction(async (tx) => {
                 await tx.delete(permissoesTable).where(eq(permissoesTable.usuario_id, id));
@@ -365,11 +402,23 @@ router.put(
                         permissoes.map((p) => ({usuario_id: id, codigo_permissao: p})),
                     );
                 }
+
+                await tx.insert(logsAuditoriaTable).values({
+                    usuario_id: req.user!.id,
+                    acao: "PUT",
+                    recurso: req.originalUrl,
+                    ip: extractIp(req),
+                    detalhes: {
+                        antes: atuais.map((row) => row.permissao),
+                        depois: permissoes,
+                    },
+                    status_code: 200,
+                });
             });
 
             return successResponse(res, permissoes);
         } catch (e: unknown) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao atualizar permissões.", String(e));
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao atualizar permissões.", e);
         }
     },
 );
