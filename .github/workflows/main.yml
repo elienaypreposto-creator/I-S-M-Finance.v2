@@ -9,40 +9,64 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      # master -> HML, develop -> TST. Variáveis e secrets usam o prefixo do ambiente (ex.: HML_DB_PORT).
+      TARGET_DIR: ${{ github.ref_name == 'master' && 'ism-hml' || 'ism-tst' }}
+      PORT: ${{ vars[format('{0}_PORT', github.ref_name == 'master' && 'HML' || 'TST')] }}
+      WEB_PORT: ${{ vars[format('{0}_WEB_PORT', github.ref_name == 'master' && 'HML' || 'TST')] }}
+      API_PORT: ${{ vars[format('{0}_API_PORT', github.ref_name == 'master' && 'HML' || 'TST')] }}
+      DB_PORT: ${{ vars[format('{0}_DB_PORT', github.ref_name == 'master' && 'HML' || 'TST')] }}
+      SMTP_HOST: ${{ vars[format('{0}_SMTP_HOST', github.ref_name == 'master' && 'HML' || 'TST')] }}
+      SMTP_PORT: ${{ vars[format('{0}_SMTP_PORT', github.ref_name == 'master' && 'HML' || 'TST')] }}
+      SMTP_USER: ${{ vars[format('{0}_SMTP_USER', github.ref_name == 'master' && 'HML' || 'TST')] }}
+      DB_PASSWORD: ${{ secrets[format('{0}_DB_PASSWORD', github.ref_name == 'master' && 'HML' || 'TST')] }}
+      JWT_SECRET: ${{ secrets[format('{0}_JWT_SECRET', github.ref_name == 'master' && 'HML' || 'TST')] }}
+      JWT_ENCRYPT_SECRET: ${{ secrets[format('{0}_JWT_ENCRYPT_SECRET', github.ref_name == 'master' && 'HML' || 'TST')] }}
+      SMTP_PASS: ${{ secrets[format('{0}_SMTP_PASS', github.ref_name == 'master' && 'HML' || 'TST')] }}
     steps:
+      - name: Validar variáveis do ambiente
+        run: |
+          faltando=0
+          for v in PORT WEB_PORT API_PORT DB_PORT SMTP_HOST SMTP_PORT SMTP_USER DB_PASSWORD JWT_SECRET JWT_ENCRYPT_SECRET SMTP_PASS; do
+            if [ -z "${!v}" ]; then
+              echo "::error::$v não definida para $TARGET_DIR"
+              faltando=1
+            fi
+          done
+          exit $faltando
+
       - name: Executando deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
-        env:
-          ENV_HML: ${{ secrets.ENV_FILE_HML }}
-          ENV_TST: ${{ secrets.ENV_FILE_TST }}
         with:
           host: ${{ secrets.SERVER_IP }}
           username: ubuntu
           key: ${{ secrets.SSH_KEY }}
-          envs: ENV_HML,ENV_TST
+          envs: TARGET_DIR,PORT,WEB_PORT,API_PORT,DB_PORT,SMTP_HOST,SMTP_PORT,SMTP_USER,DB_PASSWORD,JWT_SECRET,JWT_ENCRYPT_SECRET,SMTP_PASS
           script: |
-            # Define as variáveis baseadas na branch que disparou a action
-            if [ "${{ github.ref_name }}" = "master" ]; then
-              TARGET_DIR="$HOME/ism-hml"
-              ENV_CONTENT="$ENV_HML"
-            else
-              TARGET_DIR="$HOME/ism-tst"
-              ENV_CONTENT="$ENV_TST"
-            fi
-            
+            set -e
             echo "Iniciando deploy no diretório: $TARGET_DIR para a branch: ${{ github.ref_name }}"
-            
-            # Entra na pasta do projeto
-            cd $TARGET_DIR
-            
-            # Puxa as atualizações do git
+
+            cd "$HOME/$TARGET_DIR"
+
             git fetch --all
             git checkout ${{ github.ref_name }}
             git pull origin ${{ github.ref_name }}
-            
-            # Sobrescreve o .env na VM com o secret do GitHub correspondente ao ambiente
-            echo "$ENV_CONTENT" > .env
-            
-            # Reinicia os containers aplicando as mudanças e recriando as imagens
+
+            umask 077
+            printf '%s\n' \
+              "PORT=$PORT" \
+              "WEB_PORT=$WEB_PORT" \
+              "API_PORT=$API_PORT" \
+              "DB_PORT=$DB_PORT" \
+              "DB_PASSWORD=$DB_PASSWORD" \
+              "JWT_SECRET=$JWT_SECRET" \
+              "JWT_ENCRYPT_SECRET=$JWT_ENCRYPT_SECRET" \
+              "SMTP_HOST=$SMTP_HOST" \
+              "SMTP_PORT=$SMTP_PORT" \
+              "SMTP_USER=$SMTP_USER" \
+              "SMTP_PASS=$SMTP_PASS" \
+              > .env
+            chmod 600 .env
+
             docker compose down
             docker compose up -d --build
