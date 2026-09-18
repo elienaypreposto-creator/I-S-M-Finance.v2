@@ -6,13 +6,21 @@
  *                     /auth/forgot-password e /auth/reset-password.
  * `loginLimiter`   - 10 req / 15 min por chave composta IP + e-mail,
  *                     aplicado apenas a /auth/login.
+ * `loginEmailLimiter` — 20 falhas / 15 min por e-mail (independente do IP),
+ *                     aplicado a /auth/login em conjunto com o `loginLimiter`.
  *
- * A chave composta do login evita dois problemas opostos do limite por IP puro:
- *   - um atacante distribuído (botnet) testando um único e-mail a partir de
- *     muitos IPs não é travado por um limite puro-IP;
- *   - um IP compartilhado (NAT de escritório, 4G, VPN corporativa) não deve
- *     bloquear todos os utilizadores desse IP por causa de um único atacante.
- * A combinação IP + e-mail trata cada par como um "balde" independente.
+ * A chave composta do login evita que um IP compartilhado (NAT de escritório,
+ * 4G, VPN corporativa) bloqueie todos os utilizadores desse IP por causa de um
+ * único atacante: a combinação IP + e-mail trata cada par como um "balde"
+ * independente.
+ *
+ * Em contrapartida, a chave composta sozinha NÃO trava um atacante distribuído
+ * (botnet) testando um único e-mail a partir de muitos IPs — cada IP teria o
+ * seu próprio balde. Por isso o `loginEmailLimiter` conta as tentativas
+ * FALHAS por e-mail, somando todos os IPs. Só respostas >= 400 contam
+ * (`skipSuccessfulRequests`), então logins válidos não consomem a cota.
+ * Trade-off: quem atacar um e-mail pode bloquear temporariamente (15 min) o
+ * login desse e-mail; é preferível a permitir força bruta ilimitada.
  *
  * Nota de infraestrutura: o store usado aqui é o `MemoryStore` padrão do
  * express-rate-limit, válido para um único processo Node de longa duração
@@ -94,4 +102,26 @@ export const loginLimiter = rateLimit({
                 : "sem-email";
         return `${ip}:${email}`;
     },
+});
+
+/**
+ * Limite por e-mail (todos os IPs somados), contando apenas tentativas falhas.
+ * Sem e-mail válido no corpo a requisição é ignorada aqui — já é limitada pelo
+ * `loginLimiter` (IP + "sem-email") e pelo `globalLimiter`, e assim requisições
+ * malformadas não compartilham um balde único entre todos os utilizadores.
+ */
+const emailDoCorpo = (req: Request): string | null =>
+    typeof req.body?.email === "string" && req.body.email.trim()
+        ? req.body.email.trim().toLowerCase()
+        : null;
+
+export const loginEmailLimiter = rateLimit({
+    windowMs: FIFTEEN_MINUTES_MS,
+    limit: 20,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    skip: (req) => skipOptions(req) || emailDoCorpo(req) === null,
+    handler: rateLimitHandler,
+    keyGenerator: (req) => `email:${emailDoCorpo(req)}`,
 });
