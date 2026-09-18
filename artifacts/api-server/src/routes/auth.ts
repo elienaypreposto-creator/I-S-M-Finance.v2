@@ -21,7 +21,7 @@ import {sendPasswordResetEmail} from "../services/email.service";
 import {revokeAllTokensForUser} from "../services/session.service";
 import {withAuth} from "../middlewares/auth";
 import {withPermission} from "../middlewares/withPermission";
-import {authLimiter, loginLimiter} from "../middlewares/rate-limit";
+import {authLimiter, loginEmailLimiter, loginLimiter} from "../middlewares/rate-limit";
 import {errorResponse, successResponse} from "../utils/response";
 import {
     generateOtp,
@@ -45,7 +45,7 @@ const fetchPermissions = async (usuarioId: number): Promise<string[]> => {
     return rows.map((r) => r.codigo_permissao);
 };
 
-router.post("/auth/login", loginLimiter, async (req, res) => {
+router.post("/auth/login", loginLimiter, loginEmailLimiter, async (req, res) => {
     try {
         const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : null;
         const senha = typeof req.body?.senha === "string" ? req.body.senha : null;
@@ -406,7 +406,7 @@ router.post("/auth/setup-password", async (req, res) => {
  * Endpoint unificado de primeiro acesso - combina verify-otp + setup-password num único passo.
  * O link do e-mail de boas-vindas aponta para /definir-senha com email e token na query string; o utilizador só precisa de escolher a senha.
  */
-router.post("/auth/definir-senha", async (req, res) => {
+router.post("/auth/definir-senha", authLimiter, async (req, res) => {
     try {
         const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : null;
         const token = typeof req.body?.token === "string" ? req.body.token.trim().toUpperCase() : null;
