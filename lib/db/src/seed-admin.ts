@@ -49,7 +49,7 @@ function describeConnectionError(err: unknown): string {
     if (msg.includes("authentication failed") || msg.includes("password authentication"))
         return "Falha de autenticação — usuário ou senha incorretos na DATABASE_URL.";
     if (msg.includes("certificate") || msg.includes("ssl"))
-        return "Erro SSL — problema de certificado TLS. Verifique NODE_TLS_REJECT_UNAUTHORIZED.";
+        return "Erro SSL — problema de certificado TLS na conexão com o banco.";
     if (msg.includes("timeout") || msg.includes("timed out"))
         return "Timeout — o banco não respondeu dentro do prazo. Verifique conectividade de rede.";
     if (msg.includes("does not exist") || msg.includes("relation") || msg.includes("table"))
