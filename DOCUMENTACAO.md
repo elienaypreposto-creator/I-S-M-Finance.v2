@@ -659,6 +659,38 @@ O projeto está configurado para deploy na **Vercel**:
 - **Backend** — Rotas `/api/*` encaminhadas para serverless function
 - **Variáveis de ambiente:** `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `VITE_API_URL` (prod)
 
+### 11.1. Deploy na VM (Docker Compose)
+
+Os ambientes de teste (`ism-tst`, branch `develop`) e homologação (`ism-hml`, branch `master`) rodam via `docker-compose.yml` numa VM compartilhada. O deploy é feito pelo GitHub Actions (`.github/workflows/main.yml`), que grava o `.env` de cada ambiente a partir dos secrets `ENV_FILE_TST` e `ENV_FILE_HML`.
+
+**Variáveis obrigatórias no `.env` usadas pelo compose:**
+
+| Variável | Uso |
+|----------|-----|
+| `DB_PASSWORD` | Senha do usuário `ism_user` do Postgres. Sem ela o `docker compose` não sobe. Use apenas caracteres alfanuméricos — ela é inserida numa URL de conexão. |
+| `DB_PORT` | Porta do Postgres no loopback da VM (TST `5434`, HML `5435`) |
+| `WEB_PORT` | Porta do frontend na VM, usada pelo proxy reverso (TST `85`, HML `86`) |
+
+Trocar `DB_PASSWORD` no `.env` **não** altera a senha de um banco já criado. Rode antes `ALTER USER ism_user WITH PASSWORD '...'` no Postgres e só então atualize o secret e faça o deploy.
+
+**Exposição de portas:**
+
+- **Postgres** é publicado só em `127.0.0.1` — não é alcançável pela rede privada nem pela internet.
+- **API** não publica porta; o nginx do serviço `web` a acessa por `api:5000` dentro da rede do compose.
+- **Web** é publicada em todas as interfaces porque o proxy reverso da VM chega por `10.0.0.24:<WEB_PORT>`.
+
+**Acessar o banco pelo DBeaver:** use túnel SSH até o loopback da VM.
+
+- Aba *SSH*: host da VM, usuário `ubuntu`, autenticação por chave privada
+- Aba *Main*: host `127.0.0.1`, porta `5434` (TST) ou `5435` (HML), database `ismfinance`, usuário `ism_user`
+
+Pela linha de comando, o equivalente é:
+
+```bash
+ssh -N -L 5435:127.0.0.1:5435 ubuntu@<ip-da-vm>
+# depois conecte em localhost:5435
+```
+
 ---
 
 ## 12. Convenções e Padrões
