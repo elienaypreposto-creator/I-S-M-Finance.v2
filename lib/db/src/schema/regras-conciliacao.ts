@@ -6,20 +6,22 @@ import {parceirosTable} from "./parceiros";
 import {planoContasTable} from "./plano-contas";
 import {departamentosTable, centrosCustosTable} from "./departamentos";
 import {naturezaRegraConciliacaoEnum, tipoMatchRegraConciliacaoEnum} from "./enums";
+import {empresasTable} from "./empresas";
 
 /**
- * Card 48/FEAT-03 — motor de regras de conciliação.
+ * Card 48/FEAT-03 - motor de regras de conciliação.
  *
  * Cada regra casa o texto da linha do extrato (`texto_gatilho` + `tipo_match`)
- * dentro de uma `natureza` (entrada/saída — nunca cruzam) e, ao casar, aplica
+ * dentro de uma `natureza` (entrada/saída - nunca cruzam) e, ao casar, aplica
  * a classificação (plano de contas, parceiro, departamento, centro de custo,
  * forma de pagamento) e, se `criar_lancamento_automatico`, cria o lançamento
  * já quitado/vinculado. `conta_id` nulo = regra vale para todas as contas.
- * Em empate de `prioridade`, a regra mais recente (`created_at`) vence — ver
+ * Em empate de `prioridade`, a regra mais recente (`created_at`) vence - ver
  * `aplicarRegrasConciliacao` em routes/conciliacoes.ts.
  */
 export const regrasConciliacaoTable = pgTable("regras_conciliacao", {
     id: serial("id").primaryKey(),
+    empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
     /** null = regra vale para todas as contas bancárias. */
     conta_id: integer("conta_id").references(() => contasBancariasTable.id),
     texto_gatilho: text("texto_gatilho").notNull(),
@@ -45,6 +47,7 @@ export const insertRegraConciliacaoSchema = createInsertSchema(regrasConciliacao
     id: true,
     created_at: true,
     updated_at: true,
+    empresa_id: true,
 });
 export type InsertRegraConciliacao = z.infer<typeof insertRegraConciliacaoSchema>;
 export type RegraConciliacao = typeof regrasConciliacaoTable.$inferSelect;

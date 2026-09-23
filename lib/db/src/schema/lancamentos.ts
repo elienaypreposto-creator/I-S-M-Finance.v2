@@ -19,10 +19,12 @@ import {parceirosTable} from "./parceiros";
 import {planoContasTable} from "./plano-contas";
 import {departamentosTable, centrosCustosTable} from "./departamentos";
 import {usuariosTable} from "./usuarios";
+import {empresasTable} from "./empresas";
 import {origemLancamentoEnum, statusLancamentoEnum, tipoLancamentoEnum} from "./enums";
 
 export const lancamentosTable = pgTable("lancamentos", {
     id: serial("id").primaryKey(),
+    empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
     tipo: tipoLancamentoEnum("tipo").notNull(),
     vencimento: date("vencimento").notNull(),
     competencia: date("competencia"),
@@ -75,12 +77,16 @@ export const lancamentosTable = pgTable("lancamentos", {
     index("lancamentos_status_idx").on(table.status),
     // Filtro/ordenação de consultas de fluxo de caixa e painel de controle por data de liquidação
     index("lancamentos_data_quitacao_idx").on(table.data_quitacao),
+    index("lancamentos_empresa_id_vencimento_idx").on(table.empresa_id, table.vencimento),
+    index("lancamentos_empresa_id_conta_id_idx").on(table.empresa_id, table.conta_id),
+    index("lancamentos_empresa_id_status_idx").on(table.empresa_id, table.status),
 ]);
 
 export const insertLancamentoSchema = createInsertSchema(lancamentosTable).omit({
     id: true,
     created_at: true,
-    updated_at: true
+    updated_at: true,
+    empresa_id: true,
 });
 export type InsertLancamento = z.infer<typeof insertLancamentoSchema>;
 export type Lancamento = typeof lancamentosTable.$inferSelect;

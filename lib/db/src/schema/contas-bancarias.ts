@@ -1,9 +1,11 @@
-import { pgTable, serial, text, numeric, date, timestamp } from "drizzle-orm/pg-core";
+import { integer, pgTable, serial, text, numeric, date, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
+import { empresasTable } from "./empresas";
 
 export const contasBancariasTable = pgTable("contas_bancarias", {
   id: serial("id").primaryKey(),
+  empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
   tipo: text("tipo").notNull(), // corrente, movimento, poupanca
   banco: text("banco"),
   agencia: text("agencia"),
@@ -11,7 +13,7 @@ export const contasBancariasTable = pgTable("contas_bancarias", {
   conta: text("conta"),
   digito_conta: text("digito_conta"),
   nome: text("nome").notNull(),
-  empresa: text("empresa"),
+  titular: text("titular"),
   saldo_inicial: numeric("saldo_inicial", { precision: 15, scale: 2 }).default("0"),
   data_inicio: date("data_inicio").notNull(),
   status: text("status").default("ativo").notNull(), // ativo, bloqueado
@@ -20,6 +22,6 @@ export const contasBancariasTable = pgTable("contas_bancarias", {
   updated_at: timestamp("updated_at").defaultNow().notNull(),
 });
 
-export const insertContaBancariaSchema = createInsertSchema(contasBancariasTable).omit({ id: true, created_at: true, updated_at: true });
+export const insertContaBancariaSchema = createInsertSchema(contasBancariasTable).omit({ id: true, created_at: true, updated_at: true, empresa_id: true });
 export type InsertContaBancaria = z.infer<typeof insertContaBancariaSchema>;
 export type ContaBancaria = typeof contasBancariasTable.$inferSelect;

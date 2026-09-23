@@ -68,5 +68,26 @@ jobs:
               > .env
             chmod 600 .env
 
-            docker compose down
+            mkdir -p backups
+            BACKUP_FILE="backups/pre-deploy-$(date +%Y%m%d%H%M%S).sql"
+            if docker compose exec -T postgres pg_dump -U ism_user ismfinance > "$BACKUP_FILE"; then
+              echo "Backup gravado em $BACKUP_FILE"
+            else
+              echo "Backup ignorado (postgres ainda não está no ar)"
+              rm -f "$BACKUP_FILE"
+            fi
+
+            docker compose build api
+            docker compose up -d postgres
+            echo "Aguardando postgres aceitar conexões..."
+            for i in $(seq 1 30); do
+              if docker compose exec -T postgres pg_isready -U ism_user -d ismfinance >/dev/null 2>&1; then
+                break
+              fi
+              sleep 2
+            done
+
+            echo "Aplicando migrations versionadas (sem drizzle-kit push)..."
+            docker compose run --rm --no-deps api pnpm --filter @workspace/db run db:migrate
+
             docker compose up -d --build

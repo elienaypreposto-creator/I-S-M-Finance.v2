@@ -1,5 +1,6 @@
 import {pgTable, serial, text, integer, timestamp, jsonb} from "drizzle-orm/pg-core";
 import {usuariosTable} from "./usuarios";
+import {empresasTable} from "./empresas";
 
 export const logsSistemaTable = pgTable("logs_sistema", {
     id: serial("id").primaryKey(),
@@ -11,6 +12,7 @@ export const logsSistemaTable = pgTable("logs_sistema", {
 
 export const logsAuditoriaTable = pgTable("logs_auditoria", {
     id: serial("id").primaryKey(),
+    empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
     usuario_id: integer("usuario_id").references(() => usuariosTable.id, {onDelete: "set null"}),
     acao: text("acao").notNull(), // HTTP method
     recurso: text("recurso").notNull(), // originalUrl

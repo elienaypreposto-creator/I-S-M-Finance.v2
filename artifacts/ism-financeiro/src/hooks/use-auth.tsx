@@ -5,10 +5,20 @@ export type AuthUser = {
     id: number;
     nome: string;
     email: string;
+    empresa_id?: number;
+    cargo?: string | null;
     bloqueado?: boolean;
     telefone?: string | null;
     celular?: string | null;
     ultimo_acesso?: string | null;
+};
+
+export type EmpresaVinculo = {
+    id: number;
+    razao_social: string;
+    nome_fantasia: string | null;
+    slug: string;
+    papel: string;
 };
 
 type MeResponse = {

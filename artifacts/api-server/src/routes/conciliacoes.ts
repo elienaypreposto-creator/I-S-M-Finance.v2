@@ -2,7 +2,7 @@ import {createHash} from "crypto";
 import {Router} from "express";
 import {z} from "zod";
 import multer from "multer";
-import {and, asc, count, desc, eq, gte, ilike, inArray, isNull, lt, lte, notInArray, or, sql} from "drizzle-orm";
+import {and, asc, count, desc, eq, gte, ilike, inArray, isNull, lt, lte, notInArray, or, sql, type SQL} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {
     conciliacoesTable,
@@ -39,6 +39,9 @@ import {regrasConciliacaoService} from "../domains/financial/regras-conciliacao/
 import {promoverLancamentosAtrasados} from "../jobs/promover-atrasados";
 import {withPermission} from "../middlewares/withPermission";
 import {PERM} from "../constants/permissoes";
+import {requireTenant, tenantScope, tenantWhere, withEmpresaId} from "../lib/tenant-scope";
+
+type DbLike = Pick<typeof db, "select" | "insert" | "update" | "delete">;
 
 const router = Router();
 const upload = multer({storage: multer.memoryStorage()});
@@ -89,11 +92,11 @@ const parametrosBodySchema = z.object({
     motivo_ignorar_obrigatorio: z.boolean(),
 });
 
-async function getMotivoIgnorarObrigatorio(): Promise<boolean> {
+async function getMotivoIgnorarObrigatorio(empresaId: number): Promise<boolean> {
     const [row] = await db
         .select({valor: parametrosSistemaTable.valor})
         .from(parametrosSistemaTable)
-        .where(eq(parametrosSistemaTable.chave, PARAM_MOTIVO_IGNORAR_OBRIGATORIO))
+        .where(tenantWhere(parametrosSistemaTable, empresaId, eq(parametrosSistemaTable.chave, PARAM_MOTIVO_IGNORAR_OBRIGATORIO)))
         .limit(1);
     return row?.valor === "true" || row?.valor === "1";
 }
@@ -165,7 +168,6 @@ const vincularBodySchema = z.object({
             z.object({
                 lancamento_id: z.coerce.number().int().positive(),
                 desconto: z.coerce.number().min(0).optional(),
-                /** Campo canônico (DEF-05). */
                 juros_multa: z.coerce.number().min(0).optional(),
                 /** Alias legado - mapeado para juros_multa. */
                 acrescimo: z.coerce.number().min(0).optional(),
@@ -264,7 +266,7 @@ function addDaysToISO(dateStr: string, days: number): string {
  * fechamento do extrato anterior da mesma conta (RN-J8 / exigência Receita-DRE),
  * e se linhas ignoradas explicam uma eventual diferença (RN-J5).
  */
-async function buildDiagnosticoSaldo(extrato: {
+async function buildDiagnosticoSaldo(empresaId: number, extrato: {
     id: number;
     conta_id: number;
     periodo_inicio: string | null;
@@ -276,7 +278,7 @@ async function buildDiagnosticoSaldo(extrato: {
     }
 
     // --- Saldo final: sistema × banco, na DATA FINAL do extrato (regra D-1) ---
-    const saldoSistemaFinal = await contasBancariasService.saldoNaData(extrato.conta_id, extrato.periodo_fim);
+    const saldoSistemaFinal = await contasBancariasService.saldoNaData(empresaId, extrato.conta_id, extrato.periodo_fim);
     const saldoSistemaFinalCents = toCents(saldoSistemaFinal.saldo_decimal);
     const saldoBancoFinalCents = extrato.saldo_final_banco != null ? toCents(extrato.saldo_final_banco) : null;
 
@@ -307,8 +309,11 @@ async function buildDiagnosticoSaldo(extrato: {
             tipo_movimento: extratoLinhasTable.tipo_movimento,
         })
         .from(extratoLinhasTable)
-        .innerJoin(itensConciliacaoTable, eq(itensConciliacaoTable.extrato_linha_id, extratoLinhasTable.id))
-        .where(and(eq(extratoLinhasTable.extrato_id, extrato.id), eq(itensConciliacaoTable.status, "ignorado")));
+        .innerJoin(
+            itensConciliacaoTable,
+            and(eq(itensConciliacaoTable.extrato_linha_id, extratoLinhasTable.id), tenantScope(itensConciliacaoTable, empresaId)),
+        )
+        .where(tenantWhere(extratoLinhasTable, empresaId, eq(extratoLinhasTable.extrato_id, extrato.id), eq(itensConciliacaoTable.status, "ignorado")));
 
     const somaIgnoradasCents = sumCents(
         ignoradas.map((l) => (l.tipo_movimento === "credito" ? toCents(l.valor) : -toCents(l.valor))),
@@ -342,7 +347,9 @@ async function buildDiagnosticoSaldo(extrato: {
             })
             .from(extratosTable)
             .where(
-                and(
+                tenantWhere(
+                    extratosTable,
+                    empresaId,
                     eq(extratosTable.conta_id, extrato.conta_id),
                     lt(extratosTable.periodo_fim, extrato.periodo_inicio),
                 ),
@@ -352,7 +359,7 @@ async function buildDiagnosticoSaldo(extrato: {
 
         if (extratoAnterior?.saldo_final_banco != null) {
             const dataRef = addDaysToISO(extrato.periodo_inicio, -1);
-            const saldoSistemaAbertura = await contasBancariasService.saldoNaData(extrato.conta_id, dataRef);
+            const saldoSistemaAbertura = await contasBancariasService.saldoNaData(empresaId, extrato.conta_id, dataRef);
             const saldoSistemaAberturaCents = toCents(saldoSistemaAbertura.saldo_decimal);
             const saldoExtratoAnteriorCents = toCents(extratoAnterior.saldo_final_banco);
             const diferencaAberturaCents = saldoSistemaAberturaCents - saldoExtratoAnteriorCents;
@@ -384,14 +391,15 @@ async function buildDiagnosticoSaldo(extrato: {
 }
 
 const atualizarResumoConciliacao = async (
-    tx: typeof db,
+    tx: DbLike,
+    empresaId: number,
     conciliacaoId: number,
     extratoId: number,
 ) => {
     const statusRows = await tx
         .select({status: itensConciliacaoTable.status, total: count()})
         .from(itensConciliacaoTable)
-        .where(eq(itensConciliacaoTable.conciliacao_id, conciliacaoId))
+        .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.conciliacao_id, conciliacaoId)))
         .groupBy(itensConciliacaoTable.status);
 
     const conciliados = Number(statusRows.find((r) => r.status === "vinculado")?.total ?? 0);
@@ -412,7 +420,7 @@ const atualizarResumoConciliacao = async (
             status: statusConciliacao,
             updated_at: new Date(),
         })
-        .where(eq(conciliacoesTable.id, conciliacaoId));
+        .where(tenantWhere(conciliacoesTable, empresaId, eq(conciliacoesTable.id, conciliacaoId)));
 
     await tx
         .update(extratosTable)
@@ -420,11 +428,12 @@ const atualizarResumoConciliacao = async (
             status: statusExtrato,
             updated_at: new Date(),
         })
-        .where(eq(extratosTable.id, extratoId));
+        .where(tenantWhere(extratosTable, empresaId, eq(extratosTable.id, extratoId)));
 };
 
 router.get("/conciliacoes", withPermission(PERM.CONCILIACAO_ACESSAR), async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const page = parseInt(req.query.page as string) || 1;
         const limit = parseInt(req.query.limit as string) || 20;
         const offset = (page - 1) * limit;
@@ -468,12 +477,15 @@ router.get("/conciliacoes", withPermission(PERM.CONCILIACAO_ACESSAR), async (req
             conditions.push(lte(conciliacoesTable.periodo_inicio, dataFim));
         }
 
-        const where = conditions.length > 0 ? and(...conditions) : undefined;
+        const where = tenantWhere(conciliacoesTable, empresaId, ...conditions);
 
         const [totalResult] = await db
             .select({count: count()})
             .from(conciliacoesTable)
-            .innerJoin(extratosTable, eq(conciliacoesTable.extrato_id, extratosTable.id))
+            .innerJoin(
+                extratosTable,
+                and(eq(conciliacoesTable.extrato_id, extratosTable.id), tenantScope(extratosTable, empresaId)),
+            )
             .where(where);
 
         const items = await db
@@ -498,8 +510,14 @@ router.get("/conciliacoes", withPermission(PERM.CONCILIACAO_ACESSAR), async (req
                 created_at: extratosTable.created_at,
             })
             .from(conciliacoesTable)
-            .innerJoin(extratosTable, eq(conciliacoesTable.extrato_id, extratosTable.id))
-            .leftJoin(contasBancariasTable, eq(conciliacoesTable.conta_id, contasBancariasTable.id))
+            .innerJoin(
+                extratosTable,
+                and(eq(conciliacoesTable.extrato_id, extratosTable.id), tenantScope(extratosTable, empresaId)),
+            )
+            .leftJoin(
+                contasBancariasTable,
+                and(eq(conciliacoesTable.conta_id, contasBancariasTable.id), tenantScope(contasBancariasTable, empresaId)),
+            )
             .where(where)
             .orderBy(desc(extratosTable.created_at))
             .limit(limit)
@@ -517,6 +535,7 @@ router.delete(
     withPermission(PERM.CONCILIACAO_IMPORTAR),
     async (req, res) => {
         try {
+            const {empresaId} = requireTenant(req);
             const extratoId = Number(req.params.extrato_id);
             if (!Number.isFinite(extratoId) || extratoId <= 0) {
                 return errorResponse(res, 400, "VALIDATION_ERROR", "extrato_id inválido.");
@@ -525,7 +544,7 @@ router.delete(
             const [extrato] = await db
                 .select()
                 .from(extratosTable)
-                .where(eq(extratosTable.id, extratoId))
+                .where(tenantWhere(extratosTable, empresaId, eq(extratosTable.id, extratoId)))
                 .limit(1);
             if (!extrato) {
                 return errorResponse(res, 404, "NOT_FOUND", "Extrato não encontrado.");
@@ -542,7 +561,7 @@ router.delete(
             const [conciliacao] = await db
                 .select()
                 .from(conciliacoesTable)
-                .where(eq(conciliacoesTable.extrato_id, extratoId))
+                .where(tenantWhere(conciliacoesTable, empresaId, eq(conciliacoesTable.extrato_id, extratoId)))
                 .limit(1);
 
             let residuoIds: number[] = [];
@@ -550,21 +569,27 @@ router.delete(
                 const itensPrevio = await db
                     .select({id: itensConciliacaoTable.id})
                     .from(itensConciliacaoTable)
-                    .where(eq(itensConciliacaoTable.conciliacao_id, conciliacao.id));
+                    .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.conciliacao_id, conciliacao.id)));
                 const itemIdsPrevio = itensPrevio.map((i) => i.id);
 
                 if (itemIdsPrevio.length > 0) {
                     const vinculosPrevio = await db
                         .select({lancamento_id: itensConciliacaoLancamentosTable.lancamento_id})
                         .from(itensConciliacaoLancamentosTable)
-                        .where(inArray(itensConciliacaoLancamentosTable.item_conciliacao_id, itemIdsPrevio));
+                        .where(tenantWhere(
+                            itensConciliacaoLancamentosTable,
+                            empresaId,
+                            inArray(itensConciliacaoLancamentosTable.item_conciliacao_id, itemIdsPrevio),
+                        ));
 
                     if (vinculosPrevio.length > 0) {
                         const residuos = await db
                             .select({id: lancamentosTable.id, status: lancamentosTable.status})
                             .from(lancamentosTable)
                             .where(
-                                and(
+                                tenantWhere(
+                                    lancamentosTable,
+                                    empresaId,
                                     eq(lancamentosTable.is_residuo_parcial, true),
                                     inArray(
                                         lancamentosTable.lancamento_origem_id,
@@ -595,32 +620,36 @@ router.delete(
                     const itens = await tx
                         .select({id: itensConciliacaoTable.id})
                         .from(itensConciliacaoTable)
-                        .where(eq(itensConciliacaoTable.conciliacao_id, conciliacao.id));
+                        .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.conciliacao_id, conciliacao.id)));
                     const itemIds = itens.map((i) => i.id);
 
                     if (residuoIds.length > 0) {
-                        await tx.delete(lancamentosTable).where(inArray(lancamentosTable.id, residuoIds));
+                        await tx.delete(lancamentosTable).where(tenantWhere(lancamentosTable, empresaId, inArray(lancamentosTable.id, residuoIds)));
                     }
 
                     if (itemIds.length > 0) {
                         await tx
                             .delete(itensConciliacaoLancamentosTable)
-                            .where(inArray(itensConciliacaoLancamentosTable.item_conciliacao_id, itemIds));
+                            .where(tenantWhere(
+                                itensConciliacaoLancamentosTable,
+                                empresaId,
+                                inArray(itensConciliacaoLancamentosTable.item_conciliacao_id, itemIds),
+                            ));
                     }
 
                     await tx
                         .delete(historicoConciliacaoTable)
-                        .where(eq(historicoConciliacaoTable.conciliacao_id, conciliacao.id));
+                        .where(tenantWhere(historicoConciliacaoTable, empresaId, eq(historicoConciliacaoTable.conciliacao_id, conciliacao.id)));
 
                     await tx
                         .delete(itensConciliacaoTable)
-                        .where(eq(itensConciliacaoTable.conciliacao_id, conciliacao.id));
+                        .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.conciliacao_id, conciliacao.id)));
 
-                    await tx.delete(conciliacoesTable).where(eq(conciliacoesTable.id, conciliacao.id));
+                    await tx.delete(conciliacoesTable).where(tenantWhere(conciliacoesTable, empresaId, eq(conciliacoesTable.id, conciliacao.id)));
                 }
 
-                await tx.delete(extratoLinhasTable).where(eq(extratoLinhasTable.extrato_id, extratoId));
-                await tx.delete(extratosTable).where(eq(extratosTable.id, extratoId));
+                await tx.delete(extratoLinhasTable).where(tenantWhere(extratoLinhasTable, empresaId, eq(extratoLinhasTable.extrato_id, extratoId)));
+                await tx.delete(extratosTable).where(tenantWhere(extratosTable, empresaId, eq(extratosTable.id, extratoId)));
             });
 
             return successResponse(res, {deleted: true, extrato_id: extratoId});
@@ -632,6 +661,7 @@ router.delete(
 /** FEAT-07: pendências por mês (informativo). Deve ficar ANTES de /:extrato_id. */
 router.get("/conciliacoes/pendencias-mes", withPermission(PERM.CONCILIACAO_ACESSAR), async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const hojeCivil = hojeIsoLocal(); // YYYY-MM-DD America/Sao_Paulo
         const [anoCivil, mesCivil] = hojeCivil.split("-").map(Number);
         const mesRef = req.query.mes ? parseInt(req.query.mes as string, 10) : mesCivil!;
@@ -662,10 +692,18 @@ router.get("/conciliacoes/pendencias-mes", withPermission(PERM.CONCILIACAO_ACESS
                 resumo_pendentes: conciliacoesTable.resumo_pendentes,
             })
             .from(conciliacoesTable)
-            .innerJoin(extratosTable, eq(conciliacoesTable.extrato_id, extratosTable.id))
-            .leftJoin(contasBancariasTable, eq(conciliacoesTable.conta_id, contasBancariasTable.id))
+            .innerJoin(
+                extratosTable,
+                and(eq(conciliacoesTable.extrato_id, extratosTable.id), tenantScope(extratosTable, empresaId)),
+            )
+            .leftJoin(
+                contasBancariasTable,
+                and(eq(conciliacoesTable.conta_id, contasBancariasTable.id), tenantScope(contasBancariasTable, empresaId)),
+            )
             .where(
-                and(
+                tenantWhere(
+                    conciliacoesTable,
+                    empresaId,
                     inArray(extratosTable.status, ["pendente", "parcial"]),
                     gte(conciliacoesTable.periodo_fim, mesesAlvo[mesesAlvo.length - 1]!.inicio),
                     lte(conciliacoesTable.periodo_inicio, mesesAlvo[0]!.fim),
@@ -679,7 +717,9 @@ router.get("/conciliacoes/pendencias-mes", withPermission(PERM.CONCILIACAO_ACESS
             })
             .from(extratoLinhasTable)
             .where(
-                and(
+                tenantWhere(
+                    extratoLinhasTable,
+                    empresaId,
                     gte(extratoLinhasTable.data_movimento, mesesAlvo[mesesAlvo.length - 1]!.inicio),
                     lte(extratoLinhasTable.data_movimento, mesesAlvo[0]!.fim),
                 ),
@@ -768,9 +808,10 @@ router.get("/conciliacoes/pendencias-mes", withPermission(PERM.CONCILIACAO_ACESS
 });
 
 /** FEAT-06: parâmetro motivo_ignorar_obrigatorio */
-router.get("/conciliacoes/parametros", withPermission(PERM.CONCILIACAO_ACESSAR), async (_req, res) => {
+router.get("/conciliacoes/parametros", withPermission(PERM.CONCILIACAO_ACESSAR), async (req, res) => {
     try {
-        const obrigatorio = await getMotivoIgnorarObrigatorio();
+        const {empresaId} = requireTenant(req);
+        const obrigatorio = await getMotivoIgnorarObrigatorio(empresaId);
         return successResponse(res, {
             motivo_ignorar_obrigatorio: obrigatorio,
             motivos_predefinidos: MOTIVOS_IGNORAR_PREDEFINIDOS,
@@ -786,16 +827,17 @@ router.put(
     validateBody(parametrosBodySchema),
     async (req, res) => {
         try {
+            const {empresaId} = requireTenant(req);
             const {motivo_ignorar_obrigatorio} = req.body as z.infer<typeof parametrosBodySchema>;
             await db
                 .insert(parametrosSistemaTable)
-                .values({
+                .values(withEmpresaId({
                     chave: PARAM_MOTIVO_IGNORAR_OBRIGATORIO,
                     valor: motivo_ignorar_obrigatorio ? "true" : "false",
                     updated_at: new Date(),
-                })
+                }, empresaId))
                 .onConflictDoUpdate({
-                    target: parametrosSistemaTable.chave,
+                    target: [parametrosSistemaTable.empresa_id, parametrosSistemaTable.chave],
                     set: {
                         valor: motivo_ignorar_obrigatorio ? "true" : "false",
                         updated_at: new Date(),
@@ -878,11 +920,12 @@ router.post(
     upload.single("arquivo"),
     validateBody(importarBodySchema),
     async (req, res) => {
+        const {empresaId} = requireTenant(req);
         const {conta_id} = req.body as ImportarBody;
         const [conta] = await db
             .select({id: contasBancariasTable.id})
             .from(contasBancariasTable)
-            .where(eq(contasBancariasTable.id, conta_id))
+            .where(tenantWhere(contasBancariasTable, empresaId, eq(contasBancariasTable.id, conta_id)))
             .limit(1);
         if (!conta) {
             return errorResponse(res, 404, "NOT_FOUND", "Conta bancária não encontrada.");
@@ -910,10 +953,15 @@ router.post(
                     .from(extratoLinhasTable)
                     .leftJoin(
                         itensConciliacaoTable,
-                        eq(itensConciliacaoTable.extrato_linha_id, extratoLinhasTable.id),
+                        and(
+                            eq(itensConciliacaoTable.extrato_linha_id, extratoLinhasTable.id),
+                            tenantScope(itensConciliacaoTable, empresaId),
+                        ),
                     )
                     .where(
-                        and(
+                        tenantWhere(
+                            extratoLinhasTable,
+                            empresaId,
                             eq(extratoLinhasTable.conta_id, conta_id),
                             or(
                                 inArray(extratoLinhasTable.hash_linha, hashes),
@@ -958,12 +1006,13 @@ router.post(
     upload.single("arquivo"),
     validateBody(importarBodySchema),
     async (req, res) => {
+        const {empresaId} = requireTenant(req);
         const {conta_id, apenas_novas: apenasNovas} = req.body as ImportarBody;
 
         const [conta] = await db
             .select({id: contasBancariasTable.id, nome: contasBancariasTable.nome})
             .from(contasBancariasTable)
-            .where(eq(contasBancariasTable.id, conta_id))
+            .where(tenantWhere(contasBancariasTable, empresaId, eq(contasBancariasTable.id, conta_id)))
             .limit(1);
 
         if (!conta) {
@@ -987,7 +1036,9 @@ router.post(
             })
             .from(extratoLinhasTable)
             .where(
-                and(
+                tenantWhere(
+                    extratoLinhasTable,
+                    empresaId,
                     eq(extratoLinhasTable.conta_id, conta_id),
                     or(
                         inArray(extratoLinhasTable.hash_linha, hashes),
@@ -1033,7 +1084,7 @@ router.post(
         const periodo_inicio = datas[0]!;
         const periodo_fim = datas[datas.length - 1]!;
 
-        const regrasDb = await regrasConciliacaoService.listarAtivasParaMatch(conta_id);
+        const regrasDb = await regrasConciliacaoService.listarAtivasParaMatch(empresaId, conta_id);
         const regras: RegraParaMatch[] = regrasDb.map((r) => ({
             id: r.id,
             texto_gatilho: r.texto_gatilho,
@@ -1050,7 +1101,7 @@ router.post(
         const resultado = await db.transaction(async (tx) => {
             const [extrato] = await tx
                 .insert(extratosTable)
-                .values({
+                .values(withEmpresaId({
                     conta_id,
                     periodo_inicio,
                     periodo_fim,
@@ -1062,12 +1113,12 @@ router.post(
                     saldo_final_banco: parsed.saldo_final_banco,
                     saldo_banco_data: parsed.saldo_banco_data,
                     status: "pendente",
-                })
+                }, empresaId))
                 .returning();
 
             const [conciliacao] = await tx
                 .insert(conciliacoesTable)
-                .values({
+                .values(withEmpresaId({
                     extrato_id: extrato.id,
                     conta_id,
                     periodo_inicio,
@@ -1079,13 +1130,13 @@ router.post(
                     resumo_pendentes: paraImportar.length,
                     resumo_total: paraImportar.length,
                     resumo_classificadas_automaticamente: 0,
-                })
+                }, empresaId))
                 .returning();
 
             const linhasInseridas = await tx
                 .insert(extratoLinhasTable)
                 .values(
-                    paraImportar.map((t) => ({
+                    paraImportar.map((t) => withEmpresaId({
                         extrato_id: extrato.id,
                         conta_id,
                         identificador_externo: t.fitid,
@@ -1095,7 +1146,7 @@ router.post(
                         descricao: t.descricao,
                         data_movimento: t.data,
                         saldo_pos_linha: t.saldo_pos_linha,
-                    })),
+                    }, empresaId)),
                 )
                 .returning({
                     id: extratoLinhasTable.id,
@@ -1120,7 +1171,7 @@ router.post(
                 .values(
                     linhasInseridas.map((l) => {
                         const regra = matchPorLinhaId.get(l.id);
-                        return {
+                        return withEmpresaId({
                             conciliacao_id: conciliacao.id,
                             extrato_linha_id: l.id,
                             valor_extrato: l.valor,
@@ -1132,7 +1183,7 @@ router.post(
                             data: l.data_movimento,
                             regra_id: regra?.id ?? null,
                             classificacao_automatica: Boolean(regra),
-                        };
+                        }, empresaId);
                     }),
                 )
                 .returning({
@@ -1161,7 +1212,7 @@ router.post(
 
                 const [novoLancamento] = await tx
                     .insert(lancamentosTable)
-                    .values({
+                    .values(withEmpresaId({
                         tipo: tipoLancamento,
                         vencimento: dataMovimento,
                         conta_id,
@@ -1175,16 +1226,16 @@ router.post(
                         centro_custo_id: regra.centro_custo_id,
                         forma_pagamento: regra.forma_pagamento,
                         criado_por: req.user?.id,
-                    })
+                    }, empresaId))
                     .returning({id: lancamentosTable.id});
 
-                await tx.insert(itensConciliacaoLancamentosTable).values({
+                await tx.insert(itensConciliacaoLancamentosTable).values(withEmpresaId({
                     item_conciliacao_id: item.id,
                     lancamento_id: novoLancamento.id,
                     valor_vinculado: centsToDecimalString(valorCents),
                     desconto: "0.00",
                     juros_multa: "0.00",
-                });
+                }, empresaId));
 
                 await tx
                     .update(itensConciliacaoTable)
@@ -1195,9 +1246,9 @@ router.post(
                         data_conciliacao: hojeIsoLocal(),
                         updated_at: new Date(),
                     })
-                    .where(eq(itensConciliacaoTable.id, item.id));
+                    .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.id, item.id)));
 
-                await tx.insert(historicoConciliacaoTable).values({
+                await tx.insert(historicoConciliacaoTable).values(withEmpresaId({
                     conciliacao_id: conciliacao.id,
                     item_conciliacao_id: item.id,
                     usuario_id: req.user?.id,
@@ -1208,7 +1259,7 @@ router.post(
                         regra_id: regra.id,
                         lancamento_id: novoLancamento.id,
                     }),
-                });
+                }, empresaId));
             }
 
             await tx
@@ -1217,9 +1268,9 @@ router.post(
                     resumo_classificadas_automaticamente: classificadas,
                     updated_at: new Date(),
                 })
-                .where(eq(conciliacoesTable.id, conciliacao.id));
+                .where(tenantWhere(conciliacoesTable, empresaId, eq(conciliacoesTable.id, conciliacao.id)));
 
-            await atualizarResumoConciliacao(tx, conciliacao.id, extrato.id);
+            await atualizarResumoConciliacao(tx, empresaId, conciliacao.id, extrato.id);
 
             return {conciliacao, extrato, classificadas};
         });
@@ -1261,6 +1312,7 @@ router.post(
  */
 router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_ACESSAR), async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const linhaId = Number(req.query.linha_id);
         if (!linhaId) {
             return errorResponse(res, 400, "VALIDATION_ERROR", "Parâmetro obrigatório: linha_id.");
@@ -1286,7 +1338,7 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
                 valor: extratoLinhasTable.valor,
             })
             .from(extratoLinhasTable)
-            .where(eq(extratoLinhasTable.id, linhaId))
+            .where(tenantWhere(extratoLinhasTable, empresaId, eq(extratoLinhasTable.id, linhaId)))
             .limit(1);
 
         if (!linha) {
@@ -1298,7 +1350,7 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
 
         const usaFiltroLivre = Boolean(busca) || valorBusca !== null || vencimentoBusca !== null;
 
-        const condicoes = [
+        const condicoes: SQL[] = [
             eq(lancamentosTable.tipo, tipoCompatvel),
             // Card 71 + regressão Modo B: "pago_parcial" PRECISA continuar
             // aparecendo aqui, senão fica impossível conciliar o saldo restante
@@ -1311,7 +1363,7 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
         const [itemCtxPrevio] = await db
             .select({conciliacao_id: itensConciliacaoTable.conciliacao_id})
             .from(itensConciliacaoTable)
-            .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
+            .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.extrato_linha_id, linhaId)))
             .limit(1);
         const idsEmUsoNoExtrato = new Set<number>();
         if (itemCtxPrevio) {
@@ -1320,9 +1372,16 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
                 .from(itensConciliacaoLancamentosTable)
                 .innerJoin(
                     itensConciliacaoTable,
-                    eq(itensConciliacaoLancamentosTable.item_conciliacao_id, itensConciliacaoTable.id),
+                    and(
+                        eq(itensConciliacaoLancamentosTable.item_conciliacao_id, itensConciliacaoTable.id),
+                        tenantScope(itensConciliacaoTable, empresaId),
+                    ),
                 )
-                .where(eq(itensConciliacaoTable.conciliacao_id, itemCtxPrevio.conciliacao_id));
+                .where(tenantWhere(
+                    itensConciliacaoLancamentosTable,
+                    empresaId,
+                    eq(itensConciliacaoTable.conciliacao_id, itemCtxPrevio.conciliacao_id),
+                ));
             for (const v of vinculosExtratoPrevio) idsEmUsoNoExtrato.add(v.lancamento_id);
         }
 
@@ -1340,32 +1399,34 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
         }
 
         if (busca) {
-            condicoes.push(
-                or(ilike(lancamentosTable.descricao, `%${busca}%`), ilike(parceirosTable.nome, `%${busca}%`)),
-            );
+            const buscaOr = or(ilike(lancamentosTable.descricao, `%${busca}%`), ilike(parceirosTable.nome, `%${busca}%`));
+            if (buscaOr) condicoes.push(buscaOr);
         }
 
         if (valorBusca !== null) {
             // Tolerância de 1 centavo para absorver arredondamento na digitação.
-            condicoes.push(
-                and(
+            const valorAnd = and(
                     gte(lancamentosTable.valor, centsToDecimalString(valorBusca - 1)),
                     lte(lancamentosTable.valor, centsToDecimalString(valorBusca + 1)),
-                ),
-            );
+                );
+            if (valorAnd) condicoes.push(valorAnd);
         }
 
         // Incremental Modo A: não sugerir títulos já vinculados a esta linha.
         const [itemLinha] = await db
             .select({id: itensConciliacaoTable.id})
             .from(itensConciliacaoTable)
-            .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
+            .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.extrato_linha_id, linhaId)))
             .limit(1);
         if (itemLinha) {
             const jaNaLinha = await db
                 .select({lancamento_id: itensConciliacaoLancamentosTable.lancamento_id})
                 .from(itensConciliacaoLancamentosTable)
-                .where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, itemLinha.id));
+                .where(tenantWhere(
+                    itensConciliacaoLancamentosTable,
+                    empresaId,
+                    eq(itensConciliacaoLancamentosTable.item_conciliacao_id, itemLinha.id),
+                ));
             if (jaNaLinha.length > 0) {
                 condicoes.push(
                     notInArray(
@@ -1390,8 +1451,11 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
                 plano_conta_id: lancamentosTable.plano_conta_id,
             })
             .from(lancamentosTable)
-            .leftJoin(parceirosTable, eq(parceirosTable.id, lancamentosTable.parceiro_id))
-            .where(and(...condicoes))
+            .leftJoin(
+                parceirosTable,
+                and(eq(parceirosTable.id, lancamentosTable.parceiro_id), tenantScope(parceirosTable, empresaId)),
+            )
+            .where(tenantWhere(lancamentosTable, empresaId, ...condicoes))
             .limit(100);
 
         // Ordena: Modo B (já no extrato) → proximidade de valor → proximidade de data.
@@ -1437,6 +1501,7 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
 
 router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR), async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const extratoId = Number(req.params.extrato_id);
         const [extrato] = await db
             .select({
@@ -1455,8 +1520,11 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
                 created_at: extratosTable.created_at,
             })
             .from(extratosTable)
-            .leftJoin(contasBancariasTable, eq(extratosTable.conta_id, contasBancariasTable.id))
-            .where(eq(extratosTable.id, extratoId))
+            .leftJoin(
+                contasBancariasTable,
+                and(eq(extratosTable.conta_id, contasBancariasTable.id), tenantScope(contasBancariasTable, empresaId)),
+            )
+            .where(tenantWhere(extratosTable, empresaId, eq(extratosTable.id, extratoId)))
             .limit(1);
 
         if (!extrato) {
@@ -1466,7 +1534,7 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
         const [conciliacao] = await db
             .select()
             .from(conciliacoesTable)
-            .where(eq(conciliacoesTable.extrato_id, extratoId))
+            .where(tenantWhere(conciliacoesTable, empresaId, eq(conciliacoesTable.extrato_id, extratoId)))
             .limit(1);
 
         if (!conciliacao) {
@@ -1492,9 +1560,15 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
                 regra_criar_lancamento: regrasConciliacaoTable.criar_lancamento_automatico,
             })
             .from(extratoLinhasTable)
-            .innerJoin(itensConciliacaoTable, eq(itensConciliacaoTable.extrato_linha_id, extratoLinhasTable.id))
-            .leftJoin(regrasConciliacaoTable, eq(regrasConciliacaoTable.id, itensConciliacaoTable.regra_id))
-            .where(eq(extratoLinhasTable.extrato_id, extratoId))
+            .innerJoin(
+                itensConciliacaoTable,
+                and(eq(itensConciliacaoTable.extrato_linha_id, extratoLinhasTable.id), tenantScope(itensConciliacaoTable, empresaId)),
+            )
+            .leftJoin(
+                regrasConciliacaoTable,
+                and(eq(regrasConciliacaoTable.id, itensConciliacaoTable.regra_id), tenantScope(regrasConciliacaoTable, empresaId)),
+            )
+            .where(tenantWhere(extratoLinhasTable, empresaId, eq(extratoLinhasTable.extrato_id, extratoId)))
             .orderBy(asc(extratoLinhasTable.id));
 
         const itemIds = linhas.map((l) => l.item_id);
@@ -1523,8 +1597,15 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
                     residuo_valor_pendente: itensConciliacaoLancamentosTable.residuo_valor_pendente,
                 })
                 .from(itensConciliacaoLancamentosTable)
-                .innerJoin(lancamentosTable, eq(lancamentosTable.id, itensConciliacaoLancamentosTable.lancamento_id))
-                .where(inArray(itensConciliacaoLancamentosTable.item_conciliacao_id, itemIds))
+                .innerJoin(
+                    lancamentosTable,
+                    and(eq(lancamentosTable.id, itensConciliacaoLancamentosTable.lancamento_id), tenantScope(lancamentosTable, empresaId)),
+                )
+                .where(tenantWhere(
+                    itensConciliacaoLancamentosTable,
+                    empresaId,
+                    inArray(itensConciliacaoLancamentosTable.item_conciliacao_id, itemIds),
+                ))
             : [];
 
         // Card 76 (follow-up): o residual já nasce em `lancamentosTable` no
@@ -1549,7 +1630,9 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
                 })
                 .from(lancamentosTable)
                 .where(
-                    and(
+                    tenantWhere(
+                        lancamentosTable,
+                        empresaId,
                         eq(lancamentosTable.is_residuo_parcial, true),
                         inArray(lancamentosTable.lancamento_origem_id, lancamentoOrigemIds),
                     ),
@@ -1623,7 +1706,7 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
                 })),
         }));
 
-        const diagnostico = await buildDiagnosticoSaldo({
+        const diagnostico = await buildDiagnosticoSaldo(empresaId, {
             id: extrato.id,
             conta_id: extrato.conta_id,
             periodo_inicio: extrato.periodo_inicio,
@@ -1656,7 +1739,7 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
 });
 
 /** Lê e valida o item/conciliação de uma linha para poder ignorá-la. */
-async function validarIgnorar(executor: typeof db, linhaId: number) {
+async function validarIgnorar(executor: DbLike, empresaId: number, linhaId: number) {
     const [item] = await executor
         .select({
             id: itensConciliacaoTable.id,
@@ -1665,7 +1748,7 @@ async function validarIgnorar(executor: typeof db, linhaId: number) {
             status: itensConciliacaoTable.status,
         })
         .from(itensConciliacaoTable)
-        .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
+        .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.extrato_linha_id, linhaId)))
         .limit(1);
 
     if (!item) {
@@ -1681,7 +1764,7 @@ async function validarIgnorar(executor: typeof db, linhaId: number) {
     const [conciliacao] = await executor
         .select({extrato_id: conciliacoesTable.extrato_id})
         .from(conciliacoesTable)
-        .where(eq(conciliacoesTable.id, item.conciliacao_id))
+        .where(tenantWhere(conciliacoesTable, empresaId, eq(conciliacoesTable.id, item.conciliacao_id)))
         .limit(1);
 
     if (!conciliacao) {
@@ -1694,6 +1777,7 @@ async function validarIgnorar(executor: typeof db, linhaId: number) {
 /** Persiste o ignorar (mesma lógica usada pela rota individual e pelo Salvar em lote). */
 async function persistirIgnorar(
     tx: any,
+    empresaId: number,
     ctx: { item: { id: number; conciliacao_id: number }; conciliacao: { extrato_id: number } },
     params: { linhaId: number; motivoCodigo: string | null; motivo: string | null; usuarioId?: number },
 ) {
@@ -1710,17 +1794,17 @@ async function persistirIgnorar(
             data_conciliacao: hojeIsoLocal(),
             updated_at: new Date(),
         })
-        .where(eq(itensConciliacaoTable.id, item.id));
+        .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.id, item.id)));
 
-    await tx.insert(historicoConciliacaoTable).values({
+    await tx.insert(historicoConciliacaoTable).values(withEmpresaId({
         conciliacao_id: item.conciliacao_id,
         item_conciliacao_id: item.id,
         usuario_id: usuarioId,
         acao: "ignorar",
         detalhes: JSON.stringify({linha_id: linhaId, motivo_codigo: motivoCodigo, motivo: motivoTexto}),
-    });
+    }, empresaId));
 
-    await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
+    await atualizarResumoConciliacao(tx, empresaId, item.conciliacao_id, conciliacao.extrato_id);
 
     return {linha_id: linhaId, status: "ignorado" as const, motivo_ignorar: motivoTexto};
 }
@@ -1731,9 +1815,10 @@ router.post(
     validateBody(ignorarBodySchema),
     async (req, res) => {
         try {
+            const {empresaId} = requireTenant(req);
             const linhaId = Number(req.params.linha_id);
             const body = req.body as z.infer<typeof ignorarBodySchema>;
-            const motivoObrigatorio = await getMotivoIgnorarObrigatorio();
+            const motivoObrigatorio = await getMotivoIgnorarObrigatorio(empresaId);
 
             if (motivoObrigatorio) {
                 const temCodigo = Boolean(body.motivo_codigo);
@@ -1748,13 +1833,13 @@ router.post(
                 }
             }
 
-            const validado = await validarIgnorar(db, linhaId);
+            const validado = await validarIgnorar(db, empresaId, linhaId);
             if (!validado.ok) {
                 return errorResponse(res, validado.status, validado.code, validado.message);
             }
 
             const resultado = await db.transaction((tx) =>
-                persistirIgnorar(tx, validado, {
+                persistirIgnorar(tx, empresaId, validado, {
                     linhaId,
                     motivoCodigo: body.motivo_codigo ?? null,
                     motivo: body.motivo ?? null,
@@ -1775,7 +1860,8 @@ router.post(
  * verdade (que decide de novo, agora dentro da transaction, e persiste).
  */
 async function calcularVinculo(
-    executor: typeof db,
+    executor: DbLike,
+    empresaId: number,
     params: {
         linhaId: number;
         lancamentosPayload: VincularBody["lancamentos"];
@@ -1789,7 +1875,7 @@ async function calcularVinculo(
     const [item] = await executor
         .select()
         .from(itensConciliacaoTable)
-        .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
+        .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.extrato_linha_id, linhaId)))
         .limit(1);
 
     if (!item) {
@@ -1806,7 +1892,7 @@ async function calcularVinculo(
             valor_vinculado: itensConciliacaoLancamentosTable.valor_vinculado,
         })
         .from(itensConciliacaoLancamentosTable)
-        .where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id));
+        .where(tenantWhere(itensConciliacaoLancamentosTable, empresaId, eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id)));
 
     // Preview: se um "Desfazer" desta mesma linha já está rascunhado antes
     // deste vincular (ver ignorar_vinculos_reais), o vínculo real ainda no
@@ -1850,7 +1936,7 @@ async function calcularVinculo(
     const [conciliacao] = await executor
         .select()
         .from(conciliacoesTable)
-        .where(eq(conciliacoesTable.id, item.conciliacao_id))
+        .where(tenantWhere(conciliacoesTable, empresaId, eq(conciliacoesTable.id, item.conciliacao_id)))
         .limit(1);
     if (!conciliacao) {
         return {ok: false as const, status: 404, code: "NOT_FOUND", message: "Conciliação não encontrada."};
@@ -1859,7 +1945,7 @@ async function calcularVinculo(
     const lancamentos = await executor
         .select()
         .from(lancamentosTable)
-        .where(inArray(lancamentosTable.id, idsNovos));
+        .where(tenantWhere(lancamentosTable, empresaId, inArray(lancamentosTable.id, idsNovos)));
 
     if (lancamentos.length !== idsNovos.length) {
         return {ok: false as const, status: 400, code: "VALIDATION_ERROR", message: "Um ou mais lançamentos informados são inválidos."};
@@ -1929,6 +2015,7 @@ type VincularCalcOk = Extract<Awaited<ReturnType<typeof calcularVinculo>>, { ok:
  */
 async function persistirVinculo(
     tx: any,
+    empresaId: number,
     calc: VincularCalcOk,
     params: {
         linhaId: number;
@@ -1952,13 +2039,13 @@ async function persistirVinculo(
             const [parceiro] = await tx
                 .select({nome: parceirosTable.nome})
                 .from(parceirosTable)
-                .where(eq(parceirosTable.id, origem.parceiro_id))
+                .where(tenantWhere(parceirosTable, empresaId, eq(parceirosTable.id, origem.parceiro_id)))
                 .limit(1);
             parceiroNomeOrigem = parceiro?.nome ?? null;
         }
         const [novoResiduo] = await tx
             .insert(lancamentosTable)
-            .values({
+            .values(withEmpresaId({
                 tipo: origem.tipo,
                 vencimento: origem.vencimento,
                 competencia: origem.competencia,
@@ -1990,13 +2077,13 @@ async function persistirVinculo(
                 is_residuo_parcial: true,
                 lancamento_origem_id: origem.id,
                 criado_por: usuarioId,
-            })
+            }, empresaId))
             .returning();
         residuoCriado = {lancamento_id: novoResiduo.id, valor: fromCents(decision.residual.valorCents)};
     }
 
     await tx.insert(itensConciliacaoLancamentosTable).values(
-        decision.itens.map((v) => ({
+        decision.itens.map((v) => withEmpresaId({
             item_conciliacao_id: item.id,
             lancamento_id: v.lancamento_id,
             valor_vinculado: centsToDecimalString(v.valorVinculadoCents),
@@ -2009,7 +2096,7 @@ async function persistirVinculo(
                 decision.residual && v.lancamento_id === decision.residual.origemLancamentoId
                     ? centsToDecimalString(decision.residual.valorCents)
                     : null,
-        })),
+        }, empresaId)),
     );
 
     // Crítico: o título original (lancamentosTable) precisa refletir a
@@ -2042,7 +2129,7 @@ async function persistirVinculo(
                 desconto: centsToDecimalString(novoDescontoCents),
                 updated_at: new Date(),
             })
-            .where(eq(lancamentosTable.id, vinculoItem.lancamento_id));
+            .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.id, vinculoItem.lancamento_id)));
     }
 
     await tx
@@ -2054,9 +2141,9 @@ async function persistirVinculo(
             data_conciliacao: hojeIsoLocal(),
             updated_at: new Date(),
         })
-        .where(eq(itensConciliacaoTable.id, item.id));
+        .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.id, item.id)));
 
-    await tx.insert(historicoConciliacaoTable).values({
+    await tx.insert(historicoConciliacaoTable).values(withEmpresaId({
         conciliacao_id: item.conciliacao_id,
         item_conciliacao_id: item.id,
         usuario_id: usuarioId,
@@ -2073,9 +2160,9 @@ async function persistirVinculo(
             valor_saldo: fromCents(valorSaldoFinalCents),
             residuo_criado_lancamento_id: residuoCriado?.lancamento_id ?? null,
         }),
-    });
+    }, empresaId));
 
-    await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
+    await atualizarResumoConciliacao(tx, empresaId, item.conciliacao_id, conciliacao.extrato_id);
 
     return {
         linha_id: linhaId,
@@ -2094,6 +2181,7 @@ router.post(
     validateBody(vincularBodySchema),
     async (req, res) => {
         try {
+            const {empresaId} = requireTenant(req);
             const linhaId = Number(req.params.linha_id);
             const {
                 lancamentos: lancamentosPayload,
@@ -2103,7 +2191,7 @@ router.post(
                 contexto_rascunho: contextoRascunho,
             } = req.body as VincularBody;
 
-            const calc = await calcularVinculo(db, {
+            const calc = await calcularVinculo(db, empresaId, {
                 linhaId,
                 lancamentosPayload,
                 gerarParcial,
@@ -2142,7 +2230,7 @@ router.post(
             }
 
             const resultado = await db.transaction((tx) =>
-                persistirVinculo(tx, calc, {
+                persistirVinculo(tx, empresaId, calc, {
                     linhaId,
                     lancamentosPayload,
                     gerarParcial,
@@ -2168,13 +2256,14 @@ router.post(
     validateBody(criarLancamentoBodySchema),
     async (req, res) => {
         try {
+            const {empresaId} = requireTenant(req);
             const linhaId = Number(req.params.linha_id);
             const body = req.body as CriarLancamentoBody;
 
             const [item] = await db
                 .select()
                 .from(itensConciliacaoTable)
-                .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
+                .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.extrato_linha_id, linhaId)))
                 .limit(1);
             if (!item) {
                 return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada para conciliação.");
@@ -2186,7 +2275,7 @@ router.post(
             const [linhaExtrato] = await db
                 .select()
                 .from(extratoLinhasTable)
-                .where(eq(extratoLinhasTable.id, linhaId))
+                .where(tenantWhere(extratoLinhasTable, empresaId, eq(extratoLinhasTable.id, linhaId)))
                 .limit(1);
             if (!linhaExtrato) {
                 return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada.");
@@ -2195,7 +2284,7 @@ router.post(
             const [conciliacao] = await db
                 .select()
                 .from(conciliacoesTable)
-                .where(eq(conciliacoesTable.id, item.conciliacao_id))
+                .where(tenantWhere(conciliacoesTable, empresaId, eq(conciliacoesTable.id, item.conciliacao_id)))
                 .limit(1);
             if (!conciliacao) {
                 return errorResponse(res, 404, "NOT_FOUND", "Conciliação não encontrada.");
@@ -2217,7 +2306,7 @@ router.post(
             const resultado = await db.transaction(async (tx) => {
                 const [novoLancamento] = await tx
                     .insert(lancamentosTable)
-                    .values({
+                    .values(withEmpresaId({
                         tipo: body.tipo,
                         vencimento: body.vencimento,
                         conta_id: linhaExtrato.conta_id,
@@ -2231,16 +2320,16 @@ router.post(
                         centro_custo_id: body.centro_custo_id ?? null,
                         forma_pagamento: body.forma_pagamento ?? null,
                         criado_por: req.user?.id,
-                    })
+                    }, empresaId))
                     .returning();
 
-                await tx.insert(itensConciliacaoLancamentosTable).values({
+                await tx.insert(itensConciliacaoLancamentosTable).values(withEmpresaId({
                     item_conciliacao_id: item.id,
                     lancamento_id: novoLancamento.id,
                     valor_vinculado: centsToDecimalString(valorCents),
                     desconto: "0.00",
                     juros_multa: "0.00",
-                });
+                }, empresaId));
 
                 await tx
                     .update(itensConciliacaoTable)
@@ -2251,9 +2340,9 @@ router.post(
                         data_conciliacao: hojeIsoLocal(),
                         updated_at: new Date(),
                     })
-                    .where(eq(itensConciliacaoTable.id, item.id));
+                    .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.id, item.id)));
 
-                await tx.insert(historicoConciliacaoTable).values({
+                await tx.insert(historicoConciliacaoTable).values(withEmpresaId({
                     conciliacao_id: item.conciliacao_id,
                     item_conciliacao_id: item.id,
                     usuario_id: req.user?.id,
@@ -2263,9 +2352,9 @@ router.post(
                         acao: "criar_lancamento",
                         lancamento_id: novoLancamento.id,
                     }),
-                });
+                }, empresaId));
 
-                await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
+                await atualizarResumoConciliacao(tx, empresaId, item.conciliacao_id, conciliacao.extrato_id);
 
                 return novoLancamento;
             });
@@ -2288,13 +2377,14 @@ router.patch(
     validateBody(atualizarVinculoBodySchema),
     async (req, res) => {
         try {
+            const {empresaId} = requireTenant(req);
             const vinculoId = Number(req.params.vinculo_id);
             const body = req.body as z.infer<typeof atualizarVinculoBodySchema>;
 
             const [vinculo] = await db
                 .select()
                 .from(itensConciliacaoLancamentosTable)
-                .where(eq(itensConciliacaoLancamentosTable.id, vinculoId))
+                .where(tenantWhere(itensConciliacaoLancamentosTable, empresaId, eq(itensConciliacaoLancamentosTable.id, vinculoId)))
                 .limit(1);
 
             if (!vinculo) {
@@ -2304,7 +2394,7 @@ router.patch(
             const [lancamento] = await db
                 .select()
                 .from(lancamentosTable)
-                .where(eq(lancamentosTable.id, vinculo.lancamento_id))
+                .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.id, vinculo.lancamento_id)))
                 .limit(1);
 
             if (!lancamento) {
@@ -2314,7 +2404,7 @@ router.patch(
             const [item] = await db
                 .select()
                 .from(itensConciliacaoTable)
-                .where(eq(itensConciliacaoTable.id, vinculo.item_conciliacao_id))
+                .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.id, vinculo.item_conciliacao_id)))
                 .limit(1);
 
             const descontoAnteriorCents = toCents(vinculo.desconto);
@@ -2358,7 +2448,7 @@ router.patch(
                         juros_multa: centsToDecimalString(novoJurosCents),
                         valor_vinculado: centsToDecimalString(novoValorVinculadoCents),
                     })
-                    .where(eq(itensConciliacaoLancamentosTable.id, vinculoId));
+                    .where(tenantWhere(itensConciliacaoLancamentosTable, empresaId, eq(itensConciliacaoLancamentosTable.id, vinculoId)));
 
                 if (item) {
                     const deltaLinhaCents = novoValorVinculadoCents - toCents(vinculo.valor_vinculado);
@@ -2371,7 +2461,7 @@ router.patch(
                             valor_saldo: centsToDecimalString(Math.max(0, extratoCents - novoTotalCents)),
                             updated_at: new Date(),
                         })
-                        .where(eq(itensConciliacaoTable.id, item.id));
+                        .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.id, item.id)));
                 }
             });
 
@@ -2400,6 +2490,7 @@ router.patch(
     validateBody(saldoManualBodySchema),
     async (req, res) => {
         try {
+            const {empresaId} = requireTenant(req);
             const linhaId = Number(req.params.linha_id);
             const {saldo_pos_linha} = req.body as SaldoManualBody;
             const force = req.query.force === "true";
@@ -2407,7 +2498,7 @@ router.patch(
             const [linha] = await db
                 .select({id: extratoLinhasTable.id, saldo_pos_linha: extratoLinhasTable.saldo_pos_linha})
                 .from(extratoLinhasTable)
-                .where(eq(extratoLinhasTable.id, linhaId))
+                .where(tenantWhere(extratoLinhasTable, empresaId, eq(extratoLinhasTable.id, linhaId)))
                 .limit(1);
 
             if (!linha) {
@@ -2426,7 +2517,7 @@ router.patch(
             const [atualizado] = await db
                 .update(extratoLinhasTable)
                 .set({saldo_pos_linha: centsToDecimalString(saldoCents), updated_at: new Date()})
-                .where(eq(extratoLinhasTable.id, linhaId))
+                .where(tenantWhere(extratoLinhasTable, empresaId, eq(extratoLinhasTable.id, linhaId)))
                 .returning({id: extratoLinhasTable.id, saldo_pos_linha: extratoLinhasTable.saldo_pos_linha});
 
             return successResponse(res, {
@@ -2440,11 +2531,11 @@ router.patch(
 );
 
 /** Conta quantas linhas ainda estão pendentes nesta conciliação. */
-async function contarPendentes(executor: typeof db, conciliacaoId: number): Promise<number> {
+async function contarPendentes(executor: DbLike, empresaId: number, conciliacaoId: number): Promise<number> {
     const [pendente] = await executor
         .select({total: count()})
         .from(itensConciliacaoTable)
-        .where(and(eq(itensConciliacaoTable.conciliacao_id, conciliacaoId), eq(itensConciliacaoTable.status, "pendente")));
+        .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.conciliacao_id, conciliacaoId), eq(itensConciliacaoTable.status, "pendente")));
     return Number(pendente?.total ?? 0);
 }
 
@@ -2457,13 +2548,13 @@ async function contarPendentes(executor: typeof db, conciliacaoId: number): Prom
  * e evita perder qualquer residual de uma conciliação criada antes deste
  * deploy). Só chamar depois de confirmar que não há linhas pendentes.
  */
-async function persistirFinalizacao(tx: any, conciliacao: { id: number; conta_id: number | null }, extratoId: number, usuarioId?: number) {
+async function persistirFinalizacao(tx: any, empresaId: number, conciliacao: { id: number; conta_id: number | null }, extratoId: number, usuarioId?: number) {
     const dataConciliacao = hojeIsoLocal();
 
                 await tx
                     .update(extratosTable)
                     .set({status: "conciliado", updated_at: new Date()})
-                    .where(eq(extratosTable.id, extratoId));
+                    .where(tenantWhere(extratosTable, empresaId, eq(extratosTable.id, extratoId)));
 
                 await tx
                     .update(conciliacoesTable)
@@ -2472,14 +2563,16 @@ async function persistirFinalizacao(tx: any, conciliacao: { id: number; conta_id
                         data_conciliacao: dataConciliacao,
                         updated_at: new Date(),
                     })
-                    .where(eq(conciliacoesTable.id, conciliacao.id));
+                    .where(tenantWhere(conciliacoesTable, empresaId, eq(conciliacoesTable.id, conciliacao.id)));
 
                 // Espelha data nos itens ainda sem data (FEAT-08)
                 await tx
                     .update(itensConciliacaoTable)
                     .set({data_conciliacao: dataConciliacao, updated_at: new Date()})
                     .where(
-                        and(
+                        tenantWhere(
+                            itensConciliacaoTable,
+                            empresaId,
                             eq(itensConciliacaoTable.conciliacao_id, conciliacao.id),
                             isNull(itensConciliacaoTable.data_conciliacao),
                         ),
@@ -2505,21 +2598,32 @@ async function persistirFinalizacao(tx: any, conciliacao: { id: number; conta_id
                     .from(itensConciliacaoLancamentosTable)
                     .innerJoin(
                         itensConciliacaoTable,
-                        eq(
-                            itensConciliacaoLancamentosTable.item_conciliacao_id,
-                            itensConciliacaoTable.id,
+                        and(
+                            eq(
+                                itensConciliacaoLancamentosTable.item_conciliacao_id,
+                                itensConciliacaoTable.id,
+                            ),
+                            tenantScope(itensConciliacaoTable, empresaId),
                         ),
                     )
                     .innerJoin(
                         extratoLinhasTable,
-                        eq(itensConciliacaoTable.extrato_linha_id, extratoLinhasTable.id),
+                        and(
+                            eq(itensConciliacaoTable.extrato_linha_id, extratoLinhasTable.id),
+                            tenantScope(extratoLinhasTable, empresaId),
+                        ),
                     )
                     .innerJoin(
                         lancamentosTable,
-                        eq(itensConciliacaoLancamentosTable.lancamento_id, lancamentosTable.id),
+                        and(
+                            eq(itensConciliacaoLancamentosTable.lancamento_id, lancamentosTable.id),
+                            tenantScope(lancamentosTable, empresaId),
+                        ),
                     )
                     .where(
-                        and(
+                        tenantWhere(
+                            itensConciliacaoLancamentosTable,
+                            empresaId,
                             eq(itensConciliacaoTable.conciliacao_id, conciliacao.id),
                             eq(itensConciliacaoTable.status, "vinculado"),
                         ),
@@ -2588,19 +2692,29 @@ async function persistirFinalizacao(tx: any, conciliacao: { id: number; conta_id
                         .from(itensConciliacaoLancamentosTable)
                         .innerJoin(
                             itensConciliacaoTable,
-                            eq(
-                                itensConciliacaoLancamentosTable.item_conciliacao_id,
-                                itensConciliacaoTable.id,
+                            and(
+                                eq(
+                                    itensConciliacaoLancamentosTable.item_conciliacao_id,
+                                    itensConciliacaoTable.id,
+                                ),
+                                tenantScope(itensConciliacaoTable, empresaId),
                             ),
                         )
                         .innerJoin(
                             conciliacoesTable,
-                            eq(itensConciliacaoTable.conciliacao_id, conciliacoesTable.id),
+                            and(
+                                eq(itensConciliacaoTable.conciliacao_id, conciliacoesTable.id),
+                                tenantScope(conciliacoesTable, empresaId),
+                            ),
                         )
                         .where(
-                            inArray(
-                                itensConciliacaoLancamentosTable.lancamento_id,
-                                lancamentoIdsFinalizar,
+                            tenantWhere(
+                                itensConciliacaoLancamentosTable,
+                                empresaId,
+                                inArray(
+                                    itensConciliacaoLancamentosTable.lancamento_id,
+                                    lancamentoIdsFinalizar,
+                                ),
                             ),
                         );
 
@@ -2685,14 +2799,14 @@ async function persistirFinalizacao(tx: any, conciliacao: { id: number; conta_id
                             desconto: centsToDecimalString(descontoCents),
                             updated_at: new Date(),
                         })
-                        .where(eq(lancamentosTable.id, lancamentoId));
+                        .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.id, lancamentoId)));
                 }
 
                 // Card 76: só agora (Salvar/Conciliar confirmado) os residuais
                 // parciais marcados durante o vincular nascem de fato em
                 // lancamentosTable - até aqui existiam só como "promessa"
                 // (eh_origem_residuo/residuo_valor_pendente) no vínculo.
-                const residuaisPendentes = await tx
+                const residuaisPendentes: {origemLancamentoId: number; valorPendente: string | null}[] = await tx
                     .select({
                         origemLancamentoId: itensConciliacaoLancamentosTable.lancamento_id,
                         valorPendente: itensConciliacaoLancamentosTable.residuo_valor_pendente,
@@ -2700,10 +2814,15 @@ async function persistirFinalizacao(tx: any, conciliacao: { id: number; conta_id
                     .from(itensConciliacaoLancamentosTable)
                     .innerJoin(
                         itensConciliacaoTable,
-                        eq(itensConciliacaoLancamentosTable.item_conciliacao_id, itensConciliacaoTable.id),
+                        and(
+                            eq(itensConciliacaoLancamentosTable.item_conciliacao_id, itensConciliacaoTable.id),
+                            tenantScope(itensConciliacaoTable, empresaId),
+                        ),
                     )
                     .where(
-                        and(
+                        tenantWhere(
+                            itensConciliacaoLancamentosTable,
+                            empresaId,
                             eq(itensConciliacaoTable.conciliacao_id, conciliacao.id),
                             eq(itensConciliacaoLancamentosTable.eh_origem_residuo, true),
                         ),
@@ -2745,15 +2864,18 @@ async function persistirFinalizacao(tx: any, conciliacao: { id: number; conta_id
                             parceiro_nome: parceirosTable.nome,
                         })
                         .from(lancamentosTable)
-                        .leftJoin(parceirosTable, eq(parceirosTable.id, lancamentosTable.parceiro_id))
-                        .where(inArray(lancamentosTable.id, origemIds));
+                        .leftJoin(
+                            parceirosTable,
+                            and(eq(parceirosTable.id, lancamentosTable.parceiro_id), tenantScope(parceirosTable, empresaId)),
+                        )
+                        .where(tenantWhere(lancamentosTable, empresaId, inArray(lancamentosTable.id, origemIds)));
                     const origemById = new Map<number, OrigemResiduo>(origens.map((o) => [o.id, o]));
 
                     for (const pendente of residuaisPendentes) {
                         const origem = origemById.get(pendente.origemLancamentoId);
                         if (!origem || pendente.valorPendente == null) continue;
 
-                        await tx.insert(lancamentosTable).values({
+                        await tx.insert(lancamentosTable).values(withEmpresaId({
                             tipo: origem.tipo,
                             vencimento: origem.vencimento,
                             competencia: origem.competencia,
@@ -2778,16 +2900,16 @@ async function persistirFinalizacao(tx: any, conciliacao: { id: number; conta_id
                             is_residuo_parcial: true,
                             lancamento_origem_id: origem.id,
                             criado_por: usuarioId,
-                        });
+                        }, empresaId));
                     }
                 }
 
-    await tx.insert(historicoConciliacaoTable).values({
+    await tx.insert(historicoConciliacaoTable).values(withEmpresaId({
         conciliacao_id: conciliacao.id,
         usuario_id: usuarioId,
         acao: "salvar",
         detalhes: `Extrato ${extratoId} finalizado como conciliado em ${dataConciliacao}. Lançamentos atualizados: ${porLancamento.size}.`,
-    });
+    }, empresaId));
 }
 
 router.post(
@@ -2795,23 +2917,24 @@ router.post(
     withPermission(PERM.CONCILIACAO_CONCLUIR),
     async (req, res) => {
         try {
+            const {empresaId} = requireTenant(req);
             const extratoId = Number(req.params.extrato_id);
             const [conciliacao] = await db
                 .select()
                 .from(conciliacoesTable)
-                .where(eq(conciliacoesTable.extrato_id, extratoId))
+                .where(tenantWhere(conciliacoesTable, empresaId, eq(conciliacoesTable.extrato_id, extratoId)))
                 .limit(1);
 
             if (!conciliacao) {
                 return errorResponse(res, 404, "NOT_FOUND", "Conciliação do extrato não encontrada.");
             }
 
-            const pendentes = await contarPendentes(db, conciliacao.id);
+            const pendentes = await contarPendentes(db, empresaId, conciliacao.id);
             if (pendentes > 0) {
                 return errorResponse(res, 400, "VALIDATION_ERROR", "Ainda existem linhas pendentes para conciliação.");
             }
 
-            await db.transaction((tx) => persistirFinalizacao(tx, conciliacao, extratoId, req.user?.id));
+            await db.transaction((tx) => persistirFinalizacao(tx, empresaId, conciliacao, extratoId, req.user?.id));
 
             return successResponse(res, {
                 extrato_id: extratoId,
@@ -2866,6 +2989,7 @@ router.post(
     validateBody(salvarBodySchema),
     async (req, res) => {
         try {
+            const {empresaId} = requireTenant(req);
             const extratoId = Number(req.params.extrato_id);
             const body = req.body as z.infer<typeof salvarBodySchema>;
             const usuarioId = req.user?.id;
@@ -2873,14 +2997,14 @@ router.post(
             const [conciliacao] = await db
                 .select()
                 .from(conciliacoesTable)
-                .where(eq(conciliacoesTable.extrato_id, extratoId))
+                .where(tenantWhere(conciliacoesTable, empresaId, eq(conciliacoesTable.extrato_id, extratoId)))
                 .limit(1);
             if (!conciliacao) {
                 return errorResponse(res, 404, "NOT_FOUND", "Conciliação do extrato não encontrada.");
             }
 
             const motivoObrigatorio = body.acoes.some((a) => a.tipo === "ignorar")
-                ? await getMotivoIgnorarObrigatorio()
+                ? await getMotivoIgnorarObrigatorio(empresaId)
                 : false;
             for (const acao of body.acoes) {
                 if (acao.tipo !== "ignorar" || !motivoObrigatorio) continue;
@@ -2902,7 +3026,7 @@ router.post(
             await db.transaction(async (tx) => {
                 for (const acao of body.acoes) {
                     if (acao.tipo === "vincular") {
-                        const calc = await calcularVinculo(tx, {
+                        const calc = await calcularVinculo(tx, empresaId, {
                             linhaId: acao.linha_id,
                             lancamentosPayload: acao.lancamentos,
                             gerarParcial: acao.gerar_parcial,
@@ -2911,7 +3035,7 @@ router.post(
                         if (!calc.ok) {
                             throw errorComStatus(calc.status, calc.code, `Linha ${acao.linha_id}: ${calc.message}`);
                         }
-                        const resultado = await persistirVinculo(tx, calc, {
+                        const resultado = await persistirVinculo(tx, empresaId, calc, {
                             linhaId: acao.linha_id,
                             lancamentosPayload: acao.lancamentos,
                             gerarParcial: acao.gerar_parcial,
@@ -2920,11 +3044,11 @@ router.post(
                         });
                         resultadoPorLinha.push(resultado);
                     } else if (acao.tipo === "ignorar") {
-                        const validado = await validarIgnorar(tx, acao.linha_id);
+                        const validado = await validarIgnorar(tx, empresaId, acao.linha_id);
                         if (!validado.ok) {
                             throw errorComStatus(validado.status, validado.code, `Linha ${acao.linha_id}: ${validado.message}`);
                         }
-                        const resultado = await persistirIgnorar(tx, validado, {
+                        const resultado = await persistirIgnorar(tx, empresaId, validado, {
                             linhaId: acao.linha_id,
                             motivoCodigo: acao.motivo_codigo ?? null,
                             motivo: acao.motivo ?? null,
@@ -2932,28 +3056,28 @@ router.post(
                         });
                         resultadoPorLinha.push(resultado);
                     } else if (acao.tipo === "desfazer") {
-                        const validado = await validarDesfazer(tx, acao.linha_id);
+                        const validado = await validarDesfazer(tx, empresaId, acao.linha_id);
                         if (!validado.ok) {
                             throw errorComStatus(validado.status, validado.code, `Linha ${acao.linha_id}: ${validado.message}`);
                         }
-                        const resultado = await persistirDesfazer(tx, validado, {linhaId: acao.linha_id, usuarioId});
+                        const resultado = await persistirDesfazer(tx, empresaId, validado, {linhaId: acao.linha_id, usuarioId});
                         resultadoPorLinha.push(resultado);
                     } else {
-                        const validado = await validarReverterIgnorar(tx, acao.linha_id);
+                        const validado = await validarReverterIgnorar(tx, empresaId, acao.linha_id);
                         if (!validado.ok) {
                             throw errorComStatus(validado.status, validado.code, `Linha ${acao.linha_id}: ${validado.message}`);
                         }
-                        const resultado = await persistirReverterIgnorar(tx, validado, {linhaId: acao.linha_id, usuarioId});
+                        const resultado = await persistirReverterIgnorar(tx, empresaId, validado, {linhaId: acao.linha_id, usuarioId});
                         resultadoPorLinha.push(resultado);
                     }
                 }
 
                 if (body.finalizar) {
-                    const pendentes = await contarPendentes(tx, conciliacao.id);
+                    const pendentes = await contarPendentes(tx, empresaId, conciliacao.id);
                     if (pendentes > 0) {
                         throw errorComStatus(400, "VALIDATION_ERROR", "Ainda existem linhas pendentes para conciliação.");
                     }
-                    await persistirFinalizacao(tx, conciliacao, extratoId, usuarioId);
+                    await persistirFinalizacao(tx, empresaId, conciliacao, extratoId, usuarioId);
                     finalizado = true;
                 }
             });
@@ -2985,6 +3109,7 @@ router.delete(
     withPermission(PERM.CONCILIACAO_DESFAZER),
     async (req, res) => {
         try {
+            const {empresaId} = requireTenant(req);
             const vinculoId = Number(req.params.vinculo_id);
 
             if (!Number.isInteger(vinculoId) || vinculoId <= 0) {
@@ -2994,7 +3119,7 @@ router.delete(
             const [vinculo] = await db
                 .select()
                 .from(itensConciliacaoLancamentosTable)
-                .where(eq(itensConciliacaoLancamentosTable.id, vinculoId))
+                .where(tenantWhere(itensConciliacaoLancamentosTable, empresaId, eq(itensConciliacaoLancamentosTable.id, vinculoId)))
                 .limit(1);
 
             if (!vinculo) {
@@ -3004,7 +3129,7 @@ router.delete(
             const [item] = await db
                 .select()
                 .from(itensConciliacaoTable)
-                .where(eq(itensConciliacaoTable.id, vinculo.item_conciliacao_id))
+                .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.id, vinculo.item_conciliacao_id)))
                 .limit(1);
 
             if (!item) {
@@ -3014,7 +3139,7 @@ router.delete(
             const [conciliacaoDoVinculo] = await db
                 .select()
                 .from(conciliacoesTable)
-                .where(eq(conciliacoesTable.id, item.conciliacao_id))
+                .where(tenantWhere(conciliacoesTable, empresaId, eq(conciliacoesTable.id, item.conciliacao_id)))
                 .limit(1);
 
             if (!conciliacaoDoVinculo) {
@@ -3025,7 +3150,9 @@ router.delete(
                 .select()
                 .from(lancamentosTable)
                 .where(
-                    and(
+                    tenantWhere(
+                        lancamentosTable,
+                        empresaId,
                         eq(lancamentosTable.is_residuo_parcial, true),
                         eq(lancamentosTable.lancamento_origem_id, vinculo.lancamento_id),
                     ),
@@ -3051,7 +3178,7 @@ router.delete(
                     const [lancamento] = await tx
                         .select()
                         .from(lancamentosTable)
-                        .where(eq(lancamentosTable.id, vinculo.lancamento_id))
+                        .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.id, vinculo.lancamento_id)))
                         .limit(1);
 
                     if (lancamento) {
@@ -3094,27 +3221,31 @@ router.delete(
                                 desconto: centsToDecimalString(descontoNovo),
                                 updated_at: new Date(),
                             })
-                            .where(eq(lancamentosTable.id, lancamento.id));
+                            .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.id, lancamento.id)));
                     }
                 }
 
                 if (residuos.length > 0) {
                     await tx.delete(lancamentosTable).where(
-                        inArray(
-                            lancamentosTable.id,
-                            residuos.map((r) => r.id),
+                        tenantWhere(
+                            lancamentosTable,
+                            empresaId,
+                            inArray(
+                                lancamentosTable.id,
+                                residuos.map((r) => r.id),
+                            ),
                         ),
                     );
                 }
 
                 await tx
                     .delete(itensConciliacaoLancamentosTable)
-                    .where(eq(itensConciliacaoLancamentosTable.id, vinculoId));
+                    .where(tenantWhere(itensConciliacaoLancamentosTable, empresaId, eq(itensConciliacaoLancamentosTable.id, vinculoId)));
 
                 const vinculosRestantes = await tx
                     .select()
                     .from(itensConciliacaoLancamentosTable)
-                    .where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id));
+                    .where(tenantWhere(itensConciliacaoLancamentosTable, empresaId, eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id)));
 
                 const novoTotalCents = vinculosRestantes.reduce(
                     (total, v) => total + toCents(v.valor_vinculado),
@@ -3134,9 +3265,9 @@ router.delete(
                         data_conciliacao: novoStatus === "vinculado" ? item.data_conciliacao : null,
                         updated_at: new Date(),
                     })
-                    .where(eq(itensConciliacaoTable.id, item.id));
+                    .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.id, item.id)));
 
-                await tx.insert(historicoConciliacaoTable).values({
+                await tx.insert(historicoConciliacaoTable).values(withEmpresaId({
                     conciliacao_id: item.conciliacao_id,
                     item_conciliacao_id: item.id,
                     usuario_id: req.user?.id,
@@ -3149,9 +3280,9 @@ router.delete(
                         vinculos_restantes: vinculosRestantes.length,
                         reverteu_titulo: conciliaJaCommitada,
                     }),
-                });
+                }, empresaId));
 
-                await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacaoDoVinculo.extrato_id);
+                await atualizarResumoConciliacao(tx, empresaId, item.conciliacao_id, conciliacaoDoVinculo.extrato_id);
             });
 
             return successResponse(res, {
@@ -3166,11 +3297,11 @@ router.delete(
 );
 
 /** DEF-09: desfazer todos os vínculos da linha - lê e valida se é possível. */
-async function validarDesfazer(executor: typeof db, linhaId: number) {
+async function validarDesfazer(executor: DbLike, empresaId: number, linhaId: number) {
     const [item] = await executor
         .select()
         .from(itensConciliacaoTable)
-        .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
+        .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.extrato_linha_id, linhaId)))
         .limit(1);
 
     if (!item) {
@@ -3183,7 +3314,7 @@ async function validarDesfazer(executor: typeof db, linhaId: number) {
     const [conciliacao] = await executor
         .select()
         .from(conciliacoesTable)
-        .where(eq(conciliacoesTable.id, item.conciliacao_id))
+        .where(tenantWhere(conciliacoesTable, empresaId, eq(conciliacoesTable.id, item.conciliacao_id)))
         .limit(1);
     if (!conciliacao) {
         return {ok: false as const, status: 404, code: "NOT_FOUND", message: "Conciliação não encontrada."};
@@ -3192,13 +3323,15 @@ async function validarDesfazer(executor: typeof db, linhaId: number) {
     const vinculos = await executor
         .select()
         .from(itensConciliacaoLancamentosTable)
-        .where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id));
+        .where(tenantWhere(itensConciliacaoLancamentosTable, empresaId, eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id)));
 
     const residuos = await executor
         .select()
         .from(lancamentosTable)
         .where(
-            and(
+            tenantWhere(
+                lancamentosTable,
+                empresaId,
                 eq(lancamentosTable.is_residuo_parcial, true),
                 inArray(
                     lancamentosTable.lancamento_origem_id,
@@ -3227,7 +3360,7 @@ async function validarDesfazer(executor: typeof db, linhaId: number) {
 type DesfazerCtx = Extract<Awaited<ReturnType<typeof validarDesfazer>>, { ok: true }>;
 
 /** Persiste o desfazer (mesma lógica usada pela rota individual e pelo Salvar em lote). */
-async function persistirDesfazer(tx: any, ctx: DesfazerCtx, params: { linhaId: number; usuarioId?: number }) {
+async function persistirDesfazer(tx: any, empresaId: number, ctx: DesfazerCtx, params: { linhaId: number; usuarioId?: number }) {
     const {item, conciliacao, vinculos, residuos} = ctx;
     const {linhaId, usuarioId} = params;
 
@@ -3239,7 +3372,7 @@ async function persistirDesfazer(tx: any, ctx: DesfazerCtx, params: { linhaId: n
         const [lanc] = await tx
             .select()
             .from(lancamentosTable)
-            .where(eq(lancamentosTable.id, v.lancamento_id))
+            .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.id, v.lancamento_id)))
             .limit(1);
         if (!lanc) continue;
 
@@ -3270,14 +3403,14 @@ async function persistirDesfazer(tx: any, ctx: DesfazerCtx, params: { linhaId: n
                 desconto: centsToDecimalString(descontoNovo),
                 updated_at: new Date(),
             })
-            .where(eq(lancamentosTable.id, lanc.id));
+            .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.id, lanc.id)));
     }
 
     if (residuos.length > 0) {
-        await tx.delete(lancamentosTable).where(inArray(lancamentosTable.id, residuos.map((r: { id: number }) => r.id)));
+        await tx.delete(lancamentosTable).where(tenantWhere(lancamentosTable, empresaId, inArray(lancamentosTable.id, residuos.map((r: { id: number }) => r.id))));
     }
 
-    await tx.delete(itensConciliacaoLancamentosTable).where(eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id));
+    await tx.delete(itensConciliacaoLancamentosTable).where(tenantWhere(itensConciliacaoLancamentosTable, empresaId, eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id)));
 
     await tx
         .update(itensConciliacaoTable)
@@ -3288,17 +3421,17 @@ async function persistirDesfazer(tx: any, ctx: DesfazerCtx, params: { linhaId: n
             data_conciliacao: null,
             updated_at: new Date(),
         })
-        .where(eq(itensConciliacaoTable.id, item.id));
+        .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.id, item.id)));
 
-    await tx.insert(historicoConciliacaoTable).values({
+    await tx.insert(historicoConciliacaoTable).values(withEmpresaId({
         conciliacao_id: item.conciliacao_id,
         item_conciliacao_id: item.id,
         usuario_id: usuarioId,
         acao: "desfazer_vinculo",
         detalhes: JSON.stringify({linha_id: linhaId, vinculos_removidos: vinculos.length, reverteu_titulo: true}),
-    });
+    }, empresaId));
 
-    await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
+    await atualizarResumoConciliacao(tx, empresaId, item.conciliacao_id, conciliacao.extrato_id);
 
     return {linha_id: linhaId, status: "pendente" as const};
 }
@@ -3309,13 +3442,14 @@ router.delete(
     withPermission(PERM.CONCILIACAO_DESFAZER),
     async (req, res) => {
         try {
+            const {empresaId} = requireTenant(req);
             const linhaId = Number(req.params.linha_id);
-            const validado = await validarDesfazer(db, linhaId);
+            const validado = await validarDesfazer(db, empresaId, linhaId);
             if (!validado.ok) {
                 return errorResponse(res, validado.status, validado.code, validado.message);
             }
 
-            const resultado = await db.transaction((tx) => persistirDesfazer(tx, validado, {linhaId, usuarioId: req.user?.id}));
+            const resultado = await db.transaction((tx) => persistirDesfazer(tx, empresaId, validado, {linhaId, usuarioId: req.user?.id}));
 
             return successResponse(res, resultado);
         } catch (e) {
@@ -3324,11 +3458,11 @@ router.delete(
     });
 
 /** Lê e valida se dá pra reverter o ignorar desta linha. */
-async function validarReverterIgnorar(executor: typeof db, linhaId: number) {
+async function validarReverterIgnorar(executor: DbLike, empresaId: number, linhaId: number) {
     const [item] = await executor
         .select()
         .from(itensConciliacaoTable)
-        .where(eq(itensConciliacaoTable.extrato_linha_id, linhaId))
+        .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.extrato_linha_id, linhaId)))
         .limit(1);
 
     if (!item) {
@@ -3341,7 +3475,7 @@ async function validarReverterIgnorar(executor: typeof db, linhaId: number) {
     const [conciliacao] = await executor
         .select()
         .from(conciliacoesTable)
-        .where(eq(conciliacoesTable.id, item.conciliacao_id))
+        .where(tenantWhere(conciliacoesTable, empresaId, eq(conciliacoesTable.id, item.conciliacao_id)))
         .limit(1);
     if (!conciliacao) {
         return {ok: false as const, status: 404, code: "NOT_FOUND", message: "Conciliação não encontrada."};
@@ -3353,24 +3487,24 @@ async function validarReverterIgnorar(executor: typeof db, linhaId: number) {
 type ReverterIgnorarCtx = Extract<Awaited<ReturnType<typeof validarReverterIgnorar>>, { ok: true }>;
 
 /** Persiste o reverter-ignorar (mesma lógica usada pela rota individual e pelo Salvar em lote). */
-async function persistirReverterIgnorar(tx: any, ctx: ReverterIgnorarCtx, params: { linhaId: number; usuarioId?: number }) {
+async function persistirReverterIgnorar(tx: any, empresaId: number, ctx: ReverterIgnorarCtx, params: { linhaId: number; usuarioId?: number }) {
     const {item, conciliacao} = ctx;
     const {linhaId, usuarioId} = params;
 
     await tx
         .update(itensConciliacaoTable)
         .set({status: "pendente", motivo_ignorar: null, motivo_ignorar_codigo: null, data_conciliacao: null, updated_at: new Date()})
-        .where(eq(itensConciliacaoTable.id, item.id));
+        .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.id, item.id)));
 
-    await tx.insert(historicoConciliacaoTable).values({
+    await tx.insert(historicoConciliacaoTable).values(withEmpresaId({
         conciliacao_id: item.conciliacao_id,
         item_conciliacao_id: item.id,
         usuario_id: usuarioId,
         acao: "desfazer_vinculo",
         detalhes: JSON.stringify({linha_id: linhaId, acao: "reverter_ignorar"}),
-    });
+    }, empresaId));
 
-    await atualizarResumoConciliacao(tx, item.conciliacao_id, conciliacao.extrato_id);
+    await atualizarResumoConciliacao(tx, empresaId, item.conciliacao_id, conciliacao.extrato_id);
 
     return {linha_id: linhaId, status: "pendente" as const};
 }
@@ -3381,13 +3515,14 @@ router.post(
     withPermission(PERM.CONCILIACAO_DESFAZER),
     async (req, res) => {
         try {
+            const {empresaId} = requireTenant(req);
             const linhaId = Number(req.params.linha_id);
-            const validado = await validarReverterIgnorar(db, linhaId);
+            const validado = await validarReverterIgnorar(db, empresaId, linhaId);
             if (!validado.ok) {
                 return errorResponse(res, validado.status, validado.code, validado.message);
             }
 
-            const resultado = await db.transaction((tx) => persistirReverterIgnorar(tx, validado, {linhaId, usuarioId: req.user?.id}));
+            const resultado = await db.transaction((tx) => persistirReverterIgnorar(tx, empresaId, validado, {linhaId, usuarioId: req.user?.id}));
 
             return successResponse(res, resultado);
         } catch (e) {

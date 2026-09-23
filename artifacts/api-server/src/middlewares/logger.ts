@@ -1,5 +1,5 @@
 /**
- * auditLogger — Middleware de auditoria para requisições de mutação.
+ * auditLogger - Middleware de auditoria para requisições de mutação.
  *
  * Intercepta POST / PUT / PATCH / DELETE e grava um registro em `logs_auditoria`
  * de forma assíncrona (fire-and-forget via res.on("finish")), nunca bloqueando a
@@ -58,10 +58,16 @@ export const auditLogger = (req: Request, res: Response, next: NextFunction): vo
     }
 
     res.on("finish", () => {
+        const empresaId = req.tenant?.empresaId ?? req.user?.empresaId;
+        if (!empresaId) {
+            return;
+        }
+
         void db
             .insert(logsAuditoriaTable)
             .values({
-                usuario_id: req.user?.id ?? null,
+                empresa_id: empresaId,
+                usuario_id: req.user?.id && req.user.id > 0 ? req.user.id : null,
                 acao: req.method,
                 recurso: req.originalUrl,
                 ip: extractIp(req),

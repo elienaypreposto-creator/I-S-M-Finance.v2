@@ -26,6 +26,7 @@ export const v1AuthMiddleware = async (req: Request, res: Response, next: NextFu
       .select({
         id: tokensApiTable.id,
         ativo: tokensApiTable.ativo,
+        empresa_id: tokensApiTable.empresa_id,
       })
       .from(tokensApiTable)
       .where(
@@ -39,6 +40,20 @@ export const v1AuthMiddleware = async (req: Request, res: Response, next: NextFu
 
     if (!tokenValido) {
       return errorResponse(res, 401, "UNAUTHORIZED", "Token da API v1 inválido, inativo ou expirado.");
+    }
+
+    if (!Number.isInteger(tokenValido.empresa_id) || tokenValido.empresa_id <= 0) {
+      return errorResponse(res, 401, "UNAUTHORIZED", "Token da API v1 sem empresa associada.");
+    }
+
+    req.tenant = {empresaId: tokenValido.empresa_id};
+    if (!req.user) {
+      req.user = {
+        id: 0,
+        email: `api-token:${tokenValido.id}`,
+        permissions: [],
+        empresaId: tokenValido.empresa_id,
+      };
     }
 
     return next();

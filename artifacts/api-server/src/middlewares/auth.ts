@@ -9,54 +9,61 @@
  * aqui (com custo de I/O em cada request).
  */
 
-import type { NextFunction, Request, Response } from "express";
-import type { AccessTokenPayload } from "../services/token.service";
-import { verifyAccessToken } from "../services/token.service";
+import type {NextFunction, Request, Response} from "express";
+import type {AccessTokenPayload} from "../services/token.service";
+import {verifyAccessToken} from "../services/token.service";
 
 export type AuthUser = {
-  id: number;
-  email: string;
-  permissions: string[];
+    id: number;
+    email: string;
+    permissions: string[];
+    empresaId: number;
 };
 
 declare global {
-  namespace Express {
-    interface Request {
-      id: string;
-      user?: AuthUser;
+    namespace Express {
+        interface Request {
+            id: string;
+            user?: AuthUser;
+            tenant?: { empresaId: number };
+        }
     }
-  }
 }
 
 const jsonError = (res: Response, status: number, code: string, message: string) =>
-  res.status(status).json({ data: null, meta: null, errors: [{ code, message }] });
+    res.status(status).json({data: null, meta: null, errors: [{code, message}]});
 
 const extractBearerToken = (authHeader?: string): string | null => {
-  if (!authHeader) return null;
-  const parts = authHeader.split(" ");
-  return parts[0] === "Bearer" && parts[1] ? parts[1] : null;
+    if (!authHeader) return null;
+    const parts = authHeader.split(" ");
+    return parts[0] === "Bearer" && parts[1] ? parts[1] : null;
 };
 
 export const withAuth = async (req: Request, res: Response, next: NextFunction) => {
-  const token = extractBearerToken(req.headers.authorization);
-  if (!token) {
-    return jsonError(res, 401, "UNAUTHORIZED", "Token de autenticação ausente ou inválido.");
-  }
+    const token = extractBearerToken(req.headers.authorization);
+    if (!token) {
+        return jsonError(res, 401, "UNAUTHORIZED", "Token de autenticação ausente ou inválido.");
+    }
 
-  let payload: AccessTokenPayload;
-  try {
-    payload = await verifyAccessToken(token);
-  } catch {
-    return jsonError(res, 401, "UNAUTHORIZED", "Token expirado ou inválido.");
-  }
+    let payload: AccessTokenPayload;
+    try {
+        payload = await verifyAccessToken(token);
+    } catch {
+        return jsonError(res, 401, "UNAUTHORIZED", "Token expirado ou inválido.");
+    }
 
-  const id = parseInt(payload.sub, 10);
-  if (isNaN(id)) {
-    return jsonError(res, 401, "UNAUTHORIZED", "Token malformado: sub inválido.");
-  }
+    const id = parseInt(payload.sub, 10);
+    if (isNaN(id)) {
+        return jsonError(res, 401, "UNAUTHORIZED", "Token malformado: sub inválido.");
+    }
 
-  req.user = { id, email: payload.email, permissions: payload.permissions };
-  return next();
+    const empresaId = payload.empresa_id;
+    if (!Number.isInteger(empresaId) || empresaId <= 0) {
+        return jsonError(res, 401, "UNAUTHORIZED", "Sessão sem empresa. Faça login novamente.");
+    }
+
+    req.user = {id, email: payload.email, permissions: payload.permissions, empresaId};
+    return next();
 };
 
 export const authMiddleware = withAuth;

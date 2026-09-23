@@ -1,4 +1,4 @@
-import {and, desc, eq, isNull, or} from "drizzle-orm";
+import {desc, eq, isNull, or} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {
     centrosCustosTable,
@@ -9,6 +9,7 @@ import {
     regrasConciliacaoTable,
 } from "@workspace/db/schema";
 import {AppError} from "../../../utils/app-error";
+import {tenantWhere, withEmpresaId} from "../../../lib/tenant-scope";
 import type {
     CreateRegraConciliacaoBody,
     ListRegrasConciliacaoQuery,
@@ -16,15 +17,16 @@ import type {
 } from "./schemas";
 
 export const regrasConciliacaoService = {
-    async list(query: ListRegrasConciliacaoQuery) {
-        const conditions = [];
-        if (query.conta_id) {
-            conditions.push(or(eq(regrasConciliacaoTable.conta_id, query.conta_id), isNull(regrasConciliacaoTable.conta_id)));
-        }
-        if (query.natureza) conditions.push(eq(regrasConciliacaoTable.natureza, query.natureza));
-        if (query.ativo !== undefined) conditions.push(eq(regrasConciliacaoTable.ativo, query.ativo));
-
-        const where = conditions.length > 0 ? and(...conditions) : undefined;
+    async list(empresaId: number, query: ListRegrasConciliacaoQuery) {
+        const where = tenantWhere(
+            regrasConciliacaoTable,
+            empresaId,
+            query.conta_id
+                ? or(eq(regrasConciliacaoTable.conta_id, query.conta_id), isNull(regrasConciliacaoTable.conta_id))
+                : undefined,
+            query.natureza ? eq(regrasConciliacaoTable.natureza, query.natureza) : undefined,
+            query.ativo !== undefined ? eq(regrasConciliacaoTable.ativo, query.ativo) : undefined,
+        );
 
         return db
             .select({
@@ -59,28 +61,33 @@ export const regrasConciliacaoService = {
             .orderBy(desc(regrasConciliacaoTable.prioridade), desc(regrasConciliacaoTable.created_at));
     },
 
-    async create(payload: CreateRegraConciliacaoBody) {
+    async create(empresaId: number, payload: CreateRegraConciliacaoBody) {
         const [item] = await db
             .insert(regrasConciliacaoTable)
-            .values({
-                conta_id: payload.conta_id ?? null,
-                texto_gatilho: payload.texto_gatilho,
-                tipo_match: payload.tipo_match,
-                natureza: payload.natureza,
-                plano_conta_id: payload.plano_conta_id ?? null,
-                parceiro_id: payload.parceiro_id ?? null,
-                departamento_id: payload.departamento_id ?? null,
-                centro_custo_id: payload.centro_custo_id ?? null,
-                forma_pagamento: payload.forma_pagamento ?? null,
-                criar_lancamento_automatico: payload.criar_lancamento_automatico,
-                prioridade: payload.prioridade,
-                ativo: payload.ativo,
-            })
+            .values(
+                withEmpresaId(
+                    {
+                        conta_id: payload.conta_id ?? null,
+                        texto_gatilho: payload.texto_gatilho,
+                        tipo_match: payload.tipo_match,
+                        natureza: payload.natureza,
+                        plano_conta_id: payload.plano_conta_id ?? null,
+                        parceiro_id: payload.parceiro_id ?? null,
+                        departamento_id: payload.departamento_id ?? null,
+                        centro_custo_id: payload.centro_custo_id ?? null,
+                        forma_pagamento: payload.forma_pagamento ?? null,
+                        criar_lancamento_automatico: payload.criar_lancamento_automatico,
+                        prioridade: payload.prioridade,
+                        ativo: payload.ativo,
+                    },
+                    empresaId,
+                ),
+            )
             .returning();
         return item;
     },
 
-    async update(id: number, payload: UpdateRegraConciliacaoBody) {
+    async update(empresaId: number, id: number, payload: UpdateRegraConciliacaoBody) {
         const [item] = await db
             .update(regrasConciliacaoTable)
             .set({
@@ -98,7 +105,7 @@ export const regrasConciliacaoService = {
                 ativo: payload.ativo,
                 updated_at: new Date(),
             })
-            .where(eq(regrasConciliacaoTable.id, id))
+            .where(tenantWhere(regrasConciliacaoTable, empresaId, eq(regrasConciliacaoTable.id, id)))
             .returning();
 
         if (!item) {
@@ -107,10 +114,10 @@ export const regrasConciliacaoService = {
         return item;
     },
 
-    async remove(id: number) {
+    async remove(empresaId: number, id: number) {
         const [item] = await db
             .delete(regrasConciliacaoTable)
-            .where(eq(regrasConciliacaoTable.id, id))
+            .where(tenantWhere(regrasConciliacaoTable, empresaId, eq(regrasConciliacaoTable.id, id)))
             .returning({id: regrasConciliacaoTable.id});
         if (!item) {
             throw new AppError(404, "NOT_FOUND", "Regra de conciliação não encontrada.");
@@ -118,12 +125,14 @@ export const regrasConciliacaoService = {
         return {deleted: true};
     },
 
-    async listarAtivasParaMatch(contaId: number) {
+    async listarAtivasParaMatch(empresaId: number, contaId: number) {
         return db
             .select()
             .from(regrasConciliacaoTable)
             .where(
-                and(
+                tenantWhere(
+                    regrasConciliacaoTable,
+                    empresaId,
                     eq(regrasConciliacaoTable.ativo, true),
                     or(eq(regrasConciliacaoTable.conta_id, contaId), isNull(regrasConciliacaoTable.conta_id)),
                 ),

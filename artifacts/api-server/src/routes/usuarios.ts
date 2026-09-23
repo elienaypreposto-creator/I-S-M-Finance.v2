@@ -21,7 +21,8 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import {and, count, eq, ilike, ne} from "drizzle-orm";
 import {db} from "@workspace/db";
-import {parceirosTable, permissoesTable, usuariosTable, logsAuditoriaTable} from "@workspace/db/schema";
+import {parceirosTable, permissoesTable, usuariosTable, usuarioEmpresasTable, logsAuditoriaTable} from "@workspace/db/schema";
+import {requireTenant, tenantWhere} from "../lib/tenant-scope";
 import {sendWelcomeEmail, sendAdminCreatedAccountEmail} from "../services/email.service";
 import {revokeAllTokensForUser} from "../services/session.service";
 import {generateOtp} from "../services/token.service";
@@ -159,10 +160,11 @@ router.post(
                 );
             }
 
+            const {empresaId} = requireTenant(req);
             const [parceiro] = await db
                 .select({id: parceirosTable.id, tipos: parceirosTable.tipos})
                 .from(parceirosTable)
-                .where(ilike(parceirosTable.nome, nome.trim()))
+                .where(tenantWhere(parceirosTable, empresaId, ilike(parceirosTable.nome, nome.trim())))
                 .limit(1);
 
             if (parceiro) {
@@ -209,6 +211,14 @@ router.post(
                         bloqueado: false,
                     })
                     .returning(USUARIO_PUBLIC_COLS);
+
+                await tx.insert(usuarioEmpresasTable).values({
+                    usuario_id: user.id,
+                    empresa_id: empresaId,
+                    papel: "membro",
+                    ativo: true,
+                });
+
                 return user;
             });
 
@@ -251,7 +261,7 @@ router.put(
     validateBody(updateUsuarioBodySchema),
     async (req, res) => {
         try {
-            const id = parseInt(req.params.id, 10);
+            const id = parseInt(String(req.params.id), 10);
             if (isNaN(id)) {
                 return errorResponse(res, 400, "VALIDATION_ERROR", "ID de usuário inválido.");
             }
@@ -332,7 +342,7 @@ router.get(
     withPermission("admin:usuarios:listar"),
     async (req, res) => {
         try {
-            const id = parseInt(req.params.id, 10);
+            const id = parseInt(String(req.params.id), 10);
             if (isNaN(id)) {
                 return errorResponse(res, 400, "VALIDATION_ERROR", "ID de usuário inválido.");
             }
@@ -359,7 +369,7 @@ router.put(
                 return errorResponse(res, 401, "UNAUTHORIZED", "Usuário não autenticado.");
             }
 
-            const id = parseInt(req.params.id, 10);
+            const id = parseInt(String(req.params.id), 10);
             if (isNaN(id)) {
                 return errorResponse(res, 400, "VALIDATION_ERROR", "ID de usuário inválido.");
             }
@@ -404,6 +414,7 @@ router.put(
                 }
 
                 await tx.insert(logsAuditoriaTable).values({
+                    empresa_id: requireTenant(req).empresaId,
                     usuario_id: req.user!.id,
                     acao: "PUT",
                     recurso: req.originalUrl,

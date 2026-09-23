@@ -5,6 +5,7 @@ import {contasBancariasTable} from "./contas-bancarias";
 import {lancamentosTable} from "./lancamentos";
 import {usuariosTable} from "./usuarios";
 import {regrasConciliacaoTable} from "./regras-conciliacao";
+import {empresasTable} from "./empresas";
 import {
     acaoHistoricoConciliacaoEnum,
     statusConciliacaoEnum,
@@ -15,6 +16,7 @@ import {
 
 export const extratosTable = pgTable("extratos", {
     id: serial("id").primaryKey(),
+    empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
     conta_id: integer("conta_id").references(() => contasBancariasTable.id).notNull(),
     periodo_inicio: date("periodo_inicio"),
     periodo_fim: date("periodo_fim"),
@@ -37,6 +39,7 @@ export const extratosTable = pgTable("extratos", {
 
 export const extratoLinhasTable = pgTable("extrato_linhas", {
     id: serial("id").primaryKey(),
+    empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
     extrato_id: integer("extrato_id").references(() => extratosTable.id).notNull(),
     /** Desnormalizado para dedupe entre extratos (DEF-02). */
     conta_id: integer("conta_id").references(() => contasBancariasTable.id).notNull(),
@@ -58,11 +61,12 @@ export const extratoLinhasTable = pgTable("extrato_linhas", {
         table.conta_id,
         table.identificador_externo,
     ),
-    uniqueIndex("extrato_linhas_conta_id_hash_linha_idx").on(table.conta_id, table.hash_linha),
+    uniqueIndex("extrato_linhas_empresa_id_hash_linha_idx").on(table.empresa_id, table.hash_linha),
 ]);
 
 export const conciliacoesTable = pgTable("conciliacoes", {
     id: serial("id").primaryKey(),
+    empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
     extrato_id: integer("extrato_id").references(() => extratosTable.id).notNull(),
     conta_id: integer("conta_id").references(() => contasBancariasTable.id).notNull(),
     periodo_inicio: date("periodo_inicio"),
@@ -81,10 +85,12 @@ export const conciliacoesTable = pgTable("conciliacoes", {
 }, (table) => [
     index("conciliacoes_extrato_id_idx").on(table.extrato_id),
     index("conciliacoes_conta_id_idx").on(table.conta_id),
+    index("conciliacoes_empresa_id_conta_id_data_idx").on(table.empresa_id, table.conta_id, table.data_conciliacao),
 ]);
 
 export const itensConciliacaoTable = pgTable("itens_conciliacao", {
     id: serial("id").primaryKey(),
+    empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
     conciliacao_id: integer("conciliacao_id").references(() => conciliacoesTable.id).notNull(),
     extrato_linha_id: integer("extrato_linha_id").references(() => extratoLinhasTable.id).notNull(),
     valor_extrato: numeric("valor_extrato", {precision: 15, scale: 2}).notNull(),
@@ -111,6 +117,7 @@ export const itensConciliacaoTable = pgTable("itens_conciliacao", {
 
 export const itensConciliacaoLancamentosTable = pgTable("itens_conciliacao_lancamentos", {
     id: serial("id").primaryKey(),
+    empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
     item_conciliacao_id: integer("item_conciliacao_id").references(() => itensConciliacaoTable.id).notNull(),
     lancamento_id: integer("lancamento_id").references(() => lancamentosTable.id).notNull(),
     valor_vinculado: numeric("valor_vinculado", {precision: 15, scale: 2}).notNull(),
@@ -134,6 +141,7 @@ export const itensConciliacaoLancamentosTable = pgTable("itens_conciliacao_lanca
 
 export const historicoConciliacaoTable = pgTable("historico_conciliacao", {
     id: serial("id").primaryKey(),
+    empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
     conciliacao_id: integer("conciliacao_id").references(() => conciliacoesTable.id).notNull(),
     item_conciliacao_id: integer("item_conciliacao_id").references(() => itensConciliacaoTable.id),
     usuario_id: integer("usuario_id").references(() => usuariosTable.id),
@@ -148,7 +156,8 @@ export const insertExtratoSchema = createInsertSchema(extratosTable).omit({
     id: true,
     created_at: true,
     updated_at: true,
-    importado_em: true
+    importado_em: true,
+    empresa_id: true,
 });
 export type InsertExtrato = z.infer<typeof insertExtratoSchema>;
 export type Extrato = typeof extratosTable.$inferSelect;
@@ -156,7 +165,8 @@ export type Extrato = typeof extratosTable.$inferSelect;
 export const insertExtratoLinhaSchema = createInsertSchema(extratoLinhasTable).omit({
     id: true,
     created_at: true,
-    updated_at: true
+    updated_at: true,
+    empresa_id: true,
 });
 export type InsertExtratoLinha = z.infer<typeof insertExtratoLinhaSchema>;
 export type ExtratoLinha = typeof extratoLinhasTable.$inferSelect;
@@ -164,7 +174,8 @@ export type ExtratoLinha = typeof extratoLinhasTable.$inferSelect;
 export const insertConciliacaoSchema = createInsertSchema(conciliacoesTable).omit({
     id: true,
     created_at: true,
-    updated_at: true
+    updated_at: true,
+    empresa_id: true,
 });
 export type InsertConciliacao = z.infer<typeof insertConciliacaoSchema>;
 export type Conciliacao = typeof conciliacoesTable.$inferSelect;
@@ -172,7 +183,8 @@ export type Conciliacao = typeof conciliacoesTable.$inferSelect;
 export const insertItemConciliacaoSchema = createInsertSchema(itensConciliacaoTable).omit({
     id: true,
     created_at: true,
-    updated_at: true
+    updated_at: true,
+    empresa_id: true,
 });
 export type InsertItemConciliacao = z.infer<typeof insertItemConciliacaoSchema>;
 export type ItemConciliacao = typeof itensConciliacaoTable.$inferSelect;
@@ -180,14 +192,16 @@ export type ItemConciliacao = typeof itensConciliacaoTable.$inferSelect;
 export const insertItemConciliacaoLancamentoSchema = createInsertSchema(itensConciliacaoLancamentosTable).omit({
     id: true,
     created_at: true,
-    updated_at: true
+    updated_at: true,
+    empresa_id: true,
 });
 export type InsertItemConciliacaoLancamento = z.infer<typeof insertItemConciliacaoLancamentoSchema>;
 export type ItemConciliacaoLancamento = typeof itensConciliacaoLancamentosTable.$inferSelect;
 
 export const insertHistoricoConciliacaoSchema = createInsertSchema(historicoConciliacaoTable).omit({
     id: true,
-    created_at: true
+    created_at: true,
+    empresa_id: true,
 });
 export type InsertHistoricoConciliacao = z.infer<typeof insertHistoricoConciliacaoSchema>;
 export type HistoricoConciliacao = typeof historicoConciliacaoTable.$inferSelect;

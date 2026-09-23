@@ -4,6 +4,7 @@ import { validateBody } from "../../../middlewares/validate";
 import { asyncHandler } from "../../../utils/async-handler";
 import { successResponse } from "../../../utils/response";
 import { planoContasService } from "./plano-contas.service";
+import { requireTenant } from "../../../lib/tenant-scope";
 import {
   type CreatePlanoContaBody,
   type UpdatePlanoContaBody,
@@ -16,8 +17,8 @@ const router = Router();
 
 router.get(
   "/plano-contas",
-  asyncHandler(async (_req, res) => {
-    const items = await planoContasService.list();
+  asyncHandler(async (req, res) => {
+    const items = await planoContasService.list(requireTenant(req).empresaId);
     return successResponse(res, items);
   }),
 );
@@ -27,7 +28,7 @@ router.post(
   withPermission("configuracoes:plano-contas:criar"),
   validateBody(createPlanoContaBodySchema),
   asyncHandler(async (req, res) => {
-    const item = await planoContasService.create(req.body as CreatePlanoContaBody);
+    const item = await planoContasService.create(requireTenant(req).empresaId, req.body as CreatePlanoContaBody);
     return successResponse(res, item, null, 201);
   }),
 );
@@ -38,7 +39,7 @@ router.put(
   validateBody(updatePlanoContaBodySchema),
   asyncHandler(async (req, res) => {
     const { id } = planoContaIdParamSchema.parse(req.params);
-    const item = await planoContasService.update(id, req.body as UpdatePlanoContaBody);
+    const item = await planoContasService.update(requireTenant(req).empresaId, id, req.body as UpdatePlanoContaBody);
     return successResponse(res, item);
   }),
 );
@@ -48,7 +49,7 @@ router.delete(
   withPermission("configuracoes:plano-contas:deletar"),
   asyncHandler(async (req, res) => {
     const { id } = planoContaIdParamSchema.parse(req.params);
-    const result = await planoContasService.remove(id);
+    const result = await planoContasService.remove(requireTenant(req).empresaId, id);
     return successResponse(res, result);
   }),
 );

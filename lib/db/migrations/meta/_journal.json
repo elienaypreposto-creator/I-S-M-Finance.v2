@@ -6,7 +6,7 @@
       "idx": 0,
       "version": "7",
       "when": 1777922150039,
-      "tag": "0000_naive_nightmare",
+      "tag": "0000_baseline",
       "breakpoints": true
     },
     {
@@ -63,6 +63,34 @@
       "version": "7",
       "when": 1787160500000,
       "tag": "0008_tipo_match_exato",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790166000000,
+      "tag": "0009_empresas_empresa_id_nullable",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790166100000,
+      "tag": "0010_empresa_id_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790166200000,
+      "tag": "0011_empresa_id_not_null_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790166300000,
+      "tag": "0012_usuario_empresas",
       "breakpoints": true
     }
   ]
