@@ -14,7 +14,7 @@
  * POST /auth/migrate-passwords  - [admin] Diagnóstico de hashes SHA-256 legados
  */
 
-import {Router} from "express";
+import {Router, type Request} from "express";
 import bcrypt from "bcryptjs";
 import {eq} from "drizzle-orm";
 import {db} from "@workspace/db";
@@ -49,6 +49,20 @@ const fetchPermissions = async (usuarioId: number): Promise<string[]> => {
         .where(eq(permissoesTable.usuario_id, usuarioId));
     return rows.map((r) => r.codigo_permissao);
 };
+
+function attachTenantForAudit(
+    req: Request,
+    usuario: {id: number; email: string},
+    empresaId: number,
+): void {
+    req.tenant = {empresaId};
+    req.user = {
+        id: usuario.id,
+        email: usuario.email,
+        permissions: req.user?.permissions ?? [],
+        empresaId,
+    };
+}
 
 async function emitSession(usuario: { id: number; nome: string; email: string }, empresaId: number) {
     await assertVinculoAtivo(usuario.id, empresaId);
@@ -180,6 +194,7 @@ router.post("/auth/login", loginLimiter, loginEmailLimiter, async (req, res) => 
             {id: usuario.id, nome: usuario.nome, email: usuario.email},
             empresas[0].id,
         );
+        attachTenantForAudit(req, usuario, empresas[0].id);
 
         return successResponse(res, session, {
             tokenType: "Bearer",
@@ -342,6 +357,7 @@ router.post("/auth/select-empresa", loginLimiter, async (req, res) => {
         }
 
         const session = await emitSession(usuario, empresaId);
+        attachTenantForAudit(req, usuario, empresaId);
         return successResponse(res, session, {
             tokenType: "Bearer",
             accessTokenExpiresIn: "15m",
@@ -392,6 +408,7 @@ router.post("/auth/switch-empresa", withAuth, async (req, res) => {
 
         invalidateTenantCache(usuario.id);
         const session = await emitSession(usuario, empresaId);
+        attachTenantForAudit(req, usuario, empresaId);
         return successResponse(res, session, {
             tokenType: "Bearer",
             accessTokenExpiresIn: "15m",
