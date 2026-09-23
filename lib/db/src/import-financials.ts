@@ -1,9 +1,11 @@
 import { db } from "@workspace/db";
 import { lancamentosTable, parceirosTable, contasBancariasTable, planoContasTable } from "@workspace/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import xlsx from "xlsx";
 import fs from "fs";
 import path from "path";
+
+const EMPRESA_ID = 1;
 
 async function run() {
   const filePath = path.join(process.cwd(), "modelo_financeiro.xlsx");
@@ -18,7 +20,7 @@ async function run() {
   // 1. Lógica da Conta Bancária "A identificar"
   let contaId: number;
   const [existingConta] = await db.select().from(contasBancariasTable)
-    .where(eq(contasBancariasTable.nome, "-- A identificar --"));
+    .where(and(eq(contasBancariasTable.empresa_id, EMPRESA_ID), eq(contasBancariasTable.nome, "-- A identificar --")));
   
   if (existingConta) {
     contaId = existingConta.id;
@@ -26,6 +28,7 @@ async function run() {
   } else {
     // Criação da conta se não existir
     const [novaConta] = await db.insert(contasBancariasTable).values({
+      empresa_id: EMPRESA_ID,
       nome: "-- A identificar --",
       tipo: "movimento",
       data_inicio: new Date().toISOString().split("T")[0],
@@ -77,7 +80,7 @@ async function run() {
   const capitalize = (str: any) => str ? String(str).trim() : "";
 
   // Busca todas as contas do Plano de Contas para validar a Categoria
-  const allPlanos = await db.select().from(planoContasTable);
+  const allPlanos = await db.select().from(planoContasTable).where(eq(planoContasTable.empresa_id, EMPRESA_ID));
 
   let successCount = 0;
 
@@ -98,7 +101,7 @@ async function run() {
     
     // 4. Lógica do Parceiro
     // Procurar por Parceiro pelo nome para não duplicar
-    const [existingParceiro] = await db.select().from(parceirosTable).where(eq(parceirosTable.nome, parceiroNome));
+    const [existingParceiro] = await db.select().from(parceirosTable).where(and(eq(parceirosTable.empresa_id, EMPRESA_ID), eq(parceirosTable.nome, parceiroNome)));
     let parceiroRowId: number;
 
     if (existingParceiro) {
@@ -106,6 +109,7 @@ async function run() {
     } else {
       // Como solicitado: Criar Parceiro deixando tipos vazio (nem cliente, nem fornecedor marcado)
       const [newParceiro] = await db.insert(parceirosTable).values({
+        empresa_id: EMPRESA_ID,
         nome: parceiroNome,
         tipo_pessoa: "PJ",
         tipos: [], // <-- Deixado em branco para identificação posterior
@@ -149,7 +153,7 @@ async function run() {
     const finalValor = isNaN(valorNumber) ? "0.00" : valorNumber.toFixed(2);
 
     // 7. Status do Lançamento
-    const validStatuses = ["pendente", "pago", "recebido", "atrasado", "cancelado"];
+    const validStatuses = ["pendente", "pago", "recebido", "atrasado", "cancelado"] as const;
     const inputStatus = String(row.Status || "").trim().toLowerCase();
     
     // Fallback inteligente para status caso em branco
@@ -158,11 +162,16 @@ async function run() {
       mas confiamos no que o usuário colocou no inputStatus.
     */
     const expectedAutoStatus = !isDespesa ? "recebido" : "pago"; // default fallback for executed lines if it was marked as paid
-    const theStatus = validStatuses.includes(inputStatus) ? inputStatus : (inputStatus && inputStatus !== "pendente" ? expectedAutoStatus : "pendente");
+    const theStatus = (validStatuses as readonly string[]).includes(inputStatus)
+        ? (inputStatus as (typeof validStatuses)[number])
+        : inputStatus && inputStatus !== "pendente"
+            ? expectedAutoStatus
+            : "pendente";
 
     // 8. Inserção do Lançamento
     try {
         await db.insert(lancamentosTable).values({
+          empresa_id: EMPRESA_ID,
           tipo: isDespesa ? "CP" : "CR", // Contas a Pagar = Despesa/Custo, Contas a Receber = Receita
           vencimento: vencimentoStr,
           competencia: competenciaStr,

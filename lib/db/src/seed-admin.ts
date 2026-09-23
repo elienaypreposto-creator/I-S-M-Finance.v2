@@ -12,9 +12,9 @@
  */
 
 import bcrypt from "bcryptjs";
-import {eq, sql} from "drizzle-orm";
+import {and, eq, sql} from "drizzle-orm";
 import {db, pool} from "./index";
-import {usuariosTable} from "./schema";
+import {usuarioEmpresasTable, usuariosTable} from "./schema";
 import {PERMISSOES_ADMIN, syncAdminPermissionsOnBoot} from "./sync-admin-permissions";
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
@@ -45,15 +45,15 @@ function describeConnectionError(err: unknown): string {
     if (!(err instanceof Error)) return String(err);
     const msg = err.message.toLowerCase();
     if (msg.includes("econnrefused"))
-        return "ECONNREFUSED — o servidor de banco não aceitou a conexão. Verifique host/porta e se o banco está online.";
+        return "ECONNREFUSED - o servidor de banco não aceitou a conexão. Verifique host/porta e se o banco está online.";
     if (msg.includes("authentication failed") || msg.includes("password authentication"))
-        return "Falha de autenticação — usuário ou senha incorretos na DATABASE_URL.";
+        return "Falha de autenticação - usuário ou senha incorretos na DATABASE_URL.";
     if (msg.includes("certificate") || msg.includes("ssl"))
-        return "Erro SSL — problema de certificado TLS. Verifique NODE_TLS_REJECT_UNAUTHORIZED.";
+        return "Erro SSL - problema de certificado TLS. Verifique NODE_TLS_REJECT_UNAUTHORIZED.";
     if (msg.includes("timeout") || msg.includes("timed out"))
-        return "Timeout — o banco não respondeu dentro do prazo. Verifique conectividade de rede.";
+        return "Timeout - o banco não respondeu dentro do prazo. Verifique conectividade de rede.";
     if (msg.includes("does not exist") || msg.includes("relation") || msg.includes("table"))
-        return "Tabela ou schema não encontrado — execute as migrations antes do seed.";
+        return "Tabela ou schema não encontrado - execute as migrations antes do seed.";
     return err.message;
 }
 
@@ -75,7 +75,7 @@ async function verificarConexao(): Promise<void> {
 async function verificarTabelas(): Promise<void> {
     process.stdout.write("\n[2/4] Verificando existência das tabelas...\n");
 
-    const tabelasNecessarias = ["usuarios", "usuario_permissoes"];
+    const tabelasNecessarias = ["usuarios", "usuario_permissoes", "usuario_empresas"];
 
     for (const tabela of tabelasNecessarias) {
         const resultado = await db.execute(sql`
@@ -90,15 +90,41 @@ async function verificarTabelas(): Promise<void> {
             throw new Error(
                 `Tabela "${tabela}" não encontrada no schema public.\n` +
                 `   Execute as migrations antes do seed:\n` +
-                `   cd lib/db && pnpm push (ou pnpm drizzle-kit migrate)`,
+                `   cd lib/db && pnpm run db:migrate`,
             );
         }
         process.stdout.write(` Tabela "${tabela}" encontrada.\n`);
     }
 }
 
+async function garantirVinculoAdmin(usuarioId: number): Promise<void> {
+    const [vinculo] = await db
+        .select({id: usuarioEmpresasTable.id})
+        .from(usuarioEmpresasTable)
+        .where(
+            and(
+                eq(usuarioEmpresasTable.usuario_id, usuarioId),
+                eq(usuarioEmpresasTable.empresa_id, 1),
+            ),
+        )
+        .limit(1);
+
+    if (vinculo) {
+        process.stdout.write(`    Vínculo admin ↔ empresa 1 já existe.\n`);
+        return;
+    }
+
+    await db.insert(usuarioEmpresasTable).values({
+        usuario_id: usuarioId,
+        empresa_id: 1,
+        papel: "admin",
+        ativo: true,
+    });
+    process.stdout.write(`    Vínculo admin ↔ empresa 1 criado.\n`);
+}
+
 /** Cria o admin de ADMIN_EMAIL se ainda não existir (CLI apenas - exige ADMIN_SENHA). */
-async function upsertAdmin(): Promise<void> {
+async function upsertAdmin(): Promise<number> {
     if (!ADMIN_EMAIL?.trim()) {
         throw new Error("ADMIN_EMAIL não configurado no ambiente.");
     }
@@ -117,7 +143,7 @@ async function upsertAdmin(): Promise<void> {
     if (existente) {
         process.stdout.write(`    Usuário já existe - id=${existente.id}, email=${existente.email}\n`);
         process.stdout.write(`    Pulando criação. Permissões serão resincronizadas.\n`);
-        return;
+        return existente.id;
     }
 
     process.stdout.write(`    Gerando bcrypt hash (rounds=${BCRYPT_ROUNDS})... `);
@@ -149,6 +175,7 @@ async function upsertAdmin(): Promise<void> {
     process.stdout.write(`\n    Usuário Admin gravado com ID ${criado.id}\n`);
     process.stdout.write(`    nome  : ${criado.nome}\n`);
     process.stdout.write(`    email : ${criado.email}\n`);
+    return criado.id;
 }
 
 async function seedAdmin(): Promise<void> {
@@ -159,7 +186,8 @@ async function seedAdmin(): Promise<void> {
     try {
         await verificarConexao();
         await verificarTabelas();
-        await upsertAdmin();
+        const adminId = await upsertAdmin();
+        await garantirVinculoAdmin(adminId);
 
         process.stdout.write(
             `\n[4/4] Sincronizando ${PERMISSOES_ADMIN.length} permissões nos admins de sistema...\n`,

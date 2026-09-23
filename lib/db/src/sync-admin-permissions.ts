@@ -7,7 +7,7 @@
 
 import {eq, sql} from "drizzle-orm";
 import {db} from "./client";
-import {usuariosTable, usuarioPermissoesTable} from "./schema";
+import {usuariosTable, usuarioEmpresasTable, usuarioPermissoesTable} from "./schema";
 import {PERMISSOES_ADMIN} from "./permissoes-catalog";
 
 export {PERMISSOES_ADMIN} from "./permissoes-catalog";
@@ -78,6 +78,19 @@ export async function syncAdminPermissionsOnBoot(): Promise<SyncAdminPermissions
             .update(usuariosTable)
             .set({perfil_base: "Admin", updated_at: new Date()})
             .where(eq(usuariosTable.id, usuario.id));
+
+        await db
+            .insert(usuarioEmpresasTable)
+            .values({
+                usuario_id: usuario.id,
+                empresa_id: 1,
+                papel: "admin",
+                ativo: true,
+            })
+            .onConflictDoUpdate({
+                target: [usuarioEmpresasTable.usuario_id, usuarioEmpresasTable.empresa_id],
+                set: {papel: "admin", ativo: true},
+            });
 
         sincronizados += 1;
     }

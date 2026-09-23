@@ -1,7 +1,7 @@
 import bcrypt from "bcryptjs";
 import { eq } from "drizzle-orm";
 import { db, pool } from "./index";
-import { usuariosTable } from "./schema";
+import { usuarioEmpresasTable, usuariosTable } from "./schema";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -45,10 +45,18 @@ async function main() {
         email: usuariosTable.email,
       });
 
+    await db.insert(usuarioEmpresasTable).values({
+      usuario_id: criado.id,
+      empresa_id: 1,
+      papel: "membro",
+      ativo: true,
+    });
+
     console.log(`✅ Usuário criado com sucesso!`);
     console.log(`ID: ${criado.id}`);
     console.log(`Nome: ${criado.nome}`);
     console.log(`Email: ${criado.email}`);
+    console.log(`Empresa: 1 (membro)`);
 
   } catch (error) {
     console.error("Erro ao criar usuário:", error);

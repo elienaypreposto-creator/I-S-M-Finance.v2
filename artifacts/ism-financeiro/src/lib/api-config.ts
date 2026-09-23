@@ -70,7 +70,7 @@ async function tryRefreshToken(): Promise<string | null> {
 }
 
 // Rotas de auth que nunca devem disparar o interceptor de 401
-const AUTH_PATHS = ["/auth/login", "/auth/refresh", "/auth/logout"];
+const AUTH_PATHS = ["/auth/login", "/auth/refresh", "/auth/logout", "/auth/select-empresa"];
 const isAuthPath = (path: string) => AUTH_PATHS.some(p => path.includes(p));
 
 // ─── Converte erros de rede (TypeError) em mensagens legíveis ─────────────────
@@ -150,7 +150,7 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
         const code = errorBody.errors?.[0]?.code ?? "UNKNOWN";
         const message = errorBody.errors?.[0]?.message ?? errorBody.error ?? `Erro ${res.status}`;
 
-        if (code === "UNAUTHORIZED" || res.status === 401) {
+        if ((code === "UNAUTHORIZED" || res.status === 401) && !isAuthPath(path)) {
             authStorage.clearTokens();
             if (window.location.pathname !== "/login") {
                 window.location.href = "/login";

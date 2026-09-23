@@ -5,6 +5,7 @@ import {asyncHandler} from "../../../utils/async-handler";
 import {AppError} from "../../../utils/app-error";
 import {successResponse} from "../../../utils/response";
 import {contasBancariasService} from "./contas-bancarias.service";
+import {requireTenant} from "../../../lib/tenant-scope";
 import {PERM} from "../../../constants/permissoes";
 import {
     type CreateContaBancariaBody,
@@ -18,8 +19,8 @@ const router = Router();
 
 router.get(
     "/contas-bancarias",
-    asyncHandler(async (_req, res) => {
-        const items = await contasBancariasService.list();
+    asyncHandler(async (req, res) => {
+        const items = await contasBancariasService.list(requireTenant(req).empresaId);
         return successResponse(res, items);
     }),
 );
@@ -34,7 +35,7 @@ router.get(
         if (!data) {
             throw new AppError(400, "VALIDATION_ERROR", "Parâmetro obrigatório: data (YYYY-MM-DD).");
         }
-        const item = await contasBancariasService.saldoNaData(id, data);
+        const item = await contasBancariasService.saldoNaData(requireTenant(req).empresaId, id, data);
         return successResponse(res, item);
     }),
 );
@@ -44,7 +45,7 @@ router.post(
     withPermission("configuracoes:contas-bancarias:criar"),
     validateBody(createContaBancariaBodySchema),
     asyncHandler(async (req, res) => {
-        const item = await contasBancariasService.create(req.body as CreateContaBancariaBody);
+        const item = await contasBancariasService.create(requireTenant(req).empresaId, req.body as CreateContaBancariaBody);
         return successResponse(res, item, null, 201);
     }),
 );
@@ -55,7 +56,7 @@ router.put(
     validateBody(updateContaBancariaBodySchema),
     asyncHandler(async (req, res) => {
         const {id} = contaBancariaIdParamSchema.parse(req.params);
-        const item = await contasBancariasService.update(id, req.body as UpdateContaBancariaBody);
+        const item = await contasBancariasService.update(requireTenant(req).empresaId, id, req.body as UpdateContaBancariaBody);
         return successResponse(res, item);
     }),
 );
@@ -65,7 +66,7 @@ router.delete(
     withPermission("configuracoes:contas-bancarias:deletar"),
     asyncHandler(async (req, res) => {
         const {id} = contaBancariaIdParamSchema.parse(req.params);
-        const result = await contasBancariasService.remove(id);
+        const result = await contasBancariasService.remove(requireTenant(req).empresaId, id);
         return successResponse(res, result);
     }),
 );

@@ -1,8 +1,10 @@
 /**
  * Auth Routes
  *
- * POST /auth/login              - Autentica; retorna Access Token JWE + Refresh Token JWS
- * POST /auth/refresh            - Renova tokens com rotação e Token Family Revocation
+ * POST /auth/login              - Autentica; 1 empresa → tokens; N → selectionToken
+ * POST /auth/select-empresa     - Emite sessão após escolha (selectionToken + empresa_id)
+ * POST /auth/switch-empresa     - Troca empresa da sessão (revoga refresh, emite par novo)
+ * POST /auth/refresh            - Renova tokens; recusa se o vínculo estiver inativo
  * POST /auth/logout             - Revoga o Refresh Token
  * GET  /auth/me                 - Perfil do utilizador autenticado
  * POST /auth/verify-otp         - Valida o OTP de boas-vindas; retorna setupToken
@@ -19,9 +21,12 @@ import {db} from "@workspace/db";
 import {permissoesTable, refreshTokensTable, usuariosTable} from "@workspace/db/schema";
 import {sendPasswordResetEmail} from "../services/email.service";
 import {revokeAllTokensForUser} from "../services/session.service";
+import {assertVinculoAtivo, listEmpresasAtivasDoUsuario} from "../services/tenant.service";
+import {invalidateTenantCache} from "../middlewares/tenant";
 import {withAuth} from "../middlewares/auth";
 import {withPermission} from "../middlewares/withPermission";
 import {authLimiter, loginEmailLimiter, loginLimiter} from "../middlewares/rate-limit";
+import {AppError} from "../utils/app-error";
 import {errorResponse, successResponse} from "../utils/response";
 import {
     generateOtp,
@@ -44,6 +49,35 @@ const fetchPermissions = async (usuarioId: number): Promise<string[]> => {
         .where(eq(permissoesTable.usuario_id, usuarioId));
     return rows.map((r) => r.codigo_permissao);
 };
+
+async function emitSession(usuario: { id: number; nome: string; email: string }, empresaId: number) {
+    await assertVinculoAtivo(usuario.id, empresaId);
+    const permissions = await fetchPermissions(usuario.id);
+    const [accessToken, {token: refreshToken, tokenHash, expiresAt}] = await Promise.all([
+        signAccessToken({
+            sub: String(usuario.id),
+            email: usuario.email,
+            permissions,
+            empresa_id: empresaId,
+        }),
+        signRefreshToken({sub: String(usuario.id), email: usuario.email, empresa_id: empresaId}),
+    ]);
+
+    await db.insert(refreshTokensTable).values({
+        usuario_id: usuario.id,
+        token_hash: tokenHash,
+        expires_at: expiresAt,
+        revogado: false,
+    });
+
+    return {
+        accessToken,
+        refreshToken,
+        user: {id: usuario.id, nome: usuario.nome, email: usuario.email, empresa_id: empresaId},
+        permissoes: permissions,
+        empresa_id: empresaId,
+    };
+}
 
 router.post("/auth/login", loginLimiter, loginEmailLimiter, async (req, res) => {
     try {
@@ -116,36 +150,43 @@ router.post("/auth/login", loginLimiter, loginEmailLimiter, async (req, res) => 
             );
         }
 
-        // Permissões consultadas no banco para embutir no JWE
-        const permissions = await fetchPermissions(usuario.id);
+        const empresas = await listEmpresasAtivasDoUsuario(usuario.id);
+        if (empresas.length === 0) {
+            return errorResponse(res, 403, "SEM_EMPRESA", "Utilizador sem vínculo ativo com nenhuma empresa.");
+        }
 
-        const [accessToken, {token: refreshToken, tokenHash, expiresAt}] = await Promise.all([
-            signAccessToken({sub: String(usuario.id), email: usuario.email, permissions}),
-            signRefreshToken({sub: String(usuario.id), email: usuario.email}),
-        ]);
+        if (empresas.length > 1) {
+            const selectionToken = await signPurposeToken({
+                sub: String(usuario.id),
+                email: usuario.email,
+                purpose: "empresa_select",
+            });
+            return successResponse(
+                res,
+                {
+                    requiresEmpresaSelection: true,
+                    selectionToken,
+                    empresas,
+                    user: {id: usuario.id, nome: usuario.nome, email: usuario.email},
+                },
+                {
+                    message: "Selecione a empresa para emitir a sessão.",
+                    ...(precisaMigrar ? {passwordMigrated: true} : {}),
+                },
+            );
+        }
 
-        await db.insert(refreshTokensTable).values({
-            usuario_id: usuario.id,
-            token_hash: tokenHash,
-            expires_at: expiresAt,
-            revogado: false,
-        });
-
-        return successResponse(
-            res,
-            {
-                accessToken,
-                refreshToken,
-                user: {id: usuario.id, nome: usuario.nome, email: usuario.email},
-                permissoes: permissions,
-            },
-            {
-                tokenType: "Bearer",
-                accessTokenExpiresIn: "15m",
-                refreshTokenExpiresIn: "7d",
-                ...(precisaMigrar ? {passwordMigrated: true} : {}),
-            },
+        const session = await emitSession(
+            {id: usuario.id, nome: usuario.nome, email: usuario.email},
+            empresas[0].id,
         );
+
+        return successResponse(res, session, {
+            tokenType: "Bearer",
+            accessTokenExpiresIn: "15m",
+            refreshTokenExpiresIn: "7d",
+            ...(precisaMigrar ? {passwordMigrated: true} : {}),
+        });
     } catch (error: unknown) {
         console.error("Erro no login:", error);
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro no login.", error);
@@ -159,7 +200,7 @@ router.post("/auth/refresh", async (req, res) => {
             return errorResponse(res, 400, "VALIDATION_ERROR", "refreshToken é obrigatório.");
         }
 
-        let rtPayload: { sub: string; email: string };
+        let rtPayload: { sub: string; email: string; empresa_id: number };
         try {
             rtPayload = await verifyRefreshToken(rawToken);
         } catch {
@@ -204,7 +245,12 @@ router.post("/auth/refresh", async (req, res) => {
         }
 
         const [usuario] = await db
-            .select({id: usuariosTable.id, email: usuariosTable.email, bloqueado: usuariosTable.bloqueado})
+            .select({
+                id: usuariosTable.id,
+                nome: usuariosTable.nome,
+                email: usuariosTable.email,
+                bloqueado: usuariosTable.bloqueado,
+            })
             .from(usuariosTable)
             .where(eq(usuariosTable.id, usuarioId))
             .limit(1);
@@ -212,6 +258,13 @@ router.post("/auth/refresh", async (req, res) => {
         if (!usuario || usuario.bloqueado) {
             await revokeAllTokensForUser(usuarioId);
             return errorResponse(res, 401, "UNAUTHORIZED", "Utilizador inválido ou bloqueado.");
+        }
+
+        try {
+            await assertVinculoAtivo(usuario.id, rtPayload.empresa_id);
+        } catch {
+            await revokeAllTokensForUser(usuarioId);
+            return errorResponse(res, 401, "UNAUTHORIZED", "Vínculo com a empresa inativo. Faça login novamente.");
         }
 
         await db
@@ -224,8 +277,17 @@ router.post("/auth/refresh", async (req, res) => {
 
         const [newAccessToken, {token: newRefreshToken, tokenHash: newHash, expiresAt}] =
             await Promise.all([
-                signAccessToken({sub: String(usuario.id), email: usuario.email, permissions}),
-                signRefreshToken({sub: String(usuario.id), email: usuario.email}),
+                signAccessToken({
+                    sub: String(usuario.id),
+                    email: usuario.email,
+                    permissions,
+                    empresa_id: rtPayload.empresa_id,
+                }),
+                signRefreshToken({
+                    sub: String(usuario.id),
+                    email: usuario.email,
+                    empresa_id: rtPayload.empresa_id,
+                }),
             ]);
 
         await db.insert(refreshTokensTable).values({
@@ -243,6 +305,104 @@ router.post("/auth/refresh", async (req, res) => {
     } catch (error: unknown) {
         console.error("Erro no refresh:", error);
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao renovar token.", error);
+    }
+});
+
+router.post("/auth/select-empresa", loginLimiter, async (req, res) => {
+    try {
+        const selectionToken = typeof req.body?.selectionToken === "string" ? req.body.selectionToken : null;
+        const empresaIdRaw = req.body?.empresa_id;
+        const empresaId = typeof empresaIdRaw === "number" ? empresaIdRaw : Number(empresaIdRaw);
+
+        if (!selectionToken || !Number.isInteger(empresaId) || empresaId <= 0) {
+            return errorResponse(res, 400, "VALIDATION_ERROR", "Campos obrigatórios: selectionToken e empresa_id.");
+        }
+
+        let tokenPayload: { sub: string; email: string };
+        try {
+            tokenPayload = await verifyPurposeToken(selectionToken, "empresa_select");
+        } catch {
+            return errorResponse(res, 401, "INVALID_TOKEN", "selectionToken inválido ou expirado.");
+        }
+
+        const usuarioId = parseInt(tokenPayload.sub, 10);
+        const [usuario] = await db
+            .select({
+                id: usuariosTable.id,
+                nome: usuariosTable.nome,
+                email: usuariosTable.email,
+                bloqueado: usuariosTable.bloqueado,
+            })
+            .from(usuariosTable)
+            .where(eq(usuariosTable.id, usuarioId))
+            .limit(1);
+
+        if (!usuario || usuario.bloqueado) {
+            return errorResponse(res, 401, "UNAUTHORIZED", "Utilizador inválido ou bloqueado.");
+        }
+
+        const session = await emitSession(usuario, empresaId);
+        return successResponse(res, session, {
+            tokenType: "Bearer",
+            accessTokenExpiresIn: "15m",
+            refreshTokenExpiresIn: "7d",
+        });
+    } catch (error: unknown) {
+        if (error instanceof AppError) {
+            return errorResponse(res, error.statusCode, error.code, error.message);
+        }
+        console.error("Erro em select-empresa:", error);
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao selecionar empresa.", error);
+    }
+});
+
+router.post("/auth/switch-empresa", withAuth, async (req, res) => {
+    try {
+        const empresaIdRaw = req.body?.empresa_id;
+        const empresaId = typeof empresaIdRaw === "number" ? empresaIdRaw : Number(empresaIdRaw);
+        const rawRefresh = typeof req.body?.refreshToken === "string" ? req.body.refreshToken : null;
+
+        if (!Number.isInteger(empresaId) || empresaId <= 0) {
+            return errorResponse(res, 400, "VALIDATION_ERROR", "Campo obrigatório: empresa_id.");
+        }
+
+        const [usuario] = await db
+            .select({
+                id: usuariosTable.id,
+                nome: usuariosTable.nome,
+                email: usuariosTable.email,
+                bloqueado: usuariosTable.bloqueado,
+            })
+            .from(usuariosTable)
+            .where(eq(usuariosTable.id, req.user!.id))
+            .limit(1);
+
+        if (!usuario || usuario.bloqueado) {
+            return errorResponse(res, 401, "UNAUTHORIZED", "Utilizador inválido ou bloqueado.");
+        }
+
+        if (rawRefresh) {
+            await db
+                .update(refreshTokensTable)
+                .set({revogado: true})
+                .where(eq(refreshTokensTable.token_hash, hashToken(rawRefresh)));
+        } else {
+            await revokeAllTokensForUser(usuario.id);
+        }
+
+        invalidateTenantCache(usuario.id);
+        const session = await emitSession(usuario, empresaId);
+        return successResponse(res, session, {
+            tokenType: "Bearer",
+            accessTokenExpiresIn: "15m",
+            refreshTokenExpiresIn: "7d",
+        });
+    } catch (error: unknown) {
+        if (error instanceof AppError) {
+            return errorResponse(res, error.statusCode, error.code, error.message);
+        }
+        console.error("Erro em switch-empresa:", error);
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao trocar de empresa.", error);
     }
 });
 
@@ -284,7 +444,12 @@ router.get("/auth/me", withAuth, async (req, res) => {
             return errorResponse(res, 404, "NOT_FOUND", "Utilizador não encontrado.");
         }
 
-        return successResponse(res, {user: usuario, permissoes: req.user!.permissions});
+        const empresas = await listEmpresasAtivasDoUsuario(usuario.id);
+        return successResponse(res, {
+            user: {...usuario, empresa_id: req.user!.empresaId},
+            permissoes: req.user!.permissions,
+            empresas,
+        });
     } catch (error: unknown) {
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao obter utilizador autenticado.", error);
     }

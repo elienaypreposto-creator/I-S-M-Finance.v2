@@ -1,6 +1,7 @@
-import {and, eq, lt} from "drizzle-orm";
+import {eq, lt} from "drizzle-orm";
 import {db} from "@workspace/db";
-import {lancamentosTable} from "@workspace/db/schema";
+import {empresasTable, lancamentosTable} from "@workspace/db/schema";
+import {tenantWhere} from "../lib/tenant-scope";
 import {hojeIsoLocal} from "../utils/date-civil";
 
 /**
@@ -11,21 +12,33 @@ import {hojeIsoLocal} from "../utils/date-civil";
 export async function promoverLancamentosAtrasados(hojeIso?: string): Promise<{ atualizados: number }> {
     const hoje = hojeIso ?? hojeIsoLocal();
 
-    const result = await db
-        .update(lancamentosTable)
-        .set({
-            status: "atrasado",
-            updated_at: new Date(),
-        })
-        .where(
-            and(
-                eq(lancamentosTable.status, "pendente"),
-                lt(lancamentosTable.vencimento, hoje),
-            ),
-        )
-        .returning({id: lancamentosTable.id});
+    const empresas = await db
+        .select({id: empresasTable.id})
+        .from(empresasTable)
+        .where(eq(empresasTable.ativa, true));
 
-    return {atualizados: result.length};
+    let atualizados = 0;
+    for (const empresa of empresas) {
+        const result = await db
+            .update(lancamentosTable)
+            .set({
+                status: "atrasado",
+                updated_at: new Date(),
+            })
+            .where(
+                tenantWhere(
+                    lancamentosTable,
+                    empresa.id,
+                    eq(lancamentosTable.status, "pendente"),
+                    lt(lancamentosTable.vencimento, hoje),
+                ),
+            )
+            .returning({id: lancamentosTable.id});
+
+        atualizados += result.length;
+    }
+
+    return {atualizados};
 }
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;

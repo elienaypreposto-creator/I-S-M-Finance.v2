@@ -1,31 +1,30 @@
-import {and, count, eq, ilike, not, sql} from "drizzle-orm";
+import {count, eq, ilike, not, sql} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {lancamentosTable, parceirosTable, usuariosTable} from "@workspace/db/schema";
 import {AppError} from "../../../utils/app-error";
+import {tenantWhere, withEmpresaId} from "../../../lib/tenant-scope";
 import type {CreateParceiroBody, ListParceirosQuery, UpdateParceiroBody} from "./schemas";
 
 export const parceirosService = {
-    async list(query: ListParceirosQuery) {
+    async list(empresaId: number, query: ListParceirosQuery) {
         const {page, limit, search, excluir_com_usuario} = query;
         const offset = (page - 1) * limit;
 
-        const conditions = [];
-        if (search) conditions.push(ilike(parceirosTable.nome, `%${search}%`));
-
-        // Exclui parceiros que já estão vinculados a um usuário
-        // WHERE nome NOT IN (SELECT nome FROM usuarios)
-        if (excluir_com_usuario) {
-            conditions.push(
-                not(
-                    sql`${parceirosTable.nome}
+        const where = tenantWhere(
+            parceirosTable,
+            empresaId,
+            search ? ilike(parceirosTable.nome, `%${search}%`) : undefined,
+            // Exclui parceiros que já estão vinculados a um usuário
+            // WHERE nome NOT IN (SELECT nome FROM usuarios)
+            excluir_com_usuario
+                ? not(
+                      sql`${parceirosTable.nome}
                     IN (SELECT nome FROM
                     ${usuariosTable}
                     )`,
-                ),
-            );
-        }
-
-        const where = conditions.length > 0 ? and(...conditions) : undefined;
+                  )
+                : undefined,
+        );
 
         const [totalResult] = await db.select({count: count()}).from(parceirosTable).where(where);
         const items = await db
@@ -42,16 +41,20 @@ export const parceirosService = {
         };
     },
 
-    async create(payload: CreateParceiroBody) {
+    async create(empresaId: number, payload: CreateParceiroBody) {
         try {
             const [item] = await db
                 .insert(parceirosTable)
-                .values({
-                    ...payload,
-                    tipos: payload.tipos ?? [],
-                    chaves_pix: payload.chaves_pix ?? [],
-                    dados_bancarios: payload.dados_bancarios ?? [],
-                })
+                .values(
+                    withEmpresaId(
+                        {
+                            ...payload,
+                            tipos: payload.tipos ?? [],
+                            dados_bancarios: payload.dados_bancarios ?? [],
+                        },
+                        empresaId,
+                    ),
+                )
                 .returning();
 
             return item;
@@ -76,8 +79,12 @@ export const parceirosService = {
         }
     },
 
-    async getById(id: number) {
-        const [item] = await db.select().from(parceirosTable).where(eq(parceirosTable.id, id)).limit(1);
+    async getById(empresaId: number, id: number) {
+        const [item] = await db
+            .select()
+            .from(parceirosTable)
+            .where(tenantWhere(parceirosTable, empresaId, eq(parceirosTable.id, id)))
+            .limit(1);
         if (!item) {
             throw new AppError(404, "NOT_FOUND", "Parceiro não encontrado.");
         }
@@ -85,7 +92,7 @@ export const parceirosService = {
         return item;
     },
 
-    async update(id: number, payload: UpdateParceiroBody) {
+    async update(empresaId: number, id: number, payload: UpdateParceiroBody) {
         const LIFECYCLE_KEYS = new Set(["status", "ativo", "bloqueado"]);
         const isLifecycleOnly = Object.keys(payload).every((k) => LIFECYCLE_KEYS.has(k));
 
@@ -93,7 +100,7 @@ export const parceirosService = {
             const [{total}] = await db
                 .select({total: count()})
                 .from(lancamentosTable)
-                .where(eq(lancamentosTable.parceiro_id, id));
+                .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.parceiro_id, id)));
 
             if (Number(total) > 0) {
                 throw new AppError(
@@ -104,10 +111,11 @@ export const parceirosService = {
             }
         }
 
+        const {empresa_id: _ignored, ...safePayload} = payload as UpdateParceiroBody & {empresa_id?: unknown};
         const [item] = await db
             .update(parceirosTable)
-            .set({...payload, updated_at: new Date()})
-            .where(eq(parceirosTable.id, id))
+            .set({...safePayload, updated_at: new Date()})
+            .where(tenantWhere(parceirosTable, empresaId, eq(parceirosTable.id, id)))
             .returning();
 
         if (!item) {
@@ -117,11 +125,11 @@ export const parceirosService = {
         return item;
     },
 
-    async remove(id: number) {
+    async remove(empresaId: number, id: number) {
         const [{total}] = await db
             .select({total: count()})
             .from(lancamentosTable)
-            .where(eq(lancamentosTable.parceiro_id, id));
+            .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.parceiro_id, id)));
 
         if (Number(total) > 0) {
             throw new AppError(
@@ -131,7 +139,13 @@ export const parceirosService = {
             );
         }
 
-        await db.delete(parceirosTable).where(eq(parceirosTable.id, id));
+        const [item] = await db
+            .delete(parceirosTable)
+            .where(tenantWhere(parceirosTable, empresaId, eq(parceirosTable.id, id)))
+            .returning({id: parceirosTable.id});
+        if (!item) {
+            throw new AppError(404, "NOT_FOUND", "Parceiro não encontrado.");
+        }
         return {deleted: true};
     },
 };

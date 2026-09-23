@@ -13,11 +13,11 @@ COPY lib/ ./lib/
 
 COPY artifacts/api-server/ ./artifacts/api-server/
 
-# Instalar dependências (ignora os pacotes ausentes como o frontend)
-RUN pnpm install --filter "@workspace/api-server..."
+# api-server + db (tsx é dependência de produção: db:migrate no deploy)
+RUN pnpm install --filter "@workspace/api-server..." --filter "@workspace/db"
 
 # Fazer o build do backend
 RUN cd artifacts/api-server && pnpm run build
 
-# O comando de start entra na pasta do DB, roda o push (migrate), e depois inicia o servidor
-CMD sh -c "cd lib/db && pnpm run push && cd ../../artifacts/api-server && node dist/index.cjs"
+# Migrations são um step de deploy (db:migrate), não mais drizzle-kit push no boot.
+CMD ["node", "artifacts/api-server/dist/index.cjs"]

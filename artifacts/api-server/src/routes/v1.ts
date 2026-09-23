@@ -1,5 +1,5 @@
 import {Router} from "express";
-import {and, desc, eq, sql} from "drizzle-orm";
+import {desc, eq, sql} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {
     contasBancariasTable,
@@ -13,6 +13,7 @@ import {
 import {v1AuthMiddleware} from "../middlewares/v1Auth";
 import {errorResponse, successResponse} from "../utils/response";
 import {fromCents, valorEfetivoCents} from "../utils/money";
+import {tenantScope, tenantWhere} from "../lib/tenant-scope";
 
 const router = Router();
 
@@ -55,11 +56,12 @@ function mapLancamentoV1(i: {
 
 router.use(v1AuthMiddleware);
 
-router.get("/bancos", async (_req, res) => {
+router.get("/bancos", async (req, res) => {
     try {
         const items = await db
             .select()
             .from(contasBancariasTable)
+            .where(tenantScope(contasBancariasTable, req.tenant!.empresaId))
             .orderBy(contasBancariasTable.nome);
 
         return successResponse(
@@ -114,7 +116,7 @@ router.get("/contasPagar", async (req, res) => {
             .leftJoin(planoContasTable, eq(lancamentosTable.plano_conta_id, planoContasTable.id))
             .leftJoin(departamentosTable, eq(lancamentosTable.departamento_id, departamentosTable.id))
             .leftJoin(centrosCustosTable, eq(lancamentosTable.centro_custo_id, centrosCustosTable.id))
-            .where(eq(lancamentosTable.tipo, "CP"))
+            .where(tenantWhere(lancamentosTable, req.tenant!.empresaId, eq(lancamentosTable.tipo, "CP")))
             .orderBy(desc(lancamentosTable.updated_at))
             .limit(limit)
             .offset(offset);
@@ -172,7 +174,7 @@ router.get("/contasReceber", async (req, res) => {
             .leftJoin(planoContasTable, eq(lancamentosTable.plano_conta_id, planoContasTable.id))
             .leftJoin(departamentosTable, eq(lancamentosTable.departamento_id, departamentosTable.id))
             .leftJoin(centrosCustosTable, eq(lancamentosTable.centro_custo_id, centrosCustosTable.id))
-            .where(eq(lancamentosTable.tipo, "CR"))
+            .where(tenantWhere(lancamentosTable, req.tenant!.empresaId, eq(lancamentosTable.tipo, "CR")))
             .orderBy(desc(lancamentosTable.updated_at))
             .limit(limit)
             .offset(offset);
@@ -187,11 +189,12 @@ router.get("/contasReceber", async (req, res) => {
     }
 });
 
-router.get("/pessoas", async (_req, res) => {
+router.get("/pessoas", async (req, res) => {
     try {
         const items = await db
             .select()
             .from(parceirosTable)
+            .where(tenantScope(parceirosTable, req.tenant!.empresaId))
             .orderBy(parceirosTable.nome);
         return successResponse(res, items, {total: items.length});
     } catch (e) {
@@ -199,20 +202,25 @@ router.get("/pessoas", async (_req, res) => {
     }
 });
 
-router.get("/filiais", async (_req, res) => {
+router.get("/filiais", async (req, res) => {
     try {
-        const items = await db.select().from(filiaisTable).orderBy(filiaisTable.nome);
+        const items = await db
+            .select()
+            .from(filiaisTable)
+            .where(tenantScope(filiaisTable, req.tenant!.empresaId))
+            .orderBy(filiaisTable.nome);
         return successResponse(res, items);
     } catch (e) {
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar filiais (v1).", e);
     }
 });
 
-router.get("/planoContas", async (_req, res) => {
+router.get("/planoContas", async (req, res) => {
     try {
         const items = await db
             .select()
             .from(planoContasTable)
+            .where(tenantScope(planoContasTable, req.tenant!.empresaId))
             .orderBy(planoContasTable.categoria, planoContasTable.subcategoria);
         return successResponse(res, items);
     } catch (e) {
@@ -220,7 +228,7 @@ router.get("/planoContas", async (_req, res) => {
     }
 });
 
-router.get("/categoriaPlanoConta", async (_req, res) => {
+router.get("/categoriaPlanoConta", async (req, res) => {
     try {
         const items = await db
             .select({
@@ -228,6 +236,7 @@ router.get("/categoriaPlanoConta", async (_req, res) => {
                 total_contas: sql<number>`count(*)`,
             })
             .from(planoContasTable)
+            .where(tenantScope(planoContasTable, req.tenant!.empresaId))
             .groupBy(planoContasTable.categoria)
             .orderBy(planoContasTable.categoria);
 

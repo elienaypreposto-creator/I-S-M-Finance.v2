@@ -2,23 +2,27 @@ import { eq } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { filiaisTable } from "@workspace/db/schema";
 import { AppError } from "../../../utils/app-error";
+import { tenantScope, tenantWhere, withEmpresaId } from "../../../lib/tenant-scope";
 import type { CreateFilialBody, UpdateFilialBody } from "./schemas";
 
 export const filiaisService = {
-  async list() {
-    return db.select().from(filiaisTable).orderBy(filiaisTable.nome);
+  async list(empresaId: number) {
+    return db.select().from(filiaisTable).where(tenantScope(filiaisTable, empresaId)).orderBy(filiaisTable.nome);
   },
 
-  async create(payload: CreateFilialBody) {
-    const [item] = await db.insert(filiaisTable).values({ nome: payload.nome }).returning();
+  async create(empresaId: number, payload: CreateFilialBody) {
+    const [item] = await db
+      .insert(filiaisTable)
+      .values(withEmpresaId({ nome: payload.nome }, empresaId))
+      .returning();
     return item;
   },
 
-  async update(id: number, payload: UpdateFilialBody) {
+  async update(empresaId: number, id: number, payload: UpdateFilialBody) {
     const [item] = await db
       .update(filiaisTable)
       .set({ nome: payload.nome })
-      .where(eq(filiaisTable.id, id))
+      .where(tenantWhere(filiaisTable, empresaId, eq(filiaisTable.id, id)))
       .returning();
 
     if (!item) {
@@ -28,8 +32,14 @@ export const filiaisService = {
     return item;
   },
 
-  async remove(id: number) {
-    await db.delete(filiaisTable).where(eq(filiaisTable.id, id));
+  async remove(empresaId: number, id: number) {
+    const [item] = await db
+      .delete(filiaisTable)
+      .where(tenantWhere(filiaisTable, empresaId, eq(filiaisTable.id, id)))
+      .returning({ id: filiaisTable.id });
+    if (!item) {
+      throw new AppError(404, "NOT_FOUND", "Filial não encontrada.");
+    }
     return { deleted: true };
   },
 };

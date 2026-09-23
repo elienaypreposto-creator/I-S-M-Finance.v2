@@ -14,6 +14,8 @@ export const createContaBancariaBodySchema = z.object({
   conta: z.string().nullable().optional(),
   digito_conta: z.string().nullable().optional(),
   nome: z.string().trim().min(1),
+  titular: z.string().nullable().optional(),
+  /** Legado: o campo de texto da conta foi renomeado de `empresa` para `titular`. */
   empresa: z.string().nullable().optional(),
   saldo_inicial: saldoMonetarioSchema.optional(),
   data_inicio: z.string().trim().min(1),

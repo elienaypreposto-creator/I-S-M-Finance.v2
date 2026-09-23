@@ -1,9 +1,10 @@
 import {Router} from "express";
-import {and, count, desc, eq, gte, lte} from "drizzle-orm";
+import {count, desc, eq, gte, lte} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {logsAuditoriaTable, usuariosTable} from "@workspace/db/schema";
 import {withPermission} from "../middlewares/withPermission";
 import {errorResponse, successResponse} from "../utils/response";
+import {requireTenant, tenantWhere} from "../lib/tenant-scope";
 
 const router = Router();
 
@@ -60,7 +61,8 @@ router.get(
                 }
             }
 
-            const where = conditions.length > 0 ? and(...conditions) : undefined;
+            const {empresaId} = requireTenant(req);
+            const where = tenantWhere(logsAuditoriaTable, empresaId, ...conditions);
 
             const [[{total}], items] = await Promise.all([
                 db

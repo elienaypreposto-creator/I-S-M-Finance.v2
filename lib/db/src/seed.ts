@@ -1,3 +1,4 @@
+import {eq} from "drizzle-orm";
 import { db, pool, planoContasTable } from "./index";
 
 const planoContas = [
@@ -130,10 +131,11 @@ async function seed() {
   console.log('Populando Plano de Contas...');
 
   // delete all first
-  await db.delete(planoContasTable);
+  await db.delete(planoContasTable).where(eq(planoContasTable.empresa_id, 1));
 
   for (const conta of planoContas) {
     await db.insert(planoContasTable).values({
+      empresa_id: 1,
       tipo: conta.tipo,
       categoria: conta.categoria,
       subcategoria: conta.subcategoria,
