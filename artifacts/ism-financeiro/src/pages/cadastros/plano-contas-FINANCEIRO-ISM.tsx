@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useState, useRef, useEffect} from "react";
 import {useForm} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
@@ -231,7 +232,7 @@ export default function PlanoContas() {
     }, []);
 
     const {data: contas = [], isLoading} = useQuery<PlanoConta[]>({
-        queryKey: ['plano-contas'],
+        queryKey: tenantQueryKey('plano-contas'),
         queryFn: () => fetchApiData("/plano-contas")
     });
 
@@ -245,7 +246,7 @@ export default function PlanoContas() {
             });
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({queryKey: ['plano-contas']});
+            queryClient.invalidateQueries({queryKey: tenantQueryKey('plano-contas')});
             setModal(prev => ({...prev, open: false, data: null}));
             showSuccessBanner('Categoria salva com sucesso.');
         },
@@ -257,7 +258,7 @@ export default function PlanoContas() {
     const deleteMutation = useMutation({
         mutationFn: (id: number) => fetchApi(`/plano-contas/${id}`, {method: 'DELETE'}),
         onSuccess: () => {
-            queryClient.invalidateQueries({queryKey: ['plano-contas']});
+            queryClient.invalidateQueries({queryKey: tenantQueryKey('plano-contas')});
             toast({title: 'Sucesso', description: 'Categoria removida.'});
         },
         onError: async (error: Error) => {

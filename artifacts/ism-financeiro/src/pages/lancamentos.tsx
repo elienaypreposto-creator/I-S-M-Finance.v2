@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useState, useEffect, useRef} from "react";
 import {StatusBadge} from "@/components/shared/status-badge";
 import {formatCurrency, formatDate, cn} from "@/lib/utils";
@@ -555,7 +556,7 @@ function LancamentoModal({
     // garante refetch a cada abertura, mesmo reabrindo o mesmo item logo
     // após salvar (junto com a invalidação feita no onSuccess da mutation).
     const {data: editItemFull} = useQuery<LancamentoEditItem>({
-        queryKey: ["lancamento-edit", editItem?.id],
+        queryKey: tenantQueryKey("lancamento-edit", editItem?.id),
         queryFn: async () => {
             const res = await fetch(`${API_URL}/lancamentos/${editItem!.id}`);
             if (!res.ok) throw new Error("Erro ao buscar lançamento");
@@ -620,7 +621,7 @@ function LancamentoModal({
     // ── Queries ──────────────────────────────────────────────────────────────
 
     const {data: parceiros = []} = useQuery<Parceiro[]>({
-        queryKey: ["parceiros-modal"],
+        queryKey: tenantQueryKey("parceiros-modal"),
         queryFn: async () => {
             try {
                 const res = await fetch(`${API_URL}/parceiros?all=true`);
@@ -634,7 +635,7 @@ function LancamentoModal({
     });
 
     const {data: planoContas = []} = useQuery<PlanoConta[]>({
-        queryKey: ["plano-contas-modal"],
+        queryKey: tenantQueryKey("plano-contas-modal"),
         queryFn: async () => {
             try {
                 const res = await fetch(`${API_URL}/plano-contas`);
@@ -648,7 +649,7 @@ function LancamentoModal({
     });
 
     const {data: departamentos = []} = useQuery<Departamento[]>({
-        queryKey: ["departamentos-modal"],
+        queryKey: tenantQueryKey("departamentos-modal"),
         queryFn: async () => {
             try {
                 const res = await fetch(`${API_URL}/departamentos`);
@@ -662,7 +663,7 @@ function LancamentoModal({
     });
 
     const {data: contasBancarias = []} = useQuery<ContaBancaria[]>({
-        queryKey: ["contas-bancarias-modal"],
+        queryKey: tenantQueryKey("contas-bancarias-modal"),
         queryFn: async () => {
             try {
                 const res = await fetch(`${API_URL}/contas-bancarias`);
@@ -751,12 +752,12 @@ function LancamentoModal({
             return res.json();
         },
         onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["lancamentos"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("lancamentos")});
             // Invalida o cache do fetch-por-ID também - sem isso, reabrir o
             // MESMO lançamento logo em seguida poderia reutilizar dados
             // desatualizados (Desconto/Juros antigos) antes do refetch.
             if (editItem?.id) {
-                void queryClient.invalidateQueries({queryKey: ["lancamento-edit", editItem.id]});
+                void queryClient.invalidateQueries({queryKey: tenantQueryKey("lancamento-edit", editItem.id)});
             }
             toast({title: "Sucesso", description: editItem ? "Lançamento atualizado." : "Lançamento criado."});
             onSaved();
@@ -1322,7 +1323,7 @@ export default function Lancamentos() {
     const tipo = activeTab === "cr" ? "CR" : activeTab === "cp" ? "CP" : undefined;
 
     const {data, isLoading, isError} = useQuery<ApiResponse>({
-        queryKey: ["lancamentos", tipo, debouncedSearch, page, dateStart, dateEnd, filtroStatus],
+        queryKey: tenantQueryKey("lancamentos", tipo, debouncedSearch, page, dateStart, dateEnd, filtroStatus),
         queryFn: async () => {
             const params = new URLSearchParams();
             if (tipo) params.set("tipo", tipo);
@@ -1344,7 +1345,7 @@ export default function Lancamentos() {
             if (!res.ok) throw new Error("Falha ao excluir");
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({queryKey: ["lancamentos"]});
+            queryClient.invalidateQueries({queryKey: tenantQueryKey("lancamentos")});
             toast({title: "Excluído", description: "Lançamento removido com sucesso."});
         },
         onError: (e: Error) =>
@@ -1397,7 +1398,7 @@ export default function Lancamentos() {
                     onSaved={() => {
                         setModalOpen(false);
                         setEditItem(null);
-                        queryClient.invalidateQueries({queryKey: ["lancamentos"]});
+                        queryClient.invalidateQueries({queryKey: tenantQueryKey("lancamentos")});
                     }}
                     editItem={editItem}
                 />

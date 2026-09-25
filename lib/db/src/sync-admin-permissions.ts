@@ -3,6 +3,7 @@
  *
  * Usado no boot da API (sem CLI em TST/PRD) e reutilizado pelo seed CLI.
  * Nunca cria usuários, nunca toca senhas, nunca expõe segredos em log.
+ * Nunca grava `"*"`. O catálogo granular é a única fonte.
  */
 
 import {eq, sql} from "drizzle-orm";
@@ -26,7 +27,7 @@ function parseEmailList(raw: string | undefined): string[] {
         .filter(Boolean);
 }
 
-/** Resolve e-mails alvo: lista estática + ADMIN_EMAIL + ADMIN_EMAILS (env). */
+/** Resolve e-mails alvo do seed/boot: lista estática + ADMIN_EMAIL + ADMIN_EMAILS (env). */
 export function resolveSystemAdminEmails(): string[] {
     const fromEnv = [
         ...parseEmailList(process.env.ADMIN_EMAIL),

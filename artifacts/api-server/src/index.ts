@@ -6,9 +6,10 @@ import path from "path";
 
 dotenv.config({path: path.resolve(process.cwd(), "../../.env")});
 
-import {syncAdminPermissionsOnBoot} from "@workspace/db";
+import {assertRlsRoles, syncAdminPermissionsOnBoot} from "@workspace/db";
 import app from "./app";
 import {startPromoverAtrasadosJob} from "./jobs/promover-atrasados";
+import {startArquivarAuditoriaJob} from "./jobs/arquivar-auditoria";
 
 const port = process.env.PORT || 5000;
 
@@ -28,16 +29,15 @@ function runAdminPermissionsSyncOnBoot(): void {
         });
 }
 
-// Sincroniza permissões dos Super Admins no boot (container, local, cold start).
-// Fail-soft: não bloqueia o listen nem derruba o processo.
-runAdminPermissionsSyncOnBoot();
+function listenIfLocal(): void {
+    if (process.env.NODE_ENV === "production" && process.env.RUN_LOCAL !== "true") {
+        return;
+    }
 
-// Only listen when not in a serverless environment (like Vercel)
-// or when explicitly running in development.
-if (process.env.NODE_ENV !== "production" || process.env.RUN_LOCAL === "true") {
     const server = app.listen(port, () => {
         console.log(`Server listening on port ${port}`);
         startPromoverAtrasadosJob();
+        startArquivarAuditoriaJob();
     });
 
     server.on("error", (error: any) => {
@@ -51,5 +51,16 @@ if (process.env.NODE_ENV !== "production" || process.env.RUN_LOCAL === "true") {
     });
 }
 
-// Export for Vercel serverless function
+void assertRlsRoles()
+    .then(() => {
+        console.log("[boot] pool padrão = ism_app; admin pool = ism_admin");
+        runAdminPermissionsSyncOnBoot();
+        listenIfLocal();
+    })
+    .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[boot] recusado — SET ROLE ism_app/ism_admin é obrigatório: ${msg}`);
+        process.exit(1);
+    });
+
 export default app;

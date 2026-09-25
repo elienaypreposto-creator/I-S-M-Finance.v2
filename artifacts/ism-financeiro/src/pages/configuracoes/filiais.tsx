@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useState} from "react";
 import {useForm} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
@@ -177,7 +178,7 @@ export default function Filiais() {
 
     // ── Query ────────────────────────────────────────────────────────────────────
     const {data: filiais = [], isLoading, isError} = useQuery<FilialRow[]>({
-        queryKey: ["filiais"],
+        queryKey: tenantQueryKey("filiais"),
         queryFn: () => fetchApiData<FilialRow[]>("/filiais"),
     });
 
@@ -189,7 +190,7 @@ export default function Filiais() {
                 body: JSON.stringify({nome: data.nome}),
             }),
         onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["filiais"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("filiais")});
             toast({title: "Filial criada com sucesso."});
             closeModal();
         },
@@ -205,7 +206,7 @@ export default function Filiais() {
                 body: JSON.stringify({nome: data.nome}),
             }),
         onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["filiais"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("filiais")});
             toast({title: "Filial atualizada com sucesso."});
             closeModal();
         },
@@ -218,7 +219,7 @@ export default function Filiais() {
         mutationFn: (id: number) =>
             fetchApiData<{ deleted: boolean }>(`/filiais/${id}`, {method: "DELETE"}),
         onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["filiais"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("filiais")});
             toast({title: "Filial removida com sucesso."});
         },
         onError: (err: Error) => {

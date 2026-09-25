@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -145,7 +146,7 @@ export default function Departamentos() {
   const [modalKey, setModalKey] = useState(0);
 
   const { data: departamentos = [], isLoading } = useQuery<DepartamentoRow[]>({
-    queryKey: ["departamentos"],
+    queryKey: tenantQueryKey("departamentos"),
     queryFn: () => fetchApiData<DepartamentoRow[]>("/departamentos"),
   });
 
@@ -156,7 +157,7 @@ export default function Departamentos() {
         body: JSON.stringify(payload),
       }),
     onSuccess: (item) => {
-      void queryClient.invalidateQueries({ queryKey: ["departamentos"] });
+      void queryClient.invalidateQueries({ queryKey: tenantQueryKey("departamentos") });
       toast({ title: "Departamento criado", description: `"${item.nome}" foi cadastrado.` });
       setShowCreate(false);
     },
@@ -176,7 +177,7 @@ export default function Departamentos() {
         body: JSON.stringify({ nome }),
       }),
     onSuccess: (item) => {
-      void queryClient.invalidateQueries({ queryKey: ["departamentos"] });
+      void queryClient.invalidateQueries({ queryKey: tenantQueryKey("departamentos") });
       toast({ title: "Departamento atualizado", description: `"${item.nome}" foi salvo.` });
       setEditingItem(null);
     },
@@ -193,7 +194,7 @@ export default function Departamentos() {
     mutationFn: (id: number) =>
       fetchApiData<{ deleted: boolean }>(`/departamentos/${id}`, { method: "DELETE" }),
     onSuccess: (_, id) => {
-      void queryClient.invalidateQueries({ queryKey: ["departamentos"] });
+      void queryClient.invalidateQueries({ queryKey: tenantQueryKey("departamentos") });
       const nome = departamentos.find((d) => d.id === id)?.nome ?? "";
       toast({
         title: "Departamento removido",

@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {Fragment, useEffect, useMemo, useRef, useState} from "react";
 import {PageHeader} from "@/components/shared/page-header";
 import {Download, Target, TrendingUp, TrendingDown, Loader2, ChevronDown, ChevronRight} from "lucide-react";
@@ -220,13 +221,13 @@ export default function Metas() {
 
     // ── Queries ────────────────────────────────────────────────────────────────
     const {data: planoContas = [], isLoading: loadingPC} = useQuery<PlanoConta[]>({
-        queryKey: ["plano-contas"],
+        queryKey: tenantQueryKey("plano-contas"),
         queryFn: () => fetchApiData<PlanoConta[]>("/plano-contas"),
         staleTime: 5 * 60 * 1000,
     });
 
     const {data: metas = [], isLoading: loadingMetas} = useQuery<MetaRow[]>({
-        queryKey: ["metas", ano],
+        queryKey: tenantQueryKey("metas", ano),
         queryFn: () => fetchApiData<MetaRow[]>(`/metas?ano=${ano}`),
     });
 
@@ -244,7 +245,7 @@ export default function Metas() {
             }),
 
         onMutate: async (payload) => {
-            await queryClient.cancelQueries({queryKey: ["metas", ano]});
+            await queryClient.cancelQueries({queryKey: tenantQueryKey("metas", ano)});
             const previous = queryClient.getQueryData<MetaRow[]>(["metas", ano]);
 
             queryClient.setQueryData<MetaRow[]>(["metas", ano], (old = []) => {

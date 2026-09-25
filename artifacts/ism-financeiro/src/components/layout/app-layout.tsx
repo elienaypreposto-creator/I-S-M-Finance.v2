@@ -3,6 +3,8 @@ import { AppSidebar } from "./app-sidebar";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Bell, User, LogOut } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
+import { EmpresaSwitcher } from "./empresa-switcher";
+import { useEmpresaTitle } from "@/hooks/use-empresa-title";
 
 function getInitials(nome: string): string {
   return nome.trim().split(/\s+/).slice(0, 2).map((p) => p[0]?.toUpperCase() ?? "").join("");
@@ -10,6 +12,7 @@ function getInitials(nome: string): string {
 
 export function AppLayout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
+  useEmpresaTitle();
 
   const style = {
     "--sidebar-width": "17rem",
@@ -22,8 +25,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
         <AppSidebar />
         <div className="flex flex-col flex-1 min-w-0">
           <header className="h-16 flex items-center justify-between px-4 md:px-6 border-b border-white/5 bg-card/50 backdrop-blur-xl sticky top-0 z-20">
-            <div className="flex items-center gap-3">
-              <SidebarTrigger className="text-muted-foreground hover:text-foreground hover:bg-white/10 transition-all" />
+            <div className="flex items-center gap-3 min-w-0">
+              <SidebarTrigger className="text-muted-foreground hover:text-foreground hover:bg-white/10 transition-all shrink-0" />
+              <EmpresaSwitcher />
             </div>
             
             <div className="flex items-center gap-2 md:gap-4">

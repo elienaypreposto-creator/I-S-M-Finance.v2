@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useMemo, useState, useEffect, useRef} from "react";
 import {useLocation} from "wouter";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
@@ -490,10 +491,8 @@ function CardLancamento({
 
         onSuccess: () => {
             void queryClient.invalidateQueries({
-                queryKey: [
-                    "conciliacao-extrato",
-                    extratoId,
-                ],
+                queryKey: tenantQueryKey("conciliacao-extrato",
+                    extratoId,),
             });
 
             setEditando(null);
@@ -1023,10 +1022,8 @@ export default function ConciliacaoExtratoDetalhe({
         isError,
         refetch,
     } = useQuery({
-        queryKey: [
-            "conciliacao-extrato",
-            extratoId,
-        ],
+        queryKey: tenantQueryKey("conciliacao-extrato",
+            extratoId,),
         queryFn: () =>
             fetchApiData<ExtratoDetalheResponse>(
                 `/conciliacoes/${extratoId}`,
@@ -1035,9 +1032,7 @@ export default function ConciliacaoExtratoDetalhe({
     });
 
     const {data: parametros} = useQuery({
-        queryKey: [
-            "conciliacoes-parametros",
-        ],
+        queryKey: tenantQueryKey("conciliacoes-parametros",),
         queryFn: () =>
             fetchApiData<{
                 motivo_ignorar_obrigatorio: boolean;
@@ -1451,18 +1446,14 @@ export default function ConciliacaoExtratoDetalhe({
 
                 void queryClient.invalidateQueries(
                     {
-                        queryKey: [
-                            "conciliacao-extrato",
-                            extratoId,
-                        ],
+                        queryKey: tenantQueryKey("conciliacao-extrato",
+                            extratoId,),
                     },
                 );
 
                 void queryClient.invalidateQueries(
                     {
-                        queryKey: [
-                            "conciliacoes-pendencias-mes",
-                        ],
+                        queryKey: tenantQueryKey("conciliacoes-pendencias-mes",),
                     },
                 );
 
@@ -1978,10 +1969,8 @@ export default function ConciliacaoExtratoDetalhe({
                 onSaved={() => {
                     void queryClient.invalidateQueries(
                         {
-                            queryKey: [
-                                "conciliacao-extrato",
-                                extratoId,
-                            ],
+                            queryKey: tenantQueryKey("conciliacao-extrato",
+                                extratoId,),
                         },
                     );
                 }}

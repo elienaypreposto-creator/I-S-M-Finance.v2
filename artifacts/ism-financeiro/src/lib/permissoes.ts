@@ -1,6 +1,4 @@
-/**
- * FEAT-09 - códigos de permissão (espelho do backend).
- */
+/** Códigos de permissão (espelho do backend). */
 export const PERM = {
     CONCILIACAO_ACESSAR: "financeiro:conciliacao:acessar",
     CONCILIACAO_IMPORTAR: "financeiro:conciliacao:importar",
@@ -23,4 +21,7 @@ export const PERM = {
     REGRAS_CONCILIACAO_EDITAR: "financeiro:regras-conciliacao:editar",
     REGRAS_CONCILIACAO_DELETAR: "financeiro:regras-conciliacao:deletar",
     ADMIN_PERMISSOES_CONCEDER: "admin:permissoes:conceder",
+    ADMIN_EMPRESAS_LISTAR: "admin:empresas:listar",
+    ADMIN_EMPRESAS_CRIAR: "admin:empresas:criar",
+    ADMIN_EMPRESAS_EDITAR: "admin:empresas:editar",
 } as const;

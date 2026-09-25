@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useEffect, useMemo, useState, useRef} from "react";
 import {useForm, Controller} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
@@ -700,7 +701,7 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
             });
         },
         onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["contas-bancarias"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("contas-bancarias")});
             toast({
                 title: initialData ? "Conta atualizada" : "Conta cadastrada",
                 description: "As informações foram salvas com sucesso.",
@@ -1104,7 +1105,7 @@ export default function ContasBancarias() {
     const [currentPage, setCurrentPage] = useState(1);
 
     const {data: contas = [], isLoading} = useQuery<ContaBancaria[]>({
-        queryKey: ["contas-bancarias"],
+        queryKey: tenantQueryKey("contas-bancarias"),
         queryFn: () => fetchApiData<ContaBancaria[]>("/contas-bancarias"),
     });
 
@@ -1115,7 +1116,7 @@ export default function ContasBancarias() {
                 body: JSON.stringify({status}),
             }),
         onSuccess: (_, variables) => {
-            void queryClient.invalidateQueries({queryKey: ["contas-bancarias"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("contas-bancarias")});
             toast({
                 title:
                     variables.status === "ativo" ? "Conta desbloqueada" : "Conta bloqueada",
@@ -1137,7 +1138,7 @@ export default function ContasBancarias() {
                 method: "DELETE",
             }),
         onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["contas-bancarias"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("contas-bancarias")});
             toast({
                 title: "Conta removida",
                 description: "A conta foi deletada com sucesso.",

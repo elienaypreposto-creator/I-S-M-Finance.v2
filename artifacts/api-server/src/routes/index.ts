@@ -18,6 +18,7 @@ import healthRouter from "./health";
 import v1Router from "./v1";
 import {withAuth} from "../middlewares/auth";
 import {withTenant} from "../middlewares/tenant";
+import {withTenantTxMiddleware} from "../middlewares/tenant-tx";
 import authDomainRouter from "../domains/auth/router";
 import financialDomainRouter from "../domains/financial/router";
 import reconciliationDomainRouter from "../domains/reconciliation/router";
@@ -33,6 +34,7 @@ router.use("/v1", v1Router);
 // Barreira de autenticação + tenant - todas as rotas abaixo exigem JWT com empresa_id
 router.use(withAuth);
 router.use(withTenant);
+router.use(withTenantTxMiddleware);
 router.use(auditoriaRouter);
 router.use(reportsDomainRouter);
 router.use(financialDomainRouter);

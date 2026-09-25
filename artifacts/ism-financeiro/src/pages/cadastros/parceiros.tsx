@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useEffect, useMemo, useRef, useState} from "react";
 import {createPortal} from "react-dom";
 import {
@@ -678,7 +679,7 @@ export function NovoParceiroModal({onClose, initialData, onSaved}: {
     const isEdit = !!initialData;
 
     const {data: departamentos = []} = useQuery({
-        queryKey: ["departamentos"],
+        queryKey: tenantQueryKey("departamentos"),
         queryFn: () => fetchApiData<DepartamentoRow[]>("/departamentos"),
     });
 
@@ -736,7 +737,7 @@ export function NovoParceiroModal({onClose, initialData, onSaved}: {
             return fetchApiData<ParceiroRow>("/parceiros", {method: "POST", body: JSON.stringify(body)});
         },
         onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["parceiros"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("parceiros")});
             toast({
                 title: isEdit ? "Parceiro atualizado" : "Parceiro cadastrado",
                 description: "O registro foi salvo com sucesso.",
@@ -1027,14 +1028,14 @@ export default function Parceiros() {
     const {confirm, ConfirmDialogProps} = useConfirm();
 
     const {data: departamentos = []} = useQuery({
-        queryKey: ["departamentos"],
+        queryKey: tenantQueryKey("departamentos"),
         queryFn: () => fetchApiData<DepartamentoRow[]>("/departamentos"),
     });
 
     const deptNomeById = useMemo(() => new Map(departamentos.map((d) => [d.id, d.nome])), [departamentos]);
 
     const {data: parceirosLista = [], isLoading} = useQuery({
-        queryKey: ["parceiros", debouncedSearch],
+        queryKey: tenantQueryKey("parceiros", debouncedSearch),
         queryFn: () => {
             const q = debouncedSearch.trim();
             const qs = new URLSearchParams({limit: "200", page: "1"});
@@ -1051,7 +1052,7 @@ export default function Parceiros() {
                 body: JSON.stringify({status}),
             }),
         onSuccess: (_data, variables) => {
-            void queryClient.invalidateQueries({queryKey: ["parceiros"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("parceiros")});
             toast({
                 title: variables.status === "ativo" ? "Parceiro ativado" : "Parceiro inativado",
                 description: "O status foi atualizado com sucesso.",
@@ -1066,7 +1067,7 @@ export default function Parceiros() {
         mutationFn: (id: number) =>
             fetchApiData<{ deleted?: boolean }>(`/parceiros/${id}`, {method: "DELETE"}),
         onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["parceiros"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("parceiros")});
             toast({title: "Parceiro removido", description: "O cadastro foi excluído."});
         },
         onError: (e: unknown) => {

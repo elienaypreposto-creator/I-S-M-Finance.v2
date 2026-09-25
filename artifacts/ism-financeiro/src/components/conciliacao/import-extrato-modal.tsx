@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useEffect, useState} from "react";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 import {useForm} from "react-hook-form";
@@ -82,7 +83,7 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
     }, [open, reset]);
 
     const {data: contas = [], isLoading: loadingContas} = useQuery<ContaBancariaOption[]>({
-        queryKey: ["contas-bancarias"],
+        queryKey: tenantQueryKey("contas-bancarias"),
         queryFn: () => fetchApiData<ContaBancariaOption[]>("/contas-bancarias"),
         enabled: open,
     });
@@ -119,7 +120,7 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
             });
         },
         onSuccess: (data) => {
-            void queryClient.invalidateQueries({queryKey: ["conciliacoes"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("conciliacoes")});
             const dup = data.linhas_ignoradas_duplicadas ?? 0;
             const auto = data.linhas_classificadas_automaticamente ?? 0;
             const parts: string[] = [];

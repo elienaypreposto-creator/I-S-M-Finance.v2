@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/shared/page-header";
 import {
@@ -62,7 +63,7 @@ export default function ContabilFiscal() {
   if (tipoFiltro !== "ambos") params.set("tipo", tipoFiltro);
 
   const { data: todos = [], isLoading, isError } = useQuery<ContabilItem[]>({
-    queryKey: ["contabil-fiscal", dataInicio, dataFim, tipoFiltro],
+    queryKey: tenantQueryKey("contabil-fiscal", dataInicio, dataFim, tipoFiltro),
     queryFn: () =>
       fetchApiData<ContabilItem[]>(`/relatorios/contabil-fiscal?${params.toString()}`),
   });

@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useEffect, useState} from "react";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 import {
@@ -31,7 +32,7 @@ type Props = {
     onSaved?: () => void;
 };
 
-/** FEAT-09: editar lançamento a partir da conciliação (valor só com alterar_valor). */
+/** Edição a partir da conciliação. Valor só com permissão alterar_valor. */
 export function EditarLancamentoConciliacaoModal({open, lancamentoId, onClose, onSaved}: Props) {
     const {toast} = useToast();
     const queryClient = useQueryClient();
@@ -44,7 +45,7 @@ export function EditarLancamentoConciliacaoModal({open, lancamentoId, onClose, o
     const [valor, setValor] = useState("");
 
     const {data, isLoading} = useQuery({
-        queryKey: ["lancamento-edit-conciliacao", lancamentoId],
+        queryKey: tenantQueryKey("lancamento-edit-conciliacao", lancamentoId),
         queryFn: () => fetchApiData<LancamentoEditavel>(`/lancamentos/${lancamentoId}`),
         enabled: open && lancamentoId != null,
     });
@@ -72,7 +73,7 @@ export function EditarLancamentoConciliacaoModal({open, lancamentoId, onClose, o
         },
         onSuccess: () => {
             toast({title: "Lançamento atualizado", description: "Alterações salvas com sucesso."});
-            void queryClient.invalidateQueries({queryKey: ["conciliacao"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("conciliacao")});
             onSaved?.();
             onClose();
         },

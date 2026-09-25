@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useEffect, useRef, useState} from "react";
 import {createPortal} from "react-dom";
 import {
@@ -62,10 +63,8 @@ type Departamento = { id: number; nome: string };
 type CentroCusto = { id: number; nome: string; departamento_id: number | null };
 
 /**
- * Dados vindos da linha do extrato bancário (Conciliação) para pré-popular o
- * formulário na criação de um NOVO lançamento - não é edição de um lançamento
- * existente, então não usa `LancamentoEditItem` (que dispara o GET
- * /lancamentos/:id). Usado pelo botão "+" em extrato.tsx (RN-D3).
+ * Pré-preenche um lançamento novo a partir da linha do extrato.
+ * Não usa LancamentoEditItem (evita GET /lancamentos/:id).
  */
 export type LancamentoPrefill = {
     tipo: "CP" | "CR";
@@ -407,10 +406,7 @@ type LancamentoModalProps = {
      *  modo edição, é chamado sem argumento. */
     onSaved: (created?: { id: number }) => void;
     editItem?: LancamentoEditItem | null;
-    /** Pré-preenche o formulário para uma NOVA criação (não é edição).
-     *  Ignorado se `editItem` estiver presente. Usado pela tela de
-     *  Conciliação ao criar um lançamento a partir de uma linha do extrato
-     *  (RN-D3, botão "+"). */
+    /** Pré-preenche criação nova. Ignorado se editItem estiver presente. */
     prefill?: LancamentoPrefill;
 };
 
@@ -468,7 +464,7 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     } = form;
 
     const {data: editItemFull, dataUpdatedAt} = useQuery<LancamentoEditItem>({
-        queryKey: ["lancamento-edit", editItem?.id],
+        queryKey: tenantQueryKey("lancamento-edit", editItem?.id),
         queryFn: () => fetchApiData<LancamentoEditItem>(`/lancamentos/${editItem!.id}`),
         enabled: !!editItem?.id,
         staleTime: 0,
@@ -581,7 +577,7 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     }, [vencimento, nivelRisco]);
 
     const {data: parceiros = [], isFetching: isFetchingParceiros} = useQuery<ParceiroRow[]>({
-        queryKey: ["parceiros-modal", searchParceiro],
+        queryKey: tenantQueryKey("parceiros-modal", searchParceiro),
         queryFn: () => {
             const qs = new URLSearchParams({page: "1", limit: "20"});
             if (searchParceiro.trim()) qs.set("search", searchParceiro.trim());
@@ -590,17 +586,17 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     });
 
     const {data: planoContas = []} = useQuery<PlanoConta[]>({
-        queryKey: ["plano-contas-modal"],
+        queryKey: tenantQueryKey("plano-contas-modal"),
         queryFn: () => fetchApiData<PlanoConta[]>("/plano-contas"),
     });
 
     const {data: departamentos = []} = useQuery<Departamento[]>({
-        queryKey: ["departamentos-modal"],
+        queryKey: tenantQueryKey("departamentos-modal"),
         queryFn: () => fetchApiData<Departamento[]>("/departamentos"),
     });
 
     const {data: centrosCusto = []} = useQuery<CentroCusto[]>({
-        queryKey: ["centros-custo-modal"],
+        queryKey: tenantQueryKey("centros-custo-modal"),
         queryFn: () => fetchApiData<CentroCusto[]>("/centros-custos"),
         retry: false,
     });
@@ -622,12 +618,12 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
             return fetchApiData<{ id: number }>(`/lancamentos`, {method: "POST", body: JSON.stringify(body)});
         },
         onSuccess: (resp) => {
-            void queryClient.invalidateQueries({queryKey: ["lancamentos"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("lancamentos")});
             // Invalida o cache do fetch-por-ID também - sem isso, reabrir o
             // MESMO lançamento logo em seguida poderia (dependendo do
             // timing) reutilizar dados desatualizados antes do refetch.
             if (editItem?.id) {
-                void queryClient.invalidateQueries({queryKey: ["lancamento-edit", editItem.id]});
+                void queryClient.invalidateQueries({queryKey: tenantQueryKey("lancamento-edit", editItem.id)});
             }
             toast({title: "Sucesso", description: editItem ? "Lançamento atualizado." : "Lançamento criado."});
             onSaved(editItem ? undefined : resp);
@@ -1335,7 +1331,7 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                     initialData={parceiroSubModal.mode === "edit" ? parceiroSubModal.data : null}
                     onClose={() => setParceiroSubModal(null)}
                     onSaved={() => {
-                        void queryClient.invalidateQueries({queryKey: ["parceiros-modal"]});
+                        void queryClient.invalidateQueries({queryKey: tenantQueryKey("parceiros-modal")});
                     }}
                 />
             )}

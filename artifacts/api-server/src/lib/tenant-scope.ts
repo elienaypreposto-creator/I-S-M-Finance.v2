@@ -1,16 +1,9 @@
 /**
- * Contrato de tenant (ISMF-14) - fonte de verdade para ISMF-15/16/18/19.
- *
- * AccessTokenPayload.empresa_id  -> empresa ativa da sessão
- * req.tenant = { empresaId }     -> definido por withTenant após withAuth
- * tenantScope(table, empresaId)  -> único jeito canónico de filtrar domínio
- * withEmpresaId(body, empresaId) -> escrita: ignora empresa_id do cliente
- * runInTenantTx                  -> gancho SET LOCAL app.empresa_id (ISMF-15 RLS)
- *
- * Services NÃO montam eq(table.empresa_id, …) ad hoc.
+ * Filtro de tenant. Services não montam eq(table.empresa_id) ad hoc:
+ * tenantScope / tenantWhere na leitura, withEmpresaId na escrita.
  */
 
-import {and, eq, sql, type SQL} from "drizzle-orm";
+import {and, eq, type SQL} from "drizzle-orm";
 import type {PgTransaction} from "drizzle-orm/pg-core";
 import type {Request} from "express";
 import {AppError} from "../utils/app-error";
@@ -50,18 +43,15 @@ export function withEmpresaId<T extends object>(
 }
 
 /**
- * Gancho para ISMF-15 (RLS). `set_config(..., true)` = SET LOCAL: vale só
- * dentro desta transação. Nunca usar SET de sessão em conexão do pool.
+ * set_config(..., true) é SET LOCAL: vale só nesta transação.
+ * Nunca usar SET de sessão em conexão do pool.
  */
 export async function runInTenantTx<T>(
     empresaId: number,
     work: (tx: { execute: (q: unknown) => Promise<unknown> }) => Promise<T>,
 ): Promise<T> {
-    const {db} = await import("@workspace/db");
-    return db.transaction(async (tx) => {
-        await tx.execute(sql`SELECT set_config('app.empresa_id', ${String(empresaId)}, true)`);
-        return work(tx);
-    });
+    const {withTenantTx} = await import("@workspace/db");
+    return withTenantTx(empresaId, work);
 }
 
 export type TenantTx = PgTransaction<never, Record<string, never>, never>;

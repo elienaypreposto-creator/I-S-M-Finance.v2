@@ -6,10 +6,12 @@
   "exports": {
     ".": "./src/index.ts",
     "./schema": "./src/schema/index.ts",
-    "./permissoes": "./src/permissoes-catalog.ts"
+    "./permissoes": "./src/permissoes-catalog.ts",
+    "./tenant-als": "./src/tenant-als.ts"
   },
   "scripts": {
     "db:migrate": "tsx ./migrate.ts",
+    "rls:smoke": "tsx ./src/rls-acceptance.ts",
     "db:generate": "drizzle-kit generate --config ./drizzle.config.ts",
     "db:check": "drizzle-kit check --config ./drizzle.config.ts",
     "push": "drizzle-kit push --config ./drizzle.config.ts",

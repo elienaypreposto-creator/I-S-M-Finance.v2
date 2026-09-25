@@ -92,6 +92,34 @@
       "when": 1790166300000,
       "tag": "0012_usuario_empresas",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790166400000,
+      "tag": "0013_rls_ism_app",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790166500000,
+      "tag": "0014_auditoria_append_only",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1790166600000,
+      "tag": "0015_rls_revoke_public_auditoria",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790166700000,
+      "tag": "0016_auditoria_request_id_text",
+      "breakpoints": true
     }
   ]
 }

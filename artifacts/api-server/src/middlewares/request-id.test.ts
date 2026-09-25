@@ -3,7 +3,7 @@ import {describe, it} from "node:test";
 import type {NextFunction, Request, Response} from "express";
 import {REQUEST_ID_HEADER, requestId, resolveRequestId} from "./request-id.js";
 
-describe("resolveRequestId (Card 95)", () => {
+describe("resolveRequestId", () => {
     it("reutiliza X-Request-Id válido do cliente", () => {
         assert.equal(resolveRequestId("client-req-01"), "client-req-01");
     });

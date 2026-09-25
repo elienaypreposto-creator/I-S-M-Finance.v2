@@ -17,12 +17,15 @@ import {
     Loader2,
     UserCircle,
     KeyRound,
+    Building2,
 } from "lucide-react";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
 import {PERM} from "@/lib/permissoes";
 import {useAuth} from "@/hooks/use-auth";
+import {UsuarioEmpresasModal} from "./usuario-empresas-modal";
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
@@ -211,6 +214,9 @@ const permissoesGranulares = [
             {nome: "Edição de Usuários", codigo: "admin:usuarios:editar"},
             {nome: "Exclusão de Usuários", codigo: "admin:usuarios:deletar"},
             {nome: "Conceder permissões a utilizadores", codigo: "admin:permissoes:conceder"},
+            {nome: "Consulta de Empresas", codigo: "admin:empresas:listar"},
+            {nome: "Cadastro de Empresas", codigo: "admin:empresas:criar"},
+            {nome: "Edição de Empresas e vínculos", codigo: "admin:empresas:editar"},
             {nome: "Cadastro de Token de API", codigo: "admin:tokens-api:criar"},
             {nome: "Consulta de Tokens de API", codigo: "admin:tokens-api:listar"},
             {nome: "Exclusão de Token de API", codigo: "admin:tokens-api:deletar"},
@@ -261,7 +267,7 @@ function PermissoesModal({usuario, onClose}: { usuario: UsuarioRow; onClose: () 
     const [busca, setBusca] = useState("");
 
     const {isLoading: loadingPerms, data: fetchedPerms} = useQuery<string[]>({
-        queryKey: ["usuario-permissoes", usuario.id],
+        queryKey: tenantQueryKey("usuario-permissoes", usuario.id),
         queryFn: () => fetchApiData<string[]>(`/usuarios/${usuario.id}/permissoes`),
     });
 
@@ -276,7 +282,7 @@ function PermissoesModal({usuario, onClose}: { usuario: UsuarioRow; onClose: () 
                 body: JSON.stringify({permissoes: perms}),
             }),
         onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["usuario-permissoes", usuario.id]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("usuario-permissoes", usuario.id)});
             toast({title: "Permissões atualizadas com sucesso."});
             onClose();
         },
@@ -495,7 +501,7 @@ function ParceiroAutocomplete({
     const {data: parceiros = [], isLoading} = useQuery<
         { id: number; nome: string; email: string | null; telefone: string | null; celular: string | null }[]
     >({
-        queryKey: ["parceiros-search", debouncedSearch],
+        queryKey: tenantQueryKey("parceiros-search", debouncedSearch),
         queryFn: () =>
             fetchApiData(
                 `/parceiros?limit=20&search=${encodeURIComponent(debouncedSearch)}&excluir_com_usuario=true`
@@ -770,6 +776,8 @@ export default function Usuarios() {
     const queryClient = useQueryClient();
     const {hasPermission} = useAuth();
     const canConcederPermissoes = hasPermission(PERM.ADMIN_PERMISSOES_CONCEDER);
+    const canGerirVinculos = hasPermission(PERM.ADMIN_EMPRESAS_LISTAR) || hasPermission(PERM.ADMIN_EMPRESAS_EDITAR);
+    const [vinculosUsuario, setVinculosUsuario] = useState<UsuarioRow | null>(null);
     const [showUserModal, setShowUserModal] = useState(false);
     const [editingUsuario, setEditingUsuario] = useState<UsuarioRow | null>(null);
     const [permissoesUsuario, setPermissoesUsuario] = useState<UsuarioRow | null>(null);
@@ -793,7 +801,7 @@ export default function Usuarios() {
     };
 
     const {data: usuarios = [], isLoading, isError, error} = useQuery<UsuarioRow[]>({
-        queryKey: ["usuarios"],
+        queryKey: tenantQueryKey("usuarios"),
         queryFn: () => fetchApiData<UsuarioRow[]>("/usuarios?limit=100"),
     });
 
@@ -817,7 +825,7 @@ export default function Usuarios() {
                     body: JSON.stringify({permissoes: perfisBase[variables.perfil_base]}),
                 }).catch(console.error);
             }
-            void queryClient.invalidateQueries({queryKey: ["usuarios"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("usuarios")});
             toast({title: "Usuário criado com sucesso."});
             closeUserModal();
         },
@@ -845,7 +853,7 @@ export default function Usuarios() {
                     body: JSON.stringify({permissoes: perfisBase[variables.perfil_base]}),
                 }).catch(console.error);
             }
-            void queryClient.invalidateQueries({queryKey: ["usuarios"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("usuarios")});
             toast({title: "Usuário atualizado com sucesso."});
             closeUserModal();
         },
@@ -860,7 +868,7 @@ export default function Usuarios() {
                 body: JSON.stringify({bloqueado, perfil_base}),
             }),
         onSuccess: (_, vars) => {
-            void queryClient.invalidateQueries({queryKey: ["usuarios"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("usuarios")});
             toast({title: vars.bloqueado ? "Usuário bloqueado." : "Usuário desbloqueado."});
         },
         onError: (err: Error) =>
@@ -908,6 +916,13 @@ export default function Usuarios() {
             )}
             {canConcederPermissoes && permissoesUsuario && (
                 <PermissoesModal usuario={permissoesUsuario} onClose={() => setPermissoesUsuario(null)}/>
+            )}
+            {canGerirVinculos && vinculosUsuario && (
+                <UsuarioEmpresasModal
+                    usuarioId={vinculosUsuario.id}
+                    usuarioNome={vinculosUsuario.nome}
+                    onClose={() => setVinculosUsuario(null)}
+                />
             )}
 
             <PageHeader
@@ -1052,6 +1067,17 @@ export default function Usuarios() {
                                                     </td>
                                                     <td className="px-5 py-4 text-right">
                                                         <div className="flex justify-end gap-1">
+                                                            {canGerirVinculos && (
+                                                            <button
+                                                                type="button"
+                                                                title="Empresas"
+                                                                className="px-2 py-1.5 hover:bg-primary/10 rounded-lg text-xs text-primary font-medium transition-colors"
+                                                                onClick={() => setVinculosUsuario(u)}
+                                                            >
+                                                                <Building2 className="w-3.5 h-3.5 inline mr-1"/>
+                                                                Empresas
+                                                            </button>
+                                                            )}
                                                             {canConcederPermissoes && (
                                                             <button
                                                                 type="button"
@@ -1121,6 +1147,15 @@ export default function Usuarios() {
                                                 </div>
                                                 <div
                                                     className="flex items-center gap-2 mt-3 pt-3 border-t border-white/5">
+                                                    {canGerirVinculos && (
+                                                    <button
+                                                        type="button"
+                                                        className="flex-1 flex items-center justify-center gap-1.5 py-1.5 hover:bg-primary/10 rounded-lg text-xs text-primary font-medium"
+                                                        onClick={() => setVinculosUsuario(u)}
+                                                    >
+                                                        <Building2 className="w-3.5 h-3.5"/> Empresas
+                                                    </button>
+                                                    )}
                                                     {canConcederPermissoes && (
                                                     <button
                                                         type="button"

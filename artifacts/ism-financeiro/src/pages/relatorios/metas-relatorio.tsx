@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useMemo, useState} from "react";
 import {PageHeader} from "@/components/shared/page-header";
 import {
@@ -64,7 +65,7 @@ export default function MetasRelatorio() {
     const [ano, setAno] = useState(CURRENT_YEAR);
 
     const {data: metas = [], isLoading, isError} = useQuery<MetaItem[]>({
-        queryKey: ["relatorio-metas", ano],
+        queryKey: tenantQueryKey("relatorio-metas", ano),
         queryFn: () => fetchApiData<MetaItem[]>(`/relatorios/metas?ano=${ano}`),
     });
 

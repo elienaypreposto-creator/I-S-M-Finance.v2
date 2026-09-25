@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import { useState } from "react";
 import { PageHeader } from "@/components/shared/page-header";
 import {
@@ -71,7 +72,7 @@ export default function FechamentoMensal() {
   const [ano, setAno] = useState(CURRENT_YEAR);
 
   const { data, isLoading, isError } = useQuery<FechamentoData>({
-    queryKey: ["fechamento-mensal", mes, ano],
+    queryKey: tenantQueryKey("fechamento-mensal", mes, ano),
     queryFn: () =>
       fetchApiData<FechamentoData>(
         `/relatorios/fechamento-mensal?mes=${mes}&ano=${ano}`,

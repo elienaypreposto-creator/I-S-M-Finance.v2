@@ -1,11 +1,12 @@
 import {Switch, Route, Router as WouterRouter, Redirect} from "wouter";
-import {QueryClient, QueryClientProvider, QueryCache, MutationCache} from "@tanstack/react-query";
+import {QueryClientProvider} from "@tanstack/react-query";
 import {Toaster} from "@/components/ui/toaster";
 import {TooltipProvider} from "@/components/ui/tooltip";
-import {toast} from "sonner";
 import {AppLayout} from "./components/layout/app-layout";
 import {ErrorBoundary} from "./components/error-boundary";
 import NotFound from "@/pages/not-found";
+import {queryClient, invalidateRelated} from "./lib/query-client";
+import {AuthProvider, useAuth} from "./hooks/use-auth";
 
 // Pages
 import Dashboard from "./pages/dashboard-FINANCEIRO-ISM";
@@ -37,100 +38,12 @@ import Login from "./pages/auth/login";
 import PrimeiroAcesso from "./pages/auth/primeiro-acesso";
 import DefinirSenha from "./pages/auth/definir-senha";
 import {authStorage} from "./lib/api-config";
-import {useAuth} from "./hooks/use-auth";
 import {PERM} from "./lib/permissoes";
+import AdminEmpresas from "./pages/admin/empresas";
 
-// ─── QueryClient com tratativa global de erros
-const queryClient = new QueryClient({
-    defaultOptions: {
-        queries: {
-            retry: 1,
-            refetchOnWindowFocus: false,
-        },
-    },
-    // Toast vermelho para qualquer query que falhar (exceto 401 — já tratado no fetchApi)
-    queryCache: new QueryCache({
-        onError: (error: unknown) => {
-            const message = error instanceof Error ? error.message : "Erro na requisição.";
-            // Não exibe toast para erros de sessão expirada (já redireciona para /login)
-            if (message.toLowerCase().includes("sessão expirada")) return;
-            toast.error(message);
-        },
-    }),
-    // Toast vermelho para qualquer mutation que falhar
-    mutationCache: new MutationCache({
-        onError: (error: unknown) => {
-            const message = error instanceof Error ? error.message : "Erro ao salvar.";
-            if (message.toLowerCase().includes("sessão expirada")) return;
-            toast.error(message);
-        },
-    }),
-});
+export {queryClient, invalidateRelated};
 
-// ─── Mapa de dependências de cache
-//
-// IMPORTANTE: os valores aqui são PREFIXOS de queryKey, não chaves exatas.
-// Ao invalidar uma chave "gatilho", todas as queries cujo primeiro elemento
-// da queryKey COMEÇA COM algum dos prefixos listados também são invalidadas
-// (via `predicate`, não por match exato de array).
-//
-// Isso resolve dois problemas que uma lista de chaves exatas não resolve:
-// 1) Uma página pode ter várias queries sob o mesmo "namespace"
-//    (ex: dashboard-kpis, dashboard-fluxo, dashboard-projecao-mes, ...).
-//    Um prefixo "dashboard" cobre todas de uma vez, hoje e no futuro.
-// 2) Queries novas criadas depois (ex: dashboard-nova-metrica) já entram
-//    automaticamente na invalidação, sem precisar lembrar de atualizar
-//    este mapa toda vez que uma query nova for adicionada.
-//
-// Regra de nomenclatura que este mapa assume (e que já é seguida no projeto):
-// toda queryKey de uma "família" deve começar com o mesmo prefixo textual
-// (ex: tudo relacionado ao dashboard começa com "dashboard").
-//
-// @example
-// // Em qualquer mutation de lançamento:
-// onSuccess: () => invalidateRelated(queryClient, "lancamentos")
-// // -> invalida ["lancamentos"] exato + tudo que comece com "dashboard" ou "relatorio" + ["conciliacoes-list"]
-const QUERY_DEPENDENCIES: Record<string, string[]> = {
-    "lancamentos": ["dashboard", "relatorio", "conciliacoes-list"],
-    "kanban-cards": ["dashboard"],
-    "conciliacoes-list": ["dashboard", "lancamentos"],
-    "plano-contas": ["dashboard", "relatorio", "lancamentos"],
-    "parceiros": ["lancamentos"], // combobox de parceiro no modal de lançamento
-    "metas": ["dashboard"],
-};
-
-/**
- * Função utilitária global para invalidar uma chave de cache e todas as suas dependentes.
- *
- * Invalida:
- * 1. A própria chave, por match exato (["key"] casa com ["key", ...args]).
- * 2. Todas as queries cujo primeiro elemento da queryKey comece com algum
- *    dos prefixos listados em QUERY_DEPENDENCIES[key].
- *
- * @example
- * onSuccess: () => invalidateRelated(queryClient, "lancamentos")
- */
-export function invalidateRelated(qc: QueryClient, key: string) {
-    // 1. Invalidação exata da própria chave (cobre ["lancamentos", filtros...])
-    void qc.invalidateQueries({queryKey: [key]});
-
-    // 2. Invalidação por prefixo de todas as chaves dependentes
-    const prefixes = QUERY_DEPENDENCIES[key] ?? [];
-    if (prefixes.length === 0) return;
-
-    void qc.invalidateQueries({
-        predicate: (query) => {
-            const first = query.queryKey[0];
-            if (typeof first !== "string") return false;
-            return prefixes.some((prefix) => first.startsWith(prefix));
-        },
-    });
-}
-
-// Exportar queryClient para uso externo (ex: kanban.tsx, lancamentos.tsx)
-export {queryClient};
-
-// Rota privada (JWT + permissão opcional FEAT-09)
+// JWT + permissão opcional
 function PrivateRoute({
                           component: Component,
                           path,
@@ -147,18 +60,19 @@ function PrivateRoute({
         return <Redirect to="/login"/>;
     }
 
+    if (loading) {
+        return (
+            <Route path={path}>
+                {() => (
+                    <AppLayout>
+                        <div className="p-8 text-sm text-muted-foreground">Carregando sessão…</div>
+                    </AppLayout>
+                )}
+            </Route>
+        );
+    }
+
     if (permission) {
-        if (loading) {
-            return (
-                <Route path={path}>
-                    {() => (
-                        <AppLayout>
-                            <div className="p-8 text-sm text-muted-foreground">Carregando permissões…</div>
-                        </AppLayout>
-                    )}
-                </Route>
-            );
-        }
         if (!hasPermission(permission)) {
             return (
                 <Route path={path}>
@@ -224,8 +138,10 @@ function Router() {
 
             {/* Configurações */}
             <PrivateRoute path="/configuracoes/usuarios" component={Usuarios}/>
+            <PrivateRoute path="/admin/usuarios" component={Usuarios}/>
             <PrivateRoute path="/configuracoes/filiais" component={Filiais}/>
             <PrivateRoute path="/configuracoes/tokens-api" component={TokensApi}/>
+            <PrivateRoute path="/admin/empresas" component={AdminEmpresas} permission={PERM.ADMIN_EMPRESAS_LISTAR}/>
 
             <Route component={NotFound}/>
         </Switch>
@@ -237,12 +153,14 @@ export function App() {
     return (
         <ErrorBoundary>
             <QueryClientProvider client={queryClient}>
-                <TooltipProvider>
-                    <WouterRouter base={import.meta.env.BASE_URL?.replace(/\/$/, "") || ""}>
-                        <Router/>
-                    </WouterRouter>
-                    <Toaster/>
-                </TooltipProvider>
+                <AuthProvider>
+                    <TooltipProvider>
+                        <WouterRouter base={import.meta.env.BASE_URL?.replace(/\/$/, "") || ""}>
+                            <Router/>
+                        </WouterRouter>
+                        <Toaster/>
+                    </TooltipProvider>
+                </AuthProvider>
             </QueryClientProvider>
         </ErrorBoundary>
     );

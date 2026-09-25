@@ -54,10 +54,12 @@ router.put(
     asyncHandler(async (req, res) => {
         const {id} = lancamentoIdParamSchema.parse(req.params);
         const body = req.body as UpdateLancamentoBody;
+        const empresaId = requireTenant(req).empresaId;
+        const atual = await lancamentosService.getById(empresaId, id);
+        req.auditAntes = atual;
 
-        // FEAT-09: alterar valor exige permissão dedicada (negada ao usuário comum).
+        // Alterar valor exige permissão dedicada (negada ao usuário comum).
         if (body.valor !== undefined) {
-            const atual = await lancamentosService.getById(requireTenant(req).empresaId, id);
             const valorNovo = Number(body.valor);
             const valorAtual = Number(atual.valor);
             if (
@@ -76,7 +78,7 @@ router.put(
             }
         }
 
-        const item = await lancamentosService.update(requireTenant(req).empresaId, id, body);
+        const item = await lancamentosService.update(empresaId, id, body);
         return successResponse(res, item);
     }),
 );

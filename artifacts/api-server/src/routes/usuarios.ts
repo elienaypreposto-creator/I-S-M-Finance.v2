@@ -21,7 +21,8 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import {and, count, eq, ilike, ne} from "drizzle-orm";
 import {db} from "@workspace/db";
-import {parceirosTable, permissoesTable, usuariosTable, usuarioEmpresasTable, logsAuditoriaTable} from "@workspace/db/schema";
+import {empresasTable, parceirosTable, permissoesTable, usuariosTable, usuarioEmpresasTable} from "@workspace/db/schema";
+import {invalidateTenantCache} from "../middlewares/tenant";
 import {requireTenant, tenantWhere} from "../lib/tenant-scope";
 import {sendWelcomeEmail, sendAdminCreatedAccountEmail} from "../services/email.service";
 import {revokeAllTokensForUser} from "../services/session.service";
@@ -31,7 +32,6 @@ import {withPermission} from "../middlewares/withPermission";
 import {validateBody} from "../middlewares/validate";
 import {validatePermissoesGrant} from "../utils/permissoes-grant";
 import {PERM, codigoPermissaoCatalogoSchema} from "../constants/permissoes";
-import {extractIp} from "../middlewares/logger";
 
 // ---------------------
 // Schemas de validação
@@ -139,7 +139,7 @@ router.post(
         try {
             const {nome, email, cargo, perfil_base, telefone, celular, senha} = req.body as CreateUsuarioBody;
 
-            const frontendUrl = process.env.FRONTEND_URL ?? "http://localhost:5173";
+            const frontendUrl = process.env.FRONTEND_URL;
             if (!frontendUrl) {
                 console.error("[CONFIG] FRONTEND_URL não definido - criação de utilizador bloqueada.");
                 return errorResponse(res, 500, "CONFIGURATION_ERROR", "Serviço temporariamente indisponível. Contacte o administrador.");
@@ -277,6 +277,13 @@ router.put(
                 senha
             } = req.body as UpdateUsuarioBody;
 
+            const [antes] = await db
+                .select(USUARIO_PUBLIC_COLS)
+                .from(usuariosTable)
+                .where(eq(usuariosTable.id, id))
+                .limit(1);
+            req.auditAntes = antes ?? null;
+
             if (email !== undefined) {
                 const [conflito] = await db
                     .select({id: usuariosTable.id})
@@ -403,6 +410,10 @@ router.put(
             }
 
             const permissoes = grant.permissoes;
+            req.auditAntes = {
+                permissoes: atuais.map((row) => row.permissao),
+                depois: permissoes,
+            };
 
             await db.transaction(async (tx) => {
                 await tx.delete(permissoesTable).where(eq(permissoesTable.usuario_id, id));
@@ -412,19 +423,6 @@ router.put(
                         permissoes.map((p) => ({usuario_id: id, codigo_permissao: p})),
                     );
                 }
-
-                await tx.insert(logsAuditoriaTable).values({
-                    empresa_id: requireTenant(req).empresaId,
-                    usuario_id: req.user!.id,
-                    acao: "PUT",
-                    recurso: req.originalUrl,
-                    ip: extractIp(req),
-                    detalhes: {
-                        antes: atuais.map((row) => row.permissao),
-                        depois: permissoes,
-                    },
-                    status_code: 200,
-                });
             });
 
             return successResponse(res, permissoes);
@@ -433,5 +431,110 @@ router.put(
         }
     },
 );
+
+const upsertVinculoBodySchema = z.object({
+    empresa_id: z.coerce.number().int().positive(),
+    papel: z.enum(["admin", "membro"]).default("membro"),
+    ativo: z.boolean().default(true),
+});
+
+router.get("/usuarios/:id/empresas", withPermission(PERM.ADMIN_EMPRESAS_LISTAR), async (req, res) => {
+    try {
+        const id = parseInt(String(req.params.id), 10);
+        if (!Number.isInteger(id) || id <= 0) {
+            return errorResponse(res, 400, "VALIDATION_ERROR", "ID de usuário inválido.");
+        }
+
+        const items = await db
+            .select({
+                id: usuarioEmpresasTable.id,
+                usuario_id: usuarioEmpresasTable.usuario_id,
+                empresa_id: usuarioEmpresasTable.empresa_id,
+                papel: usuarioEmpresasTable.papel,
+                ativo: usuarioEmpresasTable.ativo,
+                razao_social: empresasTable.razao_social,
+                nome_fantasia: empresasTable.nome_fantasia,
+                slug: empresasTable.slug,
+            })
+            .from(usuarioEmpresasTable)
+            .innerJoin(empresasTable, eq(usuarioEmpresasTable.empresa_id, empresasTable.id))
+            .where(eq(usuarioEmpresasTable.usuario_id, id));
+
+        return successResponse(res, items);
+    } catch (e: unknown) {
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar vínculos.", e);
+    }
+});
+
+router.put("/usuarios/:id/empresas", withPermission(PERM.ADMIN_EMPRESAS_EDITAR), validateBody(upsertVinculoBodySchema), async (req, res) => {
+    try {
+        const id = parseInt(String(req.params.id), 10);
+        if (!Number.isInteger(id) || id <= 0) {
+            return errorResponse(res, 400, "VALIDATION_ERROR", "ID de usuário inválido.");
+        }
+
+        const {empresa_id, papel, ativo} = req.body as z.infer<typeof upsertVinculoBodySchema>;
+
+        const [empresa] = await db.select({id: empresasTable.id}).from(empresasTable).where(eq(empresasTable.id, empresa_id)).limit(1);
+        if (!empresa) return errorResponse(res, 404, "NOT_FOUND", "Empresa não encontrada.");
+
+        const [existente] = await db
+            .select({id: usuarioEmpresasTable.id})
+            .from(usuarioEmpresasTable)
+            .where(and(eq(usuarioEmpresasTable.usuario_id, id), eq(usuarioEmpresasTable.empresa_id, empresa_id)))
+            .limit(1);
+
+        if (existente) {
+            const [item] = await db
+                .update(usuarioEmpresasTable)
+                .set({papel, ativo})
+                .where(eq(usuarioEmpresasTable.id, existente.id))
+                .returning();
+            invalidateTenantCache(id, empresa_id);
+            return successResponse(res, item);
+        }
+
+        const [item] = await db
+            .insert(usuarioEmpresasTable)
+            .values({usuario_id: id, empresa_id, papel, ativo})
+            .returning();
+        invalidateTenantCache(id, empresa_id);
+        return successResponse(res, item, null, 201);
+    } catch (e: unknown) {
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao vincular usuário à empresa.", e);
+    }
+});
+
+router.delete("/usuarios/:id/empresas/:empresaId", withPermission(PERM.ADMIN_EMPRESAS_EDITAR), async (req, res) => {
+    try {
+        const id = parseInt(String(req.params.id), 10);
+        const empresaId = parseInt(String(req.params.empresaId), 10);
+        if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(empresaId) || empresaId <= 0) {
+            return errorResponse(res, 400, "VALIDATION_ERROR", "IDs inválidos.");
+        }
+
+        const ativos = await db
+            .select({id: usuarioEmpresasTable.id})
+            .from(usuarioEmpresasTable)
+            .where(and(eq(usuarioEmpresasTable.usuario_id, id), eq(usuarioEmpresasTable.ativo, true)));
+
+        const [alvo] = await db
+            .select({id: usuarioEmpresasTable.id, ativo: usuarioEmpresasTable.ativo})
+            .from(usuarioEmpresasTable)
+            .where(and(eq(usuarioEmpresasTable.usuario_id, id), eq(usuarioEmpresasTable.empresa_id, empresaId)))
+            .limit(1);
+
+        if (!alvo) return errorResponse(res, 404, "NOT_FOUND", "Vínculo não encontrado.");
+        if (alvo.ativo && ativos.length <= 1) {
+            return errorResponse(res, 422, "ULTIMO_VINCULO", "Não é possível remover o último vínculo ativo do utilizador.");
+        }
+
+        await db.delete(usuarioEmpresasTable).where(eq(usuarioEmpresasTable.id, alvo.id));
+        invalidateTenantCache(id, empresaId);
+        return successResponse(res, {deleted: true});
+    } catch (e: unknown) {
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao desvincular usuário.", e);
+    }
+});
 
 export default router;

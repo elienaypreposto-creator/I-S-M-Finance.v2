@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/shared/page-header";
@@ -46,7 +47,7 @@ export default function DreGerencial() {
   const mesesPt = useMemo(() => mesesPtLong(), []);
 
   const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ["relatorio-dre", ano, regime],
+    queryKey: tenantQueryKey("relatorio-dre", ano, regime),
     queryFn: () =>
       fetchApiData<DreResponse>(`/relatorios/dre?ano=${ano}&regime=${regime}`),
   });

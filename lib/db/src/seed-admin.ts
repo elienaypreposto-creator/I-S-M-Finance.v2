@@ -13,7 +13,7 @@
 
 import bcrypt from "bcryptjs";
 import {and, eq, sql} from "drizzle-orm";
-import {db, pool} from "./index";
+import {closeDbPools, db, pool} from "./index";
 import {usuarioEmpresasTable, usuariosTable} from "./schema";
 import {PERMISSOES_ADMIN, syncAdminPermissionsOnBoot} from "./sync-admin-permissions";
 
@@ -222,4 +222,4 @@ async function seedAdmin(): Promise<void> {
     }
 }
 
-seedAdmin().finally(() => pool.end());
+seedAdmin().finally(() => closeDbPools());

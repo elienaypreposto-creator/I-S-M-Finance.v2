@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import { useMemo, useState, useRef, useEffect, type ReactNode } from "react";
 import { PageHeader } from "@/components/shared/page-header";
 import { useQuery } from "@tanstack/react-query";
@@ -581,7 +582,7 @@ function ContasPanel({
       : `/dashboard/inadimplencia-fornecedores?tab=${tab}&limit=20`;
 
   const { data: items = [], isLoading } = useQuery({
-    queryKey: ["dashboard-inadimplencia", tipo, tab],
+    queryKey: tenantQueryKey("dashboard-inadimplencia", tipo, tab),
     queryFn: () => fetchApiData<ParceiroInadimplente[]>(path),
   });
 
@@ -653,38 +654,38 @@ export default function Dashboard() {
   }, [filtroRisco]);
 
   const { data: kpis, isLoading: kpisLoading, isError: kpisError } = useQuery({
-    queryKey: ["dashboard-kpis"],
+    queryKey: tenantQueryKey("dashboard-kpis"),
     queryFn: () => fetchApiData<KPIs>("/dashboard/kpis"),
     refetchInterval: 60000,
   });
 
   const { data: projecao } = useQuery({
-    queryKey: ["dashboard-projecao-mes"],
+    queryKey: tenantQueryKey("dashboard-projecao-mes"),
     queryFn: () => fetchApiData<ProjecaoMes>("/dashboard/projecao-mes"),
   });
 
   const { data: projecaoDias = [], isLoading: projDiasLoading } = useQuery({
-    queryKey: ["dashboard-projecao-dias", 30],
+    queryKey: tenantQueryKey("dashboard-projecao-dias", 30),
     queryFn: () => fetchApiData<ProjecaoDia[]>("/dashboard/projecao-dias?dias=30"),
   });
 
   const { data: fluxoCaixa = [], isLoading: fluxoLoading } = useQuery({
-    queryKey: ["dashboard-fluxo", anoFluxo],
+    queryKey: tenantQueryKey("dashboard-fluxo", anoFluxo),
     queryFn: () => fetchApiData<FluxoMes[]>(`/dashboard/fluxo-caixa-mensal?ano=${anoFluxo}`),
   });
 
   const { data: alertasRisco = [], isLoading: alertasLoading } = useQuery({
-    queryKey: ["dashboard-alertas-atraso", filtroRisco || "all"],
+    queryKey: tenantQueryKey("dashboard-alertas-atraso", filtroRisco || "all"),
     queryFn: () => fetchApiData<AlertaRisco[]>(alertasPath),
   });
 
   const { data: saidasPlano = [] } = useQuery({
-    queryKey: ["dashboard-saidas-plano"],
+    queryKey: tenantQueryKey("dashboard-saidas-plano"),
     queryFn: () => fetchApiData<PlanoItem[]>("/dashboard/saidas-plano-contas"),
   });
 
   const { data: entradasPlano = [] } = useQuery({
-    queryKey: ["dashboard-entradas-plano"],
+    queryKey: tenantQueryKey("dashboard-entradas-plano"),
     queryFn: () => fetchApiData<PlanoItem[]>("/dashboard/entradas-plano-contas"),
   });
 
