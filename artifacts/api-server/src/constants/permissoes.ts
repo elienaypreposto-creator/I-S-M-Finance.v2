@@ -18,7 +18,7 @@ export const PERM = {
     CONCILIACAO_CONCLUIR: "financeiro:conciliacao:concluir",
     /** Configuração do módulo (ex.: motivo_ignorar_obrigatorio) + jobs manuais. */
     CONCILIACAO_CONFIGURAR: "financeiro:conciliacao:configurar",
-    /** Legacy (UI antiga) — preferir as ações granulares acima. */
+    /** Legacy (UI antiga). Preferir as ações granulares acima. */
     CONCILIACAO_CONCILIAR: "financeiro:conciliacao:conciliar",
     LANCAMENTOS_EDITAR: "financeiro:lancamentos:editar",
     LANCAMENTOS_ALTERAR_VALOR: "financeiro:lancamentos:alterar_valor",

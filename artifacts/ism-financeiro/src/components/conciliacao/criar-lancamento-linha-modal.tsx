@@ -31,10 +31,9 @@ type CriarLancamentoLinhaModalProps = {
 };
 
 /**
- * RN-D3 (Card [+]): cria um lançamento a partir de uma linha do extrato sem
- * lançamento correspondente (ex.: antecipação de lucro do sócio). Vem
- * pré-preenchido com data/valor/natureza/descrição da linha; ao salvar, já
- * nasce vinculado e quitado por ela - sem passo extra de vincular.
+ * Cria um lançamento a partir de uma linha do extrato sem correspondente.
+ * Pré-preenchido com data/valor/natureza/descrição; ao salvar, nasce
+ * vinculado e quitado por ela.
  */
 export function CriarLancamentoLinhaModal({open, onClose, onSuccess, extratoId, linha}: CriarLancamentoLinhaModalProps) {
     const {toast} = useToast();

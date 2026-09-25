@@ -3,7 +3,7 @@
  *
  * Usado no boot da API (sem CLI em TST/PRD) e reutilizado pelo seed CLI.
  * Nunca cria usuários, nunca toca senhas, nunca expõe segredos em log.
- * Nunca grava `"*"` — o catálogo granular é a única fonte.
+ * Nunca grava `"*"`. O catálogo granular é a única fonte.
  */
 
 import {eq, sql} from "drizzle-orm";

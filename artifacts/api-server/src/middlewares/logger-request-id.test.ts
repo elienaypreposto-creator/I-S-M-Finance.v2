@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {describe, it} from "node:test";
 import {REQUEST_ID_PATTERN, auditRequestId, resolveRequestId} from "./request-id.js";
 
-describe("auditRequestId (ISMF-18 header ↔ coluna)", () => {
+describe("auditRequestId", () => {
     it("persiste o mesmo valor que o middleware aceita (não só UUID)", () => {
         assert.equal(auditRequestId("client-req-01"), "client-req-01");
         assert.equal(auditRequestId("trace-abc-001"), "trace-abc-001");

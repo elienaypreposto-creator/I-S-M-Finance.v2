@@ -1,6 +1,6 @@
 /**
- * ISMF-19: query keys e localStorage namespaced por empresa.
- * Não decodifica o JWE — o id vem de /auth/me ou do payload de login.
+ * Query keys e localStorage namespaced por empresa.
+ * Não decodifica o JWE: o id vem de /auth/me ou do payload de login.
  */
 
 let currentEmpresaId = 0;

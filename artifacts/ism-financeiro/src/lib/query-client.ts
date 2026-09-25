@@ -34,9 +34,7 @@ const QUERY_DEPENDENCIES: Record<string, string[]> = {
     metas: ["dashboard"],
 };
 
-/**
- * Invalida a família `key` (já prefixada com empresaId) e dependentes por prefixo.
- */
+/** Invalida a família `key` (prefixada com empresaId) e os dependentes. */
 export function invalidateRelated(qc: QueryClient, key: string) {
     void qc.invalidateQueries({queryKey: tenantQueryKey(key)});
 

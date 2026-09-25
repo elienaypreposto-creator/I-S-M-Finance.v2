@@ -122,9 +122,6 @@ export default function Lancamentos() {
   const deleteMutation = useMutation({
     mutationFn: (id: number) => fetchApiData<{ deleted: boolean }>(`/lancamentos/${id}`, { method: "DELETE" }),
     onSuccess: () => {
-      // FIX: antes invalidava só ["lancamentos"] direto — excluir um
-      // lançamento não refletia no dashboard nem no DRE sem F5. Agora
-      // propaga via invalidateRelated (dashboard-*, relatorio-*, conciliacoes-list).
       invalidateRelated(queryClient, "lancamentos");
       toast({ title: "Excluído", description: "Lançamento removido com sucesso." });
     },

@@ -164,12 +164,7 @@ async function runImport(filePath: string) {
     const validStatuses = ["pendente", "pago", "recebido", "atrasado", "cancelado"] as const;
     const inputStatus = String(row.Status || "").trim().toLowerCase();
     
-    // Fallback inteligente para status caso em branco
-    /* 
-      Se o vencimento já passou, "atrasado", senão "pendente", 
-      mas confiamos no que o usuário colocou no inputStatus.
-    */
-    const expectedAutoStatus = !isDespesa ? "recebido" : "pago"; // default fallback for executed lines if it was marked as paid
+    const expectedAutoStatus = !isDespesa ? "recebido" : "pago";
     const theStatus = (validStatuses as readonly string[]).includes(inputStatus)
         ? (inputStatus as (typeof validStatuses)[number])
         : inputStatus && inputStatus !== "pendente"

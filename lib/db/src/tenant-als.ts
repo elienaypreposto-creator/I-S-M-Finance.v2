@@ -1,6 +1,6 @@
 /**
- * AsyncLocalStorage do tenant — sem importar o client (evita ciclo).
- * SET LOCAL app.empresa_id vive só dentro da transação (PgBouncer transaction mode).
+ * AsyncLocalStorage do tenant, sem importar o client (evita ciclo).
+ * SET LOCAL app.empresa_id vive só dentro da transação.
  */
 
 import {AsyncLocalStorage} from "node:async_hooks";

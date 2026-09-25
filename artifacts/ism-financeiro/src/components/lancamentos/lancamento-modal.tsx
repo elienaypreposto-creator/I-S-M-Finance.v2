@@ -63,10 +63,8 @@ type Departamento = { id: number; nome: string };
 type CentroCusto = { id: number; nome: string; departamento_id: number | null };
 
 /**
- * Dados vindos da linha do extrato bancário (Conciliação) para pré-popular o
- * formulário na criação de um NOVO lançamento - não é edição de um lançamento
- * existente, então não usa `LancamentoEditItem` (que dispara o GET
- * /lancamentos/:id). Usado pelo botão "+" em extrato.tsx (RN-D3).
+ * Pré-preenche um lançamento novo a partir da linha do extrato.
+ * Não usa LancamentoEditItem (evita GET /lancamentos/:id).
  */
 export type LancamentoPrefill = {
     tipo: "CP" | "CR";
@@ -408,10 +406,7 @@ type LancamentoModalProps = {
      *  modo edição, é chamado sem argumento. */
     onSaved: (created?: { id: number }) => void;
     editItem?: LancamentoEditItem | null;
-    /** Pré-preenche o formulário para uma NOVA criação (não é edição).
-     *  Ignorado se `editItem` estiver presente. Usado pela tela de
-     *  Conciliação ao criar um lançamento a partir de uma linha do extrato
-     *  (RN-D3, botão "+"). */
+    /** Pré-preenche criação nova. Ignorado se editItem estiver presente. */
     prefill?: LancamentoPrefill;
 };
 

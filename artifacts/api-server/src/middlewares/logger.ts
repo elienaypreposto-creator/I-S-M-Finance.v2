@@ -1,12 +1,8 @@
 /**
- * auditLogger — mutações + GETs sensíveis (ISMF-18).
- *
- * Grava em res.on("finish"), sem bloquear a resposta.
- * logs_auditoria exige empresa_id NOT NULL. Rotas pre-tenant (login, refresh,
- * 401, OTP) NÃO inserem nessa tabela — vão para logs_sistema (global).
- * select-empresa / switch-empresa bem-sucedidos usam o empresa_id escolhido.
- *
- * INSERT corre dentro de withTenantTx para passar o RLS (SET LOCAL).
+ * Auditoria HTTP em res.on("finish"), sem bloquear a resposta.
+ * logs_auditoria exige empresa_id NOT NULL: rotas pre-tenant (login, refresh,
+ * 401, OTP) gravam em logs_sistema. select-empresa / switch-empresa bem-sucedidos
+ * usam o empresa_id escolhido. INSERT corre em withTenantTx (SET LOCAL).
  */
 
 import type {NextFunction, Request, Response} from "express";

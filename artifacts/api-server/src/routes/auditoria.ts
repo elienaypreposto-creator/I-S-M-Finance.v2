@@ -31,14 +31,8 @@ function isSystemAdmin(email: string | undefined): boolean {
 }
 
 /**
- * GET /auditoria
- *
  * Histórico da empresa ativa (withTenant + RLS). Superadmin pode passar
- * `todas_empresas=1` para consultar qualquer tenant (pool ism_admin / BYPASSRLS).
- *
- * Query params (todos opcionais):
- *   page, limit, usuario_id, acao, status_code, data_inicio, data_fim
- *   todas_empresas=1 — só superadmin
+ * todas_empresas=1 para consultar qualquer tenant (pool ism_admin / BYPASSRLS).
  */
 router.get(
     "/auditoria",

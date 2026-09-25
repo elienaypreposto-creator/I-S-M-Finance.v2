@@ -41,7 +41,7 @@ function mapLancamentoV1(i: {
         juros,
         multa,
         desconto,
-        /** DEF-05: valor + juros + multa − desconto */
+        /** valor + juros + multa - desconto */
         valor_efetivo: fromCents(
             valorEfetivoCents({
                 valor: i.valor,
@@ -50,7 +50,7 @@ function mapLancamentoV1(i: {
                 desconto: i.desconto,
             }),
         ),
-        /** @deprecated use `juros` (canônico DEF-05). Espelha juros para clientes legados. */
+        /** @deprecated use `juros`. Espelha juros para clientes legados. */
         acrescimo: juros,
     };
 }

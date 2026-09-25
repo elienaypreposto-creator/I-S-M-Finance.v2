@@ -43,7 +43,7 @@ import AdminEmpresas from "./pages/admin/empresas";
 
 export {queryClient, invalidateRelated};
 
-// Rota privada (JWT + permissão opcional FEAT-09)
+// JWT + permissão opcional
 function PrivateRoute({
                           component: Component,
                           path,

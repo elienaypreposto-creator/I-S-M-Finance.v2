@@ -63,5 +63,4 @@ void assertRlsRoles()
         process.exit(1);
     });
 
-// Export for Vercel serverless function
 export default app;

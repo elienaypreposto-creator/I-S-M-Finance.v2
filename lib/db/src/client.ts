@@ -1,18 +1,10 @@
 /**
- * SSL + Supabase Pooler (PgBouncer): ao usar `connectionString`, o driver `pg`
- * pode extrair `sslmode=require` da URL e criar um TLSSocket que valida o
- * certificado - ignorando `ssl: { rejectUnauthorized: false }` do Pool.
+ * O driver pg, com connectionString, honra sslmode=require da URL e ignora
+ * ssl.rejectUnauthorized do Pool. Esta variável precisa existir ANTES do pool.
+ * Não desliga a cifra; só a validação da CA intermediária do Supabase.
  *
- * Definir esta variável ANTES de criar o pool garante que o Node.js aceite o
- * certificado da CA intermediária do Supabase sem rejeitar a conexão.
- *
- * Pooler: o pooler do Supabase (porta 6543) corre em **transaction mode**.
- * SET de sessão vaza entre clientes; SET LOCAL só vale dentro de BEGIN…COMMIT
- * e é o único modo seguro. Session mode (5432 direto / Docker) também aceita
- * SET LOCAL — usamos sempre SET LOCAL.
- *
- * Não desabilita criptografia - apenas a validação do certificado CA.
- * Remover quando o cert Supabase for adicionado ao bundle: `ssl: { ca: ... }`.
+ * O pooler (6543) é transaction mode: SET de sessão vaza entre clientes.
+ * SET LOCAL só vale dentro de BEGIN...COMMIT.
  */
 (process.env as Record<string, string>).NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
@@ -68,10 +60,9 @@ export async function applySessionRole(client: Pick<pg.PoolClient, "query">, rol
 }
 
 /**
- * SET ROLE obrigatório após acquire. Falha = recusa a conexão (fail-hard).
- * O evento `connect` do pg não é awaited — sobrescrever `pool.connect` evita
- * corrida com a primeira query. Sem skip: o pool padrão nunca sobrevive como
- * dono/superuser (FORCE RLS é ignorado por SUPERUSER).
+ * SET ROLE obrigatório após acquire. O evento connect do pg não é awaited;
+ * sobrescrever pool.connect evita corrida com a primeira query.
+ * FORCE RLS é ignorado por SUPERUSER, por isso o pool padrão nunca sobrevive como dono.
  */
 export function attachSessionRole(p: pg.Pool, role: "ism_app" | "ism_admin"): void {
     const original = p.connect.bind(p) as {
@@ -130,13 +121,13 @@ pool.on("error", (err) => {
 
 const ownerUrl = process.env.DATABASE_OWNER_URL ?? process.env.DATABASE_URL;
 
-/** Pool da role dona — retenção de auditoria, lookups pre-RLS (token v1). Sem SET ROLE. */
+/** Pool da role dona: retenção de auditoria e lookups pre-RLS (token v1). Sem SET ROLE. */
 export const ownerPool = makePool(ownerUrl, {max: 3});
 ownerPool.on("error", (err) => {
     console.error("Pool owner Postgres - erro inesperado:", err.message);
 });
 
-/** Pool BYPASSRLS — só rotas administrativas explícitas (ex.: GET /auditoria?todas_empresas=1). */
+/** Pool BYPASSRLS. Só rotas administrativas explícitas (ex.: GET /auditoria?todas_empresas=1). */
 export const adminPool = makePool(ownerUrl, {max: 2});
 attachSessionRole(adminPool, "ism_admin");
 adminPool.on("error", (err) => {
@@ -149,21 +140,20 @@ export const adminDb = drizzle(adminPool, {schema});
 
 type AppDb = NodePgDatabase<typeof schema>;
 
-/**
- * Proxy: dentro de `withTenantTx` / ALS, `db` é a transação da request
- * (já com SET LOCAL app.empresa_id). Fora, é o pool `ism_app` sem tenant
- * — RLS devolve conjunto vazio nas tabelas de domínio.
- */
 export async function closeDbPools(): Promise<void> {
     await Promise.all([pool.end(), ownerPool.end(), adminPool.end()]);
 }
 
-/** Fail-hard no boot: sem ism_app / ism_admin o processo não sobe. */
+/** Sem ism_app / ism_admin o processo não sobe. */
 export async function assertRlsRoles(): Promise<void> {
     await assertPoolRole(pool, "ism_app");
     await assertPoolRole(adminPool, "ism_admin");
 }
 
+/**
+ * Dentro de withTenantTx / ALS, db é a transação da request (SET LOCAL).
+ * Fora, é o pool ism_app sem tenant: RLS devolve conjunto vazio.
+ */
 export const db: AppDb = new Proxy(rawDb, {
     get(target, prop, receiver) {
         const tx = tenantAls.getStore()?.tx as AppDb | undefined;

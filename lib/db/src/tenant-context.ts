@@ -1,6 +1,6 @@
 /**
- * ISMF-15: transação com SET LOCAL app.empresa_id (+ role ism_app no pool).
- * Nunca usar SET de sessão — o pooler Supabase está em transaction mode.
+ * Transação com SET LOCAL app.empresa_id. Nunca usar SET de sessão:
+ * o pooler Supabase está em transaction mode.
  */
 
 import {sql} from "drizzle-orm";

@@ -5,9 +5,8 @@ import {tenantWhere} from "../lib/tenant-scope";
 import {hojeIsoLocal} from "../utils/date-civil";
 
 /**
- * FEAT-08: promove lançamentos pendentes com vencimento < hoje para atrasado.
- * Idempotente - seguro rodar várias vezes ao dia.
- * "hoje" = dia civil America/Sao_Paulo (não fuso do host).
+ * Promove pendentes com vencimento anterior a hoje para atrasado.
+ * "hoje" é o dia civil America/Sao_Paulo, não o fuso do host.
  */
 export async function promoverLancamentosAtrasados(hojeIso?: string): Promise<{ atualizados: number }> {
     const hoje = hojeIso ?? hojeIsoLocal();
@@ -59,7 +58,6 @@ export function startPromoverAtrasadosJob(): void {
         });
     };
 
-    // Roda na subida + a cada 6 horas
     run();
     intervalHandle = setInterval(run, 6 * 60 * 60 * 1000);
     if (typeof intervalHandle.unref === "function") {

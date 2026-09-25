@@ -1,9 +1,6 @@
 /**
- * ISMF-18: retenção ~24 meses. Corre como role dona (ownerPool), nunca ism_app.
+ * Retenção de ~24 meses. Corre como role dona (ownerPool), nunca ism_app.
  * Move linhas antigas para logs_auditoria_arquivo e apaga da tabela quente.
- *
- * Prazo alinhado a uso operacional; validar com contador/LGPD se a empresa
- * exigir retenção mais longa (nesse caso, só arquivar, não apagar o arquivo).
  */
 
 import {sql} from "drizzle-orm";

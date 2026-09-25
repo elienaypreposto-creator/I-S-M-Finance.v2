@@ -1,8 +1,3 @@
-/**
- * Gestão de empresas (ISMF-19) — catálogo granular (ISMF-4).
- * Tabela global (sem RLS). Não reabre o modelo de tenant do 12–14.
- */
-
 import {Router} from "express";
 import {z} from "zod";
 import {and, desc, eq, ne} from "drizzle-orm";

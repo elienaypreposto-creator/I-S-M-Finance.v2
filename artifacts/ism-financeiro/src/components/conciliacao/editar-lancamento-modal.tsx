@@ -32,7 +32,7 @@ type Props = {
     onSaved?: () => void;
 };
 
-/** FEAT-09: editar lançamento a partir da conciliação (valor só com alterar_valor). */
+/** Edição a partir da conciliação. Valor só com permissão alterar_valor. */
 export function EditarLancamentoConciliacaoModal({open, lancamentoId, onClose, onSaved}: Props) {
     const {toast} = useToast();
     const queryClient = useQueryClient();

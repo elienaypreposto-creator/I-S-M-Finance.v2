@@ -23,9 +23,6 @@ import {PERM} from "@/lib/permissoes";
 import {EditarLancamentoConciliacaoModal} from "@/components/conciliacao/editar-lancamento-modal";
 import {StatusBadge} from "@/components/shared/status-badge";
 import {invalidateRelated} from "@/App";
-// RN-D3: "Novo" - cria um lançamento a partir da linha de origem e já
-// vincula automaticamente. Função movida do botão [+] da tela de
-// conciliação para dentro deste modal.
 import {LancamentoModal, type LancamentoPrefill} from "@/components/lancamentos/lancamento-modal";
 
 export type LancamentoCompativel = {
@@ -34,14 +31,12 @@ export type LancamentoCompativel = {
     vencimento: string;
     descricao: string | null;
     valor: string | number;
-    /** Quitado antes deste vínculo - necessário para a fórmula de Modo B (1
-     *  lançamento) quando ele já tem quitação parcial/total anterior. Sem
-     *  isso o front calcula um "excedente" errado para lançamentos que já
-     *  têm status "pago"/"pago_parcial" (ver bug do card DEF-10). */
+    /** Quitado antes deste vínculo. Sem isto, o Modo B calcula excedente
+     *  em lançamentos que já estão pago / pago_parcial. */
     valor_quitado?: string | number | null;
     status: string;
     parceiro_id: number | null;
-    /** Nome do parceiro - usado na busca livre (RN-D4) e exibido no card. */
+    /** Nome do parceiro, usado na busca livre. */
     parceiro_nome?: string | null;
     plano_conta_id: number | null;
 };
@@ -70,9 +65,7 @@ type VincularModalProps = {
      *  localmente (ainda não salvo) - os vínculos reais no banco serão
      *  descartados no Salvar, então o preview também deve ignorá-los agora. */
     ignorarVinculosReais?: boolean;
-    /** Dados da linha de origem, usados para pré-preencher o formulário do
-     *  botão "Novo" (criar lançamento a partir desta linha - RN-D3, função
-     *  que antes vivia no botão [+] da tela de conciliação). */
+    /** Dados da linha de origem para pré-preencher o formulário "Novo". */
     tipoMovimento: string;
     dataMovimento: string | null;
     descricaoLinha: string | null;
@@ -225,8 +218,7 @@ function VincularFormBody({
         formState: {errors},
     } = form;
 
-    // RN-D4: quando "buscar mais lançamentos" traz itens novos, adiciona sem
-    // resetar o formulário (preserva seleções e valores já digitados).
+    // Itens novos da busca entram sem resetar seleções já digitadas.
     useEffect(() => {
         const idsNoForm = new Set(fields.map((f) => f.lancamento_id));
         const novos = lancamentos.filter((l) => !idsNoForm.has(l.id));
@@ -275,8 +267,7 @@ function VincularFormBody({
         void handleRequestClose();
     }, 60);
 
-    // RN-E1: mesma fórmula usada na validação (buildVincularFormSchema) -
-    // Modo A (2+) ou Modo B (1, considerando valor_quitado anterior).
+    // Mesma fórmula da validação (buildVincularFormSchema).
     const {deltaCents, somaBasesCents, somaJurosCents} = useMemo(
         () => calcDeltaVincularCents(valorExtratoAbs, selectedItens, lancamentosValorById, lancamentosQuitadoById),
         [valorExtratoAbs, selectedItens, lancamentosValorById, lancamentosQuitadoById],
@@ -284,10 +275,7 @@ function VincularFormBody({
 
     const extratoCents = Math.round(Math.abs(Number(valorExtratoAbs) || 0) * 100);
 
-    // RN-E1/E2/E6: restante = Δ − Juros/Multa (Δ = extrato − bases).
-    // >0 gap no extrato (cobertura parcial OU alocar juros)
-    // <0 títulos > extrato (residual Modo A / pagamento parcial Modo B)
-    // =0 bate
+    // restante = delta - juros/multa. >0 gap; <0 residual; 0 fecha.
     const restanteCents = deltaCents != null ? deltaCents - somaJurosCents : null;
 
     const quitadoAnteriorCentsSelecionado =
@@ -319,9 +307,7 @@ function VincularFormBody({
                 gerarParcial &&
                 (selectedItens.length < 2 || Boolean(residuoIdSelecionado))));
 
-    // Auto-preenche Juros/Multa somente quando o usuário marca alocarSobraJuros
-    // e há exatamente 1 lançamento (RN-G2 / 1:1 com taxas). Sem a flag, deixa
-    // cobertura parcial (Modo A incremental).
+    // Juros/Multa só auto-preenche com 1 lançamento e alocarSobraJuros. Sem a flag, cobertura parcial.
     const [alocarSobraJuros, setAlocarSobraJuros] = useState(false);
 
     useEffect(() => {
@@ -558,9 +544,7 @@ function VincularFormBody({
                                                             {l.parceiro_nome}
                                                         </p>
                                                     )}
-                                                    {/* Card 77: valor original + "Restante" (valor − valor_quitado) lado
-                                                        a lado - dá visibilidade de quanto do título já está
-                                                        comprometido com outras conciliações antes de selecionar. */}
+                                                    {/* Valor de face e restante (já comprometido noutras conciliações). */}
                                                     <p className="text-sm font-bold text-primary mt-0.5">
                                                         {formatCurrency(Number(l.valor))}
                                                         {quitadoAnteriorCents > 0 && (
@@ -571,10 +555,7 @@ function VincularFormBody({
                                                             </span>
                                                         )}
                                                     </p>
-                                                    {/* DEF-08/RN-E1: lançamento já com quitação anterior (ex.: status
-                                                        "Pago" buscado só para receber uma linha extra de juros) - mostra
-                                                        isso explicitamente, senão o usuário não entende por que o
-                                                        "Juros/Multa" pedido é maior que o valor de face do lançamento. */}
+                                                    {/* Quitação anterior visível: juros/multa pode superar o valor de face. */}
                                                     {quitadoAnteriorCents > 0 && (
                                                         <p className="text-[10px] text-amber-300/90 mt-0.5">
                                                             Já quitado: {formatCurrency(toMoney(quitadoAnteriorCents))}
@@ -659,11 +640,7 @@ function VincularFormBody({
                 </p>
             )}
 
-            {/* Barra de resumo em tempo real - recalcula a cada seleção/edição,
-                sem precisar de submit (RN-E1). Todo o cálculo roda em centavos
-                inteiros (extratoCents / somaBasesCents / restanteCents), e usa
-                a MESMA fórmula do backend (Modo A ou Modo B conforme o número
-                de lançamentos selecionados - ver calcDeltaVincularCents). */}
+            {/* Resumo em centavos, mesma fórmula do backend (calcDeltaVincularCents). */}
             <div className="shrink-0 border-t border-white/10 bg-black/40 px-5 py-3 space-y-3">
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center">
                     <div className="rounded-lg bg-white/5 px-2 py-2">
@@ -688,9 +665,7 @@ function VincularFormBody({
                             {formatCurrency(toMoney(somaJurosCents))}
                         </p>
                     </div>
-                    {/* RN-E1/E2/E6: valor restante, sempre visível e atualizado a
-                        cada clique - positivo = falta, negativo = excedente,
-                        zero = bate certinho. */}
+                    {/* Positivo = falta; negativo = excedente; zero = fecha. */}
                     <div
                         className={cn(
                             "rounded-lg px-2 py-2",
@@ -850,7 +825,7 @@ function VincularFormBody({
                     </div>
                 ) : null}
 
-                {/* RN-D4: busca mais lançamentos enquanto o valor não bate; some assim que bater */}
+                {/* Busca mais lançamentos enquanto o valor não fecha. */}
                 {!valoresBatendo && podeBuscarMais && (
                     <div className="flex justify-center">
                         <button
@@ -930,10 +905,7 @@ export function VincularModal({
     const {toast} = useToast();
 
     const [diasJanela, setDiasJanela] = useState(DIAS_JANELA_INICIAL);
-    // RN-D4: campos de busca manual - descrição/parceiro (texto livre), valor
-    // e vencimento, além da janela de datas. "buscaAtiva"/"valorAtivo"/
-    // "vencimentoAtivo" só mudam ao clicar em Buscar, para não disparar uma
-    // requisição a cada tecla digitada.
+    // Só aplica busca/valor/vencimento ao clicar em Buscar (não a cada tecla).
     const [buscaTexto, setBuscaTexto] = useState("");
     const [buscaAtiva, setBuscaAtiva] = useState("");
     const [valorTexto, setValorTexto] = useState("");
@@ -941,12 +913,7 @@ export function VincularModal({
     const [vencimentoTexto, setVencimentoTexto] = useState("");
     const [vencimentoAtivo, setVencimentoAtivo] = useState("");
 
-    // RN-D3: "Novo" - abre o mesmo formulário completo de "Novo Lançamento"
-    // usado na tela de Lançamentos, pré-preenchido com tipo/vencimento/valor/
-    // descrição vindos da linha do extrato. Ao salvar, o lançamento é criado
-    // e automaticamente vinculado a esta linha (vincularAutoMutation) - sem
-    // passo extra manual. Essa função morava no botão [+] da tela de
-    // conciliação e foi movida para dentro deste modal.
+    // Formulário de novo lançamento, pré-preenchido pela linha do extrato.
     const [novoLancamentoOpen, setNovoLancamentoOpen] = useState(false);
     const requestCloseRef = useRef(onClose);
 
@@ -977,13 +944,7 @@ export function VincularModal({
         enabled: open && linhaId > 0,
     });
 
-    // RN-D3: reaproveita o mesmo endpoint do fluxo de vincular manual (POST
-    // /conciliacoes/linhas/:id/vincular), sem desconto/juros e sem residuo -
-    // igual ao comportamento antigo do botão [+]. Regra de Ouro: o próprio
-    // lançamento nasce de fato (ele não tem "estado financeiro" até ser
-    // vinculado a algo), mas o VÍNCULO em si só é um preview - vira rascunho
-    // em memória (onDraftVincular) igual ao fluxo manual, só é persistido no
-    // Salvar/Conciliar do extrato.
+    // O lançamento nasce persistido; o vínculo fica em rascunho até Salvar/Conciliar.
     const vincularAutoMutation = useMutation({
         mutationFn: async ({lancamentoId, descricao}: { lancamentoId: number; descricao: string | null }) => {
             const payload: VincularPayload = {
@@ -1133,8 +1094,7 @@ export function VincularModal({
                     />
                 )}
 
-                {/* RN-D4: janela de busca configurável + busca por descrição/parceiro/
-                    valor/vencimento, em vez de depender só da proximidade de data. */}
+                {/* Janela e filtros de busca (não só proximidade de data). */}
                 <div className="px-5 pt-4 pb-2 border-b border-white/5 shrink-0 space-y-2">
                     <div className="flex flex-wrap items-end gap-2">
                         <div className="flex flex-col gap-1">

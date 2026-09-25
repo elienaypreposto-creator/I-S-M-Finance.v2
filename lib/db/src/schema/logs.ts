@@ -15,10 +15,10 @@ export const logsAuditoriaTable = pgTable("logs_auditoria", {
     id: serial("id").primaryKey(),
     empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
     usuario_id: integer("usuario_id").references(() => usuariosTable.id, {onDelete: "set null"}),
-    acao: text("acao").notNull(), // HTTP method
-    recurso: text("recurso").notNull(), // originalUrl
+    acao: text("acao").notNull(),
+    recurso: text("recurso").notNull(),
     ip: text("ip"),
-    detalhes: jsonb("detalhes"), // sanitised req.body + snapshot `antes`
+    detalhes: jsonb("detalhes"),
     status_code: integer("status_code"),
     request_id: varchar("request_id", {length: 128}),
     user_agent: text("user_agent"),

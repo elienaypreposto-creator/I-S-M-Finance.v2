@@ -1,14 +1,6 @@
 /**
- * Smoke ISMF-15 / ISMF-18 contra o Postgres real.
+ * Smoke RLS contra o Postgres real.
  * Uso: pnpm --filter @workspace/db run rls:smoke
- *
- * Critérios:
- *  - ism_app sem SET LOCAL → count(lancamentos) = 0
- *  - SET LOCAL app.empresa_id = 1 → só empresa 1
- *  - INSERT empresa_id=2 sob contexto 1 → erro de política
- *  - DELETE logs_auditoria como ism_app → permission denied
- *  - pool padrão fail-hard sem role ism_app
- *  - latência listagem 90d: mediana RLS vs baseline dono (alvo ≤ +10%)
  */
 
 import fs from "node:fs";

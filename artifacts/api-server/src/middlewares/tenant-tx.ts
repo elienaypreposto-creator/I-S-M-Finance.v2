@@ -1,10 +1,7 @@
 /**
- * Abre a transação da request com SET LOCAL app.empresa_id (ISMF-15).
- * Montar imediatamente após withTenant / v1Auth (quando req.tenant já existe).
- *
- * SET LOCAL só sobrevive enquanto a transação está aberta — por isso a tx
- * envolve o resto da request até `finish`/`close`. Seguro em transaction-mode
- * (Supabase pooler) e em session-mode (Docker/Postgres direto).
+ * Transação da request com SET LOCAL app.empresa_id.
+ * Montar após withTenant / v1Auth. SET LOCAL só vale enquanto a tx está aberta,
+ * por isso envolve a request até finish/close (pooler em transaction mode).
  */
 
 import type {NextFunction, Request, Response} from "express";

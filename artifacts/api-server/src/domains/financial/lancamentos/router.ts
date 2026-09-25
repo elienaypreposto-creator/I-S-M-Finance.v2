@@ -58,7 +58,7 @@ router.put(
         const atual = await lancamentosService.getById(empresaId, id);
         req.auditAntes = atual;
 
-        // FEAT-09: alterar valor exige permissão dedicada (negada ao usuário comum).
+        // Alterar valor exige permissão dedicada (negada ao usuário comum).
         if (body.valor !== undefined) {
             const valorNovo = Number(body.valor);
             const valorAtual = Number(atual.valor);

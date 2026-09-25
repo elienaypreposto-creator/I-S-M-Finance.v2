@@ -1,6 +1,5 @@
 /**
- * Rotas GET sensíveis (ISMF-18). Lista em constante — o middleware não hardcoda paths.
- * Mutações (POST/PUT/PATCH/DELETE) são sempre auditadas.
+ * Prefixos GET auditados. Mutações (POST/PUT/PATCH/DELETE) são sempre auditadas.
  */
 
 export const AUDIT_SENSITIVE_GET_PREFIXES = [

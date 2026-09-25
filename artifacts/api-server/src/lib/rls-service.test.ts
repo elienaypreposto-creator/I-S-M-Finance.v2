@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
 
-/**
- * Aceite ISMF-15: service sem withTenantTx / middleware não devolve dados
- * (ism_app + RLS FORCE, current_setting ausente → NULL → policy nega).
- * Requer migrate 0013+ e ISM_RLS_TEST=1.
- */
+/** Service sem SET LOCAL deve devolver vazio. Requer migrate 0013+ e ISM_RLS_TEST=1. */
 describe("RLS: service sem middleware", () => {
     it("list de lançamentos sem SET LOCAL devolve vazio", async (t) => {
         if (process.env.ISM_RLS_TEST !== "1" || !process.env.DATABASE_URL) {
