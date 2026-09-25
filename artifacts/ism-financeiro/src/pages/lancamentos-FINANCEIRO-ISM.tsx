@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import { useState } from "react";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { formatCurrency, formatDate } from "@/lib/utils";
@@ -103,7 +104,7 @@ export default function Lancamentos() {
   const tipo = activeTab === "cr" ? "CR" : activeTab === "cp" ? "CP" : undefined;
 
   const { data, isLoading, isError } = useQuery<LancamentosListResult>({
-    queryKey: ["lancamentos", tipo, debouncedSearch, page, dateStart, dateEnd],
+    queryKey: tenantQueryKey("lancamentos", tipo, debouncedSearch, page, dateStart, dateEnd),
     queryFn: async () => {
       const params = new URLSearchParams();
       if (tipo) params.set("tipo", tipo);

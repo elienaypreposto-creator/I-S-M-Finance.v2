@@ -12,7 +12,7 @@ import type {NextFunction, Request, Response} from "express";
 export const REQUEST_ID_HEADER = "X-Request-Id";
 
 /** Rejeita IDs com whitespace / controlo - evita injeção em logs. */
-const INCOMING_REQUEST_ID = /^[\w.:-]{8,128}$/;
+export const REQUEST_ID_PATTERN = /^[\w.:-]{8,128}$/;
 
 declare global {
     namespace Express {
@@ -22,10 +22,16 @@ declare global {
     }
 }
 
+/** Persiste o mesmo valor que o header X-Request-Id (não só UUID). */
+export function auditRequestId(id: string | undefined): string | null {
+    if (!id) return null;
+    return REQUEST_ID_PATTERN.test(id) ? id : null;
+}
+
 export function resolveRequestId(incoming: string | string[] | undefined): string {
     const raw = Array.isArray(incoming) ? incoming[0] : incoming;
     const trimmed = raw?.trim();
-    if (trimmed && INCOMING_REQUEST_ID.test(trimmed)) {
+    if (trimmed && REQUEST_ID_PATTERN.test(trimmed)) {
         return trimmed;
     }
     return randomUUID();

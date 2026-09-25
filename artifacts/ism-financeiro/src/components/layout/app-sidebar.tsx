@@ -91,6 +91,7 @@ export function AppSidebar() {
     const [location] = useLocation();
     const {state} = useSidebar();
     const {hasPermission} = useAuth();
+    const canListarEmpresas = hasPermission(PERM.ADMIN_EMPRESAS_LISTAR);
     const isCollapsed = state === "collapsed";
     const [expandedSections, setExpandedSections] = useState<string[]>(["Cadastros", "Relatórios", "Configurações"]);
 
@@ -103,6 +104,10 @@ export function AppSidebar() {
     const visibleCadastros = cadastrosItems.filter(
         (item) => !item.permission || hasPermission(item.permission),
     );
+    const visibleConfig = [
+        ...(canListarEmpresas ? [{title: "Empresas", url: "/admin/empresas", icon: Building2}] : []),
+        ...configItems,
+    ];
 
     useEffect(() => {
         if (!isCollapsed) {
@@ -234,8 +239,8 @@ export function AppSidebar() {
                             {renderCollapsibleSection({
                                 title: "Configurações",
                                 icon: Settings,
-                                items: configItems
-                            }, false)}
+                                items: visibleConfig
+                            }, true)}
 
                         </SidebarMenu>
                     </SidebarGroupContent>

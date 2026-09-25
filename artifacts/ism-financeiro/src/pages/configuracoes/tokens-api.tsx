@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -91,7 +92,7 @@ function NovoTokenModal({ onClose }: { onClose: () => void }) {
       }),
     onSuccess: (data) => {
       setCreatedToken(data);
-      void queryClient.invalidateQueries({ queryKey: ["tokens-api"] });
+      void queryClient.invalidateQueries({ queryKey: tenantQueryKey("tokens-api") });
     },
     onError: (err: Error) =>
       toast({ title: "Erro ao criar token", description: err.message, variant: "destructive" }),
@@ -223,7 +224,7 @@ export default function TokensApi() {
   const { confirm, ConfirmDialogProps } = useConfirm();
 
   const { data: tokens = [], isLoading, isError } = useQuery<TokenRow[]>({
-    queryKey: ["tokens-api"],
+    queryKey: tenantQueryKey("tokens-api"),
     queryFn: () => fetchApiData<TokenRow[]>("/tokens-api"),
   });
 
@@ -234,7 +235,7 @@ export default function TokensApi() {
         method: "PATCH",
         body: JSON.stringify({ ativo }),
       }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["tokens-api"] }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: tenantQueryKey("tokens-api") }),
     onError: (err: Error) =>
       toast({ title: "Erro ao atualizar token", description: err.message, variant: "destructive" }),
   });
@@ -244,7 +245,7 @@ export default function TokensApi() {
     mutationFn: (id: number) =>
       fetchApiData<{ deleted: boolean }>(`/tokens-api/${id}`, { method: "DELETE" }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["tokens-api"] });
+      void queryClient.invalidateQueries({ queryKey: tenantQueryKey("tokens-api") });
       toast({ title: "Token removido com sucesso." });
     },
     onError: (err: Error) =>

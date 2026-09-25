@@ -84,6 +84,10 @@ export const PERMISSOES_ADMIN = [
     "admin:permissoes:conceder",
     "admin:migrate-passwords",
 
+    "admin:empresas:listar",
+    "admin:empresas:criar",
+    "admin:empresas:editar",
+
     "admin:tokens-api:listar",
     "admin:tokens-api:criar",
     "admin:tokens-api:editar",

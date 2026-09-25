@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useState, useMemo, useRef, useEffect} from "react";
 import {createPortal} from "react-dom";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
@@ -286,7 +287,7 @@ export default function Kanban() {
     const queryClient = useQueryClient();
 
     const {data: cardsData, isLoading, isError, error, refetch} = useQuery<Card[]>({
-        queryKey: ["kanban-cards"],
+        queryKey: tenantQueryKey("kanban-cards"),
         queryFn: () => fetchApiData<Card[]>("/kanban/cards"),
     });
 
@@ -295,7 +296,7 @@ export default function Kanban() {
         mutationFn: (data: Partial<Card>) =>
             fetchApiData<Card>("/kanban/cards", {method: "POST", body: JSON.stringify(data)}),
         onMutate: async (newCard) => {
-            await queryClient.cancelQueries({queryKey: ["kanban-cards"]});
+            await queryClient.cancelQueries({queryKey: tenantQueryKey("kanban-cards")});
             const snapshot = queryClient.getQueryData<Card[]>(["kanban-cards"]);
             const tempCard: Card = {
                 id: -(Date.now()),
@@ -333,7 +334,7 @@ export default function Kanban() {
                 body: JSON.stringify(payload),
             }),
         onMutate: async ({id, payload}) => {
-            await queryClient.cancelQueries({queryKey: ["kanban-cards"]});
+            await queryClient.cancelQueries({queryKey: tenantQueryKey("kanban-cards")});
             const snapshot = queryClient.getQueryData<Card[]>(["kanban-cards"]);
             queryClient.setQueryData<Card[]>(["kanban-cards"], (old = []) =>
                 old.map(c => c.id === id ? {...c, ...payload} : c)
@@ -353,7 +354,7 @@ export default function Kanban() {
         mutationFn: (id: number) =>
             fetchApiData(`/kanban/cards/${id}`, {method: "DELETE"}),
         onMutate: async (id) => {
-            await queryClient.cancelQueries({queryKey: ["kanban-cards"]});
+            await queryClient.cancelQueries({queryKey: tenantQueryKey("kanban-cards")});
             const snapshot = queryClient.getQueryData<Card[]>(["kanban-cards"]);
             queryClient.setQueryData<Card[]>(["kanban-cards"], (old = []) => old.filter(c => c.id !== id));
             return {snapshot};
@@ -371,7 +372,7 @@ export default function Kanban() {
         mutationFn: ({id, coluna}: { id: number; coluna: string }) =>
             fetchApiData(`/kanban/cards/${id}`, {method: "PATCH", body: JSON.stringify({coluna})}),
         onMutate: async ({id, coluna}) => {
-            await queryClient.cancelQueries({queryKey: ["kanban-cards"]});
+            await queryClient.cancelQueries({queryKey: tenantQueryKey("kanban-cards")});
             const snapshot = queryClient.getQueryData<Card[]>(["kanban-cards"]);
             queryClient.setQueryData<Card[]>(["kanban-cards"], (old = []) =>
                 old.map(c => c.id === id ? {...c, coluna} : c)

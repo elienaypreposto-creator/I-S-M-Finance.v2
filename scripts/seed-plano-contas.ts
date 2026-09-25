@@ -1,4 +1,4 @@
-import { db, pool, planoContasTable } from "@workspace/db";
+import {closeDbPools, db, planoContasTable, withTenantTx} from "@workspace/db";
 
 const planoContas = [
   // RECEITAS
@@ -128,17 +128,20 @@ const planoContas = [
 
 async function seed() {
   console.log('Populando Plano de Contas...');
-  for (const conta of planoContas) {
-    const categoria = conta.categoria || (conta as any).list;
-    await db.insert(planoContasTable).values({
-      tipo: conta.tipo,
-      categoria: categoria,
-      subcategoria: conta.subcategoria,
-      ativo: true,
-    });
-  }
+  await withTenantTx(1, async () => {
+    for (const conta of planoContas) {
+      const categoria = conta.categoria || (conta as {list?: string}).list;
+      await db.insert(planoContasTable).values({
+        empresa_id: 1,
+        tipo: conta.tipo,
+        categoria: categoria,
+        subcategoria: conta.subcategoria,
+        ativo: true,
+      });
+    }
+  });
   console.log('Plano de contas populado com sucesso.');
-  pool.end();
+  await closeDbPools();
 }
 
 seed().catch(console.error);

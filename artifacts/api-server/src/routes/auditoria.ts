@@ -1,6 +1,6 @@
 import {Router} from "express";
-import {count, desc, eq, gte, lte} from "drizzle-orm";
-import {db} from "@workspace/db";
+import {and, count, desc, eq, gte, lte, type SQL} from "drizzle-orm";
+import {db, resolveSystemAdminEmails, withBypassRls, type TenantDb} from "@workspace/db";
 import {logsAuditoriaTable, usuariosTable} from "@workspace/db/schema";
 import {withPermission} from "../middlewares/withPermission";
 import {errorResponse, successResponse} from "../utils/response";
@@ -8,20 +8,37 @@ import {requireTenant, tenantWhere} from "../lib/tenant-scope";
 
 const router = Router();
 
+const AUDITORIA_COLS = {
+    id: logsAuditoriaTable.id,
+    empresa_id: logsAuditoriaTable.empresa_id,
+    usuario_id: logsAuditoriaTable.usuario_id,
+    usuario_nome: usuariosTable.nome,
+    acao: logsAuditoriaTable.acao,
+    recurso: logsAuditoriaTable.recurso,
+    ip: logsAuditoriaTable.ip,
+    detalhes: logsAuditoriaTable.detalhes,
+    status_code: logsAuditoriaTable.status_code,
+    request_id: logsAuditoriaTable.request_id,
+    user_agent: logsAuditoriaTable.user_agent,
+    token_api_id: logsAuditoriaTable.token_api_id,
+    duracao_ms: logsAuditoriaTable.duracao_ms,
+    created_at: logsAuditoriaTable.created_at,
+} as const;
+
+function isSystemAdmin(email: string | undefined): boolean {
+    if (!email) return false;
+    return resolveSystemAdminEmails().includes(email.toLowerCase());
+}
+
 /**
  * GET /auditoria
  *
- * Retorna o histórico de ações de mutação registradas no sistema.
- * Requer permissão: admin:auditoria:listar
+ * Histórico da empresa ativa (withTenant + RLS). Superadmin pode passar
+ * `todas_empresas=1` para consultar qualquer tenant (pool ism_admin / BYPASSRLS).
  *
  * Query params (todos opcionais):
- *   page - número da página (default 1)
- *   limit - itens por página (default 50, máx 100)
- *   usuario_id - filtra por usuário específico
- *   acao - filtra pelo HTTP method (POST, PUT, PATCH, DELETE)
- *   status_code - filtra pelo HTTP status de resposta
- *   data_inicio - filtra a partir desta data (ISO 8601, inclusive)
- *   data_fim - filtra até esta data (ISO 8601, inclusive, final do dia)
+ *   page, limit, usuario_id, acao, status_code, data_inicio, data_fim
+ *   todas_empresas=1 — só superadmin
  */
 router.get(
     "/auditoria",
@@ -61,36 +78,35 @@ router.get(
                 }
             }
 
+            const crossTenant =
+                (req.query.todas_empresas === "1" || req.query.todas_empresas === "true") &&
+                isSystemAdmin(req.user?.email);
+
+            const runQuery = async (client: typeof db, where: SQL | undefined) => {
+                const [[{total}], items] = await Promise.all([
+                    client.select({total: count()}).from(logsAuditoriaTable).where(where),
+                    client
+                        .select(AUDITORIA_COLS)
+                        .from(logsAuditoriaTable)
+                        .leftJoin(usuariosTable, eq(logsAuditoriaTable.usuario_id, usuariosTable.id))
+                        .where(where)
+                        .orderBy(desc(logsAuditoriaTable.created_at))
+                        .limit(limit)
+                        .offset(offset),
+                ]);
+                return {total: Number(total), items};
+            };
+
+            if (crossTenant) {
+                const where = conditions.length ? and(...conditions) : undefined;
+                const result = await withBypassRls((tx: TenantDb) => runQuery(tx, where));
+                return successResponse(res, result.items, {total: result.total, page, limit, todas_empresas: true});
+            }
+
             const {empresaId} = requireTenant(req);
             const where = tenantWhere(logsAuditoriaTable, empresaId, ...conditions);
-
-            const [[{total}], items] = await Promise.all([
-                db
-                    .select({total: count()})
-                    .from(logsAuditoriaTable)
-                    .where(where),
-
-                db
-                    .select({
-                        id: logsAuditoriaTable.id,
-                        usuario_id: logsAuditoriaTable.usuario_id,
-                        usuario_nome: usuariosTable.nome,
-                        acao: logsAuditoriaTable.acao,
-                        recurso: logsAuditoriaTable.recurso,
-                        ip: logsAuditoriaTable.ip,
-                        detalhes: logsAuditoriaTable.detalhes,
-                        status_code: logsAuditoriaTable.status_code,
-                        created_at: logsAuditoriaTable.created_at,
-                    })
-                    .from(logsAuditoriaTable)
-                    .leftJoin(usuariosTable, eq(logsAuditoriaTable.usuario_id, usuariosTable.id))
-                    .where(where)
-                    .orderBy(desc(logsAuditoriaTable.created_at))
-                    .limit(limit)
-                    .offset(offset),
-            ]);
-
-            return successResponse(res, items, {total: Number(total), page, limit});
+            const result = await runQuery(db, where);
+            return successResponse(res, result.items, {total: result.total, page, limit});
         } catch (e) {
             return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar logs de auditoria.", e);
         }

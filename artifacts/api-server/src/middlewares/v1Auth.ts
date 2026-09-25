@@ -1,8 +1,8 @@
 import type { NextFunction, Request, Response } from "express";
 import crypto from "crypto";
 import { and, eq, gte, isNull, or } from "drizzle-orm";
-import { db } from "@workspace/db";
-import { tokensApiTable } from "@workspace/db/schema";
+import {withOwnerTx, type TenantDb} from "@workspace/db";
+import {tokensApiTable} from "@workspace/db/schema";
 import { errorResponse } from "../utils/response";
 
 const getBearerToken = (authHeader?: string) => {
@@ -22,21 +22,23 @@ export const v1AuthMiddleware = async (req: Request, res: Response, next: NextFu
     const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
     const hoje = new Date().toISOString().split("T")[0];
 
-    const [tokenValido] = await db
-      .select({
-        id: tokensApiTable.id,
-        ativo: tokensApiTable.ativo,
-        empresa_id: tokensApiTable.empresa_id,
-      })
-      .from(tokensApiTable)
-      .where(
-        and(
-          eq(tokensApiTable.token_hash, tokenHash),
-          eq(tokensApiTable.ativo, true),
-          or(isNull(tokensApiTable.data_expiracao), gte(tokensApiTable.data_expiracao, hoje)),
-        ),
-      )
-      .limit(1);
+    const [tokenValido] = await withOwnerTx((tx: TenantDb) =>
+      tx
+        .select({
+          id: tokensApiTable.id,
+          ativo: tokensApiTable.ativo,
+          empresa_id: tokensApiTable.empresa_id,
+        })
+        .from(tokensApiTable)
+        .where(
+          and(
+            eq(tokensApiTable.token_hash, tokenHash),
+            eq(tokensApiTable.ativo, true),
+            or(isNull(tokensApiTable.data_expiracao), gte(tokensApiTable.data_expiracao, hoje)),
+          ),
+        )
+        .limit(1),
+    );
 
     if (!tokenValido) {
       return errorResponse(res, 401, "UNAUTHORIZED", "Token da API v1 inválido, inativo ou expirado.");
@@ -47,6 +49,7 @@ export const v1AuthMiddleware = async (req: Request, res: Response, next: NextFu
     }
 
     req.tenant = {empresaId: tokenValido.empresa_id};
+    req.tokenApiId = tokenValido.id;
     if (!req.user) {
       req.user = {
         id: 0,

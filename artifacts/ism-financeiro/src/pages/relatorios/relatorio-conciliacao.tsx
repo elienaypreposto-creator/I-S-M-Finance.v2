@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useMemo, useState} from "react";
 import {PageHeader} from "@/components/shared/page-header";
 import {
@@ -82,7 +83,7 @@ export default function RelatorioConciliacao() {
     const dataFim = lastDayOfMonth(anoFiltro, mesFiltro);
 
     const {data: contas = []} = useQuery({
-        queryKey: ["contas-bancarias-relatorio-conciliacao"],
+        queryKey: tenantQueryKey("contas-bancarias-relatorio-conciliacao"),
         queryFn: () => fetchApiData<ContaOption[]>("/contas-bancarias"),
     });
 
@@ -94,7 +95,7 @@ export default function RelatorioConciliacao() {
     });
 
     const {data, isLoading, isError, refetch} = useQuery({
-        queryKey: ["relatorio-conciliacao", contaId, dataInicio, dataFim],
+        queryKey: tenantQueryKey("relatorio-conciliacao", contaId, dataInicio, dataFim),
         queryFn: () => fetchApiData<RelatorioConciliacao>(`/relatorios/conciliacao?${params}`),
         enabled,
     });

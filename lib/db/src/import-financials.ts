@@ -1,4 +1,4 @@
-import { db } from "@workspace/db";
+import {db, withTenantTx} from "@workspace/db";
 import { lancamentosTable, parceirosTable, contasBancariasTable, planoContasTable } from "@workspace/db/schema";
 import { and, eq } from "drizzle-orm";
 import xlsx from "xlsx";
@@ -16,6 +16,14 @@ async function run() {
   }
 
   console.log("Iniciando importação de dados da planilha...");
+  await withTenantTx(EMPRESA_ID, async () => {
+    await runImport(filePath);
+  });
+  console.log(`\nImportação concluída.`);
+  process.exit(0);
+}
+
+async function runImport(filePath: string) {
 
   // 1. Lógica da Conta Bancária "A identificar"
   let contaId: number;
@@ -189,8 +197,7 @@ async function run() {
     }
   }
 
-  console.log(`\nImportação concluída. ${successCount} registros importados com sucesso.`);
-  process.exit(0);
+  console.log(`${successCount} registros importados com sucesso.`);
 }
 
 run().catch(console.error);

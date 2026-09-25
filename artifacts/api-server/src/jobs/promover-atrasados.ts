@@ -1,5 +1,5 @@
 import {eq, lt} from "drizzle-orm";
-import {db} from "@workspace/db";
+import {db, withTenantTx} from "@workspace/db";
 import {empresasTable, lancamentosTable} from "@workspace/db/schema";
 import {tenantWhere} from "../lib/tenant-scope";
 import {hojeIsoLocal} from "../utils/date-civil";
@@ -19,21 +19,23 @@ export async function promoverLancamentosAtrasados(hojeIso?: string): Promise<{ 
 
     let atualizados = 0;
     for (const empresa of empresas) {
-        const result = await db
-            .update(lancamentosTable)
-            .set({
-                status: "atrasado",
-                updated_at: new Date(),
-            })
-            .where(
-                tenantWhere(
-                    lancamentosTable,
-                    empresa.id,
-                    eq(lancamentosTable.status, "pendente"),
-                    lt(lancamentosTable.vencimento, hoje),
-                ),
-            )
-            .returning({id: lancamentosTable.id});
+        const result = await withTenantTx(empresa.id, async () =>
+            db
+                .update(lancamentosTable)
+                .set({
+                    status: "atrasado",
+                    updated_at: new Date(),
+                })
+                .where(
+                    tenantWhere(
+                        lancamentosTable,
+                        empresa.id,
+                        eq(lancamentosTable.status, "pendente"),
+                        lt(lancamentosTable.vencimento, hoje),
+                    ),
+                )
+                .returning({id: lancamentosTable.id}),
+        );
 
         atualizados += result.length;
     }

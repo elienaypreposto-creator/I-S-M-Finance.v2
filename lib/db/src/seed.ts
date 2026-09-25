@@ -1,5 +1,5 @@
 import {eq} from "drizzle-orm";
-import { db, pool, planoContasTable } from "./index";
+import {closeDbPools, db, planoContasTable, withTenantTx} from "./index";
 
 const planoContas = [
   // RECEITAS
@@ -130,23 +130,24 @@ const planoContas = [
 async function seed() {
   console.log('Populando Plano de Contas...');
 
-  // delete all first
-  await db.delete(planoContasTable).where(eq(planoContasTable.empresa_id, 1));
+  await withTenantTx(1, async () => {
+    await db.delete(planoContasTable).where(eq(planoContasTable.empresa_id, 1));
 
-  for (const conta of planoContas) {
-    await db.insert(planoContasTable).values({
-      empresa_id: 1,
-      tipo: conta.tipo,
-      categoria: conta.categoria,
-      subcategoria: conta.subcategoria,
-      ativo: true,
-    });
-  }
+    for (const conta of planoContas) {
+      await db.insert(planoContasTable).values({
+        empresa_id: 1,
+        tipo: conta.tipo,
+        categoria: conta.categoria,
+        subcategoria: conta.subcategoria,
+        ativo: true,
+      });
+    }
+  });
   console.log('Plano de contas populado com sucesso.');
-  pool.end();
+  await closeDbPools();
 }
 
-seed().catch(err => {
+seed().catch(async (err) => {
     console.error(err);
-    pool.end();
+    await closeDbPools();
 });

@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useEffect, useMemo, useState} from "react";
 import {createPortal} from "react-dom";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
@@ -186,12 +187,12 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
     }, [open, prefill?.texto_gatilho, prefill?.natureza, prefill?.conta_id]);
 
     const {data: regras = [], isLoading: loadingRegras} = useQuery<RegraConciliacaoItem[]>({
-        queryKey: ["regras-conciliacao"],
+        queryKey: tenantQueryKey("regras-conciliacao"),
         queryFn: () => fetchApiData<RegraConciliacaoItem[]>("/regras-conciliacao"),
         enabled: open,
     });
     const {data: parceiros = [], isFetching: isFetchingParceiros} = useQuery<ParceiroRow[]>({
-        queryKey: ["parceiros-modal", searchParceiro],
+        queryKey: tenantQueryKey("parceiros-modal", searchParceiro),
         queryFn: () => {
             const qs = new URLSearchParams({page: "1", limit: "20"});
             if (searchParceiro.trim()) qs.set("search", searchParceiro.trim());
@@ -200,12 +201,12 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
         enabled: open,
     });
     const {data: planoContas = []} = useQuery<PlanoContaOption[]>({
-        queryKey: ["plano-contas-modal"],
+        queryKey: tenantQueryKey("plano-contas-modal"),
         queryFn: () => fetchApiData<PlanoContaOption[]>("/plano-contas"),
         enabled: open,
     });
     const {data: departamentos = []} = useQuery<DepartamentoOption[]>({
-        queryKey: ["departamentos-modal"],
+        queryKey: tenantQueryKey("departamentos-modal"),
         queryFn: () => fetchApiData<DepartamentoOption[]>("/departamentos"),
         enabled: open,
     });
@@ -278,7 +279,7 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
                 : fetchApiData("/regras-conciliacao", {method: "POST", body: JSON.stringify(payload)});
         },
         onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["regras-conciliacao"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("regras-conciliacao")});
             toast({
                 title: editItem ? "Regra atualizada" : "Regra criada",
                 description: editItem
@@ -300,7 +301,7 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
     const deleteMutation = useMutation({
         mutationFn: (id: number) => fetchApiData(`/regras-conciliacao/${id}`, {method: "DELETE"}),
         onSuccess: (_data, id) => {
-            void queryClient.invalidateQueries({queryKey: ["regras-conciliacao"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("regras-conciliacao")});
             if (editItem?.id === id) applyPrefill();
             toast({title: "Regra excluída", description: "A regra não será mais aplicada nas próximas importações."});
         },
@@ -541,7 +542,7 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
                     initialData={parceiroSubModal.mode === "edit" ? parceiroSubModal.data : null}
                     onClose={() => setParceiroSubModal(null)}
                     onSaved={() => {
-                        void queryClient.invalidateQueries({queryKey: ["parceiros-modal"]});
+                        void queryClient.invalidateQueries({queryKey: tenantQueryKey("parceiros-modal")});
                     }}
                 />
             )}

@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import { eq } from "drizzle-orm";
-import { db, pool } from "./index";
+import {closeDbPools, db} from "./index";
 import { usuarioEmpresasTable, usuariosTable } from "./schema";
 
 async function main() {
@@ -62,7 +62,7 @@ async function main() {
     console.error("Erro ao criar usuário:", error);
     process.exit(1);
   } finally {
-    await pool.end();
+    await closeDbPools();
   }
 }
 

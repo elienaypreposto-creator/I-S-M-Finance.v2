@@ -26,6 +26,9 @@ declare global {
             id: string;
             user?: AuthUser;
             tenant?: { empresaId: number };
+            tokenApiId?: number;
+            auditAntes?: unknown;
+            auditStartedAt?: number;
         }
     }
 }

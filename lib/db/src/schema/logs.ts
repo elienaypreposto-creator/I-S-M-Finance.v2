@@ -1,6 +1,7 @@
-import {pgTable, serial, text, integer, timestamp, jsonb} from "drizzle-orm/pg-core";
+import {pgTable, serial, text, integer, timestamp, jsonb, varchar} from "drizzle-orm/pg-core";
 import {usuariosTable} from "./usuarios";
 import {empresasTable} from "./empresas";
+import {tokensApiTable} from "./tokens-api";
 
 export const logsSistemaTable = pgTable("logs_sistema", {
     id: serial("id").primaryKey(),
@@ -17,8 +18,12 @@ export const logsAuditoriaTable = pgTable("logs_auditoria", {
     acao: text("acao").notNull(), // HTTP method
     recurso: text("recurso").notNull(), // originalUrl
     ip: text("ip"),
-    detalhes: jsonb("detalhes"), // sanitised req.body
+    detalhes: jsonb("detalhes"), // sanitised req.body + snapshot `antes`
     status_code: integer("status_code"),
+    request_id: varchar("request_id", {length: 128}),
+    user_agent: text("user_agent"),
+    token_api_id: integer("token_api_id").references(() => tokensApiTable.id, {onDelete: "set null"}),
+    duracao_ms: integer("duracao_ms"),
     created_at: timestamp("created_at").defaultNow().notNull(),
 });
 

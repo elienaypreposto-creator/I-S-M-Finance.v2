@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useEffect, useState} from "react";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
@@ -63,25 +64,25 @@ export function CriarLancamentoLinhaModal({open, onClose, onSuccess, extratoId, 
     }, [open, linha.id]);
 
     const {data: parceiros = []} = useQuery<ParceiroOption[]>({
-        queryKey: ["parceiros-criar-lancamento-linha"],
+        queryKey: tenantQueryKey("parceiros-criar-lancamento-linha"),
         queryFn: () => fetchApiData<ParceiroOption[]>("/parceiros?limit=200"),
         enabled: open,
     });
 
     const {data: planoContas = []} = useQuery<PlanoContaOption[]>({
-        queryKey: ["plano-contas-criar-lancamento-linha"],
+        queryKey: tenantQueryKey("plano-contas-criar-lancamento-linha"),
         queryFn: () => fetchApiData<PlanoContaOption[]>("/plano-contas"),
         enabled: open,
     });
 
     const {data: departamentos = []} = useQuery<DepartamentoOption[]>({
-        queryKey: ["departamentos-criar-lancamento-linha"],
+        queryKey: tenantQueryKey("departamentos-criar-lancamento-linha"),
         queryFn: () => fetchApiData<DepartamentoOption[]>("/departamentos"),
         enabled: open,
     });
 
     const {data: centrosCusto = []} = useQuery<CentroCustoOption[]>({
-        queryKey: ["centros-custo-criar-lancamento-linha"],
+        queryKey: tenantQueryKey("centros-custo-criar-lancamento-linha"),
         queryFn: () => fetchApiData<CentroCustoOption[]>("/centros-custos"),
         enabled: open,
         retry: false,
@@ -109,7 +110,7 @@ export function CriarLancamentoLinhaModal({open, onClose, onSuccess, extratoId, 
             }),
         onSuccess: () => {
             invalidateRelated(queryClient, "conciliacao");
-            void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("conciliacao-extrato", extratoId)});
             toast({
                 title: "Lançamento criado",
                 description: "A linha foi conciliada automaticamente com o novo lançamento.",

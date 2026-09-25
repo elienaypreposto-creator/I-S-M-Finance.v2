@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useEffect, useMemo, useRef, useState} from "react";
 import {createPortal} from "react-dom";
 import {useForm, useFieldArray, Controller, useWatch} from "react-hook-form";
@@ -902,7 +903,7 @@ function VincularFormBody({
                 onClose={() => setEditarId(null)}
                 onSaved={() => {
                     void queryClient.invalidateQueries({
-                        queryKey: ["conciliacao-buscar-lancamentos", linhaId],
+                        queryKey: tenantQueryKey("conciliacao-buscar-lancamentos", linhaId),
                     });
                 }}
             />
@@ -962,7 +963,7 @@ export function VincularModal({
     }, [linhaId]);
 
     const {data: lancamentos = [], isLoading, isFetching} = useQuery<LancamentoCompativel[]>({
-        queryKey: ["conciliacao-buscar-lancamentos", linhaId, diasJanela, buscaAtiva, valorAtivo, vencimentoAtivo],
+        queryKey: tenantQueryKey("conciliacao-buscar-lancamentos", linhaId, diasJanela, buscaAtiva, valorAtivo, vencimentoAtivo),
         queryFn: () => {
             const params = new URLSearchParams({
                 linha_id: String(linhaId),

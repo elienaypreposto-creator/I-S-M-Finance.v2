@@ -11,6 +11,7 @@ import {
     centrosCustosTable,
 } from "@workspace/db/schema";
 import {v1AuthMiddleware} from "../middlewares/v1Auth";
+import {withTenantTxMiddleware} from "../middlewares/tenant-tx";
 import {errorResponse, successResponse} from "../utils/response";
 import {fromCents, valorEfetivoCents} from "../utils/money";
 import {tenantScope, tenantWhere} from "../lib/tenant-scope";
@@ -55,6 +56,7 @@ function mapLancamentoV1(i: {
 }
 
 router.use(v1AuthMiddleware);
+router.use(withTenantTxMiddleware);
 
 router.get("/bancos", async (req, res) => {
     try {

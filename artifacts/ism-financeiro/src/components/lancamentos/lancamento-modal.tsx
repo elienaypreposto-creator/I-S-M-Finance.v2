@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useEffect, useRef, useState} from "react";
 import {createPortal} from "react-dom";
 import {
@@ -468,7 +469,7 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     } = form;
 
     const {data: editItemFull, dataUpdatedAt} = useQuery<LancamentoEditItem>({
-        queryKey: ["lancamento-edit", editItem?.id],
+        queryKey: tenantQueryKey("lancamento-edit", editItem?.id),
         queryFn: () => fetchApiData<LancamentoEditItem>(`/lancamentos/${editItem!.id}`),
         enabled: !!editItem?.id,
         staleTime: 0,
@@ -581,7 +582,7 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     }, [vencimento, nivelRisco]);
 
     const {data: parceiros = [], isFetching: isFetchingParceiros} = useQuery<ParceiroRow[]>({
-        queryKey: ["parceiros-modal", searchParceiro],
+        queryKey: tenantQueryKey("parceiros-modal", searchParceiro),
         queryFn: () => {
             const qs = new URLSearchParams({page: "1", limit: "20"});
             if (searchParceiro.trim()) qs.set("search", searchParceiro.trim());
@@ -590,17 +591,17 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     });
 
     const {data: planoContas = []} = useQuery<PlanoConta[]>({
-        queryKey: ["plano-contas-modal"],
+        queryKey: tenantQueryKey("plano-contas-modal"),
         queryFn: () => fetchApiData<PlanoConta[]>("/plano-contas"),
     });
 
     const {data: departamentos = []} = useQuery<Departamento[]>({
-        queryKey: ["departamentos-modal"],
+        queryKey: tenantQueryKey("departamentos-modal"),
         queryFn: () => fetchApiData<Departamento[]>("/departamentos"),
     });
 
     const {data: centrosCusto = []} = useQuery<CentroCusto[]>({
-        queryKey: ["centros-custo-modal"],
+        queryKey: tenantQueryKey("centros-custo-modal"),
         queryFn: () => fetchApiData<CentroCusto[]>("/centros-custos"),
         retry: false,
     });
@@ -622,12 +623,12 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
             return fetchApiData<{ id: number }>(`/lancamentos`, {method: "POST", body: JSON.stringify(body)});
         },
         onSuccess: (resp) => {
-            void queryClient.invalidateQueries({queryKey: ["lancamentos"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("lancamentos")});
             // Invalida o cache do fetch-por-ID também - sem isso, reabrir o
             // MESMO lançamento logo em seguida poderia (dependendo do
             // timing) reutilizar dados desatualizados antes do refetch.
             if (editItem?.id) {
-                void queryClient.invalidateQueries({queryKey: ["lancamento-edit", editItem.id]});
+                void queryClient.invalidateQueries({queryKey: tenantQueryKey("lancamento-edit", editItem.id)});
             }
             toast({title: "Sucesso", description: editItem ? "Lançamento atualizado." : "Lançamento criado."});
             onSaved(editItem ? undefined : resp);
@@ -1335,7 +1336,7 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                     initialData={parceiroSubModal.mode === "edit" ? parceiroSubModal.data : null}
                     onClose={() => setParceiroSubModal(null)}
                     onSaved={() => {
-                        void queryClient.invalidateQueries({queryKey: ["parceiros-modal"]});
+                        void queryClient.invalidateQueries({queryKey: tenantQueryKey("parceiros-modal")});
                     }}
                 />
             )}
