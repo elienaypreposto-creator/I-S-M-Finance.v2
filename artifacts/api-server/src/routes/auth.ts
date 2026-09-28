@@ -235,7 +235,15 @@ router.post("/auth/login", loginLimiter, loginEmailLimiter, async (req, res) => 
         console.error("Erro no login:", error);
         // DEBUG TST: expõe a causa no message. Reverter após o diagnóstico.
         const msg = error instanceof Error ? error.message : String(error);
-        return errorResponse(res, 500, "INTERNAL_ERROR", `Erro no login: ${msg}`, error);
+        const causa = error instanceof Error ? (error as {cause?: unknown}).cause : undefined;
+        const causaMsg = causa instanceof Error ? causa.message : causa ? String(causa) : "";
+        return errorResponse(
+            res,
+            500,
+            "INTERNAL_ERROR",
+            `Erro no login: ${msg}${causaMsg ? ` | causa: ${causaMsg}` : ""}`,
+            error,
+        );
     }
 });
 
