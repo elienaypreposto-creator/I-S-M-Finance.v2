@@ -127,6 +127,27 @@
       "when": 1790166800000,
       "tag": "0017_colunas_pagamento_lancamentos",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790166900000,
+      "tag": "0018_permissoes_empresa_superadmin",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790167000000,
+      "tag": "0019_roles_login",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790167100000,
+      "tag": "0020_reassign_ism_owner",
+      "breakpoints": true
     }
   ]
 }

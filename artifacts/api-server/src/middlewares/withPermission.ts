@@ -1,17 +1,17 @@
 /**
- * withPermission — Middleware de autorização stateless por permissão.
+ * withPermission - Middleware de autorização stateless por permissão.
  *
- * Complexidade: O(n) onde n = permissões no token (tipicamente < 30) — zero I/O.
+ * Complexidade: O(n) onde n = permissões no token (tipicamente < 30) - zero I/O.
  * As permissões são lidas de req.user.permissions, embutidas no JWE pelo
  * signAccessToken em cada login/refresh. Nenhuma consulta ao banco é feita aqui.
  *
  * Pré-requisito: withAuth deve preceder este middleware na cadeia.
  *
- * ALTERADO — Card 2 (Permissões): a permissão curinga `"*"` deixou de
- * existir. `req.user.superadmin` (boolean, embutido no token — ver
+ * ALTERADO - Card 2 (Permissões): a permissão curinga `"*"` deixou de
+ * existir. `req.user.superadmin` (boolean, embutido no token - ver
  * token.service.ts) é o ÚNICO bypass total. Uma string `"*"` que apareça
- * em `permissions[]` (não deveria mais acontecer — ver migration
- * 0017_permissoes_empresa_superadmin.sql) é tratada como uma permissão
+ * em `permissions[]` (não deveria mais acontecer - ver migration
+ * 0018_permissoes_empresa_superadmin.sql) é tratada como uma permissão
  * comum, sem significado especial.
  *
  * Uso:
@@ -49,10 +49,10 @@ export const requirePermission = withPermission;
 
 /**
  * Helper para checks inline (ex.: alterar_valor no PUT de lançamentos).
- * ALTERADO — Card 2: não trata mais `"*"` como wildcard. Quem precisa do
+ * ALTERADO - Card 2: não trata mais `"*"` como wildcard. Quem precisa do
  * bypass de superadmin fora de um middleware (isto é uma função pura, sem
  * acesso a req.user completo) deve checar `req.user.superadmin`
- * separadamente antes de chamar isto — ver o call site em
+ * separadamente antes de chamar isto - ver o call site em
  * domains/financial/lancamentos/router.ts.
  */
 export function hasPermission(permissions: string[] | undefined, codigoPermissao: string): boolean {

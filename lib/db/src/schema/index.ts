@@ -2,8 +2,6 @@ export * from "./empresas";
 export * from "./usuarios";
 export * from "./usuario-empresas";
 export * from "./enums";
-export * from "./empresas";
-export * from "./usuario-empresas";
 export * from "./filiais";
 export * from "./parceiros";
 export * from "./contas-bancarias";

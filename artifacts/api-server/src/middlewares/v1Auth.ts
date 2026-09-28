@@ -1,7 +1,7 @@
 import type {NextFunction, Request, Response} from "express";
 import crypto from "crypto";
 import {eq} from "drizzle-orm";
-import {withOwnerTx, type TenantDb} from "@workspace/db";
+import {withBypassRls, type TenantDb} from "@workspace/db";
 import {tokensApiTable} from "@workspace/db/schema";
 import {errorResponse} from "../utils/response";
 
@@ -62,9 +62,8 @@ function popularContexto(
 function agendarAtualizacaoUso(req: Request, tokenId: number) {
     const ip = req.ip ?? req.socket?.remoteAddress ?? null;
 
-    // Usa owner transaction porque este middleware ainda ocorre
-    // antes do contexto de tenant da requisição.
-    void withOwnerTx(async (tx: TenantDb) => {
+    // Lookup e last_used correm como ism_admin (BYPASSRLS), nunca como dono/SUPERUSER.
+    void withBypassRls(async (tx: TenantDb) => {
         await tx
             .update(tokensApiTable)
             .set({
@@ -121,7 +120,7 @@ export const v1AuthMiddleware = async (
                 );
             }
 
-            const [tokenRow] = await withOwnerTx((tx: TenantDb) =>
+            const [tokenRow] = await withBypassRls((tx: TenantDb) =>
                 tx
                     .select({
                         id: tokensApiTable.id,
@@ -211,7 +210,7 @@ export const v1AuthMiddleware = async (
                 .update(rawToken)
                 .digest("hex");
 
-            const [tokenRow] = await withOwnerTx((tx: TenantDb) =>
+            const [tokenRow] = await withBypassRls((tx: TenantDb) =>
                 tx
                     .select({
                         id: tokensApiTable.id,

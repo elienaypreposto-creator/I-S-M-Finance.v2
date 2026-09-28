@@ -53,14 +53,14 @@ function listenIfLocal(): void {
 
 void assertRlsRoles()
     .then(() => {
-        console.log("[boot] pool padrão = ism_app; admin pool = ism_admin");
+        console.log("[boot] pool padrão = ism_app; admin = ism_admin; owner = ism_owner (retenção)");
         runAdminPermissionsSyncOnBoot();
 
         listenIfLocal();
     })
     .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[boot] recusado — SET ROLE ism_app/ism_admin é obrigatório: ${msg}`);
+        console.error(`[boot] recusado - API deve ligar como ism_app/ism_admin NOSUPERUSER: ${msg}`);
         process.exit(1);
     });
 
