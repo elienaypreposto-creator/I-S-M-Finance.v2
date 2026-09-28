@@ -149,6 +149,18 @@ router.post("/auth/login", loginLimiter, loginEmailLimiter, async (req, res) => 
             return errorResponse(res, 401, "INVALID_CREDENTIALS", "Email ou senha inválidos.");
         }
 
+        // CORREÇÃO: usuário ainda não definiu senha permanente (fluxo de primeiro
+        // acesso via OTP não concluído) — sem isso, o bcrypt.compare abaixo lança
+        // exceção ao receber `senha_hash` nulo e derruba a rota com 500.
+        if (!usuario.senha_hash) {
+            return errorResponse(
+                res,
+                403,
+                "SETUP_PENDING",
+                "Este utilizador ainda não definiu uma senha. Complete o processo de primeiro acesso.",
+            );
+        }
+
         let senhaValida = await bcrypt.compare(senha, usuario.senha_hash);
         let precisaMigrar = false;
 
