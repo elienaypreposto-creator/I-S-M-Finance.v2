@@ -12,7 +12,6 @@ import {drizzle, type NodePgDatabase} from "drizzle-orm/node-postgres";
 import pg from "pg";
 import * as schema from "./schema";
 import {tenantAls} from "./tenant-als";
-
 if (!process.env.DATABASE_URL) {
     throw new Error("DATABASE_URL não configurado.");
 }
@@ -118,7 +117,6 @@ attachSessionRole(pool, "ism_app");
 pool.on("error", (err) => {
     console.error("Pool Postgres - erro inesperado:", err.message);
 });
-
 const ownerUrl = process.env.DATABASE_OWNER_URL ?? process.env.DATABASE_URL;
 
 /** Pool da role dona: retenção de auditoria e lookups pre-RLS (token v1). Sem SET ROLE. */
@@ -162,3 +160,20 @@ export const db: AppDb = new Proxy(rawDb, {
         return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(src) : value;
     },
 });
+
+/**
+ * ALTERADO — Onda 2 (Card 3/RLS): `db` agora é um Proxy. Dentro de uma
+ * requisição HTTP autenticada, `empresaContext` (middleware) já colocou uma
+ * instância Drizzle "escopada" no AsyncLocalStorage — ligada a um client
+ * dedicado do pool, dentro de uma transação com
+ * `SET LOCAL app.current_empresa_id` aplicado. Todo `db.select()/.insert()/
+ * .update()/.delete()` chamado durante essa requisição usa essa conexão
+ * automaticamente, então a RLS do Postgres passa a valer sem tocar em
+ * NENHUM `*.service.ts` existente.
+ *
+ * Fora de uma requisição (scripts, seeds, migrations, o teste
+ * `rls-safety-net.test.ts` da suite de isolamento), não há contexto no ALS
+ * e o Proxy cai no `poolDb` normal — sem `SET LOCAL`, ou seja, sujeito à
+ * RLS bloquear tudo por padrão (esse é exatamente o comportamento que
+ * `rls-safety-net.test.ts` verifica).
+ */

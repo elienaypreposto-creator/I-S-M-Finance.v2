@@ -18,8 +18,7 @@ function runAdminPermissionsSyncOnBoot(): void {
     void syncAdminPermissionsOnBoot()
         .then((r) => {
             console.log(
-                `[boot] admin-permissions: ${r.sincronizados}/${r.emailsAlvo} usuário(s),` +
-                ` ${r.permissoesPorUsuario} permissões` +
+                `[boot] admin-permissions: ${r.sincronizados}/${r.emailsAlvo} superadmin(s) sincronizado(s)` +
                 (r.ausentes.length ? ` (ausentes: ${r.ausentes.join(", ")})` : ""),
             );
         })
@@ -51,10 +50,12 @@ function listenIfLocal(): void {
     });
 }
 
+
 void assertRlsRoles()
     .then(() => {
         console.log("[boot] pool padrão = ism_app; admin pool = ism_admin");
         runAdminPermissionsSyncOnBoot();
+
         listenIfLocal();
     })
     .catch((err: unknown) => {
@@ -62,5 +63,6 @@ void assertRlsRoles()
         console.error(`[boot] recusado — SET ROLE ism_app/ism_admin é obrigatório: ${msg}`);
         process.exit(1);
     });
+
 
 export default app;

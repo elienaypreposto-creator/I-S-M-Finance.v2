@@ -16,7 +16,8 @@ import {and, eq, sql} from "drizzle-orm";
 import {closeDbPools, db, pool} from "./index";
 import {usuarioEmpresasTable, usuariosTable} from "./schema";
 import {PERMISSOES_ADMIN, syncAdminPermissionsOnBoot} from "./sync-admin-permissions";
-
+import {usuariosTable} from "./schema";
+import {syncAdminPermissionsOnBoot} from "./sync-admin-permissions";
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
 const ADMIN_NOME = process.env.ADMIN_NOME;
 const ADMIN_SENHA = process.env.ADMIN_SENHA;
@@ -189,10 +190,10 @@ async function seedAdmin(): Promise<void> {
         const adminId = await upsertAdmin();
         await garantirVinculoAdmin(adminId);
 
-        process.stdout.write(
-            `\n[4/4] Sincronizando ${PERMISSOES_ADMIN.length} permissões nos admins de sistema...\n`,
-        );
-        const result = await syncAdminPermissionsOnBoot();
+       process.stdout.write(
+    `\n[4/4] Marcando superadmin=true nos e-mails de sistema...\n`,
+);
+const result = await syncAdminPermissionsOnBoot();
         process.stdout.write(
             `    Sincronizados: ${result.sincronizados}/${result.emailsAlvo}` +
             (result.ausentes.length ? ` (ausentes: ${result.ausentes.join(", ")})` : "") +

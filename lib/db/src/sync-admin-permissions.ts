@@ -1,5 +1,19 @@
 /**
- * Sincronização idempotente de permissões dos Super Admins de sistema.
+ * Sincronização idempotente dos Super Admins de sistema.
+ *
+ * ALTERADO — Card 2 (Permissões): antes injetava todo o catálogo
+ * PERMISSOES_ADMIN como linhas em usuario_permissoes (uma tabela por
+ * usuário, sem noção de empresa); agora só liga `usuarios.superadmin`.
+ * Superadmin bypassa withPermission/withSuperadmin inteiramente (ver
+ * middlewares/withPermission.ts e withSuperadmin.ts), então não precisa de
+ * nenhuma linha de permissão gravada — e como permissão agora é por
+ * empresa (usuario_permissoes.empresa_id), não existiria "a empresa certa"
+ * pra gravar essas ~80 linhas de qualquer forma.
+ *
+ * Mantém o vínculo com a empresa 1 como papel "admin" (não mais "superuser
+ * de permissões" — só o vínculo de conveniência que já existia, pra login
+ * ter uma empresa ativa por padrão; `superadmin=true` é o que realmente
+ * abre as portas).
  *
  * Usado no boot da API (sem CLI em TST/PRD) e reutilizado pelo seed CLI.
  * Nunca cria usuários, nunca toca senhas, nunca expõe segredos em log.
@@ -8,7 +22,7 @@
 
 import {eq, sql} from "drizzle-orm";
 import {db} from "./client";
-import {usuariosTable, usuarioEmpresasTable, usuarioPermissoesTable} from "./schema";
+import {usuariosTable, usuarioEmpresasTable} from "./schema";
 import {PERMISSOES_ADMIN} from "./permissoes-catalog";
 
 export {PERMISSOES_ADMIN} from "./permissoes-catalog";
@@ -40,12 +54,14 @@ export type SyncAdminPermissionsResult = {
     emailsAlvo: number;
     sincronizados: number;
     ausentes: string[];
+    /** Mantido por compatibilidade de assinatura — sempre 0 agora (nada mais é inserido em usuario_permissoes). */
     permissoesPorUsuario: number;
 };
 
 /**
- * Injeta PERMISSOES_ADMIN nos usuários de sistema que já existem no banco.
- * Não cria contas. Fail-soft no chamador - esta função pode lançar em erro de DB.
+ * Marca `superadmin = true` nos usuários de sistema que já existem no banco
+ * e garante o vínculo de conveniência com a empresa 1. Não cria contas.
+ * Fail-soft no chamador - esta função pode lançar em erro de DB.
  */
 export async function syncAdminPermissionsOnBoot(): Promise<SyncAdminPermissionsResult> {
     const emails = resolveSystemAdminEmails();
@@ -65,19 +81,8 @@ export async function syncAdminPermissionsOnBoot(): Promise<SyncAdminPermissions
         }
 
         await db
-            .delete(usuarioPermissoesTable)
-            .where(eq(usuarioPermissoesTable.usuario_id, usuario.id));
-
-        await db.insert(usuarioPermissoesTable).values(
-            PERMISSOES_ADMIN.map((codigo_permissao) => ({
-                usuario_id: usuario.id,
-                codigo_permissao,
-            })),
-        );
-
-        await db
             .update(usuariosTable)
-            .set({perfil_base: "Admin", updated_at: new Date()})
+            .set({superadmin: true, perfil_base: "Admin", updated_at: new Date()})
             .where(eq(usuariosTable.id, usuario.id));
 
         await db
@@ -100,6 +105,6 @@ export async function syncAdminPermissionsOnBoot(): Promise<SyncAdminPermissions
         emailsAlvo: emails.length,
         sincronizados,
         ausentes,
-        permissoesPorUsuario: PERMISSOES_ADMIN.length,
+        permissoesPorUsuario: 0,
     };
 }

@@ -4,7 +4,7 @@
  * Access Token  -> JWE (dir / A256GCM, 15 min): payload criptografado com
  *   permissions[] embutidas, permitindo autorização stateless sem I/O de banco.
  *
- * Refresh Token -> JWS (HS256, 7 dias): payload mínimo { sub, email }.
+ * Refresh Token -> JWS (HS256, 7 dias): payload mínimo { sub, email, empresa_id }.
  *   Permissões são re-consultadas no banco a cada /auth/refresh para garantir
  *   frescor quando há alterações de papel após a emissão do token.
  *
@@ -52,6 +52,12 @@ export interface AccessTokenPayload {
     email: string;
     permissions: string[];
     empresa_id: number;
+    /**
+     * NOVO — Card 2 (Permissões). Único bit que concede acesso irrestrito a
+     * TODAS as empresas. Substitui o antigo padrão de permissão curinga
+     * `"*"` em permissions[] — ver withPermission.ts e withSuperadmin.ts.
+     */
+    superadmin: boolean;
 }
 
 /**
@@ -64,6 +70,7 @@ export const signAccessToken = async (payload: AccessTokenPayload): Promise<stri
         email: payload.email,
         permissions: payload.permissions,
         empresa_id: payload.empresa_id,
+        superadmin: payload.superadmin,
     })
         .setProtectedHeader({alg: "dir", enc: "A256GCM"})
         .setIssuedAt()
@@ -84,6 +91,7 @@ export const verifyAccessToken = async (token: string): Promise<AccessTokenPaylo
     const permissions = payload.permissions as unknown;
     const empresaRaw = payload.empresa_id as unknown;
     const empresa_id = typeof empresaRaw === "number" ? empresaRaw : Number(empresaRaw);
+    const superadmin = payload.superadmin === true;
 
     if (!sub || !email) throw new Error("Payload do token inválido: sub ou email ausente.");
     if (!Number.isInteger(empresa_id) || empresa_id <= 0) {
@@ -94,7 +102,7 @@ export const verifyAccessToken = async (token: string): Promise<AccessTokenPaylo
         ? (permissions as unknown[]).filter((p): p is string => typeof p === "string")
         : [];
 
-    return {sub, email, permissions: safePermissions, empresa_id};
+    return {sub, email, permissions: safePermissions, empresa_id, superadmin};
 };
 
 /** Payload mínimo do Refresh Token JWS -> sem permissões por design. */

@@ -16,9 +16,9 @@
 
 import {Router, type Request} from "express";
 import bcrypt from "bcryptjs";
-import {eq} from "drizzle-orm";
+import {and, eq} from "drizzle-orm";
 import {db} from "@workspace/db";
-import {permissoesTable, refreshTokensTable, usuariosTable} from "@workspace/db/schema";
+import {permissoesTable, refreshTokensTable, usuarioEmpresasTable, usuariosTable} from "@workspace/db/schema";
 import {sendPasswordResetEmail} from "../services/email.service";
 import {revokeAllTokensForUser} from "../services/session.service";
 import {assertVinculoAtivo, listEmpresasAtivasDoUsuario} from "../services/tenant.service";
@@ -28,6 +28,7 @@ import {withPermission} from "../middlewares/withPermission";
 import {authLimiter, loginEmailLimiter, loginLimiter} from "../middlewares/rate-limit";
 import {AppError} from "../utils/app-error";
 import {errorResponse, successResponse} from "../utils/response";
+import {ADMIN_USUARIOS_AUTOMATICAS} from "../constants/permissoes";
 import {
     generateOtp,
     hashToken,
@@ -42,17 +43,39 @@ import {
 const BCRYPT_SALT_ROUNDS = 12;
 const router = Router();
 
-const fetchPermissions = async (usuarioId: number): Promise<string[]> => {
-    const rows = await db
-        .select({codigo_permissao: permissoesTable.codigo_permissao})
-        .from(permissoesTable)
-        .where(eq(permissoesTable.usuario_id, usuarioId));
-    return rows.map((r) => r.codigo_permissao);
+/**
+ * ALTERADO — Card 2 (Permissões): agora recebe `empresaId` e só devolve as
+ * permissões DAQUELA empresa — o filtro por `empresa_id` é o que impede a
+ * permissão de um usuário na empresa A "vazar" pra empresa B quando ele tem
+ * vínculo nas duas. Também soma `ADMIN_USUARIOS_AUTOMATICAS` se o papel do
+ * usuário em `usuario_empresas` for "admin" nessa empresa — isso NÃO fica
+ * gravado como linha em `usuario_permissoes`, é calculado aqui.
+ */
+const fetchPermissions = async (usuarioId: number, empresaId: number): Promise<string[]> => {
+    const [rows, vinculo] = await Promise.all([
+        db
+            .select({codigo_permissao: permissoesTable.codigo_permissao})
+            .from(permissoesTable)
+            .where(and(eq(permissoesTable.usuario_id, usuarioId), eq(permissoesTable.empresa_id, empresaId))),
+        db
+            .select({papel: usuarioEmpresasTable.papel})
+            .from(usuarioEmpresasTable)
+            .where(and(eq(usuarioEmpresasTable.usuario_id, usuarioId), eq(usuarioEmpresasTable.empresa_id, empresaId)))
+            .limit(1),
+    ]);
+
+    const permissoes = rows.map((r) => r.codigo_permissao);
+    if (vinculo[0]?.papel === "admin") {
+        for (const codigo of ADMIN_USUARIOS_AUTOMATICAS) {
+            if (!permissoes.includes(codigo)) permissoes.push(codigo);
+        }
+    }
+    return permissoes;
 };
 
 function attachTenantForAudit(
     req: Request,
-    usuario: {id: number; email: string},
+    usuario: {id: number; email: string; superadmin: boolean},
     empresaId: number,
 ): void {
     req.tenant = {empresaId};
@@ -61,18 +84,23 @@ function attachTenantForAudit(
         email: usuario.email,
         permissions: req.user?.permissions ?? [],
         empresaId,
+        superadmin: usuario.superadmin,
     };
 }
 
-async function emitSession(usuario: { id: number; nome: string; email: string }, empresaId: number) {
+async function emitSession(
+    usuario: {id: number; nome: string; email: string; superadmin: boolean},
+    empresaId: number,
+) {
     await assertVinculoAtivo(usuario.id, empresaId);
-    const permissions = await fetchPermissions(usuario.id);
+    const permissions = await fetchPermissions(usuario.id, empresaId);
     const [accessToken, {token: refreshToken, tokenHash, expiresAt}] = await Promise.all([
         signAccessToken({
             sub: String(usuario.id),
             email: usuario.email,
             permissions,
             empresa_id: empresaId,
+            superadmin: usuario.superadmin,
         }),
         signRefreshToken({sub: String(usuario.id), email: usuario.email, empresa_id: empresaId}),
     ]);
@@ -87,7 +115,7 @@ async function emitSession(usuario: { id: number; nome: string; email: string },
     return {
         accessToken,
         refreshToken,
-        user: {id: usuario.id, nome: usuario.nome, email: usuario.email, empresa_id: empresaId},
+        user: {id: usuario.id, nome: usuario.nome, email: usuario.email, empresa_id: empresaId, superadmin: usuario.superadmin},
         permissoes: permissions,
         empresa_id: empresaId,
     };
@@ -111,6 +139,7 @@ router.post("/auth/login", loginLimiter, loginEmailLimiter, async (req, res) => 
                 bloqueado: usuariosTable.bloqueado,
                 ultimo_acesso: usuariosTable.ultimo_acesso,
                 senha_unica_utilizada: usuariosTable.senha_unica_utilizada,
+                superadmin: usuariosTable.superadmin,
             })
             .from(usuariosTable)
             .where(eq(usuariosTable.email, email))
@@ -191,7 +220,7 @@ router.post("/auth/login", loginLimiter, loginEmailLimiter, async (req, res) => 
         }
 
         const session = await emitSession(
-            {id: usuario.id, nome: usuario.nome, email: usuario.email},
+            {id: usuario.id, nome: usuario.nome, email: usuario.email, superadmin: usuario.superadmin},
             empresas[0].id,
         );
         attachTenantForAudit(req, usuario, empresas[0].id);
@@ -265,6 +294,7 @@ router.post("/auth/refresh", async (req, res) => {
                 nome: usuariosTable.nome,
                 email: usuariosTable.email,
                 bloqueado: usuariosTable.bloqueado,
+                superadmin: usuariosTable.superadmin,
             })
             .from(usuariosTable)
             .where(eq(usuariosTable.id, usuarioId))
@@ -288,7 +318,7 @@ router.post("/auth/refresh", async (req, res) => {
             .where(eq(refreshTokensTable.id, registro.id));
 
         // Re-consulta permissões para propagar alterações feitas após o último login
-        const permissions = await fetchPermissions(usuario.id);
+        const permissions = await fetchPermissions(usuario.id, rtPayload.empresa_id);
 
         const [newAccessToken, {token: newRefreshToken, tokenHash: newHash, expiresAt}] =
             await Promise.all([
@@ -297,6 +327,7 @@ router.post("/auth/refresh", async (req, res) => {
                     email: usuario.email,
                     permissions,
                     empresa_id: rtPayload.empresa_id,
+                    superadmin: usuario.superadmin,
                 }),
                 signRefreshToken({
                     sub: String(usuario.id),
@@ -347,6 +378,7 @@ router.post("/auth/select-empresa", loginLimiter, async (req, res) => {
                 nome: usuariosTable.nome,
                 email: usuariosTable.email,
                 bloqueado: usuariosTable.bloqueado,
+                superadmin: usuariosTable.superadmin,
             })
             .from(usuariosTable)
             .where(eq(usuariosTable.id, usuarioId))
@@ -388,6 +420,7 @@ router.post("/auth/switch-empresa", withAuth, async (req, res) => {
                 nome: usuariosTable.nome,
                 email: usuariosTable.email,
                 bloqueado: usuariosTable.bloqueado,
+                superadmin: usuariosTable.superadmin,
             })
             .from(usuariosTable)
             .where(eq(usuariosTable.id, req.user!.id))
@@ -463,7 +496,7 @@ router.get("/auth/me", withAuth, async (req, res) => {
 
         const empresas = await listEmpresasAtivasDoUsuario(usuario.id);
         return successResponse(res, {
-            user: {...usuario, empresa_id: req.user!.empresaId},
+            user: {...usuario, empresa_id: req.user!.empresaId, superadmin: req.user!.superadmin},
             permissoes: req.user!.permissions,
             empresas,
         });
@@ -580,72 +613,6 @@ router.post("/auth/setup-password", async (req, res) => {
         return successResponse(res, null, {message: "Senha definida com sucesso. Faça login."});
     } catch (error: unknown) {
         console.error("Erro em setup-password:", error);
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao definir senha.", error);
-    }
-});
-
-/**
- * Endpoint unificado de primeiro acesso - combina verify-otp + setup-password num único passo.
- * O link do e-mail de boas-vindas aponta para /definir-senha com email e token na query string; o utilizador só precisa de escolher a senha.
- */
-router.post("/auth/definir-senha", authLimiter, async (req, res) => {
-    try {
-        const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : null;
-        const token = typeof req.body?.token === "string" ? req.body.token.trim().toUpperCase() : null;
-        const novaSenha = typeof req.body?.novaSenha === "string" ? req.body.novaSenha : null;
-
-        if (!email || !token || !novaSenha) {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "Campos obrigatórios: email, token e novaSenha.");
-        }
-
-        if (novaSenha.length < 8) {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "A senha deve ter pelo menos 8 caracteres.");
-        }
-        if (!/[A-Z]/.test(novaSenha)) {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "A senha deve conter ao menos 1 letra maiúscula.");
-        }
-        if (!/[0-9]/.test(novaSenha)) {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "A senha deve conter ao menos 1 número.");
-        }
-
-        const [usuario] = await db
-            .select({
-                id: usuariosTable.id,
-                email: usuariosTable.email,
-                senha_unica_hash: usuariosTable.senha_unica_hash,
-                senha_unica_utilizada: usuariosTable.senha_unica_utilizada,
-                bloqueado: usuariosTable.bloqueado,
-            })
-            .from(usuariosTable)
-            .where(eq(usuariosTable.email, email))
-            .limit(1);
-
-        if (!usuario || !usuario.senha_unica_hash || usuario.senha_unica_utilizada) {
-            return errorResponse(res, 400, "INVALID_TOKEN", "Token de ativação inválido ou já utilizado.");
-        }
-
-        if (usuario.bloqueado) {
-            return errorResponse(res, 403, "FORBIDDEN", "Conta bloqueada. Contacte o administrador.");
-        }
-
-        const tokenValido = await bcrypt.compare(token, usuario.senha_unica_hash);
-        if (!tokenValido) {
-            return errorResponse(res, 400, "INVALID_TOKEN", "Token de ativação inválido ou já utilizado.");
-        }
-
-        await db
-            .update(usuariosTable)
-            .set({
-                senha_hash: await bcrypt.hash(novaSenha, BCRYPT_SALT_ROUNDS),
-                senha_unica_hash: null,
-                senha_unica_utilizada: true,
-                updated_at: new Date(),
-            })
-            .where(eq(usuariosTable.id, usuario.id));
-
-        return successResponse(res, null, {message: "Senha definida com sucesso. Faça login para continuar."});
-    } catch (error: unknown) {
-        console.error("Erro em definir-senha:", error);
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao definir senha.", error);
     }
 });

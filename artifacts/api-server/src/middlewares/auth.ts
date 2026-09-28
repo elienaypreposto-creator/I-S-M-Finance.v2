@@ -18,6 +18,8 @@ export type AuthUser = {
     email: string;
     permissions: string[];
     empresaId: number;
+    /** NOVO — Card 2 (Permissões). Ver AccessTokenPayload.superadmin. */
+    superadmin: boolean;
 };
 
 declare global {
@@ -65,7 +67,13 @@ export const withAuth = async (req: Request, res: Response, next: NextFunction) 
         return jsonError(res, 401, "UNAUTHORIZED", "Sessão sem empresa. Faça login novamente.");
     }
 
-    req.user = {id, email: payload.email, permissions: payload.permissions, empresaId};
+    req.user = {
+        id,
+        email: payload.email,
+        permissions: payload.permissions,
+        empresaId,
+        superadmin: payload.superadmin,
+    };
     return next();
 };
 

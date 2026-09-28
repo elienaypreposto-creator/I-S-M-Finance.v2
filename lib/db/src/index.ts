@@ -21,3 +21,5 @@ export {
 export type {SyncAdminPermissionsResult} from "./sync-admin-permissions";
 export {withTenantTx, withOwnerTx, withBypassRls, getTenantStore, tenantAls} from "./tenant-context";
 export type {TenantDb} from "./tenant-context";
+// NOVO — Onda 2 (Card 2/3): usado pelo middleware empresa-context.ts do api-server.
+export {empresaContextStorage, getScopedDb, getCurrentEmpresaId, type EmpresaContext} from "./request-context";

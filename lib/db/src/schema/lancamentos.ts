@@ -24,6 +24,7 @@ import {origemLancamentoEnum, statusLancamentoEnum, tipoLancamentoEnum} from "./
 
 export const lancamentosTable = pgTable("lancamentos", {
     id: serial("id").primaryKey(),
+    // NOVO — Onda 2: FK de isolamento multi-empresa.
     empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
     tipo: tipoLancamentoEnum("tipo").notNull(),
     vencimento: date("vencimento").notNull(),
@@ -67,6 +68,10 @@ export const lancamentosTable = pgTable("lancamentos", {
         foreignColumns: [table.id],
         name: "lancamentos_lancamento_origem_id_fkey",
     }),
+    // NOVO — Onda 2: toda query filtra por empresa_id primeiro; índice cobre
+    // esse filtro sozinho e composto com status (padrão mais comum nas rotas).
+    index("lancamentos_empresa_id_idx").on(table.empresa_id),
+    index("lancamentos_empresa_id_status_idx").on(table.empresa_id, table.status),
     // Índices de consulta FK (joins with contas_bancarias, parceiros, plano_contas)
     index("lancamentos_conta_id_idx").on(table.conta_id),
     index("lancamentos_parceiro_id_idx").on(table.parceiro_id),

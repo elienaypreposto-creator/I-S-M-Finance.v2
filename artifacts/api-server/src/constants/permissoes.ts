@@ -36,9 +36,32 @@ export const PERM = {
     ADMIN_EMPRESAS_LISTAR: "admin:empresas:listar",
     ADMIN_EMPRESAS_CRIAR: "admin:empresas:criar",
     ADMIN_EMPRESAS_EDITAR: "admin:empresas:editar",
+    ADMIN_USUARIOS_LISTAR: "admin:usuarios:listar",
+    ADMIN_USUARIOS_CRIAR: "admin:usuarios:criar",
+    ADMIN_USUARIOS_EDITAR: "admin:usuarios:editar",
+    ADMIN_USUARIOS_DELETAR: "admin:usuarios:deletar",
 } as const;
 
 export type PermissaoCodigo = (typeof PERM)[keyof typeof PERM];
+
+/**
+ * NOVO — Card 2 (Permissões). Concedido automaticamente pelo `fetchPermissions`
+ * (routes/auth.ts) a quem tem `papel = "admin"` em `usuario_empresas` para a
+ * empresa ativa — NÃO é uma linha gravada em `usuario_permissoes`, é
+ * calculado no momento de emitir o token. Cobre as ações de gestão de
+ * usuários DENTRO da empresa (distinto de `superadmin`, que é acesso
+ * irrestrito a TODAS as empresas — ver usuarios.ts).
+ *
+ * Lista de códigos concretos (não um wildcard `"admin:usuarios:*"`): assim
+ * `withPermission`/`permissions.includes(...)` continua sendo comparação
+ * exata em todo lugar, sem precisar de lógica de prefixo em lugar nenhum.
+ */
+export const ADMIN_USUARIOS_AUTOMATICAS = [
+    PERM.ADMIN_USUARIOS_LISTAR,
+    PERM.ADMIN_USUARIOS_CRIAR,
+    PERM.ADMIN_USUARIOS_EDITAR,
+    PERM.ADMIN_USUARIOS_DELETAR,
+] as const satisfies readonly PermissaoCatalogo[];
 
 /** Tuple não-vazia exigida por `z.enum`. `"*"` não faz parte do catálogo. */
 const PERMISSOES_ENUM_VALUES = PERMISSOES_ADMIN as unknown as [

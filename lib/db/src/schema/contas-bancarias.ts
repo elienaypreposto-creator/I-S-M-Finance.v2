@@ -1,10 +1,15 @@
+
 import { integer, pgTable, serial, text, numeric, date, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, numeric, date, timestamp, integer } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { empresasTable } from "./empresas";
 
 export const contasBancariasTable = pgTable("contas_bancarias", {
   id: serial("id").primaryKey(),
+  // NOVO — Onda 2: FK de isolamento multi-empresa. Não confundir com a
+  // coluna `empresa` abaixo, que é texto livre (ex.: razão social empressa
+  // em boleto), sem relação nenhuma com este FK.
   empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
   tipo: text("tipo").notNull(), // corrente, movimento, poupanca
   banco: text("banco"),

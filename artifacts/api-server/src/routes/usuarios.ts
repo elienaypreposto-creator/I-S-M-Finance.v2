@@ -1,13 +1,16 @@
 /**
  * Rotas de Usuários
  *
- * GET    /usuarios                - Lista paginada
- * POST   /usuarios                - Cria utilizador + envia OTP por e-mail
- * PUT    /usuarios/:id            - Atualização
- * GET    /usuarios/:id/permissoes - Leitura de permissões
- * PUT    /usuarios/:id/permissoes - Substituição de permissões
- *         (exige admin:permissoes:conceder; allowlist z.enum; "*" recusado;
- *          auditoria com detalhes.antes / detalhes.depois)
+ * GET    /usuarios                       - Lista paginada
+ * POST   /usuarios                       - Cria utilizador + envia OTP por e-mail
+ * PUT    /usuarios/:id                   - Atualização
+ * GET    /usuarios/:id/permissoes        - Leitura de permissões (empresa ativa do autor)
+ * PUT    /usuarios/:id/permissoes        - Substituição de permissões (empresa ativa do autor)
+ *                                         (exige admin:permissoes:conceder; allowlist z.enum; "*" recusado;
+ *                                          auditoria com detalhes.antes / detalhes.depois)
+ * GET    /usuarios/:id/empresas           - Lista vínculos do usuário com empresas
+ * PUT    /usuarios/:id/empresas           - Cria/atualiza vínculo (exige superadmin)
+ * DELETE /usuarios/:id/empresas/:empresaId - Remove vínculo (exige superadmin)
  *
  * Validações no POST /usuarios:
  *   - Parceiro com flag "Cliente" ou "Fornecedor" ativa -> 422 com mensagem clara
@@ -21,17 +24,30 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import {and, count, eq, ilike, ne} from "drizzle-orm";
 import {db} from "@workspace/db";
-import {empresasTable, parceirosTable, permissoesTable, usuariosTable, usuarioEmpresasTable} from "@workspace/db/schema";
+import {
+    empresasTable,
+    parceirosTable,
+    permissoesTable,
+    usuariosTable,
+    usuarioEmpresasTable,
+} from "@workspace/db/schema";
 import {invalidateTenantCache} from "../middlewares/tenant";
 import {requireTenant, tenantWhere} from "../lib/tenant-scope";
-import {sendWelcomeEmail, sendAdminCreatedAccountEmail} from "../services/email.service";
+import {
+    sendWelcomeEmail,
+    sendAdminCreatedAccountEmail,
+} from "../services/email.service";
 import {revokeAllTokensForUser} from "../services/session.service";
 import {generateOtp} from "../services/token.service";
 import {errorResponse, successResponse} from "../utils/response";
 import {withPermission} from "../middlewares/withPermission";
+import {withSuperadmin} from "../middlewares/withSuperadmin";
 import {validateBody} from "../middlewares/validate";
 import {validatePermissoesGrant} from "../utils/permissoes-grant";
-import {PERM, codigoPermissaoCatalogoSchema} from "../constants/permissoes";
+import {
+    PERM,
+    codigoPermissaoCatalogoSchema,
+} from "../constants/permissoes";
 
 // ---------------------
 // Schemas de validação
@@ -51,21 +67,36 @@ const createUsuarioBodySchema = z.object({
     telefone: z.string().trim().min(1).optional(),
     celular: z.string().trim().min(1).optional(),
     senha: z.preprocess(
-        (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+        (v) =>
+            typeof v === "string" && v.trim() === ""
+                ? undefined
+                : v,
         senhaForteSchema.optional(),
     ),
 });
 
 const updateUsuarioBodySchema = z.object({
-    nome: z.string().trim().min(2, "Nome deve ter pelo menos 2 caracteres.").optional(),
-    email: z.string().trim().email("E-mail inválido.").toLowerCase().optional(),
+    nome: z
+        .string()
+        .trim()
+        .min(2, "Nome deve ter pelo menos 2 caracteres.")
+        .optional(),
+    email: z
+        .string()
+        .trim()
+        .email("E-mail inválido.")
+        .toLowerCase()
+        .optional(),
     cargo: z.string().trim().min(1).optional(),
     perfil_base: z.string().trim().min(1).optional(),
     telefone: z.string().trim().min(1).optional(),
     celular: z.string().trim().min(1).optional(),
     bloqueado: z.boolean().optional(),
     senha: z.preprocess(
-        (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+        (v) =>
+            typeof v === "string" && v.trim() === ""
+                ? undefined
+                : v,
         senhaForteSchema.optional(),
     ),
 });
@@ -104,18 +135,41 @@ router.get(
     withPermission("admin:usuarios:listar"),
     async (req, res) => {
         try {
-            const page = Math.max(1, parseInt(req.query.page as string) || 1);
-            const limit = Math.min(100, parseInt(req.query.limit as string) || 20);
-            const offset = (page - 1) * limit;
+            const page = Math.max(
+                1,
+                parseInt(req.query.page as string) || 1,
+            );
 
+            const limit = Math.min(
+                100,
+                parseInt(req.query.limit as string) || 20,
+            );
+
+            const offset = (page - 1) * limit;
             const conditions = [];
-            if (typeof req.query.search === "string" && req.query.search.trim()) {
-                conditions.push(ilike(usuariosTable.nome, `%${req.query.search.trim()}%`));
+
+            if (
+                typeof req.query.search === "string" &&
+                req.query.search.trim()
+            ) {
+                conditions.push(
+                    ilike(
+                        usuariosTable.nome,
+                        `%${req.query.search.trim()}%`,
+                    ),
+                );
             }
 
-            const where = conditions.length > 0 ? and(...conditions) : undefined;
+            const where =
+                conditions.length > 0
+                    ? and(...conditions)
+                    : undefined;
 
-            const [totalResult] = await db.select({count: count()}).from(usuariosTable).where(where);
+            const [totalResult] = await db
+                .select({count: count()})
+                .from(usuariosTable)
+                .where(where);
+
             const items = await db
                 .select(USUARIO_PUBLIC_COLS)
                 .from(usuariosTable)
@@ -124,9 +178,19 @@ router.get(
                 .offset(offset)
                 .orderBy(usuariosTable.nome);
 
-            return successResponse(res, items, {total: totalResult.count, page, limit});
+            return successResponse(res, items, {
+                total: totalResult.count,
+                page,
+                limit,
+            });
         } catch (e: unknown) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar usuários.", e);
+            return errorResponse(
+                res,
+                500,
+                "INTERNAL_ERROR",
+                "Erro ao listar usuários.",
+                e,
+            );
         }
     },
 );
@@ -137,12 +201,29 @@ router.post(
     validateBody(createUsuarioBodySchema),
     async (req, res) => {
         try {
-            const {nome, email, cargo, perfil_base, telefone, celular, senha} = req.body as CreateUsuarioBody;
+            const {
+                nome,
+                email,
+                cargo,
+                perfil_base,
+                telefone,
+                celular,
+                senha,
+            } = req.body as CreateUsuarioBody;
 
             const frontendUrl = process.env.FRONTEND_URL;
+
             if (!frontendUrl) {
-                console.error("[CONFIG] FRONTEND_URL não definido - criação de utilizador bloqueada.");
-                return errorResponse(res, 500, "CONFIGURATION_ERROR", "Serviço temporariamente indisponível. Contacte o administrador.");
+                console.error(
+                    "[CONFIG] FRONTEND_URL não definido - criação de utilizador bloqueada.",
+                );
+
+                return errorResponse(
+                    res,
+                    500,
+                    "CONFIGURATION_ERROR",
+                    "Serviço temporariamente indisponível. Contacte o administrador.",
+                );
             }
 
             const [usuarioExistente] = await db
@@ -161,79 +242,129 @@ router.post(
             }
 
             const {empresaId} = requireTenant(req);
+
             const [parceiro] = await db
-                .select({id: parceirosTable.id, tipos: parceirosTable.tipos})
+                .select({
+                    id: parceirosTable.id,
+                    tipos: parceirosTable.tipos,
+                })
                 .from(parceirosTable)
-                .where(tenantWhere(parceirosTable, empresaId, ilike(parceirosTable.nome, nome.trim())))
+                .where(
+                    tenantWhere(
+                        parceirosTable,
+                        empresaId,
+                        ilike(
+                            parceirosTable.nome,
+                            nome.trim(),
+                        ),
+                    ),
+                )
                 .limit(1);
 
             if (parceiro) {
                 const tipos = (parceiro.tipos ?? []) as string[];
-                const flagsAtivas = tipos.filter((t) => FLAGS_BLOQUEADAS.includes(t));
+
+                const flagsAtivas = tipos.filter((t) =>
+                    FLAGS_BLOQUEADAS.includes(t),
+                );
+
                 if (flagsAtivas.length > 0) {
                     return errorResponse(
                         res,
                         422,
                         "PARCEIRO_FLAG_BLOQUEADA",
-                        `Utilizador não pode ser cadastrado, pois a flag ${flagsAtivas.map((f) => `"${f}"`).join(" e ")} está habilitada. Desabilite essa flag para prosseguir.`,
+                        `Utilizador não pode ser cadastrado, pois a flag ${flagsAtivas
+                            .map((f) => `"${f}"`)
+                            .join(
+                                " e ",
+                            )} está habilitada. Desabilite essa flag para prosseguir.`,
                     );
                 }
             }
 
             // Fluxo A: admin definiu senha -> login directo sem OTP
             // Fluxo B: sem senha -> gera OTP de primeiro acesso
-            const adminDefineSenha = typeof senha === "string" && senha.length >= 8;
+            const adminDefineSenha =
+                typeof senha === "string" && senha.length >= 8;
 
             const senhaHash = adminDefineSenha
-                ? await bcrypt.hash(senha!, BCRYPT_SALT_ROUNDS)
-                : await bcrypt.hash(crypto.randomBytes(32).toString("hex"), BCRYPT_SALT_ROUNDS);
+                ? await bcrypt.hash(
+                      senha,
+                      BCRYPT_SALT_ROUNDS,
+                  )
+                : await bcrypt.hash(
+                      crypto.randomBytes(32).toString("hex"),
+                      BCRYPT_SALT_ROUNDS,
+                  );
 
             let otp: string | null = null;
             let otpHash: string | null = null;
+
             if (!adminDefineSenha) {
                 otp = generateOtp();
-                otpHash = await bcrypt.hash(otp, BCRYPT_SALT_ROUNDS);
+                otpHash = await bcrypt.hash(
+                    otp,
+                    BCRYPT_SALT_ROUNDS,
+                );
             }
 
-            const novoUsuario = await db.transaction(async (tx) => {
-                const [user] = await tx
-                    .insert(usuariosTable)
-                    .values({
-                        nome,
-                        email,
-                        cargo,
-                        perfil_base,
-                        telefone,
-                        celular,
-                        senha_hash: senhaHash,
-                        senha_unica_hash: otpHash,
-                        senha_unica_utilizada: false,
-                        bloqueado: false,
-                    })
-                    .returning(USUARIO_PUBLIC_COLS);
+            const novoUsuario = await db.transaction(
+                async (tx) => {
+                    const [user] = await tx
+                        .insert(usuariosTable)
+                        .values({
+                            nome,
+                            email,
+                            cargo,
+                            perfil_base,
+                            telefone,
+                            celular,
+                            senha_hash: senhaHash,
+                            senha_unica_hash: otpHash,
+                            senha_unica_utilizada: false,
+                            bloqueado: false,
+                        })
+                        .returning(USUARIO_PUBLIC_COLS);
 
-                await tx.insert(usuarioEmpresasTable).values({
-                    usuario_id: user.id,
-                    empresa_id: empresaId,
-                    papel: "membro",
-                    ativo: true,
-                });
+                    await tx
+                        .insert(usuarioEmpresasTable)
+                        .values({
+                            usuario_id: user.id,
+                            empresa_id: empresaId,
+                            papel: "membro",
+                            ativo: true,
+                        });
 
-                return user;
-            });
+                    return user;
+                },
+            );
 
             try {
                 if (adminDefineSenha) {
-                    await sendAdminCreatedAccountEmail(email, nome, frontendUrl);
+                    await sendAdminCreatedAccountEmail(
+                        email,
+                        nome,
+                        frontendUrl,
+                    );
                 } else {
-                    await sendWelcomeEmail(email, nome, otp!, frontendUrl);
+                    await sendWelcomeEmail(
+                        email,
+                        nome,
+                        otp!,
+                        frontendUrl,
+                    );
                 }
             } catch (emailErr) {
                 // Reverte o OTP para não deixar um hash inutilizável gravado
                 await db
                     .update(usuariosTable)
                     .set({senha_unica_hash: null})
-                    .where(eq(usuariosTable.id, novoUsuario.id));
+                    .where(
+                        eq(
+                            usuariosTable.id,
+                            novoUsuario.id,
+                        ),
+                    );
 
                 return errorResponse(
                     res,
@@ -245,12 +376,29 @@ router.post(
             }
 
             const meta = adminDefineSenha
-                ? {message: "Conta criada. E-mail de confirmação enviado."}
-                : {message: "Conta criada. Código de activação enviado por e-mail."};
+                ? {
+                      message:
+                          "Conta criada. E-mail de confirmação enviado.",
+                  }
+                : {
+                      message:
+                          "Conta criada. Código de activação enviado por e-mail.",
+                  };
 
-            return successResponse(res, novoUsuario, meta, 201);
+            return successResponse(
+                res,
+                novoUsuario,
+                meta,
+                201,
+            );
         } catch (e: unknown) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao criar usuário.", e);
+            return errorResponse(
+                res,
+                500,
+                "INTERNAL_ERROR",
+                "Erro ao criar usuário.",
+                e,
+            );
         }
     },
 );
@@ -261,9 +409,18 @@ router.put(
     validateBody(updateUsuarioBodySchema),
     async (req, res) => {
         try {
-            const id = parseInt(String(req.params.id), 10);
+            const id = parseInt(
+                String(req.params.id),
+                10,
+            );
+
             if (isNaN(id)) {
-                return errorResponse(res, 400, "VALIDATION_ERROR", "ID de usuário inválido.");
+                return errorResponse(
+                    res,
+                    400,
+                    "VALIDATION_ERROR",
+                    "ID de usuário inválido.",
+                );
             }
 
             const {
@@ -274,7 +431,7 @@ router.put(
                 telefone,
                 celular,
                 bloqueado,
-                senha
+                senha,
             } = req.body as UpdateUsuarioBody;
 
             const [antes] = await db
@@ -282,13 +439,25 @@ router.put(
                 .from(usuariosTable)
                 .where(eq(usuariosTable.id, id))
                 .limit(1);
+
             req.auditAntes = antes ?? null;
 
             if (email !== undefined) {
                 const [conflito] = await db
                     .select({id: usuariosTable.id})
                     .from(usuariosTable)
-                    .where(and(eq(usuariosTable.email, email), ne(usuariosTable.id, id)))
+                    .where(
+                        and(
+                            eq(
+                                usuariosTable.email,
+                                email,
+                            ),
+                            ne(
+                                usuariosTable.id,
+                                id,
+                            ),
+                        ),
+                    )
                     .limit(1);
 
                 if (conflito) {
@@ -313,16 +482,43 @@ router.put(
                 senha_hash?: string;
             };
 
-            const updateData: UsuarioUpdate = {updated_at: new Date()};
-            if (nome !== undefined) updateData.nome = nome;
-            if (email !== undefined) updateData.email = email;
-            if (cargo !== undefined) updateData.cargo = cargo;
-            if (perfil_base !== undefined) updateData.perfil_base = perfil_base;
-            if (telefone !== undefined) updateData.telefone = telefone;
-            if (celular !== undefined) updateData.celular = celular;
-            if (bloqueado !== undefined) updateData.bloqueado = bloqueado;
+            const updateData: UsuarioUpdate = {
+                updated_at: new Date(),
+            };
+
+            if (nome !== undefined) {
+                updateData.nome = nome;
+            }
+
+            if (email !== undefined) {
+                updateData.email = email;
+            }
+
+            if (cargo !== undefined) {
+                updateData.cargo = cargo;
+            }
+
+            if (perfil_base !== undefined) {
+                updateData.perfil_base = perfil_base;
+            }
+
+            if (telefone !== undefined) {
+                updateData.telefone = telefone;
+            }
+
+            if (celular !== undefined) {
+                updateData.celular = celular;
+            }
+
+            if (bloqueado !== undefined) {
+                updateData.bloqueado = bloqueado;
+            }
+
             if (senha !== undefined) {
-                updateData.senha_hash = await bcrypt.hash(senha, BCRYPT_SALT_ROUNDS);
+                updateData.senha_hash = await bcrypt.hash(
+                    senha,
+                    BCRYPT_SALT_ROUNDS,
+                );
             }
 
             const [item] = await db
@@ -331,37 +527,133 @@ router.put(
                 .where(eq(usuariosTable.id, id))
                 .returning(USUARIO_PUBLIC_COLS);
 
-            if (!item) return errorResponse(res, 404, "NOT_FOUND", "Utilizador não encontrado.");
+            if (!item) {
+                return errorResponse(
+                    res,
+                    404,
+                    "NOT_FOUND",
+                    "Utilizador não encontrado.",
+                );
+            }
 
-            if (bloqueado === true || senha !== undefined || email !== undefined) {
+            if (
+                bloqueado === true ||
+                senha !== undefined ||
+                email !== undefined
+            ) {
                 await revokeAllTokensForUser(id);
             }
 
             return successResponse(res, item);
         } catch (e: unknown) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao atualizar usuário.", e);
+            return errorResponse(
+                res,
+                500,
+                "INTERNAL_ERROR",
+                "Erro ao atualizar usuário.",
+                e,
+            );
         }
     },
 );
+
+/**
+ * NOVO — Card 2 (Permissões): confirma que o usuário-alvo tem vínculo com a
+ * empresa ativa do ator, a menos que o ator seja superadmin. 404 (não 403)
+ * pra não revelar que o usuário existe em outra empresa.
+ */
+async function targetPertenceAEmpresa(
+    targetUserId: number,
+    empresaId: number,
+): Promise<boolean> {
+    const [vinculo] = await db
+        .select({
+            id: usuarioEmpresasTable.id,
+        })
+        .from(usuarioEmpresasTable)
+        .where(
+            and(
+                eq(
+                    usuarioEmpresasTable.usuario_id,
+                    targetUserId,
+                ),
+                eq(
+                    usuarioEmpresasTable.empresa_id,
+                    empresaId,
+                ),
+            ),
+        )
+        .limit(1);
+
+    return !!vinculo;
+}
 
 router.get(
     "/usuarios/:id/permissoes",
     withPermission("admin:usuarios:listar"),
     async (req, res) => {
         try {
-            const id = parseInt(String(req.params.id), 10);
+            const id = parseInt(
+                String(req.params.id),
+                10,
+            );
+
             if (isNaN(id)) {
-                return errorResponse(res, 400, "VALIDATION_ERROR", "ID de usuário inválido.");
+                return errorResponse(
+                    res,
+                    400,
+                    "VALIDATION_ERROR",
+                    "ID de usuário inválido.",
+                );
+            }
+
+            // NOVO — Card 2: admin de empresa só enxerga usuário da própria empresa.
+            if (
+                !req.user!.superadmin &&
+                !(await targetPertenceAEmpresa(
+                    id,
+                    req.user!.empresaId,
+                ))
+            ) {
+                return errorResponse(
+                    res,
+                    404,
+                    "NOT_FOUND",
+                    "Utilizador não encontrado.",
+                );
             }
 
             const items = await db
-                .select({permissao: permissoesTable.codigo_permissao})
+                .select({
+                    permissao:
+                        permissoesTable.codigo_permissao,
+                })
                 .from(permissoesTable)
-                .where(eq(permissoesTable.usuario_id, id));
+                .where(
+                    and(
+                        eq(
+                            permissoesTable.usuario_id,
+                            id,
+                        ),
+                        eq(
+                            permissoesTable.empresa_id,
+                            req.user!.empresaId,
+                        ),
+                    ),
+                );
 
-            return successResponse(res, items.map((i) => i.permissao));
+            return successResponse(
+                res,
+                items.map((i) => i.permissao),
+            );
         } catch (e: unknown) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar permissões.", e);
+            return errorResponse(
+                res,
+                500,
+                "INTERNAL_ERROR",
+                "Erro ao listar permissões.",
+                e,
+            );
         }
     },
 );
@@ -373,61 +665,164 @@ router.put(
     async (req, res) => {
         try {
             if (!req.user) {
-                return errorResponse(res, 401, "UNAUTHORIZED", "Usuário não autenticado.");
+                return errorResponse(
+                    res,
+                    401,
+                    "UNAUTHORIZED",
+                    "Usuário não autenticado.",
+                );
             }
 
-            const id = parseInt(String(req.params.id), 10);
+            const id = parseInt(
+                String(req.params.id),
+                10,
+            );
+
             if (isNaN(id)) {
-                return errorResponse(res, 400, "VALIDATION_ERROR", "ID de usuário inválido.");
+                return errorResponse(
+                    res,
+                    400,
+                    "VALIDATION_ERROR",
+                    "ID de usuário inválido.",
+                );
             }
 
             const [alvo] = await db
-                .select({id: usuariosTable.id})
+                .select({
+                    id: usuariosTable.id,
+                })
                 .from(usuariosTable)
-                .where(eq(usuariosTable.id, id))
+                .where(
+                    eq(
+                        usuariosTable.id,
+                        id,
+                    ),
+                )
                 .limit(1);
 
             if (!alvo) {
-                return errorResponse(res, 404, "NOT_FOUND", "Utilizador não encontrado.");
+                return errorResponse(
+                    res,
+                    404,
+                    "NOT_FOUND",
+                    "Utilizador não encontrado.",
+                );
+            }
+
+            // NOVO — Card 2: admin de empresa só edita usuário vinculado à
+            // MESMA empresa em que está autenticado agora. 404, não 403 —
+            // não revela que o usuário existe em outra empresa. Superadmin
+            // edita qualquer um, sem essa checagem.
+            const empresaId = req.user.empresaId;
+
+            if (
+                !req.user.superadmin &&
+                !(await targetPertenceAEmpresa(
+                    id,
+                    empresaId,
+                ))
+            ) {
+                return errorResponse(
+                    res,
+                    404,
+                    "NOT_FOUND",
+                    "Utilizador não encontrado.",
+                );
             }
 
             const atuais = await db
-                .select({permissao: permissoesTable.codigo_permissao})
+                .select({
+                    permissao:
+                        permissoesTable.codigo_permissao,
+                })
                 .from(permissoesTable)
-                .where(eq(permissoesTable.usuario_id, id));
+                .where(
+                    and(
+                        eq(
+                            permissoesTable.usuario_id,
+                            id,
+                        ),
+                        eq(
+                            permissoesTable.empresa_id,
+                            empresaId,
+                        ),
+                    ),
+                );
 
-            const {permissoes: requested} = req.body as UpdatePermissoesBody;
+            const {permissoes: requested} =
+                req.body as UpdatePermissoesBody;
+
             const grant = validatePermissoesGrant({
                 actorUserId: req.user.id,
                 targetUserId: id,
                 actorPermissions: req.user.permissions,
+                actorSuperadmin: req.user.superadmin,
                 requested,
-                targetCurrentPermissions: atuais.map((row) => row.permissao),
+                targetCurrentPermissions:
+                    atuais.map(
+                        (row) => row.permissao,
+                    ),
             });
 
             if (!grant.ok) {
-                return errorResponse(res, grant.status, grant.code, grant.message);
+                return errorResponse(
+                    res,
+                    grant.status,
+                    grant.code,
+                    grant.message,
+                );
             }
 
             const permissoes = grant.permissoes;
+
             req.auditAntes = {
-                permissoes: atuais.map((row) => row.permissao),
+                permissoes: atuais.map(
+                    (row) => row.permissao,
+                ),
                 depois: permissoes,
             };
 
             await db.transaction(async (tx) => {
-                await tx.delete(permissoesTable).where(eq(permissoesTable.usuario_id, id));
+                await tx
+                    .delete(permissoesTable)
+                    .where(
+                        and(
+                            eq(
+                                permissoesTable.usuario_id,
+                                id,
+                            ),
+                            eq(
+                                permissoesTable.empresa_id,
+                                empresaId,
+                            ),
+                        ),
+                    );
 
                 if (permissoes.length > 0) {
-                    await tx.insert(permissoesTable).values(
-                        permissoes.map((p) => ({usuario_id: id, codigo_permissao: p})),
-                    );
+                    await tx
+                        .insert(permissoesTable)
+                        .values(
+                            permissoes.map((p) => ({
+                                usuario_id: id,
+                                empresa_id: empresaId,
+                                codigo_permissao: p,
+                            })),
+                        );
                 }
             });
 
-            return successResponse(res, permissoes);
+            return successResponse(
+                res,
+                permissoes,
+            );
         } catch (e: unknown) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao atualizar permissões.", e);
+            return errorResponse(
+                res,
+                500,
+                "INTERNAL_ERROR",
+                "Erro ao atualizar permissões.",
+                e,
+            );
         }
     },
 );
@@ -438,103 +833,326 @@ const upsertVinculoBodySchema = z.object({
     ativo: z.boolean().default(true),
 });
 
-router.get("/usuarios/:id/empresas", withPermission(PERM.ADMIN_EMPRESAS_LISTAR), async (req, res) => {
-    try {
-        const id = parseInt(String(req.params.id), 10);
-        if (!Number.isInteger(id) || id <= 0) {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "ID de usuário inválido.");
+router.get(
+    "/usuarios/:id/empresas",
+    withPermission(PERM.ADMIN_EMPRESAS_LISTAR),
+    async (req, res) => {
+        try {
+            const id = parseInt(
+                String(req.params.id),
+                10,
+            );
+
+            if (
+                !Number.isInteger(id) ||
+                id <= 0
+            ) {
+                return errorResponse(
+                    res,
+                    400,
+                    "VALIDATION_ERROR",
+                    "ID de usuário inválido.",
+                );
+            }
+
+            const items = await db
+                .select({
+                    id: usuarioEmpresasTable.id,
+                    usuario_id:
+                        usuarioEmpresasTable.usuario_id,
+                    empresa_id:
+                        usuarioEmpresasTable.empresa_id,
+                    papel: usuarioEmpresasTable.papel,
+                    ativo: usuarioEmpresasTable.ativo,
+                    razao_social:
+                        empresasTable.razao_social,
+                    nome_fantasia:
+                        empresasTable.nome_fantasia,
+                    slug: empresasTable.slug,
+                })
+                .from(usuarioEmpresasTable)
+                .innerJoin(
+                    empresasTable,
+                    eq(
+                        usuarioEmpresasTable.empresa_id,
+                        empresasTable.id,
+                    ),
+                )
+                .where(
+                    eq(
+                        usuarioEmpresasTable.usuario_id,
+                        id,
+                    ),
+                );
+
+            return successResponse(
+                res,
+                items,
+            );
+        } catch (e: unknown) {
+            return errorResponse(
+                res,
+                500,
+                "INTERNAL_ERROR",
+                "Erro ao listar vínculos.",
+                e,
+            );
         }
+    },
+);
 
-        const items = await db
-            .select({
-                id: usuarioEmpresasTable.id,
-                usuario_id: usuarioEmpresasTable.usuario_id,
-                empresa_id: usuarioEmpresasTable.empresa_id,
-                papel: usuarioEmpresasTable.papel,
-                ativo: usuarioEmpresasTable.ativo,
-                razao_social: empresasTable.razao_social,
-                nome_fantasia: empresasTable.nome_fantasia,
-                slug: empresasTable.slug,
-            })
-            .from(usuarioEmpresasTable)
-            .innerJoin(empresasTable, eq(usuarioEmpresasTable.empresa_id, empresasTable.id))
-            .where(eq(usuarioEmpresasTable.usuario_id, id));
+// ALTERADO — Card 2: "vincular usuário a empresa" é operação do
+// ISM, não de administração de uma empresa. Antes exigia apenas
+// withPermission(PERM.ADMIN_EMPRESAS_EDITAR); agora exige withSuperadmin.
+router.put(
+    "/usuarios/:id/empresas",
+    withSuperadmin,
+    validateBody(upsertVinculoBodySchema),
+    async (req, res) => {
+        try {
+            const id = parseInt(
+                String(req.params.id),
+                10,
+            );
 
-        return successResponse(res, items);
-    } catch (e: unknown) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar vínculos.", e);
-    }
-});
+            if (
+                !Number.isInteger(id) ||
+                id <= 0
+            ) {
+                return errorResponse(
+                    res,
+                    400,
+                    "VALIDATION_ERROR",
+                    "ID de usuário inválido.",
+                );
+            }
 
-router.put("/usuarios/:id/empresas", withPermission(PERM.ADMIN_EMPRESAS_EDITAR), validateBody(upsertVinculoBodySchema), async (req, res) => {
-    try {
-        const id = parseInt(String(req.params.id), 10);
-        if (!Number.isInteger(id) || id <= 0) {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "ID de usuário inválido.");
-        }
+            const {
+                empresa_id,
+                papel,
+                ativo,
+            } = req.body as z.infer<
+                typeof upsertVinculoBodySchema
+            >;
 
-        const {empresa_id, papel, ativo} = req.body as z.infer<typeof upsertVinculoBodySchema>;
+            const [empresa] = await db
+                .select({
+                    id: empresasTable.id,
+                })
+                .from(empresasTable)
+                .where(
+                    eq(
+                        empresasTable.id,
+                        empresa_id,
+                    ),
+                )
+                .limit(1);
 
-        const [empresa] = await db.select({id: empresasTable.id}).from(empresasTable).where(eq(empresasTable.id, empresa_id)).limit(1);
-        if (!empresa) return errorResponse(res, 404, "NOT_FOUND", "Empresa não encontrada.");
+            if (!empresa) {
+                return errorResponse(
+                    res,
+                    404,
+                    "NOT_FOUND",
+                    "Empresa não encontrada.",
+                );
+            }
 
-        const [existente] = await db
-            .select({id: usuarioEmpresasTable.id})
-            .from(usuarioEmpresasTable)
-            .where(and(eq(usuarioEmpresasTable.usuario_id, id), eq(usuarioEmpresasTable.empresa_id, empresa_id)))
-            .limit(1);
+            const [existente] = await db
+                .select({
+                    id: usuarioEmpresasTable.id,
+                })
+                .from(usuarioEmpresasTable)
+                .where(
+                    and(
+                        eq(
+                            usuarioEmpresasTable.usuario_id,
+                            id,
+                        ),
+                        eq(
+                            usuarioEmpresasTable.empresa_id,
+                            empresa_id,
+                        ),
+                    ),
+                )
+                .limit(1);
 
-        if (existente) {
+            if (existente) {
+                const [item] = await db
+                    .update(usuarioEmpresasTable)
+                    .set({
+                        papel,
+                        ativo,
+                    })
+                    .where(
+                        eq(
+                            usuarioEmpresasTable.id,
+                            existente.id,
+                        ),
+                    )
+                    .returning();
+
+                invalidateTenantCache(
+                    id,
+                    empresa_id,
+                );
+
+                return successResponse(
+                    res,
+                    item,
+                );
+            }
+
             const [item] = await db
-                .update(usuarioEmpresasTable)
-                .set({papel, ativo})
-                .where(eq(usuarioEmpresasTable.id, existente.id))
+                .insert(usuarioEmpresasTable)
+                .values({
+                    usuario_id: id,
+                    empresa_id,
+                    papel,
+                    ativo,
+                })
                 .returning();
-            invalidateTenantCache(id, empresa_id);
-            return successResponse(res, item);
+
+            invalidateTenantCache(
+                id,
+                empresa_id,
+            );
+
+            return successResponse(
+                res,
+                item,
+                null,
+                201,
+            );
+        } catch (e: unknown) {
+            return errorResponse(
+                res,
+                500,
+                "INTERNAL_ERROR",
+                "Erro ao vincular usuário à empresa.",
+                e,
+            );
         }
+    },
+);
 
-        const [item] = await db
-            .insert(usuarioEmpresasTable)
-            .values({usuario_id: id, empresa_id, papel, ativo})
-            .returning();
-        invalidateTenantCache(id, empresa_id);
-        return successResponse(res, item, null, 201);
-    } catch (e: unknown) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao vincular usuário à empresa.", e);
-    }
-});
+// ALTERADO — Card 2: mesma razão do PUT acima — desvincular é o inverso de
+// vincular, mesma exigência de superadmin.
+router.delete(
+    "/usuarios/:id/empresas/:empresaId",
+    withSuperadmin,
+    async (req, res) => {
+        try {
+            const id = parseInt(
+                String(req.params.id),
+                10,
+            );
 
-router.delete("/usuarios/:id/empresas/:empresaId", withPermission(PERM.ADMIN_EMPRESAS_EDITAR), async (req, res) => {
-    try {
-        const id = parseInt(String(req.params.id), 10);
-        const empresaId = parseInt(String(req.params.empresaId), 10);
-        if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(empresaId) || empresaId <= 0) {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "IDs inválidos.");
+            const empresaId = parseInt(
+                String(req.params.empresaId),
+                10,
+            );
+
+            if (
+                !Number.isInteger(id) ||
+                id <= 0 ||
+                !Number.isInteger(empresaId) ||
+                empresaId <= 0
+            ) {
+                return errorResponse(
+                    res,
+                    400,
+                    "VALIDATION_ERROR",
+                    "IDs inválidos.",
+                );
+            }
+
+            const ativos = await db
+                .select({
+                    id: usuarioEmpresasTable.id,
+                })
+                .from(usuarioEmpresasTable)
+                .where(
+                    and(
+                        eq(
+                            usuarioEmpresasTable.usuario_id,
+                            id,
+                        ),
+                        eq(
+                            usuarioEmpresasTable.ativo,
+                            true,
+                        ),
+                    ),
+                );
+
+            const [alvo] = await db
+                .select({
+                    id: usuarioEmpresasTable.id,
+                    ativo: usuarioEmpresasTable.ativo,
+                })
+                .from(usuarioEmpresasTable)
+                .where(
+                    and(
+                        eq(
+                            usuarioEmpresasTable.usuario_id,
+                            id,
+                        ),
+                        eq(
+                            usuarioEmpresasTable.empresa_id,
+                            empresaId,
+                        ),
+                    ),
+                )
+                .limit(1);
+
+            if (!alvo) {
+                return errorResponse(
+                    res,
+                    404,
+                    "NOT_FOUND",
+                    "Vínculo não encontrado.",
+                );
+            }
+
+            if (
+                alvo.ativo &&
+                ativos.length <= 1
+            ) {
+                return errorResponse(
+                    res,
+                    422,
+                    "ULTIMO_VINCULO",
+                    "Não é possível remover o último vínculo ativo do utilizador.",
+                );
+            }
+
+            await db
+                .delete(usuarioEmpresasTable)
+                .where(
+                    eq(
+                        usuarioEmpresasTable.id,
+                        alvo.id,
+                    ),
+                );
+
+            invalidateTenantCache(
+                id,
+                empresaId,
+            );
+
+            return successResponse(
+                res,
+                {deleted: true},
+            );
+        } catch (e: unknown) {
+            return errorResponse(
+                res,
+                500,
+                "INTERNAL_ERROR",
+                "Erro ao desvincular usuário.",
+                e,
+            );
         }
-
-        const ativos = await db
-            .select({id: usuarioEmpresasTable.id})
-            .from(usuarioEmpresasTable)
-            .where(and(eq(usuarioEmpresasTable.usuario_id, id), eq(usuarioEmpresasTable.ativo, true)));
-
-        const [alvo] = await db
-            .select({id: usuarioEmpresasTable.id, ativo: usuarioEmpresasTable.ativo})
-            .from(usuarioEmpresasTable)
-            .where(and(eq(usuarioEmpresasTable.usuario_id, id), eq(usuarioEmpresasTable.empresa_id, empresaId)))
-            .limit(1);
-
-        if (!alvo) return errorResponse(res, 404, "NOT_FOUND", "Vínculo não encontrado.");
-        if (alvo.ativo && ativos.length <= 1) {
-            return errorResponse(res, 422, "ULTIMO_VINCULO", "Não é possível remover o último vínculo ativo do utilizador.");
-        }
-
-        await db.delete(usuarioEmpresasTable).where(eq(usuarioEmpresasTable.id, alvo.id));
-        invalidateTenantCache(id, empresaId);
-        return successResponse(res, {deleted: true});
-    } catch (e: unknown) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao desvincular usuário.", e);
-    }
-});
+    },
+);
 
 export default router;

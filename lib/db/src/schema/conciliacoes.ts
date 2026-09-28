@@ -14,6 +14,16 @@ import {
     tipoMovimentoExtratoEnum,
 } from "./enums";
 
+/**
+ * NOVO — Onda 2: `empresa_id` é denormalizado em toda a cadeia (extratos →
+ * conciliacoes → itens_conciliacao → historico_conciliacao) em vez de só na
+ * tabela raiz. Motivo: políticas de RLS por `current_setting` comparam uma
+ * coluna direta da linha — uma política que dependesse de um JOIN até
+ * `extratos` para descobrir a empresa seria bem mais lenta e mais frágil
+ * (RLS com subquery correlacionada por linha). Mesmo padrão que o código já
+ * usa em `extrato_linhas.conta_id` (comentário original: "Desnormalizado
+ * para dedupe entre extratos").
+ */
 export const extratosTable = pgTable("extratos", {
     id: serial("id").primaryKey(),
     empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
@@ -33,6 +43,7 @@ export const extratosTable = pgTable("extratos", {
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [
+    index("extratos_empresa_id_idx").on(table.empresa_id),
     index("extratos_conta_id_idx").on(table.conta_id),
     index("extratos_arquivo_hash_idx").on(table.arquivo_hash),
 ]);
@@ -83,6 +94,7 @@ export const conciliacoesTable = pgTable("conciliacoes", {
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [
+    index("conciliacoes_empresa_id_idx").on(table.empresa_id),
     index("conciliacoes_extrato_id_idx").on(table.extrato_id),
     index("conciliacoes_conta_id_idx").on(table.conta_id),
     index("conciliacoes_empresa_id_conta_id_data_idx").on(table.empresa_id, table.conta_id, table.data_conciliacao),
@@ -110,6 +122,7 @@ export const itensConciliacaoTable = pgTable("itens_conciliacao", {
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [
+    index("itens_conciliacao_empresa_id_idx").on(table.empresa_id),
     // COUNT by conciliacao_id (resumo de status) e pesquisar por extrato_linha_id (vincular/ignorar)
     index("itens_conciliacao_conciliacao_id_idx").on(table.conciliacao_id),
     index("itens_conciliacao_extrato_linha_id_idx").on(table.extrato_linha_id),
@@ -149,6 +162,7 @@ export const historicoConciliacaoTable = pgTable("historico_conciliacao", {
     detalhes: text("detalhes"),
     created_at: timestamp("created_at").defaultNow().notNull(),
 }, (table) => [
+    index("historico_conciliacao_empresa_id_idx").on(table.empresa_id),
     index("historico_conciliacao_conciliacao_id_idx").on(table.conciliacao_id),
 ]);
 

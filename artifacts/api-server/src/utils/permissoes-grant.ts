@@ -1,13 +1,15 @@
 /**
- * Regras de concessão de permissões (Card 91).
+ * Regras de concessão de permissões (Card 91 / VIN-16).
  *
- * `"*"` nunca entra pela API — só seed (`seed-admin.ts` / `sync-admin-permissions.ts`).
- * A rota exige `admin:permissoes:conceder`, independente de `admin:usuarios:editar`.
+ * ALTERADO — Card 2 (Permissões): `"*"` deixou de existir como conceito em
+ * QUALQUER lugar — nem no catálogo, nem como permissão gravável, nem como
+ * marcador de "superuser". O bit de acesso irrestrito agora é
+ * `usuarios.superadmin` (boolean), passado explicitamente pelo chamador
+ * (routes/usuarios.ts lê de `req.user.superadmin`) em vez de inferido
+ * procurando `"*"` dentro de `actorPermissions`.
  */
 
 import {PERMISSOES_ADMIN} from "../constants/permissoes";
-
-export const SUPERUSER_WILDCARD = "*";
 
 export const PERMISSOES_CONHECIDAS: ReadonlySet<string> = new Set(PERMISSOES_ADMIN);
 
@@ -15,6 +17,8 @@ export type GrantPermissoesInput = {
     actorUserId: number;
     targetUserId: number;
     actorPermissions: readonly string[];
+    /** NOVO — Card 2: antes inferido de `actorPermissions.includes("*")`. */
+    actorSuperadmin: boolean;
     requested: readonly string[];
     targetCurrentPermissions?: readonly string[];
 };
@@ -27,10 +31,6 @@ export type GrantPermissoesFail = {
     message: string;
 };
 export type GrantPermissoesResult = GrantPermissoesOk | GrantPermissoesFail;
-
-export function actorIsSuperuser(permissions: readonly string[]): boolean {
-    return permissions.includes(SUPERUSER_WILDCARD);
-}
 
 function uniqueTrimmed(values: readonly string[]): string[] {
     const seen = new Set<string>();
@@ -45,7 +45,7 @@ function uniqueTrimmed(values: readonly string[]): string[] {
 }
 
 export function validatePermissoesGrant(input: GrantPermissoesInput): GrantPermissoesResult {
-    const {actorUserId, targetUserId, actorPermissions, requested} = input;
+    const {actorUserId, targetUserId, actorPermissions, actorSuperadmin, requested} = input;
 
     if (actorUserId === targetUserId) {
         return {
@@ -56,29 +56,19 @@ export function validatePermissoesGrant(input: GrantPermissoesInput): GrantPermi
         };
     }
 
+    // ANTES: bloqueava requested.includes("*") explicitamente. Não é mais
+    // necessário: codigoPermissaoCatalogoSchema (constants/permissoes.ts) é
+    // um z.enum sobre PERMISSOES_ADMIN, que nunca incluiu "*" — o payload
+    // já é rejeitado a 400 na validação de body, antes mesmo de chegar aqui.
     const permissoes = uniqueTrimmed(requested);
-    if (permissoes.includes(SUPERUSER_WILDCARD)) {
-        return {
-            ok: false,
-            status: 403,
-            code: "PRIVILEGE_ESCALATION",
-            message: "Não é permitido conceder a permissão curinga.",
-        };
-    }
 
-    const actorSuper = actorIsSuperuser(actorPermissions);
     const targetCurrent = input.targetCurrentPermissions ?? [];
 
-    if (targetCurrent.includes(SUPERUSER_WILDCARD)) {
-        return {
-            ok: false,
-            status: 403,
-            code: "FORBIDDEN",
-            message: "Não é permitido alterar permissões de um superutilizador.",
-        };
-    }
+    // ANTES: bloqueava se targetCurrent.includes("*") — não existe mais
+    // "usuário com a permissão curinga" para proteger; superadmin não passa
+    // por usuario_permissoes de forma nenhuma, é um campo à parte.
 
-    if (!actorSuper) {
+    if (!actorSuperadmin) {
         const superiores = targetCurrent.filter((codigo) => !actorPermissions.includes(codigo));
         if (superiores.length > 0) {
             return {
@@ -100,7 +90,7 @@ export function validatePermissoesGrant(input: GrantPermissoesInput): GrantPermi
             };
         }
 
-        if (!actorSuper && !actorPermissions.includes(codigo)) {
+        if (!actorSuperadmin && !actorPermissions.includes(codigo)) {
             return {
                 ok: false,
                 status: 403,

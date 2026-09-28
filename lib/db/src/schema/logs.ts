@@ -2,7 +2,6 @@ import {pgTable, serial, text, integer, timestamp, jsonb, varchar} from "drizzle
 import {usuariosTable} from "./usuarios";
 import {empresasTable} from "./empresas";
 import {tokensApiTable} from "./tokens-api";
-
 export const logsSistemaTable = pgTable("logs_sistema", {
     id: serial("id").primaryKey(),
     servico: text("servico"),
@@ -25,6 +24,13 @@ export const logsAuditoriaTable = pgTable("logs_auditoria", {
     token_api_id: integer("token_api_id").references(() => tokensApiTable.id, {onDelete: "set null"}),
     duracao_ms: integer("duracao_ms"),
     created_at: timestamp("created_at").defaultNow().notNull(),
+    // Colunas já existentes no banco (adicionadas fora do schema anteriormente
+    // - alinhando aqui para bater com a tabela real):
+    empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
+    request_id: varchar("request_id"),
+    user_agent: text("user_agent"),
+    token_api_id: integer("token_api_id").references(() => tokensApiTable.id, {onDelete: "set null"}),
+    duracao_ms: integer("duracao_ms"),
 });
 
 export type LogSistema = typeof logsSistemaTable.$inferSelect;
