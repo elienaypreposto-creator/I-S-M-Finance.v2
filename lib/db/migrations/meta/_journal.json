@@ -120,6 +120,13 @@
       "when": 1790166700000,
       "tag": "0016_auditoria_request_id_text",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790166800000,
+      "tag": "0017_colunas_pagamento_lancamentos",
+      "breakpoints": true
     }
   ]
 }
