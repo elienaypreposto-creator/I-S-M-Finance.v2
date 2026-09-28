@@ -233,7 +233,9 @@ router.post("/auth/login", loginLimiter, loginEmailLimiter, async (req, res) => 
         });
     } catch (error: unknown) {
         console.error("Erro no login:", error);
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro no login.", error);
+        // DEBUG TST: expõe a causa no message. Reverter após o diagnóstico.
+        const msg = error instanceof Error ? error.message : String(error);
+        return errorResponse(res, 500, "INTERNAL_ERROR", `Erro no login: ${msg}`, error);
     }
 });
 
