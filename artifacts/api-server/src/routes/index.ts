@@ -9,9 +9,8 @@
  *    └─ /auth/switch-empresa — requer withAuth
  * 3. /v1/*                 — autenticação por API Token (v1AuthMiddleware)
  * 4. withAuth              — TODAS as rotas abaixo exigem JWT válido
- * 5. empresaContext        — abre o contexto de empresa para as rotas
- *    protegidas, permitindo que as queries utilizem o tenant atual
- *    e o RLS contextualizado.
+ * 5. withTenant + withTenantTxMiddleware — transação da request com
+ *    SET LOCAL app.empresa_id (contexto da RLS).
  *    ├─ auditoria
  *    ├─ reports
  *    ├─ financial
@@ -24,7 +23,6 @@ import v1Router from "./v1";
 import {withAuth} from "../middlewares/auth";
 import {withTenant} from "../middlewares/tenant";
 import {withTenantTxMiddleware} from "../middlewares/tenant-tx";
-import {empresaContext} from "../middlewares/empresa-context";
 import authDomainRouter from "../domains/auth/router";
 import financialDomainRouter from "../domains/financial/router";
 import reconciliationDomainRouter from "../domains/reconciliation/router";
@@ -46,11 +44,6 @@ router.use(withAuth);
 router.use(withTenant);
 
 router.use(withTenantTxMiddleware);
-
-// Contexto de empresa para as rotas protegidas.
-// Mantém o tenant atual disponível para as operações que dependem
-// de RLS e do contexto transacional da empresa.
-router.use(empresaContext);
 
 router.use(auditoriaRouter);
 

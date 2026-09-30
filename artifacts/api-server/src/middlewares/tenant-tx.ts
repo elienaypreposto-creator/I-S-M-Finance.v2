@@ -15,6 +15,9 @@ export function withTenantTxMiddleware(req: Request, res: Response, next: NextFu
     }
 
     void withTenantTx(empresaId, async () => {
+        // Cliente desistiu enquanto aguardava conexão: "close" já disparou e
+        // não dispara de novo - sem isto a conexão ficaria presa para sempre.
+        if (res.writableEnded || res.destroyed) return;
         await new Promise<void>((resolve, reject) => {
             const finish = () => {
                 res.off("finish", finish);
