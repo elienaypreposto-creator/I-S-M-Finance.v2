@@ -12,12 +12,12 @@ import {drizzle, type NodePgDatabase} from "drizzle-orm/node-postgres";
 import pg from "pg";
 import * as schema from "./schema";
 import {tenantAls} from "./tenant-als";
-if (!process.env.DATABASE_URL) {
-    throw new Error("DATABASE_URL não configurado.");
-}
+import {resolveDbUrls} from "./db-urls";
+
+const {appUrl, adminUrl, ownerUrl} = resolveDbUrls();
 
 const ssl =
-    process.env.DB_REQUIRE_SSL === "true" || process.env.DATABASE_URL.includes("supabase.co")
+    process.env.DB_REQUIRE_SSL === "true" || appUrl.includes("supabase.co") || ownerUrl.includes("supabase.co")
         ? {rejectUnauthorized: false}
         : undefined;
 
@@ -37,7 +37,7 @@ function makePool(connectionString: string, extra?: pg.PoolConfig): pg.Pool {
 }
 
 /**
- * Aplica SET ROLE e confirma current_user. Falha = throw (nunca warn-and-continue).
+ * SET ROLE só para smoke que tenta escalar a partir de ism_app. A API não usa isto.
  */
 export async function applySessionRole(client: Pick<pg.PoolClient, "query">, role: string): Promise<void> {
     if (!ROLE_IDENT.test(role)) {
@@ -47,87 +47,65 @@ export async function applySessionRole(client: Pick<pg.PoolClient, "query">, rol
         await client.query(`SET ROLE ${role}`);
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        throw new Error(`[db] SET ROLE ${role} falhou — rode db:migrate (0013): ${msg}`);
+        throw new Error(`[db] SET ROLE ${role} falhou - rode db:migrate (0013/0019): ${msg}`);
     }
-    const {rows} = await client.query<{current_user: string}>("SELECT current_user");
+    const {rows} = await client.query<{ current_user: string }>("SELECT current_user");
     const actual = rows[0]?.current_user;
     if (actual !== role) {
         throw new Error(
-            `[db] SET ROLE ${role} não aplicou (current_user=${actual ?? "?"}). Rode db:migrate (0013).`,
+            `[db] SET ROLE ${role} não aplicou (current_user=${actual ?? "?"}). Rode db:migrate (0013/0019).`,
         );
     }
 }
 
-/**
- * SET ROLE obrigatório após acquire. O evento connect do pg não é awaited;
- * sobrescrever pool.connect evita corrida com a primeira query.
- * FORCE RLS é ignorado por SUPERUSER, por isso o pool padrão nunca sobrevive como dono.
- */
-export function attachSessionRole(p: pg.Pool, role: "ism_app" | "ism_admin"): void {
-    const original = p.connect.bind(p) as {
-        (): Promise<pg.PoolClient>;
-        (cb: (err: Error, client: pg.PoolClient, done: (release?: unknown) => void) => void): void;
-    };
+type RoleProbe = { current_user: string; rolsuper: boolean };
 
-    const apply = async (client: pg.PoolClient): Promise<pg.PoolClient> => {
-        try {
-            await applySessionRole(client, role);
-        } catch (err) {
-            try {
-                client.release();
-            } catch {
-                /* já libertado ou conexão morta */
-            }
-            throw err;
-        }
-        return client;
-    };
-
-    p.connect = ((cb?: (err: Error, client: pg.PoolClient, done: (release?: unknown) => void) => void) => {
-        if (typeof cb === "function") {
-            return original((err, client, done) => {
-                if (err || !client) return cb(err, client, done);
-                void apply(client).then(
-                    (ready) => cb(undefined as unknown as Error, ready, done),
-                    (roleErr: Error) => cb(roleErr, undefined as unknown as pg.PoolClient, done),
-                );
-            });
-        }
-        return original().then(apply);
-    }) as typeof p.connect;
-}
-
-async function assertPoolRole(p: pg.Pool, role: "ism_app" | "ism_admin"): Promise<void> {
+async function assertPoolLogin(p: pg.Pool, role: "ism_app" | "ism_admin" | "ism_owner"): Promise<void> {
     const client = await p.connect();
     try {
-        const {rows} = await client.query<{current_user: string}>("SELECT current_user");
+        const {rows} = await client.query<RoleProbe>(
+            `SELECT current_user, r.rolsuper
+             FROM pg_roles r
+             WHERE r.rolname = current_user`,
+        );
         const actual = rows[0]?.current_user;
         if (actual !== role) {
-            throw new Error(`[db] pool deveria ser ${role}, actual=${actual ?? "?"}`);
+            throw new Error(`[db] pool deveria login como ${role}, actual=${actual ?? "?"}`);
+        }
+        if (rows[0]?.rolsuper) {
+            throw new Error(`[db] ${role} não pode ser SUPERUSER (RESET ROLE anularia a RLS)`);
+        }
+        await client.query("RESET ROLE");
+        const after = await client.query<RoleProbe>(
+            `SELECT current_user, r.rolsuper
+             FROM pg_roles r
+             WHERE r.rolname = current_user`,
+        );
+        if (after.rows[0]?.current_user !== role || after.rows[0]?.rolsuper) {
+            throw new Error(
+                `[db] RESET ROLE alargou privilégios (user=${after.rows[0]?.current_user}, super=${after.rows[0]?.rolsuper})`,
+            );
         }
     } finally {
         client.release();
     }
 }
 
-/** Pool padrão da API: role `ism_app` (sem BYPASSRLS). Nunca usar para retenção/migrate. */
-export const pool = makePool(process.env.DATABASE_URL);
-attachSessionRole(pool, "ism_app");
+/** Pool padrão da API: login direto como `ism_app`. Sem SET ROLE. */
+export const pool = makePool(appUrl);
 
 pool.on("error", (err) => {
     console.error("Pool Postgres - erro inesperado:", err.message);
 });
-const ownerUrl = process.env.DATABASE_OWNER_URL ?? process.env.DATABASE_URL;
 
-/** Pool da role dona: retenção de auditoria e lookups pre-RLS (token v1). Sem SET ROLE. */
+/** Pool da role dona (ism_owner NOSUPERUSER): só retenção de auditoria. Sem HTTP. */
 export const ownerPool = makePool(ownerUrl, {max: 3});
 ownerPool.on("error", (err) => {
     console.error("Pool owner Postgres - erro inesperado:", err.message);
 });
 
-/** Pool BYPASSRLS. Só rotas administrativas explícitas (ex.: GET /auditoria?todas_empresas=1). */
-export const adminPool = makePool(ownerUrl, {max: 2});
-attachSessionRole(adminPool, "ism_admin");
+/** Login direto como ism_admin. Só rotas administrativas explícitas. */
+export const adminPool = makePool(adminUrl, {max: 2});
 adminPool.on("error", (err) => {
     console.error("Pool admin Postgres - erro inesperado:", err.message);
 });
@@ -142,10 +120,11 @@ export async function closeDbPools(): Promise<void> {
     await Promise.all([pool.end(), ownerPool.end(), adminPool.end()]);
 }
 
-/** Sem ism_app / ism_admin o processo não sobe. */
+/** Sem login ism_app / ism_admin / ism_owner (NOSUPERUSER) o processo não sobe. */
 export async function assertRlsRoles(): Promise<void> {
-    await assertPoolRole(pool, "ism_app");
-    await assertPoolRole(adminPool, "ism_admin");
+    await assertPoolLogin(pool, "ism_app");
+    await assertPoolLogin(adminPool, "ism_admin");
+    await assertPoolLogin(ownerPool, "ism_owner");
 }
 
 /**
@@ -160,20 +139,3 @@ export const db: AppDb = new Proxy(rawDb, {
         return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(src) : value;
     },
 });
-
-/**
- * ALTERADO — Onda 2 (Card 3/RLS): `db` agora é um Proxy. Dentro de uma
- * requisição HTTP autenticada, `empresaContext` (middleware) já colocou uma
- * instância Drizzle "escopada" no AsyncLocalStorage — ligada a um client
- * dedicado do pool, dentro de uma transação com
- * `SET LOCAL app.current_empresa_id` aplicado. Todo `db.select()/.insert()/
- * .update()/.delete()` chamado durante essa requisição usa essa conexão
- * automaticamente, então a RLS do Postgres passa a valer sem tocar em
- * NENHUM `*.service.ts` existente.
- *
- * Fora de uma requisição (scripts, seeds, migrations, o teste
- * `rls-safety-net.test.ts` da suite de isolamento), não há contexto no ALS
- * e o Proxy cai no `poolDb` normal — sem `SET LOCAL`, ou seja, sujeito à
- * RLS bloquear tudo por padrão (esse é exatamente o comportamento que
- * `rls-safety-net.test.ts` verifica).
- */

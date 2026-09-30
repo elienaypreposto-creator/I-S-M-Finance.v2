@@ -14,7 +14,7 @@ export type TenantDb = NodePgDatabase<typeof schema>;
 export async function withTenantTx<T>(
     empresaId: number,
     work: (tx: TenantDb) => Promise<T>,
-    options?: {isolated?: boolean},
+    options?: { isolated?: boolean },
 ): Promise<T> {
     if (!Number.isInteger(empresaId) || empresaId <= 0) {
         throw new Error("withTenantTx: empresaId inválido");
@@ -31,7 +31,7 @@ export async function withTenantTx<T>(
     });
 }
 
-/** Consultas como dona (sem SET ROLE ism_app): retenção, lookup de token v1. */
+/** Retenção de auditoria: ism_owner (NOSUPERUSER). Nunca no caminho HTTP. */
 export async function withOwnerTx<T>(work: (tx: TenantDb) => Promise<T>): Promise<T> {
     return ownerDb.transaction(async (tx) => work(tx));
 }

@@ -8,9 +8,9 @@ export {
     adminPool,
     closeDbPools,
     assertRlsRoles,
-    attachSessionRole,
     applySessionRole,
 } from "./client";
+export {resolveDbUrls, replacePgUser} from "./db-urls";
 export * from "./schema";
 export {PERMISSOES_ADMIN, type PermissaoCatalogo} from "./permissoes-catalog";
 export {
@@ -21,5 +21,4 @@ export {
 export type {SyncAdminPermissionsResult} from "./sync-admin-permissions";
 export {withTenantTx, withOwnerTx, withBypassRls, getTenantStore, tenantAls} from "./tenant-context";
 export type {TenantDb} from "./tenant-context";
-// NOVO — Onda 2 (Card 2/3): usado pelo middleware empresa-context.ts do api-server.
 export {empresaContextStorage, getScopedDb, getCurrentEmpresaId, type EmpresaContext} from "./request-context";

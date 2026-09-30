@@ -20,6 +20,9 @@ jobs:
       SMTP_PORT: ${{ vars[format('{0}_SMTP_PORT', github.ref_name == 'master' && 'HML' || 'TST')] }}
       SMTP_USER: ${{ vars[format('{0}_SMTP_USER', github.ref_name == 'master' && 'HML' || 'TST')] }}
       DB_PASSWORD: ${{ secrets[format('{0}_DB_PASSWORD', github.ref_name == 'master' && 'HML' || 'TST')] }}
+      ISM_APP_PASSWORD: ${{ secrets[format('{0}_ISM_APP_PASSWORD', github.ref_name == 'master' && 'HML' || 'TST')] }}
+      ISM_ADMIN_PASSWORD: ${{ secrets[format('{0}_ISM_ADMIN_PASSWORD', github.ref_name == 'master' && 'HML' || 'TST')] }}
+      ISM_OWNER_PASSWORD: ${{ secrets[format('{0}_ISM_OWNER_PASSWORD', github.ref_name == 'master' && 'HML' || 'TST')] }}
       JWT_SECRET: ${{ secrets[format('{0}_JWT_SECRET', github.ref_name == 'master' && 'HML' || 'TST')] }}
       JWT_ENCRYPT_SECRET: ${{ secrets[format('{0}_JWT_ENCRYPT_SECRET', github.ref_name == 'master' && 'HML' || 'TST')] }}
       SMTP_PASS: ${{ secrets[format('{0}_SMTP_PASS', github.ref_name == 'master' && 'HML' || 'TST')] }}
@@ -33,6 +36,14 @@ jobs:
               faltando=1
             fi
           done
+          if [ -z "$ISM_APP_PASSWORD" ] || [ -z "$ISM_ADMIN_PASSWORD" ] || [ -z "$ISM_OWNER_PASSWORD" ]; then
+            echo "::warning::Defina TST_/HML_ISM_APP_PASSWORD, ISM_ADMIN_PASSWORD e ISM_OWNER_PASSWORD. A usar DB_PASSWORD até existirem."
+          fi
+          {
+            echo "ISM_APP_PASSWORD=${ISM_APP_PASSWORD:-$DB_PASSWORD}"
+            echo "ISM_ADMIN_PASSWORD=${ISM_ADMIN_PASSWORD:-$DB_PASSWORD}"
+            echo "ISM_OWNER_PASSWORD=${ISM_OWNER_PASSWORD:-$DB_PASSWORD}"
+          } >> "$GITHUB_ENV"
           exit $faltando
 
       - name: Executando deploy via SSH
@@ -41,7 +52,7 @@ jobs:
           host: ${{ secrets.SERVER_IP }}
           username: ubuntu
           key: ${{ secrets.SSH_KEY }}
-          envs: TARGET_DIR,PORT,WEB_PORT,API_PORT,DB_PORT,SMTP_HOST,SMTP_PORT,SMTP_USER,DB_PASSWORD,JWT_SECRET,JWT_ENCRYPT_SECRET,SMTP_PASS
+          envs: TARGET_DIR,PORT,WEB_PORT,API_PORT,DB_PORT,SMTP_HOST,SMTP_PORT,SMTP_USER,DB_PASSWORD,ISM_APP_PASSWORD,ISM_ADMIN_PASSWORD,ISM_OWNER_PASSWORD,JWT_SECRET,JWT_ENCRYPT_SECRET,SMTP_PASS
           script: |
             set -e
             echo "Iniciando deploy no diretório: $TARGET_DIR para a branch: ${{ github.ref_name }}"
@@ -59,6 +70,9 @@ jobs:
               "API_PORT=$API_PORT" \
               "DB_PORT=$DB_PORT" \
               "DB_PASSWORD=$DB_PASSWORD" \
+              "ISM_APP_PASSWORD=$ISM_APP_PASSWORD" \
+              "ISM_ADMIN_PASSWORD=$ISM_ADMIN_PASSWORD" \
+              "ISM_OWNER_PASSWORD=$ISM_OWNER_PASSWORD" \
               "JWT_SECRET=$JWT_SECRET" \
               "JWT_ENCRYPT_SECRET=$JWT_ENCRYPT_SECRET" \
               "SMTP_HOST=$SMTP_HOST" \
@@ -88,6 +102,8 @@ jobs:
             done
 
             echo "Aplicando migrations versionadas (sem drizzle-kit push)..."
-            docker compose run --rm --no-deps api pnpm --filter @workspace/db run db:migrate
+            docker compose run --rm --no-deps \
+              -e DATABASE_MIGRATE_URL="postgresql://ism_user:${DB_PASSWORD}@postgres:5432/ismfinance" \
+              api pnpm --filter @workspace/db run db:migrate
 
             docker compose up -d --build
