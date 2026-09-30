@@ -148,6 +148,13 @@
       "when": 1790167100000,
       "tag": "0020_reassign_ism_owner",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790167200000,
+      "tag": "0021_tokens_api_escopos_indices_empresa",
+      "breakpoints": true
     }
   ]
 }
