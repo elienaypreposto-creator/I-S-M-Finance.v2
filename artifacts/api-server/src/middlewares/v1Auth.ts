@@ -50,7 +50,7 @@ function popularContexto(
         escopos: tokenRow.escopos ?? [],
     };
 
-    // Mantido por compatibilidade com empresaContext/auditLogger.
+    // Mantido por compatibilidade com o auditLogger.
     req.user = {
         id: tokenRow.id,
         email: "api-v1@token",

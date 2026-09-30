@@ -23,6 +23,13 @@ $$
             WHERE n.nspname = 'public'
               AND c.relkind IN ('r', 'p', 'v', 'm', 'S')
               AND pg_get_userbyid(c.relowner) = current_user
+              -- Sequence de coluna serial acompanha a tabela; ALTER direto nela falha.
+              AND NOT (c.relkind = 'S' AND EXISTS (SELECT 1
+                                                   FROM pg_depend d
+                                                   WHERE d.classid = 'pg_class'::regclass
+                                                     AND d.objid = c.oid
+                                                     AND d.refclassid = 'pg_class'::regclass
+                                                     AND d.deptype IN ('a', 'i')))
             LOOP
                 kind := CASE obj.relkind
                             WHEN 'v' THEN 'VIEW'

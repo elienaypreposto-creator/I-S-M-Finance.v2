@@ -21,4 +21,3 @@ export {
 export type {SyncAdminPermissionsResult} from "./sync-admin-permissions";
 export {withTenantTx, withOwnerTx, withBypassRls, getTenantStore, tenantAls} from "./tenant-context";
 export type {TenantDb} from "./tenant-context";
-export {empresaContextStorage, getScopedDb, getCurrentEmpresaId, type EmpresaContext} from "./request-context";
