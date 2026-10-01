@@ -19,6 +19,7 @@ import {
     Wallet,
     UserCheck,
     Scale,
+    ListFilter,
 } from "lucide-react";
 import {
     Sidebar,
@@ -52,6 +53,12 @@ const cadastrosItems: NavItem[] = [
     {title: "Plano de Contas", url: "/cadastros/plano-contas", icon: Briefcase},
     {title: "Metas Financeiras", url: "/cadastros/metas", icon: Target},
     {title: "Departamentos", url: "/cadastros/departamentos", icon: Building2},
+    {
+        title: "Regras de Conciliação",
+        url: "/cadastros/regras-conciliacao",
+        icon: ListFilter,
+        permission: PERM.CONCILIACAO_ACESSAR,
+    },
 ];
 
 const relatoriosItems = [

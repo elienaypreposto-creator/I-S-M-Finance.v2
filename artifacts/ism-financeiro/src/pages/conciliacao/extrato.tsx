@@ -1922,16 +1922,18 @@ export default function ConciliacaoExtratoDetalhe({
                 confirmLabel="Conciliar"
                 variant="default"
                 icon={CheckCircle2}
+                confirmDisabled={salvarMutation.isPending}
                 onCancel={() =>
                     setFinalizarOpen(
                         false,
                     )
                 }
-                onConfirm={() =>
+                onConfirm={() => {
+                    if (salvarMutation.isPending) return;
                     salvarMutation.mutate({
                         finalizar: true,
-                    })
-                }
+                    });
+                }}
             />
 
             <ConfirmDialog
@@ -2577,6 +2579,12 @@ export default function ConciliacaoExtratoDetalhe({
                                         "conciliado"
                                     }
                                     onClick={() => {
+                                        if (
+                                            salvarMutation.isPending
+                                        ) {
+                                            return;
+                                        }
+
                                         if (
                                             podeFinalizar
                                         ) {

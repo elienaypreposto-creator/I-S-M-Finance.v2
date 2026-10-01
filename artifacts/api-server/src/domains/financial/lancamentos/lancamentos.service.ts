@@ -14,6 +14,17 @@ import type {CreateLancamentoBody, ListLancamentosQuery, UpdateLancamentoBody} f
 import {statusAbertoPorVencimento} from "../../../utils/conciliacao-vincular";
 import {hojeIsoLocal} from "../../../utils/date-civil";
 
+function formatPlanoContaPath(categoria: string | null, subcategoria: string | null): string | null {
+    const pai = categoria?.trim() ?? "";
+    const sub = subcategoria?.trim() ?? "";
+    if (pai && sub) return `${pai} / ${sub}`;
+    if (sub) return sub;
+    if (pai) return pai;
+    return null;
+}
+
+const STATUS_EXCLUIVEIS = new Set(["pendente", "atrasado"]);
+
 const resolveDepartamentoCentroByParceiro = async (empresaId: number, parceiroId?: number | null) => {
     if (!parceiroId) {
         return {departamento_id: undefined, centro_custo_id: undefined};
@@ -65,14 +76,12 @@ export const lancamentosService = {
                 parceiro_nome: parceirosTable.nome,
                 descricao: lancamentosTable.descricao,
                 valor: lancamentosTable.valor,
-                // Ajustam o valor líquido exibido na tabela (ver map abaixo) -
-                // sem selecioná-los aqui, a listagem sempre mostrava o valor
-                // de face puro, mesmo depois de editar Desconto/Juros no modal.
                 desconto: lancamentosTable.desconto,
                 juros: lancamentosTable.juros,
                 status: lancamentosTable.status,
                 plano_conta_id: lancamentosTable.plano_conta_id,
-                plano_conta_nome: planoContasTable.subcategoria,
+                plano_conta_categoria: planoContasTable.categoria,
+                plano_conta_subcategoria: planoContasTable.subcategoria,
                 departamento_id: lancamentosTable.departamento_id,
                 departamento_nome: departamentosTable.nome,
                 centro_custo_id: lancamentosTable.centro_custo_id,
@@ -101,9 +110,10 @@ export const lancamentosService = {
                 const juros = Number(item.juros ?? 0);
                 return {
                     ...item,
-                    // Valor líquido (Bruto - Desconto + Juros) - é o que a
-                    // coluna "R$ Valor" da tabela de Lançamentos exibe, então
-                    // precisa refletir qualquer edição feita no modal.
+                    plano_conta_nome: formatPlanoContaPath(
+                        item.plano_conta_categoria,
+                        item.plano_conta_subcategoria,
+                    ),
                     valor: Math.max(valorBruto - desconto + juros, 0),
                     valor_bruto: valorBruto,
                     desconto,
@@ -200,6 +210,25 @@ export const lancamentosService = {
     },
 
     async remove(empresaId: number, id: number) {
+        const [atual] = await db
+            .select({
+                id: lancamentosTable.id,
+                status: lancamentosTable.status,
+            })
+            .from(lancamentosTable)
+            .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.id, id)))
+            .limit(1);
+        if (!atual) {
+            throw new AppError(404, "NOT_FOUND", "Lançamento não encontrado.");
+        }
+        if (!STATUS_EXCLUIVEIS.has(atual.status)) {
+            throw new AppError(
+                409,
+                "CONFLICT",
+                "Só é possível excluir lançamentos com status Pendente ou Atrasado.",
+            );
+        }
+
         const [item] = await db
             .delete(lancamentosTable)
             .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.id, id)))

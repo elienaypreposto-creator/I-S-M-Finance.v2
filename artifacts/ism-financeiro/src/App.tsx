@@ -8,21 +8,19 @@ import NotFound from "@/pages/not-found";
 import {queryClient, invalidateRelated} from "./lib/query-client";
 import {AuthProvider, useAuth} from "./hooks/use-auth";
 
-// Pages
 import Dashboard from "./pages/dashboard-FINANCEIRO-ISM";
 import Kanban from "./pages/kanban";
 import Lancamentos from "./pages/lancamentos-FINANCEIRO-ISM";
 import ConciliacaoList from "./pages/conciliacao/index";
 import ConciliacaoExtratoDetalhe from "./pages/conciliacao/extrato";
 
-// Cadastros
 import Parceiros from "./pages/cadastros/parceiros";
 import PlanoContas from "./pages/cadastros/plano-contas-FINANCEIRO-ISM";
 import ContasBancarias from "./pages/cadastros/contas-bancarias-FINANCEIRO-ISM";
 import Metas from "./pages/cadastros/metas";
 import Departamentos from "./pages/cadastros/departamentos";
+import RegrasConciliacao from "./pages/cadastros/regras-conciliacao";
 
-// Relatórios
 import FechamentoMensal from "./pages/relatorios/fechamento-mensal";
 import ContabilFiscal from "./pages/relatorios/contabil-fiscal";
 import DreGerencial from "./pages/relatorios/dre-FINANCEIRO-ISM";
@@ -30,7 +28,6 @@ import FluxoCaixa from "./pages/relatorios/fluxo-caixa-FINANCEIRO-ISM";
 import MetasRelatorio from "./pages/relatorios/metas-relatorio";
 import RelatorioConciliacao from "./pages/relatorios/relatorio-conciliacao";
 
-// Configurações
 import Usuarios from "./pages/configuracoes/usuarios";
 import Filiais from "./pages/configuracoes/filiais";
 import TokensApi from "./pages/configuracoes/tokens-api";
@@ -43,7 +40,6 @@ import AdminEmpresas from "./pages/admin/empresas";
 
 export {queryClient, invalidateRelated};
 
-// JWT + permissão opcional
 function PrivateRoute({
                           component: Component,
                           path,
@@ -116,15 +112,17 @@ function Router() {
                 permission={PERM.CONCILIACAO_ACESSAR}
             />
 
-            {/* Cadastros */}
             <PrivateRoute path="/cadastros/parceiros" component={Parceiros}/>
             <PrivateRoute path="/cadastros/plano-contas" component={PlanoContas}/>
             <PrivateRoute path="/cadastros/contas-bancarias" component={ContasBancarias}/>
             <PrivateRoute path="/cadastros/metas" component={Metas}/>
             <PrivateRoute path="/cadastros/departamentos" component={Departamentos}/>
+            <PrivateRoute
+                path="/cadastros/regras-conciliacao"
+                component={RegrasConciliacao}
+                permission={PERM.CONCILIACAO_ACESSAR}
+            />
 
-
-            {/* Relatórios */}
             <PrivateRoute path="/relatorios/fechamento-mensal" component={FechamentoMensal}/>
             <PrivateRoute path="/relatorios/contabil-fiscal" component={ContabilFiscal}/>
             <PrivateRoute path="/relatorios/dre" component={DreGerencial}/>
@@ -136,7 +134,6 @@ function Router() {
                 permission={PERM.RELATORIOS_CONCILIACAO}
             />
 
-            {/* Configurações */}
             <PrivateRoute path="/configuracoes/usuarios" component={Usuarios}/>
             <PrivateRoute path="/admin/usuarios" component={Usuarios}/>
             <PrivateRoute path="/configuracoes/filiais" component={Filiais}/>
@@ -148,7 +145,6 @@ function Router() {
     );
 }
 
-// ─── App root
 export function App() {
     return (
         <ErrorBoundary>

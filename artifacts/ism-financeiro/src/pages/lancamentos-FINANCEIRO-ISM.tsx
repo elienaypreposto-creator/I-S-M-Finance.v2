@@ -12,6 +12,8 @@ import { exportToExcel, fmtBRL, fmtDate as fmtDateExport } from "@/lib/export";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { useConfirm } from "@/hooks/use-confirm";
 import { invalidateRelated } from "@/App";
+import { RequiresPermission } from "@/components/auth/requires-permission";
+import { PERM } from "@/lib/permissoes";
 
 type Lancamento = {
   id: number;
@@ -81,6 +83,10 @@ function getBankBadge(contaNome: string | null) {
   return { abbr: firstWord, color: "#94A3B8", bg: "rgba(148,163,184,0.15)" };
 }
 
+function podeExcluirLancamento(status: string): boolean {
+  return status === "pendente" || status === "atrasado";
+}
+
 export default function Lancamentos() {
   const [activeTab, setActiveTab] = useState("todos");
   const [search, setSearch] = useState("");
@@ -131,8 +137,15 @@ export default function Lancamentos() {
     },
   });
 
-  // Confirmação estilizada antes de excluir (substitui o window.confirm nativo)
   const handleDelete = async (l: Lancamento) => {
+    if (!podeExcluirLancamento(l.status)) {
+      toast({
+        variant: "destructive",
+        title: "Não é possível excluir",
+        description: "Só lançamentos Pendente ou Atrasado podem ser excluídos.",
+      });
+      return;
+    }
     const label = l.descricao ? `"${l.descricao.toUpperCase()}"` : `lançamento #${l.id}`;
     const ok = await confirm({
       title: `Excluir ${label}?`,
@@ -144,7 +157,6 @@ export default function Lancamentos() {
     if (ok) deleteMutation.mutate(l.id);
   };
 
-  // Confirmação estilizada antes de abrir o formulário de edição
   const handleEdit = async (l: Lancamento) => {
     const label = l.descricao ? `"${l.descricao.toUpperCase()}"` : `lançamento #${l.id}`;
     const ok = await confirm({
@@ -382,9 +394,9 @@ export default function Lancamentos() {
                     </td>
 
                     {/* Categoria */}
-                    <td className="px-3 py-2.5 max-w-[140px] truncate">
+                    <td className="px-3 py-2.5 max-w-[220px] truncate">
                       {l.plano_conta_nome
-                        ? <span className="text-[10px] bg-white/5 border border-white/10 rounded-full px-2 py-0.5 text-white/70">{l.plano_conta_nome}</span>
+                        ? <span title={l.plano_conta_nome} className="text-[10px] bg-white/5 border border-white/10 rounded-full px-2 py-0.5 text-white/70">{l.plano_conta_nome}</span>
                         : <span className="text-white/25 italic text-[10px]">Sem cat.</span>}
                     </td>
 
@@ -431,12 +443,19 @@ export default function Lancamentos() {
                           title="Editar">
                           <Pencil className="w-3.5 h-3.5" />
                         </button>
-                        <button
-                          onClick={() => handleDelete(l)}
-                          className="p-1 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
-                          title="Excluir">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        {podeExcluirLancamento(l.status) && (
+                          <RequiresPermission permission={PERM.LANCAMENTOS_DELETAR}>
+                            <button
+                              type="button"
+                              onClick={() => handleDelete(l)}
+                              disabled={deleteMutation.isPending}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors disabled:opacity-40"
+                              title="Excluir lançamento">
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span className="text-[10px] font-semibold uppercase tracking-wide">Excluir</span>
+                            </button>
+                          </RequiresPermission>
+                        )}
                       </div>
                     </td>
                   </tr>

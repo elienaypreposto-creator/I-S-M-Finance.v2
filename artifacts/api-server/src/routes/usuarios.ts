@@ -903,9 +903,6 @@ router.get(
     },
 );
 
-// ALTERADO — Card 2: "vincular usuário a empresa" é operação do
-// ISM, não de administração de uma empresa. Antes exigia apenas
-// withPermission(PERM.ADMIN_EMPRESAS_EDITAR); agora exige withSuperadmin.
 router.put(
     "/usuarios/:id/empresas",
     withSuperadmin,
@@ -1037,8 +1034,6 @@ router.put(
     },
 );
 
-// ALTERADO — Card 2: mesma razão do PUT acima — desvincular é o inverso de
-// vincular, mesma exigência de superadmin.
 router.delete(
     "/usuarios/:id/empresas/:empresaId",
     withSuperadmin,

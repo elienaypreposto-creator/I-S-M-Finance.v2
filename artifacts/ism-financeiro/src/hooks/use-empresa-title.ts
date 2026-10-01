@@ -11,6 +11,7 @@ const PAGE_TITLES: Array<{prefix: string; title: string}> = [
     {prefix: "/cadastros/plano-contas", title: "Plano de contas"},
     {prefix: "/cadastros/metas", title: "Metas"},
     {prefix: "/cadastros/departamentos", title: "Departamentos"},
+    {prefix: "/cadastros/regras-conciliacao", title: "Regras de conciliação"},
     {prefix: "/relatorios/fechamento-mensal", title: "Fechamento mensal"},
     {prefix: "/relatorios/contabil-fiscal", title: "Contábil/Fiscal"},
     {prefix: "/relatorios/dre", title: "DRE"},

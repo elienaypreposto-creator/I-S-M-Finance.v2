@@ -49,6 +49,7 @@ type RegraConciliacaoModalProps = {
         natureza?: "entrada" | "saida";
         conta_id?: number | null;
     };
+    variant?: "modal" | "page";
 };
 
 function labelTipo(natureza: string): string {
@@ -106,7 +107,9 @@ const EMPTY_FORM = {
     formaPagamento: "",
 };
 
-export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: RegraConciliacaoModalProps) {
+export function RegraConciliacaoModal({open, onClose, onSuccess, prefill, variant = "modal"}: RegraConciliacaoModalProps) {
+    const asPage = variant === "page";
+    const ativo = open || asPage;
     const {toast} = useToast();
     const queryClient = useQueryClient();
     const {confirm, ConfirmDialogProps} = useConfirm();
@@ -170,6 +173,14 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
     }
 
     async function handleRequestClose() {
+        if (asPage) {
+            if (isFormDirty()) {
+                const ok = await confirm(DISCARD_PROMPT);
+                if (!ok) return;
+            }
+            applyPrefill();
+            return;
+        }
         if (isFormDirty()) {
             const ok = await confirm(DISCARD_PROMPT);
             if (!ok) return;
@@ -177,19 +188,19 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
         onClose();
     }
 
-    useEscapeClose(open && !parceiroSubModal && !ConfirmDialogProps.open, () => {
+    useEscapeClose(ativo && !asPage && !parceiroSubModal && !ConfirmDialogProps.open, () => {
         void handleRequestClose();
     }, 60);
 
     useEffect(() => {
-        if (!open) return;
+        if (!ativo) return;
         applyPrefill();
-    }, [open, prefill?.texto_gatilho, prefill?.natureza, prefill?.conta_id]);
+    }, [ativo, prefill?.texto_gatilho, prefill?.natureza, prefill?.conta_id]);
 
     const {data: regras = [], isLoading: loadingRegras} = useQuery<RegraConciliacaoItem[]>({
         queryKey: tenantQueryKey("regras-conciliacao"),
         queryFn: () => fetchApiData<RegraConciliacaoItem[]>("/regras-conciliacao"),
-        enabled: open,
+        enabled: ativo,
     });
     const {data: parceiros = [], isFetching: isFetchingParceiros} = useQuery<ParceiroRow[]>({
         queryKey: tenantQueryKey("parceiros-modal", searchParceiro),
@@ -198,17 +209,17 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
             if (searchParceiro.trim()) qs.set("search", searchParceiro.trim());
             return fetchApiData<ParceiroRow[]>(`/parceiros?${qs.toString()}`);
         },
-        enabled: open,
+        enabled: ativo,
     });
     const {data: planoContas = []} = useQuery<PlanoContaOption[]>({
         queryKey: tenantQueryKey("plano-contas-modal"),
         queryFn: () => fetchApiData<PlanoContaOption[]>("/plano-contas"),
-        enabled: open,
+        enabled: ativo,
     });
     const {data: departamentos = []} = useQuery<DepartamentoOption[]>({
         queryKey: tenantQueryKey("departamentos-modal"),
         queryFn: () => fetchApiData<DepartamentoOption[]>("/departamentos"),
-        enabled: open,
+        enabled: ativo,
     });
 
     const listaPlanoContas = useMemo(() => {
@@ -324,7 +335,7 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
         if (ok) deleteMutation.mutate(row.id);
     }
 
-    if (!open) return null;
+    if (!ativo) return null;
 
     const inputCls =
         "w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-primary/50 transition-all placeholder:text-muted-foreground/30";
@@ -333,13 +344,18 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
         "w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-primary/50 transition-all appearance-none cursor-pointer [&>option]:bg-[#1a1c23]";
     const podeSalvar = textoGatilho.trim().length > 0 && !saveMutation.isPending;
 
-    return createPortal(
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/75 backdrop-blur-md"/>
+    const card = (
             <div
-                className="relative bg-[#121417] border border-white/10 rounded-2xl w-full max-w-6xl shadow-2xl flex flex-col max-h-[90vh]">
+                className={cn(
+                    "bg-[#121417] border border-white/10 rounded-2xl shadow-2xl flex flex-col",
+                    asPage ? "w-full" : "relative w-full max-w-6xl max-h-[90vh]",
+                )}
+            >
                 <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 shrink-0">
-                    <h2 className="text-base font-bold text-white">Cadastro Texto Conciliação</h2>
+                    <h2 className="text-base font-bold text-white">
+                        {asPage ? "Cadastro de regras" : "Cadastro Texto Conciliação"}
+                    </h2>
+                    {!asPage && (
                     <button
                         type="button"
                         onClick={() => void handleRequestClose()}
@@ -347,6 +363,7 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
                     >
                         <X className="w-5 h-5"/>
                     </button>
+                    )}
                 </div>
 
                 <form
@@ -519,7 +536,7 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
                             onClick={() => void handleRequestClose()}
                             className="px-6 py-2.5 rounded-xl border border-white/10 text-sm font-medium text-white hover:bg-white/5"
                         >
-                            Cancelar
+                            {asPage ? "Limpar" : "Cancelar"}
                         </button>
                         <RequiresPermission
                             permission={editItem ? PERM.REGRAS_CONCILIACAO_EDITAR : PERM.REGRAS_CONCILIACAO_CRIAR}>
@@ -535,6 +552,10 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
                     </div>
                 </form>
             </div>
+    );
+
+    const extras = (
+        <>
             <ConfirmDialog {...ConfirmDialogProps} />
             {parceiroSubModal && (
                 <NovoParceiroModal
@@ -546,6 +567,23 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
                     }}
                 />
             )}
+        </>
+    );
+
+    if (asPage) {
+        return (
+            <>
+                {card}
+                {extras}
+            </>
+        );
+    }
+
+    return createPortal(
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/75 backdrop-blur-md"/>
+            {card}
+            {extras}
         </div>,
         document.body,
     );
