@@ -28,7 +28,7 @@ import {withPermission} from "../middlewares/withPermission";
 import {authLimiter, loginEmailLimiter, loginLimiter} from "../middlewares/rate-limit";
 import {AppError} from "../utils/app-error";
 import {errorResponse, successResponse} from "../utils/response";
-import {ADMIN_USUARIOS_AUTOMATICAS} from "../constants/permissoes";
+import {ADMIN_USUARIOS_AUTOMATICAS, PERMISSOES_ADMIN} from "../constants/permissoes";
 import {
     generateOtp,
     hashToken,
@@ -44,14 +44,20 @@ const BCRYPT_SALT_ROUNDS = 12;
 const router = Router();
 
 /**
- * ALTERADO — Card 2 (Permissões): agora recebe `empresaId` e só devolve as
- * permissões DAQUELA empresa — o filtro por `empresa_id` é o que impede a
- * permissão de um usuário na empresa A "vazar" pra empresa B quando ele tem
- * vínculo nas duas. Também soma `ADMIN_USUARIOS_AUTOMATICAS` se o papel do
- * usuário em `usuario_empresas` for "admin" nessa empresa — isso NÃO fica
- * gravado como linha em `usuario_permissoes`, é calculado aqui.
+ * Permissões da empresa ativa. Superadmin global recebe o catálogo completo
+ * (não depende de linhas em `usuario_permissoes` por tenant) para o frontend
+ * não esconder menus ao trocar de empresa. Admin de empresa soma
+ * `ADMIN_USUARIOS_AUTOMATICAS` sem gravar wildcard.
  */
-const fetchPermissions = async (usuarioId: number, empresaId: number): Promise<string[]> => {
+const fetchPermissions = async (
+    usuarioId: number,
+    empresaId: number,
+    superadmin = false,
+): Promise<string[]> => {
+    if (superadmin) {
+        return [...PERMISSOES_ADMIN];
+    }
+
     const [rows, vinculo] = await Promise.all([
         db
             .select({codigo_permissao: permissoesTable.codigo_permissao})
@@ -93,7 +99,7 @@ async function emitSession(
     empresaId: number,
 ) {
     await assertVinculoAtivo(usuario.id, empresaId);
-    const permissions = await fetchPermissions(usuario.id, empresaId);
+    const permissions = await fetchPermissions(usuario.id, empresaId, usuario.superadmin);
     const [accessToken, {token: refreshToken, tokenHash, expiresAt}] = await Promise.all([
         signAccessToken({
             sub: String(usuario.id),
@@ -330,7 +336,7 @@ router.post("/auth/refresh", async (req, res) => {
             .where(eq(refreshTokensTable.id, registro.id));
 
         // Re-consulta permissões para propagar alterações feitas após o último login
-        const permissions = await fetchPermissions(usuario.id, rtPayload.empresa_id);
+        const permissions = await fetchPermissions(usuario.id, rtPayload.empresa_id, usuario.superadmin);
 
         const [newAccessToken, {token: newRefreshToken, tokenHash: newHash, expiresAt}] =
             await Promise.all([
@@ -507,9 +513,14 @@ router.get("/auth/me", withAuth, async (req, res) => {
         }
 
         const empresas = await listEmpresasAtivasDoUsuario(usuario.id);
+        const permissoes = await fetchPermissions(
+            usuario.id,
+            req.user!.empresaId,
+            req.user!.superadmin,
+        );
         return successResponse(res, {
             user: {...usuario, empresa_id: req.user!.empresaId, superadmin: req.user!.superadmin},
-            permissoes: req.user!.permissions,
+            permissoes,
             empresas,
         });
     } catch (error: unknown) {

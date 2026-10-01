@@ -6,6 +6,7 @@ import {
     kanbanCardsTable,
     kanbanComentariosTable,
     kanbanHistoricoTable,
+    usuarioEmpresasTable,
     usuariosTable,
 } from "@workspace/db/schema";
 import {and, desc, eq, gte, lt, lte, sql} from "drizzle-orm";
@@ -237,11 +238,20 @@ router.delete("/cards/:id", async (req, res) => {
     }
 });
 
-router.get("/usuarios", async (_req, res) => {
+router.get("/usuarios", async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const data = await db
             .select({id: usuariosTable.id, nome: usuariosTable.nome, email: usuariosTable.email})
             .from(usuariosTable)
+            .innerJoin(
+                usuarioEmpresasTable,
+                and(
+                    eq(usuarioEmpresasTable.usuario_id, usuariosTable.id),
+                    eq(usuarioEmpresasTable.empresa_id, empresaId),
+                    eq(usuarioEmpresasTable.ativo, true),
+                ),
+            )
             .orderBy(usuariosTable.nome);
         return successResponse(res, data);
     } catch (error) {
