@@ -135,6 +135,7 @@ router.get(
     withPermission("admin:usuarios:listar"),
     async (req, res) => {
         try {
+            const {empresaId} = requireTenant(req);
             const page = Math.max(
                 1,
                 parseInt(req.query.page as string) || 1,
@@ -160,20 +161,26 @@ router.get(
                 );
             }
 
-            const where =
-                conditions.length > 0
-                    ? and(...conditions)
-                    : undefined;
+            const vinculoAtual = and(
+                eq(usuarioEmpresasTable.usuario_id, usuariosTable.id),
+                eq(usuarioEmpresasTable.empresa_id, empresaId),
+                eq(usuarioEmpresasTable.ativo, true),
+            );
+
+            const searchWhere =
+                conditions.length > 0 ? and(...conditions) : undefined;
 
             const [totalResult] = await db
                 .select({count: count()})
                 .from(usuariosTable)
-                .where(where);
+                .innerJoin(usuarioEmpresasTable, vinculoAtual)
+                .where(searchWhere);
 
             const items = await db
                 .select(USUARIO_PUBLIC_COLS)
                 .from(usuariosTable)
-                .where(where)
+                .innerJoin(usuarioEmpresasTable, vinculoAtual)
+                .where(searchWhere)
                 .limit(limit)
                 .offset(offset)
                 .orderBy(usuariosTable.nome);
@@ -308,36 +315,32 @@ router.post(
                 );
             }
 
-            const novoUsuario = await db.transaction(
-                async (tx) => {
-                    const [user] = await tx
-                        .insert(usuariosTable)
-                        .values({
-                            nome,
-                            email,
-                            cargo,
-                            perfil_base,
-                            telefone,
-                            celular,
-                            senha_hash: senhaHash,
-                            senha_unica_hash: otpHash,
-                            senha_unica_utilizada: false,
-                            bloqueado: false,
-                        })
-                        .returning(USUARIO_PUBLIC_COLS);
+            const novoUsuario = await (async () => {
+                const [user] = await db
+                    .insert(usuariosTable)
+                    .values({
+                        nome,
+                        email,
+                        cargo,
+                        perfil_base,
+                        telefone,
+                        celular,
+                        senha_hash: senhaHash,
+                        senha_unica_hash: otpHash,
+                        senha_unica_utilizada: false,
+                        bloqueado: false,
+                    })
+                    .returning(USUARIO_PUBLIC_COLS);
 
-                    await tx
-                        .insert(usuarioEmpresasTable)
-                        .values({
-                            usuario_id: user.id,
-                            empresa_id: empresaId,
-                            papel: "membro",
-                            ativo: true,
-                        });
+                await db.insert(usuarioEmpresasTable).values({
+                    usuario_id: user.id,
+                    empresa_id: empresaId,
+                    papel: "membro",
+                    ativo: true,
+                });
 
-                    return user;
-                },
-            );
+                return user;
+            })();
 
             try {
                 if (adminDefineSenha) {
@@ -392,6 +395,17 @@ router.post(
                 201,
             );
         } catch (e: unknown) {
+            const code = typeof e === "object" && e !== null && "code" in e
+                ? String((e as {code: unknown}).code)
+                : "";
+            if (code === "23505") {
+                return errorResponse(
+                    res,
+                    422,
+                    "EMAIL_JA_CADASTRADO",
+                    "Já existe um utilizador cadastrado com este e-mail.",
+                );
+            }
             return errorResponse(
                 res,
                 500,
@@ -420,6 +434,16 @@ router.put(
                     400,
                     "VALIDATION_ERROR",
                     "ID de usuário inválido.",
+                );
+            }
+
+            const {empresaId} = requireTenant(req);
+            if (!(await targetPertenceAEmpresa(id, empresaId))) {
+                return errorResponse(
+                    res,
+                    404,
+                    "NOT_FOUND",
+                    "Utilizador não encontrado.",
                 );
             }
 
@@ -558,9 +582,8 @@ router.put(
 );
 
 /**
- * NOVO — Card 2 (Permissões): confirma que o usuário-alvo tem vínculo com a
- * empresa ativa do ator, a menos que o ator seja superadmin. 404 (não 403)
- * pra não revelar que o usuário existe em outra empresa.
+ * Confirma que o alvo tem vínculo ativo com a empresa da request.
+ * 404 para não revelar que o usuário existe em outro tenant.
  */
 async function targetPertenceAEmpresa(
     targetUserId: number,
@@ -573,14 +596,9 @@ async function targetPertenceAEmpresa(
         .from(usuarioEmpresasTable)
         .where(
             and(
-                eq(
-                    usuarioEmpresasTable.usuario_id,
-                    targetUserId,
-                ),
-                eq(
-                    usuarioEmpresasTable.empresa_id,
-                    empresaId,
-                ),
+                eq(usuarioEmpresasTable.usuario_id, targetUserId),
+                eq(usuarioEmpresasTable.empresa_id, empresaId),
+                eq(usuarioEmpresasTable.ativo, true),
             ),
         )
         .limit(1);
@@ -607,14 +625,8 @@ router.get(
                 );
             }
 
-            // NOVO — Card 2: admin de empresa só enxerga usuário da própria empresa.
-            if (
-                !req.user!.superadmin &&
-                !(await targetPertenceAEmpresa(
-                    id,
-                    req.user!.empresaId,
-                ))
-            ) {
+            // Isolamento por tenant: mesmo superadmin só gere usuários da empresa ativa.
+            if (!(await targetPertenceAEmpresa(id, req.user!.empresaId))) {
                 return errorResponse(
                     res,
                     404,
@@ -709,19 +721,9 @@ router.put(
                 );
             }
 
-            // NOVO — Card 2: admin de empresa só edita usuário vinculado à
-            // MESMA empresa em que está autenticado agora. 404, não 403 —
-            // não revela que o usuário existe em outra empresa. Superadmin
-            // edita qualquer um, sem essa checagem.
             const empresaId = req.user.empresaId;
 
-            if (
-                !req.user.superadmin &&
-                !(await targetPertenceAEmpresa(
-                    id,
-                    empresaId,
-                ))
-            ) {
+            if (!(await targetPertenceAEmpresa(id, empresaId))) {
                 return errorResponse(
                     res,
                     404,

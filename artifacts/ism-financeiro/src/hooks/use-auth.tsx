@@ -13,6 +13,7 @@ export type AuthUser = {
     telefone?: string | null;
     celular?: string | null;
     ultimo_acesso?: string | null;
+    superadmin?: boolean;
 };
 
 export type EmpresaVinculo = {
@@ -153,6 +154,7 @@ export function AuthProvider({children}: {children: ReactNode}) {
     const hasPermission = useCallback(
         (permission: string) => {
             if (!user) return false;
+            if (user.superadmin) return true;
             return permissions.includes(permission);
         },
         [user, permissions],

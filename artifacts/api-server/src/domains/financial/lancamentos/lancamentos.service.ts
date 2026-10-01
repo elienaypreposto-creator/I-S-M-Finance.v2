@@ -1,4 +1,4 @@
-import {count, eq, gte, ilike, lte} from "drizzle-orm";
+import {count, desc, eq, gte, ilike, lte} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {
     contasBancariasTable,
@@ -90,7 +90,7 @@ export const lancamentosService = {
             .leftJoin(departamentosTable, eq(lancamentosTable.departamento_id, departamentosTable.id))
             .leftJoin(centrosCustosTable, eq(lancamentosTable.centro_custo_id, centrosCustosTable.id))
             .where(where)
-            .orderBy(lancamentosTable.vencimento)
+            .orderBy(desc(lancamentosTable.vencimento), desc(lancamentosTable.id))
             .limit(limit)
             .offset(offset);
 
