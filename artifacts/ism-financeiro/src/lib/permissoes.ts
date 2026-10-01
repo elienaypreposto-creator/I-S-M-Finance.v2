@@ -9,6 +9,7 @@ export const PERM = {
     CONCILIACAO_CONFIGURAR: "financeiro:conciliacao:configurar",
     CONCILIACAO_CONCILIAR: "financeiro:conciliacao:conciliar",
     LANCAMENTOS_EDITAR: "financeiro:lancamentos:editar",
+    LANCAMENTOS_DELETAR: "financeiro:lancamentos:deletar",
     LANCAMENTOS_ALTERAR_VALOR: "financeiro:lancamentos:alterar_valor",
     RELATORIOS_CONCILIACAO: "relatorios:conciliacao",
     RELATORIOS_METAS: "relatorios:metas",

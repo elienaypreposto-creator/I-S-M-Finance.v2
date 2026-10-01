@@ -178,7 +178,7 @@ const vincularBodySchema = z.object({
     /** Obrigatório com 2+ lançamentos quando gerar_parcial=true (DEF-07). */
     residuo_lancamento_id: z.coerce.number().int().positive().optional(),
     /**
-     * Regra de Ouro (Fase 8): quando true, só CALCULA a decisão (mesma regra
+     * Quando true, só calcula a decisão e devolve, sem gravar nada no banco. Usado pelo
      * de negócio do backend) e devolve, sem gravar nada no banco. Usado pelo
      * modal de "Vincular" para manter o resultado só em memória no front até
      * o usuário clicar em Salvar/Conciliar na tela do extrato.
@@ -849,7 +849,7 @@ router.put(
         }
     });
 
-/** FEAT-08: dispara promoção pendente -> atrasado (também roda no job periódico). */
+/** Dispara promoção pendente para atrasado (também roda no job periódico). */
 router.post(
     "/conciliacoes/jobs/promover-atrasados",
     withPermission(PERM.CONCILIACAO_CONFIGURAR),
@@ -1590,7 +1590,7 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
                     // a data do residual parcial (RN-G3).
                     lancamento_vencimento: lancamentosTable.vencimento,
                     is_residuo_parcial: lancamentosTable.is_residuo_parcial,
-                    // Card 76: residual ainda não materializado (só existe em
+                    // Residual ainda não materializado (só existe em
                     // lancamentosTable depois do finalizar) - front usa isso para
                     // avisar "vai gerar residual ao salvar/conciliar".
                     eh_origem_residuo: itensConciliacaoLancamentosTable.eh_origem_residuo,
@@ -1608,7 +1608,7 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
                 ))
             : [];
 
-        // Card 76 (follow-up): o residual já nasce em `lancamentosTable` no
+        // O residual já nasce em `lancamentosTable` no
         // momento do Salvar (persistirVinculo), mas nunca é inserido em
         // itens_conciliacao_lancamentos (ele não está "pago" nesta linha do
         // extrato - é um título novo, ainda pendente, que só será conciliado
@@ -2007,11 +2007,74 @@ async function calcularVinculo(
 
 type VincularCalcOk = Extract<Awaited<ReturnType<typeof calcularVinculo>>, { ok: true }>;
 
+async function buscarResiduoJaCriado(
+    tx: any,
+    empresaId: number,
+    origemLancamentoId: number,
+    linhaId: number,
+): Promise<{id: number} | null> {
+    const [existente] = await tx
+        .select({id: lancamentosTable.id})
+        .from(lancamentosTable)
+        .innerJoin(
+            itensConciliacaoLancamentosTable,
+            and(
+                eq(itensConciliacaoLancamentosTable.lancamento_id, lancamentosTable.lancamento_origem_id),
+                tenantScope(itensConciliacaoLancamentosTable, empresaId),
+                eq(itensConciliacaoLancamentosTable.eh_origem_residuo, true),
+            ),
+        )
+        .innerJoin(
+            itensConciliacaoTable,
+            and(
+                eq(itensConciliacaoTable.id, itensConciliacaoLancamentosTable.item_conciliacao_id),
+                tenantScope(itensConciliacaoTable, empresaId),
+                eq(itensConciliacaoTable.extrato_linha_id, linhaId),
+            ),
+        )
+        .where(
+            tenantWhere(
+                lancamentosTable,
+                empresaId,
+                eq(lancamentosTable.lancamento_origem_id, origemLancamentoId),
+                eq(lancamentosTable.is_residuo_parcial, true),
+            ),
+        )
+        .limit(1);
+    return existente ?? null;
+}
+
+async function buscarResiduoPorOrigem(
+    tx: any,
+    empresaId: number,
+    origemLancamentoId: number,
+): Promise<{id: number} | null> {
+    const [existente] = await tx
+        .select({id: lancamentosTable.id})
+        .from(lancamentosTable)
+        .where(
+            tenantWhere(
+                lancamentosTable,
+                empresaId,
+                eq(lancamentosTable.lancamento_origem_id, origemLancamentoId),
+                eq(lancamentosTable.is_residuo_parcial, true),
+            ),
+        )
+        .limit(1);
+    return existente ?? null;
+}
+
+async function travarLancamentoOrigem(tx: any, empresaId: number, origemLancamentoId: number): Promise<void> {
+    await tx
+        .select({id: lancamentosTable.id})
+        .from(lancamentosTable)
+        .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.id, origemLancamentoId)))
+        .limit(1)
+        .for("update");
+}
+
 /**
- * Grava de fato o resultado de `calcularVinculo` - inclui a criação
- * IMEDIATA do lançamento residual (Regra de Ouro: a persistência inteira do
- * vincular já foi adiada para o momento do Salvar/Conciliar, então não há
- * mais motivo para adiar o residual num segundo momento como antes).
+ * Persiste o vínculo e materializa o residual na mesma transação do Salvar.
  */
 async function persistirVinculo(
     tx: any,
@@ -2034,6 +2097,13 @@ async function persistirVinculo(
         if (!origem) {
             throw new Error("Não foi possível identificar lançamento de origem para o residual.");
         }
+        await travarLancamentoOrigem(tx, empresaId, origem.id);
+        const residualExistente =
+            (await buscarResiduoJaCriado(tx, empresaId, origem.id, linhaId)) ??
+            (await buscarResiduoPorOrigem(tx, empresaId, origem.id));
+        if (residualExistente) {
+            residuoCriado = {lancamento_id: residualExistente.id, valor: fromCents(decision.residual.valorCents)};
+        } else {
         let parceiroNomeOrigem: string | null = null;
         if (origem.parceiro_id) {
             const [parceiro] = await tx
@@ -2080,6 +2150,7 @@ async function persistirVinculo(
             }, empresaId))
             .returning();
         residuoCriado = {lancamento_id: novoResiduo.id, valor: fromCents(decision.residual.valorCents)};
+        }
     }
 
     await tx.insert(itensConciliacaoLancamentosTable).values(
@@ -2204,7 +2275,7 @@ router.post(
             }
 
             if (preview) {
-                // Regra de Ouro (Fase 8): o modal só devolve o cálculo pro front
+                // O modal só devolve o cálculo pro front
                 // guardar em memória - nada é gravado até o Salvar/Conciliar.
                 return successResponse(res, {
                     linha_id: linhaId,
@@ -2540,13 +2611,8 @@ async function contarPendentes(executor: DbLike, empresaId: number, conciliacaoI
 }
 
 /**
- * Materializa a conciliação: marca extrato/conciliação como conciliado,
- * marteliza `valor_quitado`/status dos títulos (RN-G) e faz uma varredura
- * legada de residuais que porventura ainda estejam com a flag antiga
- * `eh_origem_residuo` (fluxo anterior à Regra de Ouro - hoje o residual já
- * nasce no `persistirVinculo`, mas manter esta varredura aqui é inofensivo
- * e evita perder qualquer residual de uma conciliação criada antes deste
- * deploy). Só chamar depois de confirmar que não há linhas pendentes.
+ * Marca extrato e conciliação como conciliados e aplica quitação nos títulos.
+ * Residuais já criados em persistirVinculo não são inseridos de novo.
  */
 async function persistirFinalizacao(tx: any, empresaId: number, conciliacao: { id: number; conta_id: number | null }, extratoId: number, usuarioId?: number) {
     const dataConciliacao = hojeIsoLocal();
@@ -2565,7 +2631,6 @@ async function persistirFinalizacao(tx: any, empresaId: number, conciliacao: { i
                     })
                     .where(tenantWhere(conciliacoesTable, empresaId, eq(conciliacoesTable.id, conciliacao.id)));
 
-                // Espelha data nos itens ainda sem data (FEAT-08)
                 await tx
                     .update(itensConciliacaoTable)
                     .set({data_conciliacao: dataConciliacao, updated_at: new Date()})
@@ -2802,14 +2867,11 @@ async function persistirFinalizacao(tx: any, empresaId: number, conciliacao: { i
                         .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.id, lancamentoId)));
                 }
 
-                // Card 76: só agora (Salvar/Conciliar confirmado) os residuais
-                // parciais marcados durante o vincular nascem de fato em
-                // lancamentosTable - até aqui existiam só como "promessa"
-                // (eh_origem_residuo/residuo_valor_pendente) no vínculo.
-                const residuaisPendentes: {origemLancamentoId: number; valorPendente: string | null}[] = await tx
+                const residuaisPendentes: {origemLancamentoId: number; valorPendente: string | null; linhaId: number}[] = await tx
                     .select({
                         origemLancamentoId: itensConciliacaoLancamentosTable.lancamento_id,
                         valorPendente: itensConciliacaoLancamentosTable.residuo_valor_pendente,
+                        linhaId: itensConciliacaoTable.extrato_linha_id,
                     })
                     .from(itensConciliacaoLancamentosTable)
                     .innerJoin(
@@ -2874,6 +2936,11 @@ async function persistirFinalizacao(tx: any, empresaId: number, conciliacao: { i
                     for (const pendente of residuaisPendentes) {
                         const origem = origemById.get(pendente.origemLancamentoId);
                         if (!origem || pendente.valorPendente == null) continue;
+
+                        const residualExistente =
+                            (await buscarResiduoJaCriado(tx, empresaId, origem.id, pendente.linhaId)) ??
+                            (await buscarResiduoPorOrigem(tx, empresaId, origem.id));
+                        if (residualExistente) continue;
 
                         await tx.insert(lancamentosTable).values(withEmpresaId({
                             tipo: origem.tipo,
@@ -2947,7 +3014,7 @@ router.post(
     });
 
 /**
- * Regra de Ouro (Fase 8): "Salvar"/"Conciliar" na tela do extrato. Recebe TODAS
+ * Salvar/Conciliar na tela do extrato. Recebe TODAS
  * as decisões de vincular/ignorar tomadas em memória no front (ainda não
  * persistidas em lugar nenhum) e aplica cada uma de verdade, em sequência,
  * dentro de UMA ÚNICA transaction - se qualquer ação falhar, nada é gravado.
