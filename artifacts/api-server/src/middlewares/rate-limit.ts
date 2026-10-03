@@ -22,22 +22,113 @@
  * Trade-off: quem atacar um e-mail pode bloquear temporariamente (15 min) o
  * login desse e-mail; é preferível a permitir força bruta ilimitada.
  *
- * Nota de infraestrutura: o store usado aqui é o `MemoryStore` padrão do
- * express-rate-limit, válido para um único processo Node de longa duração
- * (`pnpm run dev` / `dev:direct`). Em deploy serverless (Vercel, ver
- * `api/index.ts`), cada invocação pode rodar numa instância/região diferente
- * e a contagem não é compartilhada entre elas - o limite passa a ser "por
- * instância fria", não global. Para garantir o limite real em produção
- * serverless é necessário um store externo compartilhado (ex.: Redis via
- * `rate-limit-redis` + Upstash), fora do escopo desta implementação inicial.
+ * Infraestrutura: os contadores ficam no Redis (`rate-limit-redis`), então
+ * sobrevivem a restart e são compartilhados entre instâncias da API / invocações
+ * serverless. Cada limiter usa um prefixo próprio (`rl:global:`, `rl:auth:`,
+ * `rl:login:`, `rl:email:`).
+ *
+ * DECISÃO: fail-open. Se o Redis estiver indisponível (ou ainda não pronto no
+ * boot), `ResilientRedisStore.increment` devolve uma contagem neutra (a requisição
+ * passa sem ser contada) e emite um alerta `[ALERT][REDIS]` (com throttle). Não se
+ * usa só o `passOnStoreError` porque a lib loga o stack completo a cada requisição;
+ * ele fica ligado apenas como rede de segurança. Ver lib/redis.ts.
  */
 
 import { rateLimit, ipKeyGenerator } from "express-rate-limit";
-import type { RateLimitExceededEventHandler } from "express-rate-limit";
+import type {
+    ClientRateLimitInfo,
+    Options,
+    RateLimitExceededEventHandler,
+    Store,
+} from "express-rate-limit";
+import { RedisStore } from "rate-limit-redis";
 import type { Request } from "express";
+import { alertRedis, getRedis } from "../lib/redis";
 import { errorResponse } from "../utils/response";
 
 const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
+
+// Inicia a conexão já no boot (sem isso ela só começaria na 1ª requisição, que passaria sem limite).
+getRedis();
+
+type RedisSendCommand = ConstructorParameters<typeof RedisStore>[0]["sendCommand"];
+
+const sendCommand: RedisSendCommand = async (...args: string[]) => {
+    const redis = getRedis();
+    if (!redis) throw new Error("Redis não configurado.");
+    return (await redis.call(args[0]!, ...args.slice(1))) as never;
+};
+
+/**
+ * Envolve o `RedisStore` com duas proteções:
+ *  1. Criação preguiçosa: o `RedisStore` carrega um script Lua no construtor; se isso
+ *     rodasse no boot com o Redis fora do ar (fila offline desligada), a promessa
+ *     rejeitada ficaria sem tratamento. Aqui o store só é criado quando o cliente
+ *     está `ready`; antes disso o erro é lançado e o `passOnStoreError` libera a requisição.
+ *  2. `decrement`/`resetKey`/`get` nunca lançam (rodam fora do fluxo do request,
+ *     por exemplo com `skipSuccessfulRequests`); apenas alertam.
+ */
+class ResilientRedisStore implements Store {
+    localKeys = false;
+    prefix: string;
+    private inner: RedisStore | null = null;
+    private opts: Options | null = null;
+
+    constructor(prefix: string) {
+        this.prefix = prefix;
+    }
+
+    init(options: Options): void {
+        this.opts = options;
+    }
+
+    private store(): RedisStore {
+        if (this.inner) return this.inner;
+        if (getRedis()?.status !== "ready") throw new Error("Redis indisponível.");
+        const s = new RedisStore({ sendCommand, prefix: this.prefix });
+        if (this.opts) (s as unknown as Store).init?.(this.opts);
+        this.inner = s;
+        return s;
+    }
+
+    async increment(key: string): Promise<ClientRateLimitInfo> {
+        try {
+            return await this.store().increment(key);
+        } catch (e) {
+            alertRedis(`rate limit (${this.prefix}) indisponível`, e);
+            // Fail-open silencioso: contagem neutra, a requisição passa.
+            return {
+                totalHits: 1,
+                resetTime: new Date(Date.now() + (this.opts?.windowMs ?? 0)),
+            };
+        }
+    }
+
+    async decrement(key: string): Promise<void> {
+        try {
+            await this.store().decrement(key);
+        } catch (e) {
+            alertRedis(`rate limit (${this.prefix}) falhou no decrement`, e);
+        }
+    }
+
+    async resetKey(key: string): Promise<void> {
+        try {
+            await this.store().resetKey(key);
+        } catch (e) {
+            alertRedis(`rate limit (${this.prefix}) falhou no resetKey`, e);
+        }
+    }
+
+    async get(key: string): Promise<ClientRateLimitInfo | undefined> {
+        try {
+            return await this.store().get(key);
+        } catch (e) {
+            alertRedis(`rate limit (${this.prefix}) falhou no get`, e);
+            return undefined;
+        }
+    }
+}
 
 /** Handler comum: devolve 429 no mesmo envelope { data, meta, errors } da API. */
 const rateLimitHandler: RateLimitExceededEventHandler = (_req, res) => {
@@ -72,6 +163,8 @@ export const globalLimiter = rateLimit({
     skip: skipOptions,
     handler: rateLimitHandler,
     validate: proxyValidate,
+    store: new ResilientRedisStore("rl:global:"),
+    passOnStoreError: true,
 });
 
 export const authLimiter = rateLimit({
@@ -84,6 +177,8 @@ export const authLimiter = rateLimit({
     validate: proxyValidate,
     // IP puro - o helper normaliza IPv4/IPv6 (mitiga CVE-2026-30827 de agrupamento IPv6).
     keyGenerator: (req) => ipKeyGenerator(req.ip ?? req.socket.remoteAddress ?? "unknown"),
+    store: new ResilientRedisStore("rl:auth:"),
+    passOnStoreError: true,
 });
 
 export const loginLimiter = rateLimit({
@@ -102,6 +197,8 @@ export const loginLimiter = rateLimit({
                 : "sem-email";
         return `${ip}:${email}`;
     },
+    store: new ResilientRedisStore("rl:login:"),
+    passOnStoreError: true,
 });
 
 /**
@@ -124,4 +221,6 @@ export const loginEmailLimiter = rateLimit({
     skip: (req) => skipOptions(req) || emailDoCorpo(req) === null,
     handler: rateLimitHandler,
     keyGenerator: (req) => `email:${emailDoCorpo(req)}`,
+    store: new ResilientRedisStore("rl:email:"),
+    passOnStoreError: true,
 });

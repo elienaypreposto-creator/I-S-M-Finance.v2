@@ -1,17 +1,22 @@
 /**
- * withAuth - middleware de autenticação stateless via JWE.
+ * withAuth - middleware de autenticação via JWE.
  *
- * O(1) - apenas operação criptográfica local, zero I/O de banco por request.
+ * Decifra o token localmente e consulta a denylist no Redis (~0,3 ms, sem banco).
  *
- * Trade-off aceito: um utilizador bloqueado após a emissão de um Access Token
- * pode continuar a usá-lo até ao fim do TTL (máx 15 min). Para revogação
- * imediata, a única solução é reduzir o TTL ou adicionar uma consulta ao banco
- * aqui (com custo de I/O em cada request).
+ * Revogação imediata: bloqueio de usuário, desativação de vínculo e reuso de
+ * refresh gravam `denylist:user:<id>` com o instante da revogação; tokens
+ * emitidos até esse instante (iat <= revogadoEm) são recusados. Tokens de um
+ * novo login (iat posterior) passam.
+ *
+ * Fail-open: se o Redis estiver indisponível, a API segue funcionando com o
+ * trade-off antigo (token válido até o fim do TTL, máx 15 min) e emite alerta.
+ * Ver services/denylist.service.ts.
  */
 
 import type {NextFunction, Request, Response} from "express";
 import type {AccessTokenPayload} from "../services/token.service";
 import {verifyAccessToken} from "../services/token.service";
+import {getUserRevokedAt} from "../services/denylist.service";
 
 export type AuthUser = {
     id: number;
@@ -65,6 +70,14 @@ export const withAuth = async (req: Request, res: Response, next: NextFunction) 
     const empresaId = payload.empresa_id;
     if (!Number.isInteger(empresaId) || empresaId <= 0) {
         return jsonError(res, 401, "UNAUTHORIZED", "Sessão sem empresa. Faça login novamente.");
+    }
+
+    const revogadoEm = await getUserRevokedAt(id);
+    if (revogadoEm !== null) {
+        const iat = payload.iat;
+        if (typeof iat !== "number" || iat <= revogadoEm) {
+            return jsonError(res, 401, "SESSION_REVOKED", "Sessão revogada. Faça login novamente.");
+        }
     }
 
     req.user = {

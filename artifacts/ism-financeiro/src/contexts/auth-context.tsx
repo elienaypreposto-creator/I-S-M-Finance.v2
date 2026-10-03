@@ -58,7 +58,7 @@ export function AuthProvider({children}: { children: React.ReactNode }) {
     }, []);
 
     const login = (token: string, userData: User) => {
-        authStorage.setTokens(token, "");
+       authStorage.setAccessToken(token);
         setUser(userData);
         setLocation("/");
     };

@@ -1,5 +1,5 @@
 import {createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode} from "react";
-import {fetchApi, authStorage} from "@/lib/api-config";
+import {fetchApi, authStorage, refreshAccessToken} from "@/lib/api-config";
 import {nomeEmpresa, setCurrentEmpresaId} from "@/lib/tenant-query";
 import {queryClient} from "@/lib/query-client";
 
@@ -38,9 +38,9 @@ type MeResponse = {
     };
 };
 
+// O refresh token não vem mais no body: está no cookie httpOnly.
 type SessionPayload = {
     accessToken: string;
-    refreshToken: string;
     user: AuthUser;
     permissoes?: string[];
     empresa_id?: number;
@@ -52,7 +52,7 @@ type AuthContextValue = {
     empresas: EmpresaVinculo[];
     empresaAtiva: EmpresaAtiva | null;
     loading: boolean;
-    login: (accessToken: string, refreshToken: string, userData: AuthUser, perms?: string[], empresas?: EmpresaVinculo[]) => void;
+    login: (accessToken: string, userData: AuthUser, perms?: string[], empresas?: EmpresaVinculo[]) => void;
     logout: () => Promise<void>;
     switchEmpresa: (empresaId: number) => Promise<void>;
     hasPermission: (permission: string) => boolean;
@@ -89,12 +89,11 @@ export function AuthProvider({children}: {children: ReactNode}) {
     const login = useCallback(
         (
             accessToken: string,
-            refreshToken: string,
             userData: AuthUser,
             perms: string[] = [],
             vinculos: EmpresaVinculo[] = [],
         ) => {
-            authStorage.setTokens(accessToken, refreshToken);
+            authStorage.setAccessToken(accessToken);
             applySession(userData, perms, vinculos);
             if (vinculos.length === 0) {
                 void fetchApi<MeResponse>("/auth/me")
@@ -114,16 +113,11 @@ export function AuthProvider({children}: {children: ReactNode}) {
     );
 
     const logout = useCallback(async () => {
-        const refreshToken = authStorage.getRefreshToken();
-        if (refreshToken) {
-            try {
-                await fetchApi("/auth/logout", {
-                    method: "POST",
-                    body: JSON.stringify({refreshToken}),
-                });
-            } catch {
-                // best-effort
-            }
+        try {
+            // O cookie do refresh vai sozinho; o servidor revoga o registro e limpa o cookie
+            await fetchApi("/auth/logout", {method: "POST"});
+        } catch {
+            // best-effort
         }
         authStorage.clearTokens();
         setUser(null);
@@ -135,17 +129,16 @@ export function AuthProvider({children}: {children: ReactNode}) {
     }, []);
 
     const switchEmpresa = useCallback(async (empresaId: number) => {
-        const refreshToken = authStorage.getRefreshToken();
         const res = await fetchApi<{data: SessionPayload}>("/auth/switch-empresa", {
             method: "POST",
-            body: JSON.stringify({empresa_id: empresaId, refreshToken}),
+            body: JSON.stringify({empresa_id: empresaId}),
         });
-        const {accessToken, refreshToken: nextRefresh, user: nextUser, permissoes, empresa_id} = res.data;
-        if (!accessToken || !nextRefresh || !nextUser) {
+        const {accessToken, user: nextUser, permissoes, empresa_id} = res.data;
+        if (!accessToken || !nextUser) {
             throw new Error("Resposta do servidor inválida.");
         }
         const merged = {...nextUser, empresa_id: nextUser.empresa_id ?? empresa_id};
-        authStorage.setTokens(accessToken, nextRefresh);
+        authStorage.setAccessToken(accessToken);
         applySession(merged, Array.isArray(permissoes) ? permissoes : []);
         queryClient.clear();
         window.location.assign("/");
@@ -160,15 +153,18 @@ export function AuthProvider({children}: {children: ReactNode}) {
         [user, permissions],
     );
 
+    // Ao abrir a aplicação: o access token não persiste, então obtém um novo via
+    // refresh (cookie httpOnly enviado automaticamente). Sem cookie válido → login.
     useEffect(() => {
-        const token = authStorage.getAccessToken();
-        if (!token) {
-            setLoading(false);
-            return;
-        }
+        void (async () => {
+            const token = await refreshAccessToken();
+            if (!token) {
+                setLoading(false);
+                return;
+            }
 
-        fetchApi<MeResponse>("/auth/me")
-            .then((res) => {
+            try {
+                const res = await fetchApi<MeResponse>("/auth/me");
                 if (res?.data?.user) {
                     applySession(
                         res.data.user,
@@ -176,15 +172,16 @@ export function AuthProvider({children}: {children: ReactNode}) {
                         Array.isArray(res.data.empresas) ? res.data.empresas : [],
                     );
                 }
-            })
-            .catch(() => {
+            } catch {
                 authStorage.clearTokens();
                 setUser(null);
                 setPermissions([]);
                 setEmpresas([]);
                 setCurrentEmpresaId(0);
-            })
-            .finally(() => setLoading(false));
+            } finally {
+                setLoading(false);
+            }
+        })();
     }, [applySession]);
 
     const empresaAtiva = useMemo(

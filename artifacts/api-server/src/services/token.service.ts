@@ -58,6 +58,12 @@ export interface AccessTokenPayload {
      * `"*"` em permissions[] — ver withPermission.ts e withSuperadmin.ts.
      */
     superadmin: boolean;
+    /**
+     * Instante de emissão (epoch, segundos). Preenchido apenas por
+     * `verifyAccessToken`; ignorado em `signAccessToken` (o `setIssuedAt()` define o valor).
+     * Usado pela denylist de sessão no `withAuth` (iat <= revogadoEm => 401).
+     */
+    iat?: number;
 }
 
 /**
@@ -92,6 +98,7 @@ export const verifyAccessToken = async (token: string): Promise<AccessTokenPaylo
     const empresaRaw = payload.empresa_id as unknown;
     const empresa_id = typeof empresaRaw === "number" ? empresaRaw : Number(empresaRaw);
     const superadmin = payload.superadmin === true;
+    const iat = typeof payload.iat === "number" ? payload.iat : undefined;
 
     if (!sub || !email) throw new Error("Payload do token inválido: sub ou email ausente.");
     if (!Number.isInteger(empresa_id) || empresa_id <= 0) {
@@ -102,7 +109,7 @@ export const verifyAccessToken = async (token: string): Promise<AccessTokenPaylo
         ? (permissions as unknown[]).filter((p): p is string => typeof p === "string")
         : [];
 
-    return {sub, email, permissions: safePermissions, empresa_id, superadmin};
+    return {sub, email, permissions: safePermissions, empresa_id, superadmin, iat};
 };
 
 /** Payload mínimo do Refresh Token JWS -> sem permissões por design. */

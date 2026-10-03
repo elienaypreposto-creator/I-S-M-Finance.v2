@@ -15,13 +15,35 @@ services:
     networks:
       - ism_network
 
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?defina REDIS_PASSWORD no .env}
+      --maxmemory 128mb
+      --maxmemory-policy allkeys-lru
+    environment:
+      # Só para o healthcheck; o redis-server recebe a senha pelo --requirepass acima.
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - redis_network # rede interna (sem rota externa); sem "ports:" -> não publicado no host
+
   api:
     build:
       context: .
       dockerfile: Dockerfile.api
     restart: always
     depends_on:
-      - postgres
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_healthy
     environment:
       # API: ism_app / ism_admin / ism_owner. Superuser (ism_user) só no one-shot de migrate.
       - DATABASE_URL=postgresql://ism_app:${ISM_APP_PASSWORD:-${DB_PASSWORD}}@postgres:5432/ismfinance
@@ -30,6 +52,7 @@ services:
       - ISM_APP_PASSWORD=${ISM_APP_PASSWORD:-${DB_PASSWORD}}
       - ISM_ADMIN_PASSWORD=${ISM_ADMIN_PASSWORD:-${DB_PASSWORD}}
       - ISM_OWNER_PASSWORD=${ISM_OWNER_PASSWORD:-${DB_PASSWORD}}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?defina REDIS_PASSWORD no .env}@redis:6379
       - PORT=5000
       - NODE_ENV=production
       - RUN_LOCAL=true
@@ -37,6 +60,7 @@ services:
       - .env # Carrega os demais segredos como SMTP e JWT_SECRET
     networks:
       - ism_network
+      - redis_network
 
   web:
     build:
@@ -57,5 +81,8 @@ volumes:
 networks:
   ism_network:
     driver: bridge
+  redis_network:
+    driver: bridge
+    internal: true # sem saída para fora do Docker; só api e redis participam
   proxy-network:
     external: true

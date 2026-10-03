@@ -1,26 +1,30 @@
 /**
  * Auth Routes
  *
- * POST /auth/login              - Autentica; 1 empresa → tokens; N → selectionToken
+ * POST /auth/login              - Autentica; 1 empresa → sessão; N → selectionToken
  * POST /auth/select-empresa     - Emite sessão após escolha (selectionToken + empresa_id)
  * POST /auth/switch-empresa     - Troca empresa da sessão (revoga refresh, emite par novo)
- * POST /auth/refresh            - Renova tokens; recusa se o vínculo estiver inativo
- * POST /auth/logout             - Revoga o Refresh Token
+ * POST /auth/refresh            - Renova tokens (refresh lido do cookie httpOnly); recusa se o vínculo estiver inativo
+ * POST /auth/logout             - Revoga o Refresh Token e limpa o cookie
  * GET  /auth/me                 - Perfil do utilizador autenticado
  * POST /auth/verify-otp         - Valida o OTP de boas-vindas; retorna setupToken
  * POST /auth/setup-password     - Define a senha permanente com setupToken
  * POST /auth/forgot-password    - Solicita recuperação de senha por e-mail
  * POST /auth/reset-password     - Redefine a senha com o resetToken
  * POST /auth/migrate-passwords  - [admin] Diagnóstico de hashes SHA-256 legados
+ *
+ * Sessão: o access token vai no body (o frontend o mantém só em memória); o refresh
+ * token vai em cookie `rt` HttpOnly; Secure; SameSite=Strict; Path=/api/auth.
  */
 
-import {Router, type Request} from "express";
+import {Router, type Request, type Response} from "express";
 import bcrypt from "bcryptjs";
 import {and, eq} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {permissoesTable, refreshTokensTable, usuarioEmpresasTable, usuariosTable} from "@workspace/db/schema";
 import {sendPasswordResetEmail} from "../services/email.service";
 import {revokeAllTokensForUser} from "../services/session.service";
+import {denylistUser} from "../services/denylist.service";
 import {assertVinculoAtivo, listEmpresasAtivasDoUsuario} from "../services/tenant.service";
 import {invalidateTenantCache} from "../middlewares/tenant";
 import {withAuth} from "../middlewares/auth";
@@ -28,6 +32,13 @@ import {withPermission} from "../middlewares/withPermission";
 import {authLimiter, loginEmailLimiter, loginLimiter} from "../middlewares/rate-limit";
 import {AppError} from "../utils/app-error";
 import {errorResponse, successResponse} from "../utils/response";
+import {
+    clearRefreshCookie,
+    csrfGuard,
+    LEGACY_REFRESH_BODY,
+    readRefreshToken,
+    setRefreshCookie,
+} from "../utils/refresh-cookie";
 import {ADMIN_USUARIOS_AUTOMATICAS, PERMISSOES_ADMIN} from "../constants/permissoes";
 import {
     generateOtp,
@@ -42,6 +53,9 @@ import {
 
 const BCRYPT_SALT_ROUNDS = 12;
 const router = Router();
+
+// CSRF: o csrfGuard (X-Requested-With) é aplicado apenas nas rotas que consomem o cookie
+// do refresh token: /auth/refresh, /auth/switch-empresa e /auth/logout (ver refresh-cookie.ts).
 
 /**
  * Permissões da empresa ativa. Superadmin global recebe o catálogo completo
@@ -125,6 +139,20 @@ async function emitSession(
         permissoes: permissions,
         empresa_id: empresaId,
     };
+}
+
+/**
+ * Envia a sessão: refresh token vai no cookie httpOnly; o body leva só o access token
+ * (e, durante a transição, o refresh também — AUTH_LEGACY_REFRESH_BODY=true).
+ */
+function sendSession(
+    res: Response,
+    session: Awaited<ReturnType<typeof emitSession>>,
+    meta: Record<string, unknown>,
+) {
+    const {refreshToken, ...publicSession} = session;
+    setRefreshCookie(res, refreshToken);
+    return successResponse(res, LEGACY_REFRESH_BODY ? session : publicSession, meta);
 }
 
 router.post("/auth/login", loginLimiter, loginEmailLimiter, async (req, res) => {
@@ -243,7 +271,7 @@ router.post("/auth/login", loginLimiter, loginEmailLimiter, async (req, res) => 
         );
         attachTenantForAudit(req, usuario, empresas[0].id);
 
-        return successResponse(res, session, {
+        return sendSession(res, session, {
             tokenType: "Bearer",
             accessTokenExpiresIn: "15m",
             refreshTokenExpiresIn: "7d",
@@ -255,18 +283,24 @@ router.post("/auth/login", loginLimiter, loginEmailLimiter, async (req, res) => 
     }
 });
 
-router.post("/auth/refresh", async (req, res) => {
+router.post("/auth/refresh", csrfGuard, async (req, res) => {
+    // Qualquer 401 desta rota também limpa o cookie, para o navegador não reenviar um token morto.
+    const reject = (code: string, message: string) => {
+        clearRefreshCookie(res);
+        return errorResponse(res, 401, code, message);
+    };
+
     try {
-        const rawToken = typeof req.body?.refreshToken === "string" ? req.body.refreshToken : null;
+        const rawToken = readRefreshToken(req); // cookie (ou body, durante a transição)
         if (!rawToken) {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "refreshToken é obrigatório.");
+            return errorResponse(res, 401, "INVALID_TOKEN", "Refresh token ausente.");
         }
 
         let rtPayload: { sub: string; email: string; empresa_id: number };
         try {
             rtPayload = await verifyRefreshToken(rawToken);
         } catch {
-            return errorResponse(res, 401, "INVALID_TOKEN", "Refresh token inválido ou expirado.");
+            return reject("INVALID_TOKEN", "Refresh token inválido ou expirado.");
         }
 
         const tokenHash = hashToken(rawToken);
@@ -284,18 +318,17 @@ router.post("/auth/refresh", async (req, res) => {
             .limit(1);
 
         if (!registro) {
-            return errorResponse(res, 401, "INVALID_TOKEN", "Refresh token inválido.");
+            return reject("INVALID_TOKEN", "Refresh token inválido.");
         }
 
         // Reutilização de token revogado invalida toda a família para forçar novo login.
         if (registro.revogado) {
             await revokeAllTokensForUser(registro.usuario_id);
+            await denylistUser(registro.usuario_id);
             console.warn(
                 `[SECURITY] Token reuse detectado - usuario_id=${registro.usuario_id}. Família revogada.`,
             );
-            return errorResponse(
-                res,
-                401,
+            return reject(
                 "TOKEN_REUSE_DETECTED",
                 "Sessão invalidada por motivo de segurança. Faça login novamente.",
             );
@@ -303,7 +336,7 @@ router.post("/auth/refresh", async (req, res) => {
 
         // Dupla verificação de expiração: defensivo em relação a tokens não limpos do banco
         if (registro.expires_at < new Date()) {
-            return errorResponse(res, 401, "INVALID_TOKEN", "Refresh token expirado.");
+            return reject("INVALID_TOKEN", "Refresh token expirado.");
         }
 
         const [usuario] = await db
@@ -320,20 +353,32 @@ router.post("/auth/refresh", async (req, res) => {
 
         if (!usuario || usuario.bloqueado) {
             await revokeAllTokensForUser(usuarioId);
-            return errorResponse(res, 401, "UNAUTHORIZED", "Utilizador inválido ou bloqueado.");
+            await denylistUser(usuarioId);
+            return reject("UNAUTHORIZED", "Utilizador inválido ou bloqueado.");
         }
 
         try {
             await assertVinculoAtivo(usuario.id, rtPayload.empresa_id);
         } catch {
             await revokeAllTokensForUser(usuarioId);
-            return errorResponse(res, 401, "UNAUTHORIZED", "Vínculo com a empresa inativo. Faça login novamente.");
+            await denylistUser(usuarioId);
+            return reject("UNAUTHORIZED", "Vínculo com a empresa inativo. Faça login novamente.");
         }
 
-        await db
+        // Rotação atômica: só uma requisição consegue revogar este token. Sem isso, duas
+        // requisições simultâneas com o mesmo cookie passariam pela checagem `revogado`
+        // e emitiriam dois pares de tokens.
+        const [revogado] = await db
             .update(refreshTokensTable)
             .set({revogado: true})
-            .where(eq(refreshTokensTable.id, registro.id));
+            .where(and(eq(refreshTokensTable.id, registro.id), eq(refreshTokensTable.revogado, false)))
+            .returning({id: refreshTokensTable.id});
+
+        if (!revogado) {
+            // Perdeu a corrida: outra requisição já rotacionou este token.
+            // Sem clearRefreshCookie: o cookie novo da requisição vencedora não pode ser apagado.
+            return errorResponse(res, 401, "TOKEN_ROTATED", "Sessão renovada em outra requisição.");
+        }
 
         // Re-consulta permissões para propagar alterações feitas após o último login
         const permissions = await fetchPermissions(usuario.id, rtPayload.empresa_id, usuario.superadmin);
@@ -361,9 +406,13 @@ router.post("/auth/refresh", async (req, res) => {
             revogado: false,
         });
 
+        setRefreshCookie(res, newRefreshToken);
+
         return successResponse(
             res,
-            {accessToken: newAccessToken, refreshToken: newRefreshToken},
+            LEGACY_REFRESH_BODY
+                ? {accessToken: newAccessToken, refreshToken: newRefreshToken}
+                : {accessToken: newAccessToken},
             {tokenType: "Bearer", accessTokenExpiresIn: "15m", refreshTokenExpiresIn: "7d"},
         );
     } catch (error: unknown) {
@@ -408,7 +457,7 @@ router.post("/auth/select-empresa", loginLimiter, async (req, res) => {
 
         const session = await emitSession(usuario, empresaId);
         attachTenantForAudit(req, usuario, empresaId);
-        return successResponse(res, session, {
+        return sendSession(res, session, {
             tokenType: "Bearer",
             accessTokenExpiresIn: "15m",
             refreshTokenExpiresIn: "7d",
@@ -422,11 +471,11 @@ router.post("/auth/select-empresa", loginLimiter, async (req, res) => {
     }
 });
 
-router.post("/auth/switch-empresa", withAuth, async (req, res) => {
+router.post("/auth/switch-empresa", csrfGuard, withAuth, async (req, res) => {
     try {
         const empresaIdRaw = req.body?.empresa_id;
         const empresaId = typeof empresaIdRaw === "number" ? empresaIdRaw : Number(empresaIdRaw);
-        const rawRefresh = typeof req.body?.refreshToken === "string" ? req.body.refreshToken : null;
+        const rawRefresh = readRefreshToken(req); // cookie (ou body, durante a transição)
 
         if (!Number.isInteger(empresaId) || empresaId <= 0) {
             return errorResponse(res, 400, "VALIDATION_ERROR", "Campo obrigatório: empresa_id.");
@@ -452,7 +501,12 @@ router.post("/auth/switch-empresa", withAuth, async (req, res) => {
             await db
                 .update(refreshTokensTable)
                 .set({revogado: true})
-                .where(eq(refreshTokensTable.token_hash, hashToken(rawRefresh)));
+                .where(
+                    and(
+                        eq(refreshTokensTable.token_hash, hashToken(rawRefresh)),
+                        eq(refreshTokensTable.usuario_id, usuario.id),
+                    ),
+                );
         } else {
             await revokeAllTokensForUser(usuario.id);
         }
@@ -460,7 +514,7 @@ router.post("/auth/switch-empresa", withAuth, async (req, res) => {
         invalidateTenantCache(usuario.id);
         const session = await emitSession(usuario, empresaId);
         attachTenantForAudit(req, usuario, empresaId);
-        return successResponse(res, session, {
+        return sendSession(res, session, {
             tokenType: "Bearer",
             accessTokenExpiresIn: "15m",
             refreshTokenExpiresIn: "7d",
@@ -474,17 +528,20 @@ router.post("/auth/switch-empresa", withAuth, async (req, res) => {
     }
 });
 
-router.post("/auth/logout", async (req, res) => {
+router.post("/auth/logout", csrfGuard, async (req, res) => {
     try {
-        const rawToken = typeof req.body?.refreshToken === "string" ? req.body.refreshToken : null;
+        const rawToken = readRefreshToken(req); // cookie (ou body, durante a transição)
         if (rawToken) {
             await db
                 .update(refreshTokensTable)
                 .set({revogado: true})
                 .where(eq(refreshTokensTable.token_hash, hashToken(rawToken)));
         }
+        clearRefreshCookie(res);
         return successResponse(res, null, {message: "Logout realizado com sucesso."});
     } catch (error: unknown) {
+        // Mesmo com falha no banco, o cookie é limpo no navegador
+        clearRefreshCookie(res);
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro no logout.", error);
     }
 });
@@ -711,6 +768,7 @@ router.post("/auth/reset-password", authLimiter, async (req, res) => {
 
         // Invalida todas as sessões activas - mudança de senha implica revogação obrigatória
         await revokeAllTokensForUser(usuarioId);
+        clearRefreshCookie(res);
 
         await db
             .update(usuariosTable)

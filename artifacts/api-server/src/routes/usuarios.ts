@@ -38,6 +38,7 @@ import {
     sendAdminCreatedAccountEmail,
 } from "../services/email.service";
 import {revokeAllTokensForUser} from "../services/session.service";
+import {denylistUser} from "../services/denylist.service";
 import {generateOtp} from "../services/token.service";
 import {errorResponse, successResponse} from "../utils/response";
 import {withPermission} from "../middlewares/withPermission";
@@ -568,6 +569,10 @@ router.put(
                 await revokeAllTokensForUser(id);
             }
 
+            if (bloqueado === true) {
+                await denylistUser(id);
+            }
+
             return successResponse(res, item);
         } catch (e: unknown) {
             return errorResponse(
@@ -995,6 +1000,10 @@ router.put(
                     empresa_id,
                 );
 
+                if (!ativo) {
+                    await denylistUser(id);
+                }
+
                 return successResponse(
                     res,
                     item,
@@ -1135,6 +1144,8 @@ router.delete(
                 id,
                 empresaId,
             );
+
+            await denylistUser(id);
 
             return successResponse(
                 res,

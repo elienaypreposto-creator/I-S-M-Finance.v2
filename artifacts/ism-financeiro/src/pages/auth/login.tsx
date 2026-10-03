@@ -5,9 +5,9 @@ import {useAuth, type AuthUser, type EmpresaVinculo} from "@/hooks/use-auth";
 import {useToast} from "@/hooks/use-toast";
 import {ArrowLeft, Building2, ChevronRight, KeyRound, Loader2, Lock, Mail} from "lucide-react";
 
+// O refresh token não vem mais no body: está no cookie httpOnly.
 type SessionPayload = {
     accessToken: string;
-    refreshToken: string;
     user: AuthUser;
     permissoes?: string[];
     empresa_id?: number;
@@ -64,13 +64,12 @@ export default function Login() {
     const emSelecao = selectionToken !== null && empresas.length > 0;
 
     function concluirSessao(payload: SessionPayload) {
-        const {accessToken, refreshToken, user, permissoes, empresa_id} = payload;
-        if (!accessToken || !refreshToken || !user) {
+        const {accessToken, user, permissoes, empresa_id} = payload;
+        if (!accessToken || !user) {
             throw new Error("Resposta do servidor inválida.");
         }
         login(
             accessToken,
-            refreshToken,
             {...user, empresa_id: user.empresa_id ?? empresa_id},
             Array.isArray(permissoes) ? permissoes : [],
         );
