@@ -26,6 +26,7 @@ jobs:
       JWT_SECRET: ${{ secrets[format('{0}_JWT_SECRET', github.ref_name == 'master' && 'HML' || 'TST')] }}
       JWT_ENCRYPT_SECRET: ${{ secrets[format('{0}_JWT_ENCRYPT_SECRET', github.ref_name == 'master' && 'HML' || 'TST')] }}
       SMTP_PASS: ${{ secrets[format('{0}_SMTP_PASS', github.ref_name == 'master' && 'HML' || 'TST')] }}
+      
     steps:
       - name: Validar variáveis do ambiente
         run: |

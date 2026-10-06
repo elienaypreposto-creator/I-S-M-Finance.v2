@@ -162,6 +162,13 @@
       "when": 1790167300000,
       "tag": "0022_rls_usuario_empresas_permissoes",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1790167400000,
+      "tag": "0023_senha_legada_reset",
+      "breakpoints": true
     }
   ]
 }

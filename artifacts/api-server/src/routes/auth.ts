@@ -19,7 +19,7 @@
 
 import {Router, type Request, type Response} from "express";
 import bcrypt from "bcryptjs";
-import {and, eq} from "drizzle-orm";
+import {and, eq, sql} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {permissoesTable, refreshTokensTable, usuarioEmpresasTable, usuariosTable} from "@workspace/db/schema";
 import {sendPasswordResetEmail} from "../services/email.service";
@@ -31,6 +31,7 @@ import {withAuth} from "../middlewares/auth";
 import {withPermission} from "../middlewares/withPermission";
 import {authLimiter, loginEmailLimiter, loginLimiter} from "../middlewares/rate-limit";
 import {AppError} from "../utils/app-error";
+import {SENHA_RESET_REQUIRED, validatePasswordPolicy} from "../utils/password-policy";
 import {errorResponse, successResponse} from "../utils/response";
 import {
     clearRefreshCookie,
@@ -192,6 +193,16 @@ router.post("/auth/login", loginLimiter, loginEmailLimiter, async (req, res) => 
                 403,
                 "SETUP_PENDING",
                 "Este utilizador ainda não definiu uma senha. Complete o processo de primeiro acesso.",
+            );
+        }
+
+        // Hash SHA-256 legado invalidado pela migração 0023: não há senha para comparar.
+        if (usuario.senha_hash === SENHA_RESET_REQUIRED) {
+            return errorResponse(
+                res,
+                403,
+                "PASSWORD_RESET_REQUIRED",
+                "Por segurança, sua senha foi invalidada e precisa ser redefinida. Enviamos um e-mail com o link (verifique também o spam); se não o encontrar, use \"Esqueci minha senha\".",
             );
         }
 
@@ -648,7 +659,7 @@ router.post("/auth/verify-otp", authLimiter, async (req, res) => {
     }
 });
 
-router.post("/auth/setup-password", async (req, res) => {
+router.post("/auth/setup-password", authLimiter, async (req, res) => {
     try {
         const setupToken = typeof req.body?.setupToken === "string" ? req.body.setupToken : null;
         const novaSenha = typeof req.body?.novaSenha === "string" ? req.body.novaSenha : null;
@@ -656,16 +667,6 @@ router.post("/auth/setup-password", async (req, res) => {
 
         if (!setupToken || !novaSenha || !email) {
             return errorResponse(res, 400, "VALIDATION_ERROR", "Campos obrigatórios: email, setupToken e novaSenha.");
-        }
-
-        if (novaSenha.length < 8) {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "A senha deve ter pelo menos 8 caracteres.");
-        }
-        if (!/[A-Z]/.test(novaSenha)) {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "A senha deve conter ao menos 1 letra maiúscula.");
-        }
-        if (!/[0-9]/.test(novaSenha)) {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "A senha deve conter ao menos 1 número.");
         }
 
         let tokenPayload: { sub: string; email: string };
@@ -680,6 +681,23 @@ router.post("/auth/setup-password", async (req, res) => {
         }
 
         const usuarioId = parseInt(tokenPayload.sub, 10);
+
+        const [usuario] = await db
+            .select({nome: usuariosTable.nome, email: usuariosTable.email})
+            .from(usuariosTable)
+            .where(eq(usuariosTable.id, usuarioId))
+            .limit(1);
+
+        if (!usuario) {
+            return errorResponse(res, 401, "INVALID_TOKEN", "setupToken inválido ou expirado.");
+        }
+
+        // Política de senha (tamanho, e-mail/nome, vazadas na HIBP) - só depois do token válido,
+        // para a rota não virar um oráculo público de senhas vazadas.
+        const violacao = await validatePasswordPolicy(novaSenha, usuario);
+        if (violacao) {
+            return errorResponse(res, 400, "WEAK_PASSWORD", violacao.message);
+        }
 
         await db
             .update(usuariosTable)
@@ -747,16 +765,6 @@ router.post("/auth/reset-password", authLimiter, async (req, res) => {
             return errorResponse(res, 400, "VALIDATION_ERROR", "Campos obrigatórios: resetToken e novaSenha.");
         }
 
-        if (novaSenha.length < 8) {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "A senha deve ter pelo menos 8 caracteres.");
-        }
-        if (!/[A-Z]/.test(novaSenha)) {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "A senha deve conter ao menos 1 letra maiúscula.");
-        }
-        if (!/[0-9]/.test(novaSenha)) {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "A senha deve conter ao menos 1 número.");
-        }
-
         let tokenPayload: { sub: string; email: string };
         try {
             tokenPayload = await verifyPurposeToken(resetToken, "password_reset");
@@ -765,6 +773,21 @@ router.post("/auth/reset-password", authLimiter, async (req, res) => {
         }
 
         const usuarioId = parseInt(tokenPayload.sub, 10);
+
+        const [usuario] = await db
+            .select({nome: usuariosTable.nome, email: usuariosTable.email})
+            .from(usuariosTable)
+            .where(eq(usuariosTable.id, usuarioId))
+            .limit(1);
+
+        if (!usuario) {
+            return errorResponse(res, 401, "INVALID_TOKEN", "Token de recuperação inválido ou expirado.");
+        }
+
+        const violacao = await validatePasswordPolicy(novaSenha, usuario);
+        if (violacao) {
+            return errorResponse(res, 400, "WEAK_PASSWORD", violacao.message);
+        }
 
         // Invalida todas as sessões activas - mudança de senha implica revogação obrigatória
         await revokeAllTokensForUser(usuarioId);
@@ -788,28 +811,37 @@ router.post(
     withPermission("admin:migrate-passwords"),
     async (_req, res) => {
         try {
-            const legacyPattern = /^[0-9a-f]{64}$/;
+            const h = usuariosTable.senha_hash;
 
-            const usuarios = await db
-                .select({id: usuariosTable.id, email: usuariosTable.email, senha_hash: usuariosTable.senha_hash})
+            const [r] = await db
+                .select({
+                    nao_bcrypt: sql<number>`count(*) filter (where ${h} not like '$2%')`.mapWith(Number),
+                    sha256_legado: sql<number>`count(*) filter (where ${h} ~ '^[0-9a-f]{64}$')`.mapWith(Number),
+                    reset_pendente: sql<number>`count(*) filter (where ${h} = 'RESET_REQUIRED')`.mapWith(Number),
+                    reset_nao_avisado: sql<number>`
+                        count(*)
+                        filter (
+                            where ${h} = 'RESET_REQUIRED'
+                            and ${usuariosTable.senha_reset_notificado_em} is null
+                        )
+                    `.mapWith(Number),
+                })
                 .from(usuariosTable);
 
-            const legacy = usuarios
-                .filter((u) => legacyPattern.test(u.senha_hash))
-                .map((u) => ({id: u.id, email: u.email}));
-
-            return successResponse(
-                res,
-                {pending_migration: legacy, count: legacy.length},
-                {
-                    message:
-                        legacy.length === 0
-                            ? "Todas as senhas já estão em bcrypt."
-                            : "Estes utilizadores têm hash SHA-256 legado. A migração ocorre automaticamente no próximo login.",
-                },
-            );
+            return successResponse(res, r, {
+                message:
+                    r.nao_bcrypt === 0
+                        ? "Todas as senhas estão em bcrypt."
+                        : "Ainda há senhas fora de bcrypt. reset_pendente = aguardando o utilizador redefinir.",
+            });
         } catch (error: unknown) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro na verificação de migração.", error);
+            return errorResponse(
+                res,
+                500,
+                "INTERNAL_ERROR",
+                "Erro na verificação de migração.",
+                error,
+            );
         }
     },
 );

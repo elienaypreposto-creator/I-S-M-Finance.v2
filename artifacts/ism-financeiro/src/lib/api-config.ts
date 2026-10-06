@@ -97,7 +97,16 @@ export function refreshAccessToken(): Promise<string | null> {
 }
 
 // Rotas de auth que nunca devem disparar o interceptor de 401
-const AUTH_PATHS = ["/auth/login", "/auth/refresh", "/auth/logout", "/auth/select-empresa"];
+const AUTH_PATHS = [
+    "/auth/login",
+    "/auth/refresh",
+    "/auth/logout",
+    "/auth/select-empresa",
+    "/auth/verify-otp",
+    "/auth/setup-password",
+    "/auth/forgot-password",
+    "/auth/reset-password",
+];
 const isAuthPath = (path: string) => AUTH_PATHS.some(p => path.includes(p));
 
 // ─── Converte erros de rede (TypeError) em mensagens legíveis ─────────────────

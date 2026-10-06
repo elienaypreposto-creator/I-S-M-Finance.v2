@@ -272,6 +272,15 @@ export default function Login() {
                                 Primeiro acesso? Insira seu código aqui
                             </a>
                         </div>
+
+                        <div className="flex justify-center">
+                            <a
+                                href="/esqueci-senha"
+                                className="text-xs text-muted-foreground hover:text-primary transition-colors"
+                            >
+                                Esqueci minha senha
+                            </a>
+                        </div>
                     </form>
                 )}
             </div>

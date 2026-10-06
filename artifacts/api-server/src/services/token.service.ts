@@ -172,11 +172,14 @@ export interface PurposeTokenPayload {
  * Emite um Purpose Token JWS de uso único (1 h) para fluxos de setup ou reset de senha.
  * O purpose é codificado no audience para prevenir reutilização cross-flow.
  */
-export const signPurposeToken = async (payload: PurposeTokenPayload): Promise<string> =>
+export const signPurposeToken = async (
+    payload: PurposeTokenPayload,
+    ttlSeconds: number = PURPOSE_TOKEN_TTL,
+): Promise<string> =>
     new SignJWT({sub: payload.sub, email: payload.email, purpose: payload.purpose})
         .setProtectedHeader({alg: "HS256"})
         .setIssuedAt()
-        .setExpirationTime(`${PURPOSE_TOKEN_TTL}s`)
+        .setExpirationTime(`${ttlSeconds}s`)
         .setIssuer("ism-finance")
         .setAudience(`ism-finance-${payload.purpose}`)
         .sign(getPurposeKey());

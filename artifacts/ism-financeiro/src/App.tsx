@@ -34,6 +34,8 @@ import TokensApi from "./pages/configuracoes/tokens-api";
 import Login from "./pages/auth/login";
 import PrimeiroAcesso from "./pages/auth/primeiro-acesso";
 import DefinirSenha from "./pages/auth/definir-senha";
+import EsqueciSenha from "./pages/auth/esqueci-senha";
+import RedefinirSenha from "./pages/auth/redefinir-senha";
 import {authStorage} from "./lib/api-config";
 import {PERM} from "./lib/permissoes";
 import AdminEmpresas from "./pages/admin/empresas";
@@ -101,6 +103,8 @@ function Router() {
             <Route path="/login" component={Login}/>
             <Route path="/primeiro-acesso" component={PrimeiroAcesso}/>
             <Route path="/definir-senha" component={DefinirSenha}/>
+            <Route path="/esqueci-senha" component={EsqueciSenha}/>
+            <Route path="/redefinir-senha" component={RedefinirSenha}/>
             <PrivateRoute path="/" component={Dashboard}/>
 
             <PrivateRoute path="/kanban" component={Kanban}/>

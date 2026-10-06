@@ -40,6 +40,11 @@ import {
 import {revokeAllTokensForUser} from "../services/session.service";
 import {denylistUser} from "../services/denylist.service";
 import {generateOtp} from "../services/token.service";
+import {
+    PASSWORD_MAX_LENGTH,
+    PASSWORD_MIN_LENGTH,
+    validatePasswordPolicy,
+} from "../utils/password-policy";
 import {errorResponse, successResponse} from "../utils/response";
 import {withPermission} from "../middlewares/withPermission";
 import {withSuperadmin} from "../middlewares/withSuperadmin";
@@ -56,9 +61,8 @@ import {
 
 const senhaForteSchema = z
     .string()
-    .min(8, "A senha deve ter pelo menos 8 caracteres.")
-    .regex(/[A-Z]/, "A senha deve conter ao menos 1 letra maiúscula.")
-    .regex(/[0-9]/, "A senha deve conter ao menos 1 número.");
+    .min(PASSWORD_MIN_LENGTH, `A senha é curta demais: use pelo menos ${PASSWORD_MIN_LENGTH} caracteres.`)
+    .max(PASSWORD_MAX_LENGTH, `A senha é longa demais (máximo de ${PASSWORD_MAX_LENGTH} caracteres).`);
 
 const createUsuarioBodySchema = z.object({
     nome: z.string().trim().min(2, "Nome deve ter pelo menos 2 caracteres."),
@@ -249,6 +253,13 @@ router.post(
                 );
             }
 
+            if (typeof senha === "string") {
+                const violacao = await validatePasswordPolicy(senha, {email, nome});
+                if (violacao) {
+                    return errorResponse(res, 400, "WEAK_PASSWORD", violacao.message);
+                }
+            }
+
             const {empresaId} = requireTenant(req);
 
             const [parceiro] = await db
@@ -292,8 +303,7 @@ router.post(
 
             // Fluxo A: admin definiu senha -> login directo sem OTP
             // Fluxo B: sem senha -> gera OTP de primeiro acesso
-            const adminDefineSenha =
-                typeof senha === "string" && senha.length >= 8;
+            const adminDefineSenha = typeof senha === "string";
 
             const senhaHash = adminDefineSenha
                 ? await bcrypt.hash(
@@ -540,10 +550,14 @@ router.put(
             }
 
             if (senha !== undefined) {
-                updateData.senha_hash = await bcrypt.hash(
-                    senha,
-                    BCRYPT_SALT_ROUNDS,
-                );
+                const violacao = await validatePasswordPolicy(senha, {
+                    email: email ?? antes?.email,
+                    nome: nome ?? antes?.nome,
+                });
+                if (violacao) {
+                    return errorResponse(res, 400, "WEAK_PASSWORD", violacao.message);
+                }
+                updateData.senha_hash = await bcrypt.hash(senha, BCRYPT_SALT_ROUNDS);
             }
 
             const [item] = await db

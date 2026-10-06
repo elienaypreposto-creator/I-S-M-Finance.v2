@@ -3,7 +3,7 @@
  *
  * Modo A - Ativação por e-mail (Fluxo OTP):
  *   URL: /definir-senha?email=<email>&token=<otp>
- *   Endpoint: POST /auth/definir-senha
+ *   Endpoints: POST /auth/verify-otp -> POST /auth/setup-password
  *   Válido quando o admin criou a conta sem senha.
  *
  * Modo B - Primeiro acesso com senha de admin (Fluxo setupToken):
@@ -18,6 +18,8 @@ import {useLocation, useSearch} from "wouter";
 import {fetchApi} from "@/lib/api-config";
 import {useToast} from "@/hooks/use-toast";
 import {CheckCircle, Eye, EyeOff, Lock, Loader2, ShieldCheck} from "lucide-react";
+import {SenhaForca} from "@/components/auth/senha-forca";
+import {avaliarSenha} from "@/lib/senha-policy";
 
 function PasswordInput({
                            id,
@@ -59,29 +61,6 @@ function PasswordInput({
     );
 }
 
-function PasswordStrengthHints({senha}: { senha: string }) {
-    const rules = [
-        {label: "Mínimo de 8 caracteres", ok: senha.length >= 8},
-        {label: "Ao menos 1 letra maiúscula", ok: /[A-Z]/.test(senha)},
-        {label: "Ao menos 1 número", ok: /[0-9]/.test(senha)},
-    ];
-
-    if (!senha) return null;
-
-    return (
-        <ul className="mt-2 space-y-1">
-            {rules.map((r) => (
-                <li key={r.label}
-                    className={`flex items-center gap-1.5 text-xs ${r.ok ? "text-emerald-400" : "text-muted-foreground"}`}>
-                    <CheckCircle
-                        className={`w-3.5 h-3.5 flex-shrink-0 ${r.ok ? "text-emerald-400" : "text-white/20"}`}/>
-                    {r.label}
-                </li>
-            ))}
-        </ul>
-    );
-}
-
 export default function DefinirSenhaPage() {
     const [, setLocation] = useLocation();
     const searchString = useSearch();
@@ -99,6 +78,9 @@ export default function DefinirSenhaPage() {
     const [confirmarSenha, setConfirmarSenha] = useState("");
     const [loading, setLoading] = useState(false);
     const [done, setDone] = useState(false);
+    // O OTP é consumido no verify-otp; guardamos o setupToken para o usuário poder tentar outra senha
+    // (ex.: rejeitada por vazamento) sem precisar de um OTP novo.
+    const [setupTokenObtido, setSetupTokenObtido] = useState<string | null>(null);
 
     // Link inválido - nenhum token presente
     if (!email || (!token && !setupToken)) {
@@ -146,9 +128,8 @@ export default function DefinirSenhaPage() {
     }
 
     function validate(): string | null {
-        if (novaSenha.length < 8) return "A senha deve ter no mínimo 8 caracteres.";
-        if (!/[A-Z]/.test(novaSenha)) return "A senha deve conter ao menos 1 letra maiúscula.";
-        if (!/[0-9]/.test(novaSenha)) return "A senha deve conter ao menos 1 número.";
+        const r = avaliarSenha(novaSenha, {email});
+        if (!r.valida) return r.erro;
         if (novaSenha !== confirmarSenha) return "As senhas não coincidem.";
         return null;
     }
@@ -164,19 +145,25 @@ export default function DefinirSenhaPage() {
 
         setLoading(true);
         try {
+            let tokenDeSetup = setupToken;
+
             if (modoAtivacao) {
-                // Fluxo A: valida OTP + define senha
-                await fetchApi("/auth/definir-senha", {
-                    method: "POST",
-                    body: JSON.stringify({email, token, novaSenha}),
-                });
-            } else {
-                // Fluxo B: usa setupToken (primeiro login com senha de admin)
-                await fetchApi("/auth/setup-password", {
-                    method: "POST",
-                    body: JSON.stringify({email, setupToken, novaSenha}),
-                });
+                if (!setupTokenObtido) {
+                    const r = await fetchApi<{ data: { setupToken: string } }>("/auth/verify-otp", {
+                        method: "POST",
+                        body: JSON.stringify({email, otp: token}),
+                    });
+                    setSetupTokenObtido(r.data.setupToken);
+                    tokenDeSetup = r.data.setupToken;
+                } else {
+                    tokenDeSetup = setupTokenObtido;
+                }
             }
+
+            await fetchApi("/auth/setup-password", {
+                method: "POST",
+                body: JSON.stringify({email, setupToken: tokenDeSetup, novaSenha}),
+            });
 
             setDone(true);
             toast({
@@ -227,7 +214,7 @@ export default function DefinirSenhaPage() {
                             onChange={setNovaSenha}
                             disabled={loading}
                         />
-                        <PasswordStrengthHints senha={novaSenha}/>
+                        <SenhaForca senha={novaSenha} email={email}/>
                     </div>
 
                     <div className="space-y-2">

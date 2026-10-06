@@ -1,226 +1,514 @@
+
 /**
- * rate-limit - Limitação de requisições contra força bruta e flood.
+ * Rate Limit - Limitação de requisições contra força bruta e flood.
  *
- * `globalLimiter`  - 300 req / 15 min por IP, aplicado a toda a árvore /api.
- * `authLimiter`    - 10 req / 15 min por IP, aplicado a /auth/verify-otp,
- *                     /auth/forgot-password e /auth/reset-password.
- * `loginLimiter`   - 10 req / 15 min por chave composta IP + e-mail,
- *                     aplicado apenas a /auth/login.
- * `loginEmailLimiter` — 20 falhas / 15 min por e-mail (independente do IP),
- *                     aplicado a /auth/login em conjunto com o `loginLimiter`.
+ * globalLimiter
+ * - 300 requisições / 15 min por IP.
+ * - Aplicado a toda a árvore /api.
  *
- * A chave composta do login evita que um IP compartilhado (NAT de escritório,
- * 4G, VPN corporativa) bloqueie todos os utilizadores desse IP por causa de um
- * único atacante: a combinação IP + e-mail trata cada par como um "balde"
- * independente.
+ * authLimiter
+ * - 10 requisições / 15 min por IP.
+ * - Aplicado aos endpoints sensíveis de autenticação.
  *
- * Em contrapartida, a chave composta sozinha NÃO trava um atacante distribuído
- * (botnet) testando um único e-mail a partir de muitos IPs — cada IP teria o
- * seu próprio balde. Por isso o `loginEmailLimiter` conta as tentativas
- * FALHAS por e-mail, somando todos os IPs. Só respostas >= 400 contam
- * (`skipSuccessfulRequests`), então logins válidos não consomem a cota.
- * Trade-off: quem atacar um e-mail pode bloquear temporariamente (15 min) o
- * login desse e-mail; é preferível a permitir força bruta ilimitada.
+ * loginLimiter
+ * - 10 requisições / 15 min por combinação IP + e-mail.
+ * - Aplicado ao login.
  *
- * Infraestrutura: os contadores ficam no Redis (`rate-limit-redis`), então
- * sobrevivem a restart e são compartilhados entre instâncias da API / invocações
- * serverless. Cada limiter usa um prefixo próprio (`rl:global:`, `rl:auth:`,
- * `rl:login:`, `rl:email:`).
+ * loginEmailLimiter
+ * - 20 falhas / 15 min por e-mail.
+ * - Independente do IP.
+ * - Logins bem-sucedidos não consomem a cota.
  *
- * DECISÃO: fail-open. Se o Redis estiver indisponível (ou ainda não pronto no
- * boot), `ResilientRedisStore.increment` devolve uma contagem neutra (a requisição
- * passa sem ser contada) e emite um alerta `[ALERT][REDIS]` (com throttle). Não se
- * usa só o `passOnStoreError` porque a lib loga o stack completo a cada requisição;
- * ele fica ligado apenas como rede de segurança. Ver lib/redis.ts.
+ * Infraestrutura:
+ * - Contadores armazenados no Redis.
+ * - rate-limit-redis é utilizado como Store.
+ * - Cada limiter possui seu próprio prefixo.
+ *
+ * Estratégia:
+ * - FAIL-OPEN.
+ * - Se o Redis estiver indisponível, a requisição passa.
+ * - O problema é registrado por alertRedis().
  */
 
-import { rateLimit, ipKeyGenerator } from "express-rate-limit";
+import {
+    rateLimit,
+    ipKeyGenerator,
+} from "express-rate-limit";
+
 import type {
     ClientRateLimitInfo,
     Options,
     RateLimitExceededEventHandler,
     Store,
 } from "express-rate-limit";
+
 import { RedisStore } from "rate-limit-redis";
+
 import type { Request } from "express";
-import { alertRedis, getRedis } from "../lib/redis";
+
+import {
+    alertRedis,
+    getRedis,
+} from "../lib/redis";
+
 import { errorResponse } from "../utils/response";
 
-const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
-
-// Inicia a conexão já no boot (sem isso ela só começaria na 1ª requisição, que passaria sem limite).
-getRedis();
-
-type RedisSendCommand = ConstructorParameters<typeof RedisStore>[0]["sendCommand"];
-
-const sendCommand: RedisSendCommand = async (...args: string[]) => {
-    const redis = getRedis();
-    if (!redis) throw new Error("Redis não configurado.");
-    return (await redis.call(args[0]!, ...args.slice(1))) as never;
-};
+const FIFTEEN_MINUTES_MS =
+    15 * 60 * 1000;
 
 /**
- * Envolve o `RedisStore` com duas proteções:
- *  1. Criação preguiçosa: o `RedisStore` carrega um script Lua no construtor; se isso
- *     rodasse no boot com o Redis fora do ar (fila offline desligada), a promessa
- *     rejeitada ficaria sem tratamento. Aqui o store só é criado quando o cliente
- *     está `ready`; antes disso o erro é lançado e o `passOnStoreError` libera a requisição.
- *  2. `decrement`/`resetKey`/`get` nunca lançam (rodam fora do fluxo do request,
- *     por exemplo com `skipSuccessfulRequests`); apenas alertam.
+ * Inicializa o cliente Redis no boot.
+ *
+ * Isso não impede a API de iniciar caso o Redis
+ * esteja indisponível.
  */
-class ResilientRedisStore implements Store {
+getRedis();
+
+/**
+ * Tipo exigido pelo rate-limit-redis.
+ */
+type RedisSendCommand =
+    ConstructorParameters<
+        typeof RedisStore
+    >[0]["sendCommand"];
+
+/**
+ * Envia comandos para o Redis.
+ */
+const sendCommand: RedisSendCommand =
+    async (...args: string[]) => {
+        const redis = getRedis();
+
+        if (!redis) {
+            throw new Error(
+                "Redis não configurado.",
+            );
+        }
+
+        if (redis.status !== "ready") {
+            throw new Error(
+                `Redis indisponível. Status atual: ${redis.status}`,
+            );
+        }
+
+        return (await redis.call(
+            args[0]!,
+            ...args.slice(1),
+        )) as never;
+    };
+
+/**
+ * Store Redis resiliente.
+ *
+ * O RedisStore somente é criado quando o Redis
+ * estiver efetivamente pronto.
+ */
+class ResilientRedisStore
+    implements Store
+{
     localKeys = false;
-    prefix: string;
-    private inner: RedisStore | null = null;
-    private opts: Options | null = null;
+
+    readonly prefix: string;
+
+    private inner: RedisStore | null =
+        null;
+
+    private opts: Options | null =
+        null;
 
     constructor(prefix: string) {
         this.prefix = prefix;
     }
 
-    init(options: Options): void {
+    init(
+        options: Options,
+    ): void {
         this.opts = options;
     }
 
+    /**
+     * Obtém ou cria o RedisStore.
+     */
     private store(): RedisStore {
-        if (this.inner) return this.inner;
-        if (getRedis()?.status !== "ready") throw new Error("Redis indisponível.");
-        const s = new RedisStore({ sendCommand, prefix: this.prefix });
-        if (this.opts) (s as unknown as Store).init?.(this.opts);
-        this.inner = s;
-        return s;
+        if (this.inner) {
+            return this.inner;
+        }
+
+        const redis = getRedis();
+
+        if (!redis) {
+            throw new Error(
+                "Redis não configurado.",
+            );
+        }
+
+        if (redis.status !== "ready") {
+            throw new Error(
+                `Redis indisponível. Status atual: ${redis.status}`,
+            );
+        }
+
+        const store =
+            new RedisStore({
+                sendCommand,
+                prefix: this.prefix,
+            });
+
+        /**
+         * Preserva as opções do express-rate-limit.
+         */
+        if (this.opts) {
+            (
+                store as unknown as Store
+            ).init?.(this.opts);
+        }
+
+        this.inner = store;
+
+        return store;
     }
 
-    async increment(key: string): Promise<ClientRateLimitInfo> {
+    /**
+     * Incrementa o contador.
+     *
+     * Em caso de falha:
+     * - registra alerta;
+     * - retorna contagem neutra;
+     * - permite a requisição.
+     */
+    async increment(
+        key: string,
+    ): Promise<ClientRateLimitInfo> {
         try {
-            return await this.store().increment(key);
-        } catch (e) {
-            alertRedis(`rate limit (${this.prefix}) indisponível`, e);
-            // Fail-open silencioso: contagem neutra, a requisição passa.
+            return await this
+                .store()
+                .increment(key);
+        } catch (error) {
+            alertRedis(
+                `rate limit (${this.prefix}) indisponível`,
+                error,
+            );
+
             return {
                 totalHits: 1,
-                resetTime: new Date(Date.now() + (this.opts?.windowMs ?? 0)),
+
+                resetTime:
+                    new Date(
+                        Date.now() +
+                            (
+                                this.opts
+                                    ?.windowMs ??
+                                FIFTEEN_MINUTES_MS
+                            ),
+                    ),
             };
         }
     }
 
-    async decrement(key: string): Promise<void> {
+    /**
+     * Decrementa o contador.
+     */
+    async decrement(
+        key: string,
+    ): Promise<void> {
         try {
-            await this.store().decrement(key);
-        } catch (e) {
-            alertRedis(`rate limit (${this.prefix}) falhou no decrement`, e);
+            await this
+                .store()
+                .decrement(key);
+        } catch (error) {
+            alertRedis(
+                `rate limit (${this.prefix}) falhou no decrement`,
+                error,
+            );
         }
     }
 
-    async resetKey(key: string): Promise<void> {
+    /**
+     * Reseta uma chave.
+     */
+    async resetKey(
+        key: string,
+    ): Promise<void> {
         try {
-            await this.store().resetKey(key);
-        } catch (e) {
-            alertRedis(`rate limit (${this.prefix}) falhou no resetKey`, e);
+            await this
+                .store()
+                .resetKey(key);
+        } catch (error) {
+            alertRedis(
+                `rate limit (${this.prefix}) falhou no resetKey`,
+                error,
+            );
         }
     }
 
-    async get(key: string): Promise<ClientRateLimitInfo | undefined> {
+    /**
+     * Consulta uma chave.
+     */
+    async get(
+        key: string,
+    ): Promise<
+        ClientRateLimitInfo | undefined
+    > {
         try {
-            return await this.store().get(key);
-        } catch (e) {
-            alertRedis(`rate limit (${this.prefix}) falhou no get`, e);
+            return await this
+                .store()
+                .get(key);
+        } catch (error) {
+            alertRedis(
+                `rate limit (${this.prefix}) falhou no get`,
+                error,
+            );
+
             return undefined;
         }
     }
 }
 
-/** Handler comum: devolve 429 no mesmo envelope { data, meta, errors } da API. */
-const rateLimitHandler: RateLimitExceededEventHandler = (_req, res) => {
-    errorResponse(
-        res,
-        429,
-        "RATE_LIMIT_EXCEEDED",
-        "Muitas requisições. Tente novamente em alguns minutos.",
-    );
-};
-
-/** Não pesa a cota de erros de rede/preflight contra o limite. */
-const skipOptions = (req: Request): boolean => req.method === "OPTIONS";
+/**
+ * Handler comum para HTTP 429.
+ */
+const rateLimitHandler:
+    RateLimitExceededEventHandler =
+    (_req, res) => {
+        errorResponse(
+            res,
+            429,
+            "RATE_LIMIT_EXCEEDED",
+            "Muitas requisições. Tente novamente em alguns minutos.",
+        );
+    };
 
 /**
- * O TST/HML corre atrás do Nginx (`X-Forwarded-For`) com `trust proxy` = 1.
- * As validações default do express-rate-limit v8 lançam ValidationError e
- * derrubam o pedido (em alguns setups, o processo) se o header/proxy não
- * bater exactamente com o que a lib espera. Desligar só essas duas checks
- * - o IP continua a ser lido via `req.ip` / `ipKeyGenerator`.
+ * Requests OPTIONS não consomem rate limit.
+ */
+const skipOptions = (
+    req: Request,
+): boolean =>
+    req.method === "OPTIONS";
+
+/**
+ * Validações relacionadas a proxy.
+ *
+ * O ambiente pode estar atrás de Nginx /
+ * X-Forwarded-For.
+ *
+ * O IP utilizado continua sendo req.ip.
  */
 const proxyValidate = {
     xForwardedForHeader: false,
     trustProxy: false,
 } as const;
 
-export const globalLimiter = rateLimit({
-    windowMs: FIFTEEN_MINUTES_MS,
-    limit: 300,
-    standardHeaders: "draft-7",
-    legacyHeaders: false,
-    skip: skipOptions,
-    handler: rateLimitHandler,
-    validate: proxyValidate,
-    store: new ResilientRedisStore("rl:global:"),
-    passOnStoreError: true,
-});
+/**
+ * Extrai e normaliza o e-mail do corpo.
+ */
+const emailDoCorpo = (
+    req: Request,
+): string | null => {
+    if (
+        typeof req.body?.email !==
+            "string" ||
+        !req.body.email.trim()
+    ) {
+        return null;
+    }
 
-export const authLimiter = rateLimit({
-    windowMs: FIFTEEN_MINUTES_MS,
-    limit: 10,
-    standardHeaders: "draft-7",
-    legacyHeaders: false,
-    skip: skipOptions,
-    handler: rateLimitHandler,
-    validate: proxyValidate,
-    // IP puro - o helper normaliza IPv4/IPv6 (mitiga CVE-2026-30827 de agrupamento IPv6).
-    keyGenerator: (req) => ipKeyGenerator(req.ip ?? req.socket.remoteAddress ?? "unknown"),
-    store: new ResilientRedisStore("rl:auth:"),
-    passOnStoreError: true,
-});
-
-export const loginLimiter = rateLimit({
-    windowMs: FIFTEEN_MINUTES_MS,
-    limit: 10,
-    standardHeaders: "draft-7",
-    legacyHeaders: false,
-    skip: skipOptions,
-    handler: rateLimitHandler,
-    validate: proxyValidate,
-    keyGenerator: (req) => {
-        const ip = ipKeyGenerator(req.ip ?? req.socket.remoteAddress ?? "unknown");
-        const email =
-            typeof req.body?.email === "string" && req.body.email.trim()
-                ? req.body.email.trim().toLowerCase()
-                : "sem-email";
-        return `${ip}:${email}`;
-    },
-    store: new ResilientRedisStore("rl:login:"),
-    passOnStoreError: true,
-});
+    return req.body.email
+        .trim()
+        .toLowerCase();
+};
 
 /**
- * Limite por e-mail (todos os IPs somados), contando apenas tentativas falhas.
- * Sem e-mail válido no corpo a requisição é ignorada aqui — já é limitada pelo
- * `loginLimiter` (IP + "sem-email") e pelo `globalLimiter`, e assim requisições
- * malformadas não compartilham um balde único entre todos os utilizadores.
+ * GLOBAL LIMITER
+ *
+ * 300 requisições / 15 minutos por IP.
  */
-const emailDoCorpo = (req: Request): string | null =>
-    typeof req.body?.email === "string" && req.body.email.trim()
-        ? req.body.email.trim().toLowerCase()
-        : null;
+export const globalLimiter =
+    rateLimit({
+        windowMs:
+            FIFTEEN_MINUTES_MS,
 
-export const loginEmailLimiter = rateLimit({
-    windowMs: FIFTEEN_MINUTES_MS,
-    limit: 20,
-    standardHeaders: "draft-7",
-    legacyHeaders: false,
-    skipSuccessfulRequests: true,
-    skip: (req) => skipOptions(req) || emailDoCorpo(req) === null,
-    handler: rateLimitHandler,
-    keyGenerator: (req) => `email:${emailDoCorpo(req)}`,
-    store: new ResilientRedisStore("rl:email:"),
-    passOnStoreError: true,
-});
+        limit: 300,
+
+        standardHeaders: "draft-7",
+        legacyHeaders: false,
+
+        skip: skipOptions,
+
+        handler:
+            rateLimitHandler,
+
+        validate:
+            proxyValidate,
+
+        store:
+            new ResilientRedisStore(
+                "rl:global:",
+            ),
+
+        /**
+         * Segurança adicional:
+         * se o Store falhar,
+         * permite a requisição.
+         */
+        passOnStoreError: true,
+    });
+
+/**
+ * AUTH LIMITER
+ *
+ * 10 requisições / 15 minutos por IP.
+ */
+export const authLimiter =
+    rateLimit({
+        windowMs:
+            FIFTEEN_MINUTES_MS,
+
+        limit: 10,
+
+        standardHeaders: "draft-7",
+        legacyHeaders: false,
+
+        skip: skipOptions,
+
+        handler:
+            rateLimitHandler,
+
+        validate:
+            proxyValidate,
+
+        keyGenerator: (
+            req: Request,
+        ) =>
+            ipKeyGenerator(
+                req.ip ??
+                    req.socket
+                        .remoteAddress ??
+                    "unknown",
+            ),
+
+        store:
+            new ResilientRedisStore(
+                "rl:auth:",
+            ),
+
+        passOnStoreError: true,
+    });
+
+/**
+ * LOGIN LIMITER
+ *
+ * 10 tentativas / 15 minutos por:
+ *
+ * IP + e-mail
+ */
+export const loginLimiter =
+    rateLimit({
+        windowMs:
+            FIFTEEN_MINUTES_MS,
+
+        limit: 10,
+
+        standardHeaders: "draft-7",
+        legacyHeaders: false,
+
+        skip: skipOptions,
+
+        handler:
+            rateLimitHandler,
+
+        validate:
+            proxyValidate,
+
+        keyGenerator: (
+            req: Request,
+        ) => {
+            const ip =
+                ipKeyGenerator(
+                    req.ip ??
+                        req.socket
+                            .remoteAddress ??
+                        "unknown",
+                );
+
+            const email =
+                emailDoCorpo(req) ??
+                "sem-email";
+
+            return `${ip}:${email}`;
+        },
+
+        store:
+            new ResilientRedisStore(
+                "rl:login:",
+            ),
+
+        passOnStoreError: true,
+    });
+
+/**
+ * LOGIN EMAIL LIMITER
+ *
+ * 20 falhas / 15 minutos por e-mail.
+ *
+ * As tentativas são somadas entre todos os IPs.
+ *
+ * Exemplo:
+ *
+ * IP 1 ─┐
+ * IP 2 ─┼──> usuario@email.com
+ * IP 3 ─┘
+ *
+ * Todos compartilham o mesmo contador.
+ */
+export const loginEmailLimiter =
+    rateLimit({
+        windowMs:
+            FIFTEEN_MINUTES_MS,
+
+        limit: 20,
+
+        standardHeaders: "draft-7",
+        legacyHeaders: false,
+
+        /**
+         * Logins bem-sucedidos não consomem
+         * a cota.
+         */
+        skipSuccessfulRequests:
+            true,
+
+        /**
+         * Sem e-mail:
+         * não participa deste limiter.
+         *
+         * Continua protegido por:
+         * - loginLimiter;
+         * - globalLimiter.
+         */
+        skip: (req: Request) =>
+            skipOptions(req) ||
+            emailDoCorpo(req) === null,
+
+        handler:
+            rateLimitHandler,
+
+        /**
+         * O e-mail é a chave.
+         *
+         * Não utiliza IP.
+         */
+        keyGenerator: (
+            req: Request,
+        ) =>
+            `email:${emailDoCorpo(
+                req,
+            )}`,
+
+        store:
+            new ResilientRedisStore(
+                "rl:email:",
+            ),
+
+        passOnStoreError: true,
+    });

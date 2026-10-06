@@ -14,6 +14,8 @@ export const usuariosTable = pgTable("usuarios", {
     senha_hash: text("senha_hash").notNull(),
     senha_unica_hash: text("senha_unica_hash"),
     senha_unica_utilizada: boolean("senha_unica_utilizada").default(false).notNull(),
+    /** Quando o aviso de "senha invalidada" (hash SHA-256 legado) foi enviado. NULL = ainda não avisado. */
+    senha_reset_notificado_em: timestamp("senha_reset_notificado_em"),
     bloqueado: boolean("bloqueado").default(false).notNull(),
     /**
      * NOVO — Card 2 (Permissões). Único lugar onde "acesso irrestrito a
@@ -87,6 +89,7 @@ export const selectUsuarioPublicoSchema = createSelectSchema(usuariosTable).omit
     senha_hash: true,
     senha_unica_hash: true,
     senha_unica_utilizada: true,
+    senha_reset_notificado_em: true,
 });
 export type UsuarioPublico = z.infer<typeof selectUsuarioPublicoSchema>;
 
