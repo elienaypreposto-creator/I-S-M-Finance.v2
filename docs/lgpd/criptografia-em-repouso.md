@@ -8,7 +8,7 @@ Para abrir: `openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in ficheiro.sql.e
 
 ## Volume do Postgres
 
-O dado do banco fica num ficheiro LUKS2, `/var/lib/ism/pgdata.img`, aberto por `scripts/lgpd-volume-luks.sh` antes do `docker compose`. O contentor recebe o diretório já montado (`PGDATA_MOUNT`). O `cryptsetup status` tem de mostrar `type: LUKS`. Essa saída fica em `/var/lib/ism/evidencia-disco.txt` na máquina de deploy.
+O dado do banco fica num ficheiro LUKS2 por ambiente, `/var/lib/ism/<ambiente>/pgdata.img` (ex.: `ism-tst`, `ism-hml`), aberto por `scripts/lgpd-volume-luks.sh` antes do `docker compose`. O contentor recebe o diretório já montado (`PGDATA_MOUNT`). O `cryptsetup status` tem de mostrar `type: LUKS`. Essa saída fica em `/var/lib/ism/<ambiente>/evidencia-disco.txt` na máquina de deploy.
 
 O deploy só então escreve `ISM_DISCO_CIFRADO=1`. Se o script não abrir o volume, o deploy pára e não grava `0` para seguir em claro.
 

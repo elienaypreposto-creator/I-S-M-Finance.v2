@@ -31,7 +31,7 @@ Só entram suboperadores do caminho de deploy deste repositório. Não há base 
 | Suboperador | O que trata | Onde está |
 | --- | --- | --- |
 | Máquina virtual Ubuntu do operador | Aplicação, Postgres 16 e Redis 7, no `docker compose` do deploy | `.github/workflows/main.yml` |
-| Volume LUKS2 do Postgres | Dados em repouso do banco, ficheiro `/var/lib/ism/pgdata.img` aberto antes do contentor | `scripts/lgpd-volume-luks.sh` |
+| Volume LUKS2 do Postgres | Dados em repouso do banco, ficheiro `/var/lib/ism/<ambiente>/pgdata.img` aberto antes do contentor | `scripts/lgpd-volume-luks.sh` |
 | Redis no mesmo host | Sessão e limite de pedidos. Rede docker interna, sem porta publicada | `docker-compose.yml` |
 | SMTP do ambiente | Correio transacional (senha temporária). Remetente `noreply@ism.finance`. O host é `SMTP_HOST` | `artifacts/api-server/src/services/email.service.ts` |
 
