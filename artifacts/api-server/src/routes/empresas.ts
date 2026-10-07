@@ -16,6 +16,7 @@ const createEmpresaBodySchema = z.object({
     cnpj: z.string().trim().max(18).optional().nullable(),
     slug: z.string().trim().min(2).max(80).optional(),
     ativa: z.boolean().optional(),
+    dpa_representante: z.string().trim().min(2).max(180),
 });
 
 const updateEmpresaBodySchema = z.object({
@@ -24,6 +25,7 @@ const updateEmpresaBodySchema = z.object({
     cnpj: z.string().trim().max(18).optional().nullable(),
     slug: z.string().trim().min(2).max(80).optional(),
     ativa: z.boolean().optional(),
+    dpa_representante: z.string().trim().min(2).max(180).optional(),
 });
 
 type CreateEmpresaBody = z.infer<typeof createEmpresaBodySchema>;
@@ -92,6 +94,8 @@ router.post("/empresas", withPermission(PERM.ADMIN_EMPRESAS_CRIAR), validateBody
                 cnpj,
                 slug,
                 ativa: body.ativa ?? true,
+                dpa_representante: body.dpa_representante,
+                dpa_assinado_em: new Date(),
             })
             .returning();
 
@@ -116,11 +120,32 @@ router.patch("/empresas/:id", withPermission(PERM.ADMIN_EMPRESAS_EDITAR), valida
             cnpj?: string | null;
             slug?: string;
             ativa?: boolean;
+            dpa_representante?: string;
+            dpa_assinado_em?: Date;
         } = {updated_at: new Date()};
 
         if (body.razao_social !== undefined) patch.razao_social = body.razao_social;
         if (body.nome_fantasia !== undefined) patch.nome_fantasia = body.nome_fantasia?.trim() || null;
         if (body.ativa !== undefined) patch.ativa = body.ativa;
+        if (body.dpa_representante !== undefined) {
+            patch.dpa_representante = body.dpa_representante;
+            patch.dpa_assinado_em = new Date();
+        }
+        if (body.ativa === true && body.dpa_representante === undefined) {
+            const [atual] = await db
+                .select({dpa_assinado_em: empresasTable.dpa_assinado_em})
+                .from(empresasTable)
+                .where(eq(empresasTable.id, id))
+                .limit(1);
+            if (!atual?.dpa_assinado_em) {
+                return errorResponse(
+                    res,
+                    422,
+                    "DPA_AUSENTE",
+                    "A empresa só fica ativa com o representante que aceitou o DPA.",
+                );
+            }
+        }
         if (body.slug !== undefined) patch.slug = await uniqueSlug(slugify(body.slug), id);
         if (body.cnpj !== undefined) {
             const cnpj = body.cnpj?.replace(/\D/g, "") || null;

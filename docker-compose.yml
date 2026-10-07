@@ -11,7 +11,7 @@ services:
     ports:
       - "127.0.0.1:${DB_PORT:-5434}:5432" # Somente loopback; acesso externo via túnel SSH
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ${PGDATA_MOUNT:-pgdata}:/var/lib/postgresql/data
     networks:
       - ism_network
 
@@ -56,6 +56,7 @@ services:
       - PORT=5000
       - NODE_ENV=production
       - RUN_LOCAL=true
+      - ISM_DISCO_CIFRADO=${ISM_DISCO_CIFRADO:-0}
     env_file:
       - .env # Carrega os demais segredos como SMTP e JWT_SECRET
     networks:

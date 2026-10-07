@@ -1,6 +1,5 @@
 import {pgTable, serial, text, integer, timestamp, jsonb, varchar} from "drizzle-orm/pg-core";
 import {usuariosTable} from "./usuarios";
-import {empresasTable} from "./empresas";
 import {tokensApiTable} from "./tokens-api";
 export const logsSistemaTable = pgTable("logs_sistema", {
     id: serial("id").primaryKey(),
@@ -12,7 +11,11 @@ export const logsSistemaTable = pgTable("logs_sistema", {
 
 export const logsAuditoriaTable = pgTable("logs_auditoria", {
     id: serial("id").primaryKey(),
-    empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
+    /**
+     * Tenant da linha. Sem FK para empresas: a eliminação apaga a empresa
+     * e conserva este inteiro na linha já anonimizada.
+     */
+    empresa_id: integer("empresa_id").notNull(),
     usuario_id: integer("usuario_id").references(() => usuariosTable.id, {onDelete: "set null"}),
     acao: text("acao").notNull(),
     recurso: text("recurso").notNull(),

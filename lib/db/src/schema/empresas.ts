@@ -9,6 +9,9 @@ export const empresasTable = pgTable("empresas", {
     cnpj: text("cnpj").unique(),
     slug: text("slug").notNull().unique(),
     ativa: boolean("ativa").default(true).notNull(),
+    /** Nome de quem aceitou o DPA em nome do controlador. Sem isto a empresa não entra ativa. */
+    dpa_representante: text("dpa_representante"),
+    dpa_assinado_em: timestamp("dpa_assinado_em"),
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
 });

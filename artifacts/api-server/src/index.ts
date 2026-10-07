@@ -10,6 +10,8 @@ import {assertRlsRoles, syncAdminPermissionsOnBoot} from "@workspace/db";
 import app from "./app";
 import {startPromoverAtrasadosJob} from "./jobs/promover-atrasados";
 import {startArquivarAuditoriaJob} from "./jobs/arquivar-auditoria";
+import {startRetencaoLgpdJob} from "./jobs/retencao-lgpd";
+import {assertDiscoCifrado} from "./domains/lgpd/lgpd-disco";
 
 const port = process.env.PORT || 5000;
 
@@ -37,6 +39,7 @@ function listenIfLocal(): void {
         console.log(`Server listening on port ${port}`);
         startPromoverAtrasadosJob();
         startArquivarAuditoriaJob();
+        startRetencaoLgpdJob();
     });
 
     server.on("error", (error: any) => {
@@ -54,6 +57,7 @@ function listenIfLocal(): void {
 void assertRlsRoles()
     .then(() => {
         console.log("[boot] pool padrão = ism_app; admin = ism_admin; owner = ism_owner (retenção)");
+        assertDiscoCifrado(process.env);
         runAdminPermissionsSyncOnBoot();
 
         listenIfLocal();

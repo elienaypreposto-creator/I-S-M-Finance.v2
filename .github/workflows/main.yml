@@ -26,12 +26,12 @@ jobs:
       JWT_SECRET: ${{ secrets[format('{0}_JWT_SECRET', github.ref_name == 'master' && 'HML' || 'TST')] }}
       JWT_ENCRYPT_SECRET: ${{ secrets[format('{0}_JWT_ENCRYPT_SECRET', github.ref_name == 'master' && 'HML' || 'TST')] }}
       SMTP_PASS: ${{ secrets[format('{0}_SMTP_PASS', github.ref_name == 'master' && 'HML' || 'TST')] }}
-      
+      REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
     steps:
       - name: Validar variáveis do ambiente
         run: |
           faltando=0
-          for v in PORT WEB_PORT API_PORT DB_PORT SMTP_HOST SMTP_PORT SMTP_USER DB_PASSWORD JWT_SECRET JWT_ENCRYPT_SECRET SMTP_PASS; do
+          for v in PORT WEB_PORT API_PORT DB_PORT SMTP_HOST SMTP_PORT SMTP_USER DB_PASSWORD JWT_SECRET JWT_ENCRYPT_SECRET SMTP_PASS REDIS_PASSWORD; do
             if [ -z "${!v}" ]; then
               echo "::error::$v não definida para $TARGET_DIR"
               faltando=1
@@ -53,7 +53,7 @@ jobs:
           host: ${{ secrets.SERVER_IP }}
           username: ubuntu
           key: ${{ secrets.SSH_KEY }}
-          envs: TARGET_DIR,PORT,WEB_PORT,API_PORT,DB_PORT,SMTP_HOST,SMTP_PORT,SMTP_USER,DB_PASSWORD,ISM_APP_PASSWORD,ISM_ADMIN_PASSWORD,ISM_OWNER_PASSWORD,JWT_SECRET,JWT_ENCRYPT_SECRET,SMTP_PASS
+          envs: TARGET_DIR,PORT,WEB_PORT,API_PORT,DB_PORT,SMTP_HOST,SMTP_PORT,SMTP_USER,DB_PASSWORD,ISM_APP_PASSWORD,ISM_ADMIN_PASSWORD,ISM_OWNER_PASSWORD,JWT_SECRET,JWT_ENCRYPT_SECRET,SMTP_PASS,REDIS_PASSWORD
           script: |
             set -e
             echo "Iniciando deploy no diretório: $TARGET_DIR para a branch: ${{ github.ref_name }}"
@@ -80,27 +80,37 @@ jobs:
               "SMTP_PORT=$SMTP_PORT" \
               "SMTP_USER=$SMTP_USER" \
               "SMTP_PASS=$SMTP_PASS" \
+              "REDIS_PASSWORD=$REDIS_PASSWORD" \
               > .env
             chmod 600 .env
 
-            mkdir -p backups
-            BACKUP_FILE="backups/pre-deploy-$(date +%Y%m%d%H%M%S).sql"
-            if docker compose exec -T postgres pg_dump -U ism_user ismfinance > "$BACKUP_FILE"; then
-              echo "Backup gravado em $BACKUP_FILE"
-            else
-              echo "Backup ignorado (postgres ainda não está no ar)"
-              rm -f "$BACKUP_FILE"
+            export PG_LUKS_PASSPHRASE="${ISM_OWNER_PASSWORD:-$DB_PASSWORD}"
+            eval "$(bash scripts/lgpd-volume-luks.sh | tee /dev/stderr | grep '^PGDATA_MOUNT=')"
+            if [ -z "${PGDATA_MOUNT:-}" ]; then
+              echo "Volume LUKS não devolveu PGDATA_MOUNT. Deploy interrompido."
+              exit 1
             fi
+            printf '%s\n' "ISM_DISCO_CIFRADO=1" "PGDATA_MOUNT=$PGDATA_MOUNT" >> .env
 
-            docker compose build api
             docker compose up -d postgres
             echo "Aguardando postgres aceitar conexões..."
+            pronto=0
             for i in $(seq 1 30); do
               if docker compose exec -T postgres pg_isready -U ism_user -d ismfinance >/dev/null 2>&1; then
+                pronto=1
                 break
               fi
               sleep 2
             done
+            if [ "$pronto" -ne 1 ]; then
+              echo "PostgreSQL não ficou pronto. Backup e migrations interrompidos."
+              exit 1
+            fi
+
+            export BACKUP_CIPHER_PASS="${ISM_OWNER_PASSWORD:-$DB_PASSWORD}"
+            bash scripts/lgpd-cifrar-backup.sh
+
+            docker compose build api
 
             echo "Aplicando migrations versionadas (sem drizzle-kit push)..."
             docker compose run --rm --no-deps \

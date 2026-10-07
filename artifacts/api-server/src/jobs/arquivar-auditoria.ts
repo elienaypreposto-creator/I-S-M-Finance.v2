@@ -5,8 +5,9 @@
 
 import {sql} from "drizzle-orm";
 import {withOwnerTx, type TenantDb} from "@workspace/db";
+import {PRAZO_AUDITORIA_MESES} from "../domains/lgpd/lgpd-prazos";
 
-const RETENTION_MONTHS = 24;
+const RETENTION_MONTHS = PRAZO_AUDITORIA_MESES;
 const INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 export async function arquivarLogsAuditoria(): Promise<{arquivados: number}> {
