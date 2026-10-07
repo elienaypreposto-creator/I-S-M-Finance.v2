@@ -10,7 +10,7 @@
     "build:direct": "tsx ./build.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "senhas:notificar": "tsx --env-file=../../.env ./src/scripts/notificar-reset-legado.ts",
-    "test": "tsx --test src/utils/money.test.ts src/utils/conciliacao-vincular.test.ts src/utils/extrato-hash.test.ts src/utils/regras-match.test.ts src/utils/permissoes-grant.test.ts src/utils/safe-error.test.ts src/utils/response.test.ts src/middlewares/request-id.test.ts src/middlewares/logger-request-id.test.ts src/lib/tenant-scope.test.ts src/lib/audit-scope.test.ts src/lib/audit-routes.test.ts src/lib/tenant-als.test.ts src/lib/rls-service.test.ts src/utils/password-policy.test.ts"
+    "test": "tsx --test src/utils/money.test.ts src/utils/conciliacao-vincular.test.ts src/utils/extrato-hash.test.ts src/utils/regras-match.test.ts src/utils/permissoes-grant.test.ts src/utils/safe-error.test.ts src/utils/response.test.ts src/middlewares/request-id.test.ts src/middlewares/logger-request-id.test.ts src/lib/tenant-scope.test.ts src/lib/audit-scope.test.ts src/lib/audit-routes.test.ts src/lib/tenant-als.test.ts src/lib/rls-service.test.ts src/utils/password-policy.test.ts src/domains/lgpd/lgpd-empresa.test.ts"
   },
   "dependencies": {
     "@workspace/api-zod": "workspace:*",
@@ -31,6 +31,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@types/bcryptjs": "^2.4.6",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.19",

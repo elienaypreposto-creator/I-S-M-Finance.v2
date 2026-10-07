@@ -169,6 +169,20 @@
       "when": 1790167400000,
       "tag": "0023_senha_legada_reset",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790167500000,
+      "tag": "0024_lgpd_auditoria_sem_fk_empresa",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790167600000,
+      "tag": "0025_lgpd_dpa_empresa",
+      "breakpoints": true
     }
   ]
 }

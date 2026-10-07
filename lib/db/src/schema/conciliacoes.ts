@@ -42,6 +42,8 @@ export const extratosTable = pgTable("extratos", {
     saldo_banco_data: date("saldo_banco_data"),
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
+    /** Preenchido pelo job de retenção quando o período fiscal já venceu. A linha não é apagada. */
+    arquivado_em: timestamp("arquivado_em"),
 }, (table) => [
     index("extratos_empresa_id_idx").on(table.empresa_id),
     index("extratos_conta_id_idx").on(table.conta_id),

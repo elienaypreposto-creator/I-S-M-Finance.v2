@@ -30,6 +30,7 @@ export default function AdminEmpresas() {
     const [razao, setRazao] = useState("");
     const [fantasia, setFantasia] = useState("");
     const [cnpj, setCnpj] = useState("");
+    const [dpaRepresentante, setDpaRepresentante] = useState("");
 
     const {data: empresas = [], isLoading} = useQuery({
         queryKey: tenantQueryKey("admin-empresas"),
@@ -45,6 +46,7 @@ export default function AdminEmpresas() {
                     razao_social: razao.trim(),
                     nome_fantasia: fantasia.trim() || null,
                     cnpj: cnpj.trim() || null,
+                    dpa_representante: dpaRepresentante.trim(),
                 }),
             }),
         onSuccess: () => {
@@ -54,6 +56,7 @@ export default function AdminEmpresas() {
             setRazao("");
             setFantasia("");
             setCnpj("");
+            setDpaRepresentante("");
         },
         onError: (err: Error) => toast({title: "Erro ao criar", description: err.message, variant: "destructive"}),
     });
@@ -181,6 +184,14 @@ export default function AdminEmpresas() {
                                 className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50"
                             />
                         </label>
+                        <label className="block space-y-1">
+                            <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Representante que aceita o DPA</span>
+                            <input
+                                value={dpaRepresentante}
+                                onChange={(e) => setDpaRepresentante(e.target.value)}
+                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50"
+                            />
+                        </label>
                         <div className="flex gap-2 pt-2">
                             <button
                                 type="button"
@@ -191,7 +202,7 @@ export default function AdminEmpresas() {
                             </button>
                             <button
                                 type="button"
-                                disabled={razao.trim().length < 2 || createMutation.isPending}
+                                disabled={razao.trim().length < 2 || dpaRepresentante.trim().length < 2 || createMutation.isPending}
                                 onClick={() => createMutation.mutate()}
                                 className="flex-1 py-2.5 rounded-xl text-sm bg-primary text-white disabled:opacity-50 inline-flex items-center justify-center gap-2"
                             >

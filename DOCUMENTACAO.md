@@ -745,6 +745,26 @@ O I-S-M-Finance é um sistema **all-in-one** de gestão financeira que abrange:
 6. **Business intelligence** — API REST para Power BI e dashboards externos
 7. **Relatórios** — Fechamento mensal, DRE gerencial, fluxo de caixa, análise de inadimplência
 
+---
+
+## 15. LGPD (operador multiempresa)
+
+Inventário versionado: `docs/lgpd-inventario.md`.
+
+| Peça | Ficheiro |
+|------|----------|
+| Exportação e eliminação | `docs/lgpd/operacao-tecnica.md` |
+| DPA (minuta) | `docs/lgpd/dpa-modelo.md` |
+| Encarregado | `docs/lgpd/encarregado.md` |
+| Plano de incidente e exercício de mesa | `docs/lgpd/plano-incidente.md` |
+| Registro do art. 37 | `docs/lgpd/registro-operacoes-tratamento.md` |
+| Política de privacidade | `docs/lgpd/politica-privacidade.md` |
+| Termos de uso | `docs/lgpd/termos-de-uso.md` |
+| Cifra do backup e do volume | `docs/lgpd/criptografia-em-repouso.md` |
+
+Prazos que o job aplica: `PRAZO_EXTRATO_ANOS` e `PRAZO_AUDITORIA_MESES` em `artifacts/api-server/src/domains/lgpd/lgpd-prazos.ts`, os mesmos números do inventário.
+
+
 
 Após conectar com sucesso os containers, tem que criar o banco de dados a primeira vez: 
 

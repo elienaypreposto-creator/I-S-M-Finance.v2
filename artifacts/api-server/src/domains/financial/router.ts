@@ -7,6 +7,7 @@ import departamentosDomainRouter from "./departamentos/router";
 import tokensApiRouter from "../../routes/tokens-api";
 import usuariosRouter from "../../routes/usuarios";
 import empresasRouter from "../../routes/empresas";
+import adminEmpresasRouter from "../../routes/admin-empresas";
 import lancamentosDomainRouter from "./lancamentos/router";
 import parceirosDomainRouter from "./parceiros/router";
 import transferenciasDomainRouter from "./transferencias/router";
@@ -26,5 +27,6 @@ financialDomainRouter.use(regrasConciliacaoDomainRouter);
 financialDomainRouter.use(tokensApiRouter);
 financialDomainRouter.use(usuariosRouter);
 financialDomainRouter.use(empresasRouter);
+financialDomainRouter.use(adminEmpresasRouter);
 
 export default financialDomainRouter;
