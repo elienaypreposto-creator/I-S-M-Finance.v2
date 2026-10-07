@@ -19,6 +19,7 @@ import {
     Wallet,
     UserCheck,
     Scale,
+    ListFilter,
 } from "lucide-react";
 import {
     Sidebar,
@@ -52,6 +53,12 @@ const cadastrosItems: NavItem[] = [
     {title: "Plano de Contas", url: "/cadastros/plano-contas", icon: Briefcase},
     {title: "Metas Financeiras", url: "/cadastros/metas", icon: Target},
     {title: "Departamentos", url: "/cadastros/departamentos", icon: Building2},
+    {
+        title: "Regras de Conciliação",
+        url: "/cadastros/regras-conciliacao",
+        icon: ListFilter,
+        permission: PERM.CONCILIACAO_ACESSAR,
+    },
 ];
 
 const relatoriosItems = [
@@ -91,6 +98,7 @@ export function AppSidebar() {
     const [location] = useLocation();
     const {state} = useSidebar();
     const {hasPermission} = useAuth();
+    const canListarEmpresas = hasPermission(PERM.ADMIN_EMPRESAS_LISTAR);
     const isCollapsed = state === "collapsed";
     const [expandedSections, setExpandedSections] = useState<string[]>(["Cadastros", "Relatórios", "Configurações"]);
 
@@ -103,6 +111,10 @@ export function AppSidebar() {
     const visibleCadastros = cadastrosItems.filter(
         (item) => !item.permission || hasPermission(item.permission),
     );
+    const visibleConfig = [
+        ...(canListarEmpresas ? [{title: "Empresas", url: "/admin/empresas", icon: Building2}] : []),
+        ...configItems,
+    ];
 
     useEffect(() => {
         if (!isCollapsed) {
@@ -234,8 +246,8 @@ export function AppSidebar() {
                             {renderCollapsibleSection({
                                 title: "Configurações",
                                 icon: Settings,
-                                items: configItems
-                            }, false)}
+                                items: visibleConfig
+                            }, true)}
 
                         </SidebarMenu>
                     </SidebarGroupContent>

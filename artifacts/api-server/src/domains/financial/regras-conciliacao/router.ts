@@ -5,6 +5,7 @@ import {asyncHandler} from "../../../utils/async-handler";
 import {successResponse} from "../../../utils/response";
 import {PERM} from "../../../constants/permissoes";
 import {regrasConciliacaoService} from "./regras-conciliacao.service";
+import {requireTenant} from "../../../lib/tenant-scope";
 import {
     type CreateRegraConciliacaoBody,
     type UpdateRegraConciliacaoBody,
@@ -22,7 +23,7 @@ router.get(
     withPermission(PERM.CONCILIACAO_ACESSAR),
     asyncHandler(async (req, res) => {
         const query = listRegrasConciliacaoQuerySchema.parse(req.query);
-        const items = await regrasConciliacaoService.list(query);
+        const items = await regrasConciliacaoService.list(requireTenant(req).empresaId, query);
         return successResponse(res, items);
     }),
 );
@@ -32,7 +33,7 @@ router.post(
     withPermission(PERM.REGRAS_CONCILIACAO_CRIAR),
     validateBody(createRegraConciliacaoBodySchema),
     asyncHandler(async (req, res) => {
-        const item = await regrasConciliacaoService.create(req.body as CreateRegraConciliacaoBody);
+        const item = await regrasConciliacaoService.create(requireTenant(req).empresaId, req.body as CreateRegraConciliacaoBody);
         return successResponse(res, item, null, 201);
     }),
 );
@@ -43,7 +44,7 @@ router.put(
     validateBody(updateRegraConciliacaoBodySchema),
     asyncHandler(async (req, res) => {
         const {id} = regraConciliacaoIdParamSchema.parse(req.params);
-        const item = await regrasConciliacaoService.update(id, req.body as UpdateRegraConciliacaoBody);
+        const item = await regrasConciliacaoService.update(requireTenant(req).empresaId, id, req.body as UpdateRegraConciliacaoBody);
         return successResponse(res, item);
     }),
 );
@@ -53,7 +54,7 @@ router.delete(
     withPermission(PERM.REGRAS_CONCILIACAO_DELETAR),
     asyncHandler(async (req, res) => {
         const {id} = regraConciliacaoIdParamSchema.parse(req.params);
-        const result = await regrasConciliacaoService.remove(id);
+        const result = await regrasConciliacaoService.remove(requireTenant(req).empresaId, id);
         return successResponse(res, result);
     }),
 );

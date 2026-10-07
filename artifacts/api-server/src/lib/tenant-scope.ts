@@ -1,0 +1,57 @@
+/**
+ * Filtro de tenant. Services não montam eq(table.empresa_id) ad hoc:
+ * tenantScope / tenantWhere na leitura, withEmpresaId na escrita.
+ */
+
+import {and, eq, type SQL} from "drizzle-orm";
+import type {PgTransaction} from "drizzle-orm/pg-core";
+import type {Request} from "express";
+import {AppError} from "../utils/app-error";
+
+export type TenantContext = { empresaId: number };
+
+export type TenantTable = { empresa_id: unknown };
+
+export function requireTenant(req: Request): TenantContext {
+    const empresaId = req.tenant?.empresaId;
+    if (!empresaId || !Number.isInteger(empresaId) || empresaId <= 0) {
+        throw new AppError(401, "UNAUTHORIZED", "Contexto de empresa ausente. Faça login novamente.");
+    }
+    return {empresaId};
+}
+
+/** Filtro canónico de leitura. Use em todo `where` de tabela de domínio. */
+export function tenantScope<TTable extends TenantTable>(table: TTable, empresaId: number): SQL {
+    return eq(table.empresa_id as never, empresaId);
+}
+
+/** Combina o escopo de tenant com condições extras sem `eq(empresa_id)` solto. */
+export function tenantWhere<TTable extends TenantTable>(
+    table: TTable,
+    empresaId: number,
+    ...conditions: Array<SQL | undefined>
+): SQL {
+    return and(tenantScope(table, empresaId), ...conditions)!;
+}
+
+/** Sobrescreve qualquer `empresa_id` do body pelo do tenant (nunca do cliente). */
+export function withEmpresaId<T extends object>(
+    body: T,
+    empresaId: number,
+): T & { empresa_id: number } {
+    return {...body, empresa_id: empresaId};
+}
+
+/**
+ * set_config(..., true) é SET LOCAL: vale só nesta transação.
+ * Nunca usar SET de sessão em conexão do pool.
+ */
+export async function runInTenantTx<T>(
+    empresaId: number,
+    work: (tx: { execute: (q: unknown) => Promise<unknown> }) => Promise<T>,
+): Promise<T> {
+    const {withTenantTx} = await import("@workspace/db");
+    return withTenantTx(empresaId, work);
+}
+
+export type TenantTx = PgTransaction<never, Record<string, never>, never>;

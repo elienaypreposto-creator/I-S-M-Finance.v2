@@ -7,6 +7,7 @@ import {AppError} from "../../../utils/app-error";
 import {PERM} from "../../../constants/permissoes";
 import {hasPermission} from "../../../middlewares/withPermission";
 import {lancamentosService} from "./lancamentos.service";
+import {requireTenant} from "../../../lib/tenant-scope";
 import {
     type CreateLancamentoBody,
     type UpdateLancamentoBody,
@@ -22,7 +23,7 @@ router.get(
     "/lancamentos",
     asyncHandler(async (req, res) => {
         const query = listLancamentosQuerySchema.parse(req.query);
-        const result = await lancamentosService.list(query);
+        const result = await lancamentosService.list(requireTenant(req).empresaId, query);
         return successResponse(res, result.items, result.meta);
     }),
 );
@@ -32,7 +33,7 @@ router.post(
     withPermission("financeiro:lancamentos:criar"),
     validateBody(createLancamentoBodySchema),
     asyncHandler(async (req, res) => {
-        const item = await lancamentosService.create(req.body as CreateLancamentoBody);
+        const item = await lancamentosService.create(requireTenant(req).empresaId, req.body as CreateLancamentoBody);
         return successResponse(res, item, null, 201);
     }),
 );
@@ -41,7 +42,7 @@ router.get(
     "/lancamentos/:id",
     asyncHandler(async (req, res) => {
         const {id} = lancamentoIdParamSchema.parse(req.params);
-        const item = await lancamentosService.getById(id);
+        const item = await lancamentosService.getById(requireTenant(req).empresaId, id);
         return successResponse(res, item);
     }),
 );
@@ -53,10 +54,12 @@ router.put(
     asyncHandler(async (req, res) => {
         const {id} = lancamentoIdParamSchema.parse(req.params);
         const body = req.body as UpdateLancamentoBody;
+        const empresaId = requireTenant(req).empresaId;
+        const atual = await lancamentosService.getById(empresaId, id);
+        req.auditAntes = atual;
 
-        // FEAT-09: alterar valor exige permissão dedicada (negada ao usuário comum).
+        // Alterar valor exige permissão dedicada (negada ao usuário comum).
         if (body.valor !== undefined) {
-            const atual = await lancamentosService.getById(id);
             const valorNovo = Number(body.valor);
             const valorAtual = Number(atual.valor);
             if (
@@ -64,8 +67,7 @@ router.put(
                 Number.isFinite(valorAtual) &&
                 Math.round(valorNovo * 100) !== Math.round(valorAtual * 100)
             ) {
-                const perms = req.user?.permissions ?? [];
-                if (!hasPermission(perms, PERM.LANCAMENTOS_ALTERAR_VALOR)) {
+                if (!hasPermission(req.user, PERM.LANCAMENTOS_ALTERAR_VALOR)) {
                     throw new AppError(
                         403,
                         "FORBIDDEN",
@@ -75,7 +77,7 @@ router.put(
             }
         }
 
-        const item = await lancamentosService.update(id, body);
+        const item = await lancamentosService.update(empresaId, id, body);
         return successResponse(res, item);
     }),
 );
@@ -85,7 +87,7 @@ router.delete(
     withPermission("financeiro:lancamentos:deletar"),
     asyncHandler(async (req, res) => {
         const {id} = lancamentoIdParamSchema.parse(req.params);
-        const result = await lancamentosService.remove(id);
+        const result = await lancamentosService.remove(requireTenant(req).empresaId, id);
         return successResponse(res, result);
     }),
 );

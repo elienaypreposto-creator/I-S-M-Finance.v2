@@ -1,5 +1,5 @@
 import {Router} from "express";
-import {and, eq, gte, lte, sql, desc, type SQLWrapper} from "drizzle-orm";
+import {eq, gte, lte, sql, desc, type SQLWrapper} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {
     conciliacoesTable,
@@ -14,6 +14,7 @@ import {errorResponse, successResponse} from "../utils/response";
 import {fromCents, realizadoSemJurosCents, toCents} from "../utils/money";
 import {sqlLancamentosDaConta} from "../utils/lancamentos-conta";
 import {contasBancariasService} from "../domains/financial/contas-bancarias/contas-bancarias.service";
+import {requireTenant, tenantWhere} from "../lib/tenant-scope";
 import {withPermission} from "../middlewares/withPermission";
 import {PERM} from "../constants/permissoes";
 
@@ -46,6 +47,7 @@ const extractYearEq = (col: SQLWrapper, ano: number) =>
 
 router.get("/relatorios/fechamento-mensal", withPermission(PERM.RELATORIOS_FECHAMENTO), async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const mes = parseInt(req.query.mes as string);
         const ano = parseInt(req.query.ano as string);
         if (!mes || !ano) {
@@ -67,7 +69,9 @@ router.get("/relatorios/fechamento-mensal", withPermission(PERM.RELATORIOS_FECHA
             })
             .from(lancamentosTable)
             .where(
-                and(
+                tenantWhere(
+                    lancamentosTable,
+                    empresaId,
                     sql`${lancamentosTable.data_quitacao}
                     IS NOT NULL`,
                     gte(lancamentosTable.data_quitacao, dataInicio),
@@ -95,7 +99,7 @@ router.get("/relatorios/fechamento-mensal", withPermission(PERM.RELATORIOS_FECHA
             })
             .from(metasTable)
             .leftJoin(planoContasTable, eq(metasTable.plano_conta_id, planoContasTable.id))
-            .where(and(eq(metasTable.ano, ano), eq(metasTable.mes, mes)));
+            .where(tenantWhere(metasTable, empresaId, eq(metasTable.ano, ano), eq(metasTable.mes, mes)));
 
         let planejadoReceberCents = 0;
         let planejadoGastarCents = 0;
@@ -113,12 +117,12 @@ router.get("/relatorios/fechamento-mensal", withPermission(PERM.RELATORIOS_FECHA
             realizado_receber: fromCents(realizadoReceberCents),
             planejado_gastar: fromCents(planejadoGastarCents),
             realizado_gastar: fromCents(realizadoGastarCents),
-            /** Juros do período — fora do resultado operacional. */
+            /** Juros do período - fora do resultado operacional. */
             juros: fromCents(jurosCents),
             criterio: "data_quitacao",
         });
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar fechamento mensal.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar fechamento mensal.", e);
     }
 });
 
@@ -131,6 +135,7 @@ router.get("/relatorios/fechamento-mensal", withPermission(PERM.RELATORIOS_FECHA
 
 router.get("/relatorios/dre", withPermission(PERM.RELATORIOS_DRE), async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const ano = parseInt(req.query.ano as string) || new Date().getFullYear();
         const regime = (req.query.regime as string) === "caixa" ? "caixa" : "competencia";
 
@@ -170,7 +175,7 @@ router.get("/relatorios/dre", withPermission(PERM.RELATORIOS_DRE), async (req, r
             })
             .from(lancamentosTable)
             .leftJoin(planoContasTable, eq(lancamentosTable.plano_conta_id, planoContasTable.id))
-            .where(and(anoFilter, statusFilter))
+            .where(tenantWhere(lancamentosTable, empresaId, anoFilter, statusFilter))
             .groupBy(sql`${mesExpr}`, lancamentosTable.tipo, planoContasTable.categoria);
 
         const receitaBruta = new Map<number, number>();
@@ -216,7 +221,7 @@ router.get("/relatorios/dre", withPermission(PERM.RELATORIOS_DRE), async (req, r
 
         return successResponse(res, {ano, regime, meses: MONTH_NAMES, linhas});
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar DRE.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar DRE.", e);
     }
 });
 
@@ -229,6 +234,7 @@ router.get("/relatorios/dre", withPermission(PERM.RELATORIOS_DRE), async (req, r
 
 router.get("/relatorios/fluxo-caixa", withPermission(PERM.RELATORIOS_FLUXO_CAIXA), async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const ano = parseInt(req.query.ano as string) || new Date().getFullYear();
         const meses = Array.from({length: 12}, (_, i) => i + 1);
 
@@ -249,7 +255,7 @@ router.get("/relatorios/fluxo-caixa", withPermission(PERM.RELATORIOS_FLUXO_CAIXA
             })
             .from(lancamentosTable)
             .leftJoin(planoContasTable, eq(lancamentosTable.plano_conta_id, planoContasTable.id))
-            .where(and(extractYearEq(lancamentosTable.data_quitacao, ano), STATUS_QUITADO_SQL))
+            .where(tenantWhere(lancamentosTable, empresaId, extractYearEq(lancamentosTable.data_quitacao, ano), STATUS_QUITADO_SQL))
             .groupBy(
                 mesExpr,
                 lancamentosTable.tipo,
@@ -313,7 +319,7 @@ router.get("/relatorios/fluxo-caixa", withPermission(PERM.RELATORIOS_FLUXO_CAIXA
             ],
         });
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar fluxo de caixa.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar fluxo de caixa.", e);
     }
 });
 
@@ -326,6 +332,7 @@ router.get("/relatorios/fluxo-caixa", withPermission(PERM.RELATORIOS_FLUXO_CAIXA
 
 router.get("/relatorios/metas", withPermission(PERM.RELATORIOS_METAS), async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const ano = parseInt(req.query.ano as string) || new Date().getFullYear();
 
         const [metasRows, realizadosRows] = await Promise.all([
@@ -338,7 +345,7 @@ router.get("/relatorios/metas", withPermission(PERM.RELATORIOS_METAS), async (re
                 })
                 .from(metasTable)
                 .leftJoin(planoContasTable, eq(metasTable.plano_conta_id, planoContasTable.id))
-                .where(eq(metasTable.ano, ano)),
+                .where(tenantWhere(metasTable, empresaId, eq(metasTable.ano, ano))),
 
             db
                 .select({
@@ -352,7 +359,9 @@ router.get("/relatorios/metas", withPermission(PERM.RELATORIOS_METAS), async (re
                 .from(lancamentosTable)
                 .leftJoin(planoContasTable, eq(lancamentosTable.plano_conta_id, planoContasTable.id))
                 .where(
-                    and(
+                    tenantWhere(
+                        lancamentosTable,
+                        empresaId,
                         sql`${lancamentosTable.data_quitacao}
                         IS NOT NULL`,
                         extractYearEq(lancamentosTable.data_quitacao, ano),
@@ -420,7 +429,7 @@ router.get("/relatorios/metas", withPermission(PERM.RELATORIOS_METAS), async (re
 
         return successResponse(res, rows, {ano, criterio: "data_quitacao"});
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar relatório de metas.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar relatório de metas.", e);
     }
 });
 
@@ -430,6 +439,7 @@ router.get("/relatorios/metas", withPermission(PERM.RELATORIOS_METAS), async (re
 
 router.get("/relatorios/contabil-fiscal", withPermission(PERM.RELATORIOS_CONTABIL), async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const {data_inicio, data_fim, conta_id, tipo = "ambos"} = req.query;
 
         const conditions = [
@@ -437,7 +447,7 @@ router.get("/relatorios/contabil-fiscal", withPermission(PERM.RELATORIOS_CONTABI
             data_inicio ? gte(lancamentosTable.data_quitacao, String(data_inicio)) : undefined,
             data_fim ? lte(lancamentosTable.data_quitacao, String(data_fim)) : undefined,
             conta_id ? sqlLancamentosDaConta(parseInt(String(conta_id))) : undefined,
-            tipo !== "ambos" ? eq(lancamentosTable.tipo, String(tipo)) : undefined,
+            tipo !== "ambos" ? eq(lancamentosTable.tipo, tipo === "CP" ? "CP" : "CR") : undefined,
         ].filter(Boolean) as ReturnType<typeof eq>[];
 
         const items = await db
@@ -458,7 +468,7 @@ router.get("/relatorios/contabil-fiscal", withPermission(PERM.RELATORIOS_CONTABI
             .leftJoin(contasBancariasTable, eq(lancamentosTable.conta_id, contasBancariasTable.id))
             .leftJoin(parceirosTable, eq(lancamentosTable.parceiro_id, parceirosTable.id))
             .leftJoin(planoContasTable, eq(lancamentosTable.plano_conta_id, planoContasTable.id))
-            .where(conditions.length > 0 ? and(...conditions) : undefined)
+            .where(tenantWhere(lancamentosTable, empresaId, ...conditions))
             .orderBy(lancamentosTable.data_quitacao);
 
         return successResponse(
@@ -467,7 +477,7 @@ router.get("/relatorios/contabil-fiscal", withPermission(PERM.RELATORIOS_CONTABI
             {total: items.length},
         );
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar relatório contábil/fiscal.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar relatório contábil/fiscal.", e);
     }
 });
 
@@ -480,6 +490,7 @@ router.get("/relatorios/contabil-fiscal", withPermission(PERM.RELATORIOS_CONTABI
 
 router.get("/relatorios/conciliacao", withPermission(PERM.RELATORIOS_CONCILIACAO), async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const contaId = parseInt(String(req.query.conta_id ?? ""), 10);
         let dataInicio = typeof req.query.data_inicio === "string" ? req.query.data_inicio : undefined;
         let dataFim = typeof req.query.data_fim === "string" ? req.query.data_fim : undefined;
@@ -511,7 +522,7 @@ router.get("/relatorios/conciliacao", withPermission(PERM.RELATORIOS_CONCILIACAO
                 banco: contasBancariasTable.banco,
             })
             .from(contasBancariasTable)
-            .where(eq(contasBancariasTable.id, contaId))
+            .where(tenantWhere(contasBancariasTable, empresaId, eq(contasBancariasTable.id, contaId)))
             .limit(1);
 
         if (!conta) {
@@ -524,8 +535,8 @@ router.get("/relatorios/conciliacao", withPermission(PERM.RELATORIOS_CONCILIACAO
         const dataAbertura = diaAntes.toISOString().slice(0, 10);
 
         const [saldoAbertura, saldoFechamento] = await Promise.all([
-            contasBancariasService.saldoNaData(contaId, dataAbertura),
-            contasBancariasService.saldoNaData(contaId, dataFim),
+            contasBancariasService.saldoNaData(empresaId, contaId, dataAbertura),
+            contasBancariasService.saldoNaData(empresaId, contaId, dataFim),
         ]);
 
         const movs = await db
@@ -537,7 +548,9 @@ router.get("/relatorios/conciliacao", withPermission(PERM.RELATORIOS_CONCILIACAO
             })
             .from(lancamentosTable)
             .where(
-                and(
+                tenantWhere(
+                    lancamentosTable,
+                    empresaId,
                     sqlLancamentosDaConta(contaId),
                     gte(lancamentosTable.data_quitacao, dataInicio),
                     lte(lancamentosTable.data_quitacao, dataFim),
@@ -587,7 +600,9 @@ router.get("/relatorios/conciliacao", withPermission(PERM.RELATORIOS_CONCILIACAO
             .from(conciliacoesTable)
             .innerJoin(extratosTable, eq(conciliacoesTable.extrato_id, extratosTable.id))
             .where(
-                and(
+                tenantWhere(
+                    conciliacoesTable,
+                    empresaId,
                     eq(conciliacoesTable.conta_id, contaId),
                     lte(conciliacoesTable.periodo_inicio, dataFim),
                     gte(conciliacoesTable.periodo_fim, dataInicio),
@@ -598,7 +613,7 @@ router.get("/relatorios/conciliacao", withPermission(PERM.RELATORIOS_CONCILIACAO
         const extratosDetalhe = [];
         for (const e of extratosPeriodo) {
             const ref = e.periodo_fim ?? dataFim;
-            const saldoSistema = await contasBancariasService.saldoNaData(contaId, ref);
+            const saldoSistema = await contasBancariasService.saldoNaData(empresaId, contaId, ref);
             const bancoCents = e.saldo_final_banco != null ? toCents(e.saldo_final_banco) : null;
             const sistemaCents = toCents(saldoSistema.saldo_decimal);
             const diferencaCents = bancoCents != null ? sistemaCents - bancoCents : null;
@@ -634,7 +649,7 @@ router.get("/relatorios/conciliacao", withPermission(PERM.RELATORIOS_CONCILIACAO
             movimentacoes: {
                 creditos_quitados: fromCents(creditosCents),
                 debitos_quitados: fromCents(debitosCents),
-                /** Juros CR (entrada no caixa) — fora do resultado operacional da meta. */
+                /** Juros CR (entrada no caixa) - fora do resultado operacional da meta. */
                 juros_credito: fromCents(jurosCreditoCents),
                 /** Juros CP (saída no caixa). */
                 juros_debito: fromCents(jurosDebitoCents),
@@ -659,7 +674,7 @@ router.get("/relatorios/conciliacao", withPermission(PERM.RELATORIOS_CONCILIACAO
             totais: totaisResumo,
         });
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar relatório de conciliação.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao gerar relatório de conciliação.", e);
     }
 });
 

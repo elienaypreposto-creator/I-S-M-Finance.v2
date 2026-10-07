@@ -9,7 +9,7 @@
     "build": "pnpm -r --if-present run build && node scripts/copy-dist.cjs",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
-    "test": "jest"
+    "test": "pnpm --filter @workspace/api-server run test"
   },
   "pnpm": {
     "overrides": {
@@ -35,6 +35,7 @@
     "vitest": "^4.1.10"
   },
   "dependencies": {
+    "express-rate-limit": "^8.7.0",
     "jspdf": "^4.2.1",
     "xlsx": "^0.18.5"
   }

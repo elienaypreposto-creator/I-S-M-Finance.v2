@@ -2,23 +2,31 @@ import { eq } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { departamentosTable, lancamentosTable, parceirosTable } from "@workspace/db/schema";
 import { AppError } from "../../../utils/app-error";
+import { tenantScope, tenantWhere, withEmpresaId } from "../../../lib/tenant-scope";
 import type { CreateDepartamentoBody, UpdateDepartamentoBody } from "./schemas";
 
 export const departamentosService = {
-  async list() {
-    return db.select().from(departamentosTable).orderBy(departamentosTable.nome);
+  async list(empresaId: number) {
+    return db
+      .select()
+      .from(departamentosTable)
+      .where(tenantScope(departamentosTable, empresaId))
+      .orderBy(departamentosTable.nome);
   },
 
-  async create(payload: CreateDepartamentoBody) {
-    const [item] = await db.insert(departamentosTable).values({ nome: payload.nome }).returning();
+  async create(empresaId: number, payload: CreateDepartamentoBody) {
+    const [item] = await db
+      .insert(departamentosTable)
+      .values(withEmpresaId({ nome: payload.nome }, empresaId))
+      .returning();
     return item;
   },
 
-  async update(id: number, payload: UpdateDepartamentoBody) {
+  async update(empresaId: number, id: number, payload: UpdateDepartamentoBody) {
     const [item] = await db
       .update(departamentosTable)
       .set({ nome: payload.nome })
-      .where(eq(departamentosTable.id, id))
+      .where(tenantWhere(departamentosTable, empresaId, eq(departamentosTable.id, id)))
       .returning();
 
     if (!item) {
@@ -28,17 +36,17 @@ export const departamentosService = {
     return item;
   },
 
-  async remove(id: number) {
+  async remove(empresaId: number, id: number) {
     const [lancRows, parceiroRows] = await Promise.all([
       db
         .select({ id: lancamentosTable.id })
         .from(lancamentosTable)
-        .where(eq(lancamentosTable.departamento_id, id))
+        .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.departamento_id, id)))
         .limit(1),
       db
         .select({ id: parceirosTable.id })
         .from(parceirosTable)
-        .where(eq(parceirosTable.departamento_id, id))
+        .where(tenantWhere(parceirosTable, empresaId, eq(parceirosTable.departamento_id, id)))
         .limit(1),
     ]);
 
@@ -61,7 +69,13 @@ export const departamentosService = {
       );
     }
 
-    await db.delete(departamentosTable).where(eq(departamentosTable.id, id));
+    const [item] = await db
+      .delete(departamentosTable)
+      .where(tenantWhere(departamentosTable, empresaId, eq(departamentosTable.id, id)))
+      .returning({ id: departamentosTable.id });
+    if (!item) {
+      throw new AppError(404, "NOT_FOUND", "Departamento não encontrado.");
+    }
     return { deleted: true };
   },
 };

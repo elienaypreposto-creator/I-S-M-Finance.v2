@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useEffect, useMemo, useState, useRef} from "react";
 import {useForm, Controller} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
@@ -42,6 +43,8 @@ import {
 } from "@/validations/lancamentos.schema";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
+import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
+import {ViewportOverlay} from "@/components/shared/viewport-overlay";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 type ContaBancaria = {
@@ -215,12 +218,6 @@ const BANCOS_BR = [
 
 const ITEMS_PER_PAGE = 8;
 
-// Paleta de cores do passo "Cor de Identificação": ao invés de mostrar as 20
-// cores dos bancos (que têm muita repetição de família — 6 tons de verde, 4
-// de azul, 3 de preto, 3 de laranja etc.), agrupamos cada cor pelo matiz (hue)
-// e mostramos só 1 representante por família (a primeira que aparecer, na
-// ordem de BANCOS_BR). O azul neutro #3BA8DC é sempre incluído à parte, pois
-// representa "sem banco vinculado" e não uma marca específica.
 function hexParaHsl(hex: string): [number, number, number] {
     const r = parseInt(hex.slice(1, 3), 16) / 255;
     const g = parseInt(hex.slice(3, 5), 16) / 255;
@@ -428,7 +425,7 @@ function StepPanel({
                 )}
             </div>
 
-            {/* Step body — visível apenas quando ativo */}
+            {/* Step body - visível apenas quando ativo */}
             {status === "active" && (
                 <div className="p-5 border-t border-white/5 space-y-4">{children}</div>
             )}
@@ -566,6 +563,7 @@ interface ModalProps {
 function NovaContaModal({onClose, initialData}: ModalProps) {
     const queryClient = useQueryClient();
     const {toast} = useToast();
+    const {confirm, ConfirmDialogProps} = useConfirm();
 
     // activeStep: passo aberto; maxReached: até onde o usuário avançou
     const [activeStep, setActiveStep] = useState<1 | 2 | 3>(1);
@@ -597,7 +595,7 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
         watch,
         setValue,
         getValues,
-        formState: {errors},
+        formState: {errors, isDirty},
     } = useForm<ContaBancariaFormValues>({
         resolver: zodResolver(contaBancariaFormSchema),
         defaultValues,
@@ -703,7 +701,7 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
             });
         },
         onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["contas-bancarias"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("contas-bancarias")});
             toast({
                 title: initialData ? "Conta atualizada" : "Conta cadastrada",
                 description: "As informações foram salvas com sucesso.",
@@ -762,10 +760,21 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
     // Data máxima permitida no campo "Início dos lançamentos" (hoje)
     const maxDataInicio = getTodayIso();
 
+    async function handleRequestClose() {
+        if (isDirty) {
+            const ok = await confirm(DISCARD_PROMPT);
+            if (!ok) return;
+        }
+        onClose();
+    }
+
+    useEscapeClose(!ConfirmDialogProps.open, () => {
+        void handleRequestClose();
+    });
+
     return (
-        <div
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-start pt-24 overflow-y-auto justify-center px-4 pb-10">
-            <div className="bg-card border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl flex flex-col">
+        <ViewportOverlay>
+            <div className="bg-card border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]">
                 {/* Header fixo */}
                 <div className="flex items-center justify-between p-6 border-b border-white/5 flex-shrink-0">
                     <h2 className="text-lg font-bold text-white">
@@ -773,7 +782,7 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                     </h2>
                     <button
                         type="button"
-                        onClick={onClose}
+                        onClick={() => void handleRequestClose()}
                         className="p-1.5 hover:bg-white/5 rounded-lg transition-colors"
                     >
                         <X className="w-5 h-5"/>
@@ -781,7 +790,7 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                 </div>
 
                 {/* Accordion com scroll */}
-                <div className="overflow-y-auto flex-1">
+                <div className="overflow-y-auto flex-1 min-h-0">
                     <form
                         noValidate
                         onSubmit={(e) => e.preventDefault()}
@@ -1055,7 +1064,7 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                             <div className="flex gap-3 pt-1">
                                 <button
                                     type="button"
-                                    onClick={onClose}
+                                    onClick={() => void handleRequestClose()}
                                     className="px-5 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium transition-all"
                                 >
                                     Cancelar
@@ -1079,7 +1088,8 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                     </form>
                 </div>
             </div>
-        </div>
+            <ConfirmDialog {...ConfirmDialogProps} />
+        </ViewportOverlay>
     );
 }
 
@@ -1095,7 +1105,7 @@ export default function ContasBancarias() {
     const [currentPage, setCurrentPage] = useState(1);
 
     const {data: contas = [], isLoading} = useQuery<ContaBancaria[]>({
-        queryKey: ["contas-bancarias"],
+        queryKey: tenantQueryKey("contas-bancarias"),
         queryFn: () => fetchApiData<ContaBancaria[]>("/contas-bancarias"),
     });
 
@@ -1106,7 +1116,7 @@ export default function ContasBancarias() {
                 body: JSON.stringify({status}),
             }),
         onSuccess: (_, variables) => {
-            void queryClient.invalidateQueries({queryKey: ["contas-bancarias"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("contas-bancarias")});
             toast({
                 title:
                     variables.status === "ativo" ? "Conta desbloqueada" : "Conta bloqueada",
@@ -1128,7 +1138,7 @@ export default function ContasBancarias() {
                 method: "DELETE",
             }),
         onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["contas-bancarias"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("contas-bancarias")});
             toast({
                 title: "Conta removida",
                 description: "A conta foi deletada com sucesso.",
@@ -1385,7 +1395,7 @@ export default function ContasBancarias() {
                                         <td className="px-5 py-4">
                                             <p className="text-white/80 font-mono text-xs">
                                                 {temAgenciaConta
-                                                    ? `Agência: ${conta.agencia || "—"} | Conta: ${conta.conta || "—"}`
+                                                    ? `Agência: ${conta.agencia || "-"} | Conta: ${conta.conta || "-"}`
                                                     : "Sem agência/conta cadastrada"}
                                             </p>
                                             {conta.data_inicio && (

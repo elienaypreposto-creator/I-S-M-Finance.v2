@@ -1,4 +1,6 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useEffect, useMemo, useRef, useState} from "react";
+import {createPortal} from "react-dom";
 import {
     useForm,
     useWatch,
@@ -45,6 +47,7 @@ import {
 import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
+import {useEscapeClose} from "@/hooks/use-escape-close";
 import {
     Empty,
     EmptyHeader,
@@ -239,8 +242,9 @@ function parceiroFormToApiBody(values: ParceiroFormValues, statusAtual?: { ativo
 }
 
 function ConfirmacaoCancelModal({onConfirm, onDismiss}: { onConfirm: () => void; onDismiss: () => void }) {
+    useEscapeClose(true, onDismiss, 90);
     return (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[90] flex items-center justify-center p-4">
             <div className="bg-card border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl p-6 text-center">
                 <AlertTriangle className="w-10 h-10 text-warning mx-auto mb-3"/>
                 <h3 className="font-bold text-white text-lg mb-1">Cancelar cadastro?</h3>
@@ -675,7 +679,7 @@ export function NovoParceiroModal({onClose, initialData, onSaved}: {
     const isEdit = !!initialData;
 
     const {data: departamentos = []} = useQuery({
-        queryKey: ["departamentos"],
+        queryKey: tenantQueryKey("departamentos"),
         queryFn: () => fetchApiData<DepartamentoRow[]>("/departamentos"),
     });
 
@@ -733,7 +737,7 @@ export function NovoParceiroModal({onClose, initialData, onSaved}: {
             return fetchApiData<ParceiroRow>("/parceiros", {method: "POST", body: JSON.stringify(body)});
         },
         onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["parceiros"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("parceiros")});
             toast({
                 title: isEdit ? "Parceiro atualizado" : "Parceiro cadastrado",
                 description: "O registro foi salvo com sucesso.",
@@ -765,12 +769,16 @@ export function NovoParceiroModal({onClose, initialData, onSaved}: {
         else onClose();
     };
 
+    useEscapeClose(!showConfirmCancel, handleCancel, 80);
+
     const fieldCls = (hasError?: boolean) =>
         `w-full bg-white/5 border rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors ${
             hasError ? "border-destructive/60 focus:border-destructive" : "border-white/10"
         }`;
 
-    return (
+    // Portal no body + z-[80]: precisa ficar acima do Novo Lançamento (z-[65])
+    // e do Vincular (z-[60]) na conciliação; o confirm de cancelar usa z-[90].
+    return createPortal(
         <>
             {showConfirmCancel && (
                 <ConfirmacaoCancelModal
@@ -781,13 +789,13 @@ export function NovoParceiroModal({onClose, initialData, onSaved}: {
                     onDismiss={() => setShowConfirmCancel(false)}
                 />
             )}
-            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[80] flex items-center justify-center p-4">
                 <div
                     className="bg-card border border-white/10 rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
                     <div
                         className="flex items-center justify-between p-6 border-b border-white/5 sticky top-0 bg-card z-10">
                         <h2 className="text-lg font-bold text-white">
-                            {isEdit ? "Editar Cadastro" : "Novo Cadastro"} — Clientes/Fornecedores
+                            {isEdit ? "Editar Cadastro" : "Novo Cadastro"} - Clientes/Fornecedores
                         </h2>
                         <button type="button" onClick={handleCancel} className="p-1.5 hover:bg-white/5 rounded-lg">
                             <X className="w-5 h-5"/>
@@ -994,7 +1002,8 @@ export function NovoParceiroModal({onClose, initialData, onSaved}: {
                     </form>
                 </div>
             </div>
-        </>
+        </>,
+        document.body,
     );
 }
 
@@ -1019,14 +1028,14 @@ export default function Parceiros() {
     const {confirm, ConfirmDialogProps} = useConfirm();
 
     const {data: departamentos = []} = useQuery({
-        queryKey: ["departamentos"],
+        queryKey: tenantQueryKey("departamentos"),
         queryFn: () => fetchApiData<DepartamentoRow[]>("/departamentos"),
     });
 
     const deptNomeById = useMemo(() => new Map(departamentos.map((d) => [d.id, d.nome])), [departamentos]);
 
     const {data: parceirosLista = [], isLoading} = useQuery({
-        queryKey: ["parceiros", debouncedSearch],
+        queryKey: tenantQueryKey("parceiros", debouncedSearch),
         queryFn: () => {
             const q = debouncedSearch.trim();
             const qs = new URLSearchParams({limit: "200", page: "1"});
@@ -1043,7 +1052,7 @@ export default function Parceiros() {
                 body: JSON.stringify({status}),
             }),
         onSuccess: (_data, variables) => {
-            void queryClient.invalidateQueries({queryKey: ["parceiros"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("parceiros")});
             toast({
                 title: variables.status === "ativo" ? "Parceiro ativado" : "Parceiro inativado",
                 description: "O status foi atualizado com sucesso.",
@@ -1058,7 +1067,7 @@ export default function Parceiros() {
         mutationFn: (id: number) =>
             fetchApiData<{ deleted?: boolean }>(`/parceiros/${id}`, {method: "DELETE"}),
         onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["parceiros"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("parceiros")});
             toast({title: "Parceiro removido", description: "O cadastro foi excluído."});
         },
         onError: (e: unknown) => {
@@ -1119,7 +1128,7 @@ export default function Parceiros() {
     };
 
     const getDocDisplay = (p: ParceiroRow) => {
-        if (!p.cpf_cnpj) return "—";
+        if (!p.cpf_cnpj) return "-";
         const tipo = (p.tipo_pessoa === "PF" ? "PF" : "PJ") as "PF" | "PJ";
         return mascararDocumento(String(p.cpf_cnpj).replace(/\D/g, ""), tipo);
     };
@@ -1138,8 +1147,8 @@ export default function Parceiros() {
             tipo_pessoa: p.tipo_pessoa,
             nome: p.nome,
             cpf_cnpj_fmt: getDocDisplay(p),
-            tipos_fmt: tiposArray(p.tipos).join(", ") || "—",
-            dept_nome: p.departamento_id ? (deptNomeById.get(p.departamento_id) ?? "—") : "—",
+            tipos_fmt: tiposArray(p.tipos).join(", ") || "-",
+            dept_nome: p.departamento_id ? (deptNomeById.get(p.departamento_id) ?? "-") : "-",
             status_fmt: resolveStatus(p) === "ativo" ? "Ativo" : "Inativo",
         })) as Record<string, unknown>[];
 
@@ -1252,7 +1261,7 @@ export default function Parceiros() {
                             {parceirosLista.map((p) => {
                                 const tipoUi = p.tipo_pessoa === "PJ" ? "PJ" : "PF";
                                 const isAtivo = resolveStatus(p) === "ativo";
-                                const lotacao = p.departamento_id ? deptNomeById.get(p.departamento_id) ?? "—" : "—";
+                                const lotacao = p.departamento_id ? deptNomeById.get(p.departamento_id) ?? "-" : "-";
                                 const tipos = tiposArray(p.tipos);
                                 return (
                                     <tr key={p.id} className="hover:bg-white/5 transition-colors group">
@@ -1267,7 +1276,7 @@ export default function Parceiros() {
                                         <td className="px-5 py-4">
                                             <div className="flex gap-1 flex-wrap">
                                                 {tipos.length === 0 ? (
-                                                    <span className="text-muted-foreground text-xs">—</span>
+                                                    <span className="text-muted-foreground text-xs">-</span>
                                                 ) : (
                                                     tipos.map((t) => {
                                                         const s = getTipoStyle(t);

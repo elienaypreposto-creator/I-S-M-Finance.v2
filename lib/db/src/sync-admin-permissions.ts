@@ -1,122 +1,37 @@
 /**
- * Sincronização idempotente de permissões dos Super Admins de sistema.
+ * Sincronização idempotente dos Super Admins de sistema.
+ *
+ * ALTERADO — Card 2 (Permissões): antes injetava todo o catálogo
+ * PERMISSOES_ADMIN como linhas em usuario_permissoes (uma tabela por
+ * usuário, sem noção de empresa); agora só liga `usuarios.superadmin`.
+ * Superadmin bypassa withPermission/withSuperadmin inteiramente (ver
+ * middlewares/withPermission.ts e withSuperadmin.ts), então não precisa de
+ * nenhuma linha de permissão gravada — e como permissão agora é por
+ * empresa (usuario_permissoes.empresa_id), não existiria "a empresa certa"
+ * pra gravar essas ~80 linhas de qualquer forma.
+ *
+ * Mantém o vínculo com a empresa 1 como papel "admin" (não mais "superuser
+ * de permissões" — só o vínculo de conveniência que já existia, pra login
+ * ter uma empresa ativa por padrão; `superadmin=true` é o que realmente
+ * abre as portas).
  *
  * Usado no boot da API (sem CLI em TST/PRD) e reutilizado pelo seed CLI.
  * Nunca cria usuários, nunca toca senhas, nunca expõe segredos em log.
+ * Nunca grava `"*"`. O catálogo granular é a única fonte.
  */
 
 import {eq, sql} from "drizzle-orm";
 import {db} from "./client";
-import {usuariosTable, usuarioPermissoesTable} from "./schema";
+import {usuariosTable, usuarioEmpresasTable} from "./schema";
+import {PERMISSOES_ADMIN} from "./permissoes-catalog";
+
+export {PERMISSOES_ADMIN} from "./permissoes-catalog";
 
 export const SYSTEM_ADMIN_EMAILS = [
     "admin@ism.finance",
     "ismteste@gmail.com",
     "vinicosta37@gmail.com",
 ] as const;
-
-/**
- * Catálogo canônico de permissões do Super Admin (API + UI).
- * Fonte única - manter alinhado a withPermission / grant_admin.
- */
-export const PERMISSOES_ADMIN: readonly string[] = [
-    "dashboard:ver",
-
-    "financeiro:lancamentos:criar",
-    "financeiro:lancamentos:listar",
-    "financeiro:lancamentos:editar",
-    "financeiro:lancamentos:alterar_valor",
-    "financeiro:lancamentos:deletar",
-
-    "financeiro:parceiros:criar",
-    "financeiro:parceiros:listar",
-    "financeiro:parceiros:editar",
-    "financeiro:parceiros:deletar",
-
-    "financeiro:metas:criar",
-    "financeiro:metas:listar",
-    "financeiro:metas:editar",
-    "financeiro:metas:deletar",
-
-    "financeiro:fechamentos:criar",
-    "financeiro:fechamentos:listar",
-    "financeiro:fechamentos:deletar",
-
-    "financeiro:contas-pagar:criar",
-    "financeiro:contas-pagar:listar",
-    "financeiro:contas-pagar:baixar",
-    "financeiro:contas-pagar:cancelar",
-    "financeiro:importar",
-    "financeiro:contas-receber:criar",
-    "financeiro:contas-receber:listar",
-    "financeiro:contas-receber:baixar",
-    "financeiro:contas-receber:cancelar",
-    "financeiro:contas-receber:exportar",
-
-    "financeiro:conciliacao:acessar",
-    "financeiro:conciliacao:importar",
-    "financeiro:conciliacao:vincular",
-    "financeiro:conciliacao:ignorar",
-    "financeiro:conciliacao:desfazer",
-    "financeiro:conciliacao:concluir",
-    "financeiro:conciliacao:configurar",
-
-    "financeiro:regras-conciliacao:listar",
-    "financeiro:regras-conciliacao:criar",
-    "financeiro:regras-conciliacao:editar",
-    "financeiro:regras-conciliacao:deletar",
-
-    "financeiro:transferencias:criar",
-
-    "configuracoes:contas-bancarias:criar",
-    "configuracoes:contas-bancarias:listar",
-    "configuracoes:contas-bancarias:editar",
-    "configuracoes:contas-bancarias:deletar",
-
-    "configuracoes:plano-contas:criar",
-    "configuracoes:plano-contas:listar",
-    "configuracoes:plano-contas:editar",
-    "configuracoes:plano-contas:deletar",
-    "configuracoes:plano-contas:exportar",
-
-    "configuracoes:categorias:criar",
-    "configuracoes:categorias:listar",
-    "configuracoes:categorias:deletar",
-
-    "configuracoes:filiais:criar",
-    "configuracoes:filiais:editar",
-    "configuracoes:filiais:deletar",
-
-    "configuracoes:departamentos:criar",
-    "configuracoes:departamentos:editar",
-    "configuracoes:departamentos:deletar",
-
-    "admin:usuarios:listar",
-    "admin:usuarios:criar",
-    "admin:usuarios:editar",
-    "admin:usuarios:deletar",
-    "admin:migrate-passwords",
-
-    "admin:tokens-api:listar",
-    "admin:tokens-api:criar",
-    "admin:tokens-api:editar",
-    "admin:tokens-api:deletar",
-
-    "admin:auditoria:listar",
-    "admin:transferencias:editar",
-    "admin:transferencias:deletar",
-
-    "relatorios:dre",
-    "relatorios:fluxo-caixa-diario",
-    "relatorios:fluxo-caixa-mensal",
-    "relatorios:economico",
-    "relatorios:financeiro",
-    "relatorios:vencimento",
-    "relatorios:extrato",
-    "relatorios:metas",
-    "relatorios:conciliacao",
-    "relatorios:contabil-fiscal",
-];
 
 function parseEmailList(raw: string | undefined): string[] {
     if (!raw?.trim()) return [];
@@ -126,7 +41,7 @@ function parseEmailList(raw: string | undefined): string[] {
         .filter(Boolean);
 }
 
-/** Resolve e-mails alvo: lista estática + ADMIN_EMAIL + ADMIN_EMAILS (env). */
+/** Resolve e-mails alvo do seed/boot: lista estática + ADMIN_EMAIL + ADMIN_EMAILS (env). */
 export function resolveSystemAdminEmails(): string[] {
     const fromEnv = [
         ...parseEmailList(process.env.ADMIN_EMAIL),
@@ -139,12 +54,14 @@ export type SyncAdminPermissionsResult = {
     emailsAlvo: number;
     sincronizados: number;
     ausentes: string[];
+    /** Mantido por compatibilidade de assinatura — sempre 0 agora (nada mais é inserido em usuario_permissoes). */
     permissoesPorUsuario: number;
 };
 
 /**
- * Injeta PERMISSOES_ADMIN nos usuários de sistema que já existem no banco.
- * Não cria contas. Fail-soft no chamador - esta função pode lançar em erro de DB.
+ * Marca `superadmin = true` nos usuários de sistema que já existem no banco
+ * e garante o vínculo de conveniência com a empresa 1. Não cria contas.
+ * Fail-soft no chamador - esta função pode lançar em erro de DB.
  */
 export async function syncAdminPermissionsOnBoot(): Promise<SyncAdminPermissionsResult> {
     const emails = resolveSystemAdminEmails();
@@ -164,20 +81,22 @@ export async function syncAdminPermissionsOnBoot(): Promise<SyncAdminPermissions
         }
 
         await db
-            .delete(usuarioPermissoesTable)
-            .where(eq(usuarioPermissoesTable.usuario_id, usuario.id));
-
-        await db.insert(usuarioPermissoesTable).values(
-            PERMISSOES_ADMIN.map((codigo_permissao) => ({
-                usuario_id: usuario.id,
-                codigo_permissao,
-            })),
-        );
+            .update(usuariosTable)
+            .set({superadmin: true, perfil_base: "Admin", updated_at: new Date()})
+            .where(eq(usuariosTable.id, usuario.id));
 
         await db
-            .update(usuariosTable)
-            .set({perfil_base: "Admin", updated_at: new Date()})
-            .where(eq(usuariosTable.id, usuario.id));
+            .insert(usuarioEmpresasTable)
+            .values({
+                usuario_id: usuario.id,
+                empresa_id: 1,
+                papel: "admin",
+                ativo: true,
+            })
+            .onConflictDoUpdate({
+                target: [usuarioEmpresasTable.usuario_id, usuarioEmpresasTable.empresa_id],
+                set: {papel: "admin", ativo: true},
+            });
 
         sincronizados += 1;
     }
@@ -186,6 +105,6 @@ export async function syncAdminPermissionsOnBoot(): Promise<SyncAdminPermissions
         emailsAlvo: emails.length,
         sincronizados,
         ausentes,
-        permissoesPorUsuario: PERMISSOES_ADMIN.length,
+        permissoesPorUsuario: 0,
     };
 }

@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import { Fragment, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/shared/page-header";
@@ -68,7 +69,7 @@ export default function FluxoCaixa() {
   const [aberto, setAberto] = useState<Record<string, boolean>>({});
 
   const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ["relatorio-fluxo-caixa", ano],
+    queryKey: tenantQueryKey("relatorio-fluxo-caixa", ano),
     queryFn: () => fetchApiData<FluxoCaixaResponse>(`/relatorios/fluxo-caixa?ano=${ano}`),
   });
 

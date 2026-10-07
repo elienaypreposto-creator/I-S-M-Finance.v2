@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useEffect, useRef, useState} from "react";
 import {createPortal} from "react-dom";
 import {
@@ -18,6 +19,7 @@ import {format as formatBtn, parseISO} from "date-fns";
 import {ptBR} from "date-fns/locale";
 import {cn} from "@/lib/utils";
 import {fetchApiData} from "@/lib/api-config";
+import {useEscapeClose} from "@/hooks/use-escape-close";
 import {
     maskChavePix,
     mascararCodigoBanco,
@@ -61,10 +63,8 @@ type Departamento = { id: number; nome: string };
 type CentroCusto = { id: number; nome: string; departamento_id: number | null };
 
 /**
- * Dados vindos da linha do extrato bancário (Conciliação) para pré-popular o
- * formulário na criação de um NOVO lançamento - não é edição de um lançamento
- * existente, então não usa `LancamentoEditItem` (que dispara o GET
- * /lancamentos/:id). Usado pelo botão "+" em extrato.tsx (RN-D3).
+ * Pré-preenche um lançamento novo a partir da linha do extrato.
+ * Não usa LancamentoEditItem (evita GET /lancamentos/:id).
  */
 export type LancamentoPrefill = {
     tipo: "CP" | "CR";
@@ -118,6 +118,7 @@ function ConfirmDialog({
     onConfirm: () => void;
     onCancel: () => void;
 }) {
+    useEscapeClose(open, onCancel, 70);
     if (!open) return null;
 
     const toneCls: Record<ConfirmDialogTone, { iconBg: string; iconColor: string; confirmBtn: string }> = {
@@ -405,10 +406,7 @@ type LancamentoModalProps = {
      *  modo edição, é chamado sem argumento. */
     onSaved: (created?: { id: number }) => void;
     editItem?: LancamentoEditItem | null;
-    /** Pré-preenche o formulário para uma NOVA criação (não é edição).
-     *  Ignorado se `editItem` estiver presente. Usado pela tela de
-     *  Conciliação ao criar um lançamento a partir de uma linha do extrato
-     *  (RN-D3, botão "+"). */
+    /** Pré-preenche criação nova. Ignorado se editItem estiver presente. */
     prefill?: LancamentoPrefill;
 };
 
@@ -466,7 +464,7 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     } = form;
 
     const {data: editItemFull, dataUpdatedAt} = useQuery<LancamentoEditItem>({
-        queryKey: ["lancamento-edit", editItem?.id],
+        queryKey: tenantQueryKey("lancamento-edit", editItem?.id),
         queryFn: () => fetchApiData<LancamentoEditItem>(`/lancamentos/${editItem!.id}`),
         enabled: !!editItem?.id,
         staleTime: 0,
@@ -482,7 +480,6 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     const departamento_id = watch("departamento_id");
     const isCP = tipo === "CP";
 
-    // ── Valor Bruto / Desconto / Juros → Valor Atual (calculado em tempo real) ──
     const valorBr = watch("valorBr");
     const descontoBr = watch("descontoBr") ?? "";
     const jurosBr = watch("jurosBr") ?? "";
@@ -524,6 +521,8 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
             onClose();
         }
     }
+
+    useEscapeClose(!showCancelConfirm && !parceiroSubModal, handleRequestClose, 65);
 
     // Reset ao abrir / mudar item (usa dados da lista - sem pagamentos ainda,
     // ou dados de pré-preenchimento vindos da Conciliação)
@@ -578,7 +577,7 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     }, [vencimento, nivelRisco]);
 
     const {data: parceiros = [], isFetching: isFetchingParceiros} = useQuery<ParceiroRow[]>({
-        queryKey: ["parceiros-modal", searchParceiro],
+        queryKey: tenantQueryKey("parceiros-modal", searchParceiro),
         queryFn: () => {
             const qs = new URLSearchParams({page: "1", limit: "20"});
             if (searchParceiro.trim()) qs.set("search", searchParceiro.trim());
@@ -587,17 +586,17 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     });
 
     const {data: planoContas = []} = useQuery<PlanoConta[]>({
-        queryKey: ["plano-contas-modal"],
+        queryKey: tenantQueryKey("plano-contas-modal"),
         queryFn: () => fetchApiData<PlanoConta[]>("/plano-contas"),
     });
 
     const {data: departamentos = []} = useQuery<Departamento[]>({
-        queryKey: ["departamentos-modal"],
+        queryKey: tenantQueryKey("departamentos-modal"),
         queryFn: () => fetchApiData<Departamento[]>("/departamentos"),
     });
 
     const {data: centrosCusto = []} = useQuery<CentroCusto[]>({
-        queryKey: ["centros-custo-modal"],
+        queryKey: tenantQueryKey("centros-custo-modal"),
         queryFn: () => fetchApiData<CentroCusto[]>("/centros-custos"),
         retry: false,
     });
@@ -619,12 +618,12 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
             return fetchApiData<{ id: number }>(`/lancamentos`, {method: "POST", body: JSON.stringify(body)});
         },
         onSuccess: (resp) => {
-            void queryClient.invalidateQueries({queryKey: ["lancamentos"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("lancamentos")});
             // Invalida o cache do fetch-por-ID também - sem isso, reabrir o
             // MESMO lançamento logo em seguida poderia (dependendo do
             // timing) reutilizar dados desatualizados antes do refetch.
             if (editItem?.id) {
-                void queryClient.invalidateQueries({queryKey: ["lancamento-edit", editItem.id]});
+                void queryClient.invalidateQueries({queryKey: tenantQueryKey("lancamento-edit", editItem.id)});
             }
             toast({title: "Sucesso", description: editItem ? "Lançamento atualizado." : "Lançamento criado."});
             onSaved(editItem ? undefined : resp);
@@ -677,35 +676,8 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
 
     return createPortal(
         <>
-            {/* Sub-modal de parceiro - z-[60] sobrepõe o modal de lançamentos */}
-            {parceiroSubModal && (
-                <NovoParceiroModal
-                    key={parceiroSubModal.mode === "edit" ? parceiroSubModal.data.id : "new-parceiro"}
-                    initialData={parceiroSubModal.mode === "edit" ? parceiroSubModal.data : null}
-                    onClose={() => setParceiroSubModal(null)}
-                    onSaved={() => {
-                        void queryClient.invalidateQueries({queryKey: ["parceiros-modal"]});
-                    }}
-                />
-            )}
-
-            {/* Confirmação de cancelamento - só aparece se o formulário tiver alterações não salvas */}
-            <ConfirmDialog
-                open={showCancelConfirm}
-                tone="warning"
-                title="Cancelar cadastro?"
-                description="As informações preenchidas serão perdidas. Deseja realmente cancelar?"
-                confirmLabel="Sim, cancelar"
-                cancelLabel="Não, continuar"
-                onCancel={() => setShowCancelConfirm(false)}
-                onConfirm={() => {
-                    setShowCancelConfirm(false);
-                    onClose();
-                }}
-            />
-
             <div
-                className="fixed inset-0 z-[65] flex items-start justify-center bg-black/70 backdrop-blur-md p-4 pt-16 overflow-hidden">
+                className="fixed inset-0 z-[65] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 overflow-hidden">
                 <div
                     className="bg-[#121417] border border-white/10 rounded-2xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[90vh]">
 
@@ -1336,6 +1308,33 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                     </form>
                 </div>
             </div>
+
+            {/* Confirmação de cancelamento - só aparece se o formulário tiver alterações não salvas */}
+            <ConfirmDialog
+                open={showCancelConfirm}
+                tone="warning"
+                title="Cancelar cadastro?"
+                description="As informações preenchidas serão perdidas. Deseja realmente cancelar?"
+                confirmLabel="Sim, cancelar"
+                cancelLabel="Não, continuar"
+                onCancel={() => setShowCancelConfirm(false)}
+                onConfirm={() => {
+                    setShowCancelConfirm(false);
+                    onClose();
+                }}
+            />
+
+            {/* Sub-modal de parceiro: portal próprio em z-[80], acima deste lançamento (z-[65]). */}
+            {parceiroSubModal && (
+                <NovoParceiroModal
+                    key={parceiroSubModal.mode === "edit" ? parceiroSubModal.data.id : "new-parceiro"}
+                    initialData={parceiroSubModal.mode === "edit" ? parceiroSubModal.data : null}
+                    onClose={() => setParceiroSubModal(null)}
+                    onSaved={() => {
+                        void queryClient.invalidateQueries({queryKey: tenantQueryKey("parceiros-modal")});
+                    }}
+                />
+            )}
         </>,
         document.body,
     );

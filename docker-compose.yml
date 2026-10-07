@@ -6,14 +6,33 @@ services:
     restart: always
     environment:
       POSTGRES_USER: ism_user
-      POSTGRES_PASSWORD: ism_password
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?}
       POSTGRES_DB: ismfinance
     ports:
-      - "${DB_PORT:-5434}:5432" # Exposto para acesso externo se necessário (DBeaver, psql, etc)
+      - "127.0.0.1:${DB_PORT:-5434}:5432" # Somente loopback; acesso externo via túnel SSH
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ${PGDATA_MOUNT:-pgdata}:/var/lib/postgresql/data
     networks:
       - ism_network
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?defina REDIS_PASSWORD no .env}
+      --maxmemory 128mb
+      --maxmemory-policy allkeys-lru
+    environment:
+      # Só para o healthcheck; o redis-server recebe a senha pelo --requirepass acima.
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - redis_network # rede interna (sem rota externa); sem "ports:" -> não publicado no host
 
   api:
     build:
@@ -21,19 +40,28 @@ services:
       dockerfile: Dockerfile.api
     restart: always
     depends_on:
-      - postgres
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_healthy
     environment:
-      # Sobrescreve o DATABASE_URL para apontar para o contêiner interno do postgres
-      - DATABASE_URL=postgresql://ism_user:ism_password@postgres:5432/ismfinance
+      # API: ism_app / ism_admin / ism_owner. Superuser (ism_user) só no one-shot de migrate.
+      - DATABASE_URL=postgresql://ism_app:${ISM_APP_PASSWORD:-${DB_PASSWORD}}@postgres:5432/ismfinance
+      - DATABASE_ADMIN_URL=postgresql://ism_admin:${ISM_ADMIN_PASSWORD:-${DB_PASSWORD}}@postgres:5432/ismfinance
+      - DATABASE_OWNER_URL=postgresql://ism_owner:${ISM_OWNER_PASSWORD:-${DB_PASSWORD}}@postgres:5432/ismfinance
+      - ISM_APP_PASSWORD=${ISM_APP_PASSWORD:-${DB_PASSWORD}}
+      - ISM_ADMIN_PASSWORD=${ISM_ADMIN_PASSWORD:-${DB_PASSWORD}}
+      - ISM_OWNER_PASSWORD=${ISM_OWNER_PASSWORD:-${DB_PASSWORD}}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?defina REDIS_PASSWORD no .env}@redis:6379
       - PORT=5000
       - NODE_ENV=production
       - RUN_LOCAL=true
+      - ISM_DISCO_CIFRADO=${ISM_DISCO_CIFRADO:-0}
     env_file:
       - .env # Carrega os demais segredos como SMTP e JWT_SECRET
-    ports:
-      - "${API_PORT:-5007}:5000" # Exposto localmente, útil para debug direto
     networks:
       - ism_network
+      - redis_network
 
   web:
     build:
@@ -43,7 +71,7 @@ services:
     depends_on:
       - api
     ports:
-      - "${WEB_PORT:-85}:80" # Mapeia a porta dinâmica do host para a porta 80 do Nginx
+      - "${WEB_PORT:-85}:80" # O proxy reverso da VM acessa via 10.0.0.24:WEB_PORT
     networks:
       - ism_network
 
@@ -54,5 +82,8 @@ volumes:
 networks:
   ism_network:
     driver: bridge
+  redis_network:
+    driver: bridge
+    internal: true # sem saída para fora do Docker; só api e redis participam
   proxy-network:
     external: true

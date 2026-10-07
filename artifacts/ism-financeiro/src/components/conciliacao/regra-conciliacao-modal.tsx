@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useEffect, useMemo, useState} from "react";
 import {createPortal} from "react-dom";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
@@ -7,6 +8,7 @@ import {cn} from "@/lib/utils";
 import {Loader2, X, Pencil, Trash2} from "lucide-react";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
+import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
 import {RequiresPermission} from "@/components/auth/requires-permission";
 import {PERM} from "@/lib/permissoes";
 import {ParceiroCombobox} from "@/components/shared/parceiro-combobox";
@@ -47,6 +49,7 @@ type RegraConciliacaoModalProps = {
         natureza?: "entrada" | "saida";
         conta_id?: number | null;
     };
+    variant?: "modal" | "page";
 };
 
 function labelTipo(natureza: string): string {
@@ -104,7 +107,9 @@ const EMPTY_FORM = {
     formaPagamento: "",
 };
 
-export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: RegraConciliacaoModalProps) {
+export function RegraConciliacaoModal({open, onClose, onSuccess, prefill, variant = "modal"}: RegraConciliacaoModalProps) {
+    const asPage = variant === "page";
+    const ativo = open || asPage;
     const {toast} = useToast();
     const queryClient = useQueryClient();
     const {confirm, ConfirmDialogProps} = useConfirm();
@@ -142,34 +147,79 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
         setFormaPagamento(row.forma_pagamento ?? "");
     }
 
+    function isFormDirty() {
+        if (editItem) {
+            return (
+                textoGatilho !== editItem.texto_gatilho ||
+                textoExato !== (editItem.tipo_match === "exato") ||
+                natureza !== editItem.natureza ||
+                planoContaId !== (editItem.plano_conta_id != null ? String(editItem.plano_conta_id) : "") ||
+                parceiroId !== (editItem.parceiro_id != null ? String(editItem.parceiro_id) : "") ||
+                departamentoId !== (editItem.departamento_id != null ? String(editItem.departamento_id) : "") ||
+                formaPagamento !== (editItem.forma_pagamento ?? "")
+            );
+        }
+        const gatilhoInicial = prefill?.texto_gatilho ?? "";
+        const naturezaInicial = prefill?.natureza ?? "saida";
+        return (
+            textoGatilho !== gatilhoInicial ||
+            textoExato ||
+            natureza !== naturezaInicial ||
+            planoContaId !== "" ||
+            parceiroId !== "" ||
+            departamentoId !== "" ||
+            formaPagamento !== ""
+        );
+    }
+
+    async function handleRequestClose() {
+        if (asPage) {
+            if (isFormDirty()) {
+                const ok = await confirm(DISCARD_PROMPT);
+                if (!ok) return;
+            }
+            applyPrefill();
+            return;
+        }
+        if (isFormDirty()) {
+            const ok = await confirm(DISCARD_PROMPT);
+            if (!ok) return;
+        }
+        onClose();
+    }
+
+    useEscapeClose(ativo && !asPage && !parceiroSubModal && !ConfirmDialogProps.open, () => {
+        void handleRequestClose();
+    }, 60);
+
     useEffect(() => {
-        if (!open) return;
+        if (!ativo) return;
         applyPrefill();
-    }, [open, prefill?.texto_gatilho, prefill?.natureza, prefill?.conta_id]);
+    }, [ativo, prefill?.texto_gatilho, prefill?.natureza, prefill?.conta_id]);
 
     const {data: regras = [], isLoading: loadingRegras} = useQuery<RegraConciliacaoItem[]>({
-        queryKey: ["regras-conciliacao"],
+        queryKey: tenantQueryKey("regras-conciliacao"),
         queryFn: () => fetchApiData<RegraConciliacaoItem[]>("/regras-conciliacao"),
-        enabled: open,
+        enabled: ativo,
     });
     const {data: parceiros = [], isFetching: isFetchingParceiros} = useQuery<ParceiroRow[]>({
-        queryKey: ["parceiros-modal", searchParceiro],
+        queryKey: tenantQueryKey("parceiros-modal", searchParceiro),
         queryFn: () => {
             const qs = new URLSearchParams({page: "1", limit: "20"});
             if (searchParceiro.trim()) qs.set("search", searchParceiro.trim());
             return fetchApiData<ParceiroRow[]>(`/parceiros?${qs.toString()}`);
         },
-        enabled: open,
+        enabled: ativo,
     });
     const {data: planoContas = []} = useQuery<PlanoContaOption[]>({
-        queryKey: ["plano-contas-modal"],
+        queryKey: tenantQueryKey("plano-contas-modal"),
         queryFn: () => fetchApiData<PlanoContaOption[]>("/plano-contas"),
-        enabled: open,
+        enabled: ativo,
     });
     const {data: departamentos = []} = useQuery<DepartamentoOption[]>({
-        queryKey: ["departamentos-modal"],
+        queryKey: tenantQueryKey("departamentos-modal"),
         queryFn: () => fetchApiData<DepartamentoOption[]>("/departamentos"),
-        enabled: open,
+        enabled: ativo,
     });
 
     const listaPlanoContas = useMemo(() => {
@@ -240,7 +290,7 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
                 : fetchApiData("/regras-conciliacao", {method: "POST", body: JSON.stringify(payload)});
         },
         onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["regras-conciliacao"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("regras-conciliacao")});
             toast({
                 title: editItem ? "Regra atualizada" : "Regra criada",
                 description: editItem
@@ -262,7 +312,7 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
     const deleteMutation = useMutation({
         mutationFn: (id: number) => fetchApiData(`/regras-conciliacao/${id}`, {method: "DELETE"}),
         onSuccess: (_data, id) => {
-            void queryClient.invalidateQueries({queryKey: ["regras-conciliacao"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("regras-conciliacao")});
             if (editItem?.id === id) applyPrefill();
             toast({title: "Regra excluída", description: "A regra não será mais aplicada nas próximas importações."});
         },
@@ -285,7 +335,7 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
         if (ok) deleteMutation.mutate(row.id);
     }
 
-    if (!open) return null;
+    if (!ativo) return null;
 
     const inputCls =
         "w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-primary/50 transition-all placeholder:text-muted-foreground/30";
@@ -294,20 +344,26 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
         "w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-primary/50 transition-all appearance-none cursor-pointer [&>option]:bg-[#1a1c23]";
     const podeSalvar = textoGatilho.trim().length > 0 && !saveMutation.isPending;
 
-    return createPortal(
-        <div className="fixed inset-0 z-[60]">
-            <div className="fixed inset-0 bg-black/75 backdrop-blur-md"/>
+    const card = (
             <div
-                className="fixed left-[50%] top-[4%] -translate-x-[50%] translate-y-0 bg-[#121417] border border-white/10 rounded-2xl w-[calc(100%-2rem)] max-w-6xl shadow-2xl flex flex-col max-h-[92vh]">
+                className={cn(
+                    "bg-[#121417] border border-white/10 rounded-2xl shadow-2xl flex flex-col",
+                    asPage ? "w-full" : "relative w-full max-w-6xl max-h-[90vh]",
+                )}
+            >
                 <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 shrink-0">
-                    <h2 className="text-base font-bold text-white">Cadastro Texto Conciliação</h2>
+                    <h2 className="text-base font-bold text-white">
+                        {asPage ? "Cadastro de regras" : "Cadastro Texto Conciliação"}
+                    </h2>
+                    {!asPage && (
                     <button
                         type="button"
-                        onClick={onClose}
+                        onClick={() => void handleRequestClose()}
                         className="p-2 rounded-xl text-muted-foreground hover:bg-white/5 hover:text-white transition-colors"
                     >
                         <X className="w-5 h-5"/>
                     </button>
+                    )}
                 </div>
 
                 <form
@@ -477,10 +533,10 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
                     <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/5 shrink-0">
                         <button
                             type="button"
-                            onClick={onClose}
+                            onClick={() => void handleRequestClose()}
                             className="px-6 py-2.5 rounded-xl border border-white/10 text-sm font-medium text-white hover:bg-white/5"
                         >
-                            Cancelar
+                            {asPage ? "Limpar" : "Cancelar"}
                         </button>
                         <RequiresPermission
                             permission={editItem ? PERM.REGRAS_CONCILIACAO_EDITAR : PERM.REGRAS_CONCILIACAO_CRIAR}>
@@ -496,6 +552,10 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
                     </div>
                 </form>
             </div>
+    );
+
+    const extras = (
+        <>
             <ConfirmDialog {...ConfirmDialogProps} />
             {parceiroSubModal && (
                 <NovoParceiroModal
@@ -503,10 +563,27 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill}: Regra
                     initialData={parceiroSubModal.mode === "edit" ? parceiroSubModal.data : null}
                     onClose={() => setParceiroSubModal(null)}
                     onSaved={() => {
-                        void queryClient.invalidateQueries({queryKey: ["parceiros-modal"]});
+                        void queryClient.invalidateQueries({queryKey: tenantQueryKey("parceiros-modal")});
                     }}
                 />
             )}
+        </>
+    );
+
+    if (asPage) {
+        return (
+            <>
+                {card}
+                {extras}
+            </>
+        );
+    }
+
+    return createPortal(
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/75 backdrop-blur-md"/>
+            {card}
+            {extras}
         </div>,
         document.body,
     );

@@ -1,10 +1,10 @@
 /**
- * Token Service — emissão e verificação de tokens JWT.
+ * Token Service -> emissão e verificação de tokens JWT.
  *
  * Access Token  -> JWE (dir / A256GCM, 15 min): payload criptografado com
  *   permissions[] embutidas, permitindo autorização stateless sem I/O de banco.
  *
- * Refresh Token -> JWS (HS256, 7 dias): payload mínimo { sub, email }.
+ * Refresh Token -> JWS (HS256, 7 dias): payload mínimo { sub, email, empresa_id }.
  *   Permissões são re-consultadas no banco a cada /auth/refresh para garantir
  *   frescor quando há alterações de papel após a emissão do token.
  *
@@ -18,7 +18,7 @@ import crypto from "crypto";
 
 export const ACCESS_TOKEN_TTL = 15 * 60;
 export const REFRESH_TOKEN_TTL = 7 * 24 * 60 * 60;
-export const PURPOSE_TOKEN_TTL = 60 * 60; // 1 h — setup e reset de senha
+export const PURPOSE_TOKEN_TTL = 60 * 60; // 1 h -> setup e reset de senha
 
 /**
  * Deriva 256 bits a partir de uma string via SHA-256.
@@ -46,22 +46,37 @@ const getPurposeKey = (): Uint8Array => {
     return deriveKey(`purpose:${raw}`);
 };
 
-/** Payload do Access Token JWE — carrega permissões para autorização stateless. */
+/** Payload do Access Token JWE -> carrega permissões e a empresa ativa da sessão. */
 export interface AccessTokenPayload {
     sub: string;
     email: string;
     permissions: string[];
+    empresa_id: number;
+    /**
+     * NOVO — Card 2 (Permissões). Único bit que concede acesso irrestrito a
+     * TODAS as empresas. Substitui o antigo padrão de permissão curinga
+     * `"*"` em permissions[] — ver withPermission.ts e withSuperadmin.ts.
+     */
+    superadmin: boolean;
+    /**
+     * Instante de emissão (epoch, segundos). Preenchido apenas por
+     * `verifyAccessToken`; ignorado em `signAccessToken` (o `setIssuedAt()` define o valor).
+     * Usado pela denylist de sessão no `withAuth` (iat <= revogadoEm => 401).
+     */
+    iat?: number;
 }
 
 /**
  * Emite um Access Token JWE com permissões embutidas no payload criptografado.
- * O conteúdo é opaco para intermediários — apenas o servidor pode descriptografar.
+ * O conteúdo é opaco para intermediários -> apenas o servidor pode descriptografar.
  */
 export const signAccessToken = async (payload: AccessTokenPayload): Promise<string> =>
     new EncryptJWT({
         sub: payload.sub,
         email: payload.email,
         permissions: payload.permissions,
+        empresa_id: payload.empresa_id,
+        superadmin: payload.superadmin,
     })
         .setProtectedHeader({alg: "dir", enc: "A256GCM"})
         .setIssuedAt()
@@ -70,7 +85,7 @@ export const signAccessToken = async (payload: AccessTokenPayload): Promise<stri
         .setAudience("ism-finance-api")
         .encrypt(getEncryptKey());
 
-/** Descriptografa e valida um Access Token JWE. O(1) — zero I/O de banco. */
+/** Descriptografa e valida um Access Token JWE. O(1) -> zero I/O de banco. */
 export const verifyAccessToken = async (token: string): Promise<AccessTokenPayload> => {
     const {payload} = await jwtDecrypt(token, getEncryptKey(), {
         issuer: "ism-finance",
@@ -80,20 +95,28 @@ export const verifyAccessToken = async (token: string): Promise<AccessTokenPaylo
     const sub = payload.sub as string | undefined;
     const email = payload.email as string | undefined;
     const permissions = payload.permissions as unknown;
+    const empresaRaw = payload.empresa_id as unknown;
+    const empresa_id = typeof empresaRaw === "number" ? empresaRaw : Number(empresaRaw);
+    const superadmin = payload.superadmin === true;
+    const iat = typeof payload.iat === "number" ? payload.iat : undefined;
 
     if (!sub || !email) throw new Error("Payload do token inválido: sub ou email ausente.");
+    if (!Number.isInteger(empresa_id) || empresa_id <= 0) {
+        throw new Error("Payload do token inválido: empresa_id ausente.");
+    }
 
     const safePermissions = Array.isArray(permissions)
         ? (permissions as unknown[]).filter((p): p is string => typeof p === "string")
         : [];
 
-    return {sub, email, permissions: safePermissions};
+    return {sub, email, permissions: safePermissions, empresa_id, superadmin, iat};
 };
 
-/** Payload mínimo do Refresh Token JWS — sem permissões por design. */
+/** Payload mínimo do Refresh Token JWS -> sem permissões por design. */
 export interface RefreshTokenPayload {
     sub: string;
     email: string;
+    empresa_id: number;
 }
 
 /**
@@ -105,7 +128,7 @@ export const signRefreshToken = async (
 ): Promise<{ token: string; tokenHash: string; expiresAt: Date }> => {
     const expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL * 1000);
 
-    const token = await new SignJWT({sub: payload.sub, email: payload.email})
+    const token = await new SignJWT({sub: payload.sub, email: payload.email, empresa_id: payload.empresa_id})
         .setProtectedHeader({alg: "HS256"})
         .setIssuedAt()
         .setExpirationTime(`${REFRESH_TOKEN_TTL}s`)
@@ -127,12 +150,17 @@ export const verifyRefreshToken = async (token: string): Promise<RefreshTokenPay
 
     const sub = payload.sub as string | undefined;
     const email = payload.email as string | undefined;
+    const empresaRaw = payload.empresa_id as unknown;
+    const empresa_id = typeof empresaRaw === "number" ? empresaRaw : Number(empresaRaw);
 
     if (!sub || !email) throw new Error("Payload do refresh token inválido.");
-    return {sub, email};
+    if (!Number.isInteger(empresa_id) || empresa_id <= 0) {
+        throw new Error("Payload do refresh token inválido: empresa_id ausente.");
+    }
+    return {sub, email, empresa_id};
 };
 
-export type TokenPurpose = "password_setup" | "password_reset";
+export type TokenPurpose = "password_setup" | "password_reset" | "empresa_select";
 
 export interface PurposeTokenPayload {
     sub: string;
@@ -144,18 +172,21 @@ export interface PurposeTokenPayload {
  * Emite um Purpose Token JWS de uso único (1 h) para fluxos de setup ou reset de senha.
  * O purpose é codificado no audience para prevenir reutilização cross-flow.
  */
-export const signPurposeToken = async (payload: PurposeTokenPayload): Promise<string> =>
+export const signPurposeToken = async (
+    payload: PurposeTokenPayload,
+    ttlSeconds: number = PURPOSE_TOKEN_TTL,
+): Promise<string> =>
     new SignJWT({sub: payload.sub, email: payload.email, purpose: payload.purpose})
         .setProtectedHeader({alg: "HS256"})
         .setIssuedAt()
-        .setExpirationTime(`${PURPOSE_TOKEN_TTL}s`)
+        .setExpirationTime(`${ttlSeconds}s`)
         .setIssuer("ism-finance")
         .setAudience(`ism-finance-${payload.purpose}`)
         .sign(getPurposeKey());
 
 /**
  * Verifica um Purpose Token JWS.
- * Rejeita tokens com purpose diferente do esperado — previne reutilização cross-flow.
+ * Rejeita tokens com purpose diferente do esperado -> previne reutilização cross-flow.
  */
 export const verifyPurposeToken = async (
     token: string,
@@ -177,11 +208,11 @@ export const verifyPurposeToken = async (
     return {sub, email, purpose};
 };
 
-/** SHA-256 de senhas legadas — usado exclusivamente para migração transparente no login. */
+/** SHA-256 de senhas legadas -> usado exclusivamente para migração transparente no login. */
 export const sha256Hash = (value: string): string =>
     crypto.createHash("sha256").update(value, "utf8").digest("hex");
 
-/** SHA-256 de um token opaco — usado para armazenar e comparar refresh tokens no banco. */
+/** SHA-256 de um token opaco -> usado para armazenar e comparar refresh tokens no banco. */
 export const hashToken = (token: string): string =>
     crypto.createHash("sha256").update(token, "utf8").digest("hex");
 

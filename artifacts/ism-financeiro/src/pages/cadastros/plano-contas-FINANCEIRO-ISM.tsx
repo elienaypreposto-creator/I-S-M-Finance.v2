@@ -1,14 +1,17 @@
-import {useMemo, useState} from "react";
+import {tenantQueryKey} from "@/lib/tenant-query";
+import {useState, useRef, useEffect} from "react";
 import {useForm} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {z} from "zod";
 import {PageHeader} from "@/components/shared/page-header";
-import {Plus, Edit, Trash2, Lock} from "lucide-react";
+import {Plus, Edit, Trash2, Lock, ChevronDown, ChevronUp, X} from "lucide-react";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
 import {fetchApi, fetchApiData} from "@/lib/api-config";
+import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
+import {ViewportOverlay} from "@/components/shared/viewport-overlay";
 
 type PlanoConta = {
     id: number;
@@ -52,10 +55,11 @@ function FormModal({
                        lockedTipo = false,
                        lockedCategoria = false,
                    }: FormModalProps) {
+    const {confirm, ConfirmDialogProps} = useConfirm();
     const {
         register,
         handleSubmit,
-        formState: {errors},
+        formState: {errors, isDirty},
     } = useForm<PlanoContaFormValues>({
         resolver: zodResolver(planoContaFormSchema),
         defaultValues: {
@@ -65,10 +69,22 @@ function FormModal({
         },
     });
 
+    async function handleRequestClose() {
+        if (isDirty) {
+            const ok = await confirm(DISCARD_PROMPT);
+            if (!ok) return;
+        }
+        onClose();
+    }
+
+    useEscapeClose(isOpen && !ConfirmDialogProps.open, () => {
+        void handleRequestClose();
+    });
+
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+        <ViewportOverlay>
             <div className="bg-[#1a1c23] border border-white/10 rounded-2xl w-full max-w-md p-6 shadow-2xl">
                 <h2 className="text-lg font-bold text-white mb-4">
                     {initialData?.id
@@ -151,7 +167,7 @@ function FormModal({
                     </div>
 
                     <div className="flex gap-3 pt-4">
-                        <button type="button" onClick={onClose}
+                        <button type="button" onClick={() => void handleRequestClose()}
                                 className="flex-1 py-2.5 rounded-xl border border-white/10 text-white hover:bg-white/5 transition-colors">Cancelar
                         </button>
                         <button type="submit"
@@ -160,7 +176,8 @@ function FormModal({
                     </div>
                 </form>
             </div>
-        </div>
+            <ConfirmDialog {...ConfirmDialogProps} />
+        </ViewportOverlay>
     );
 }
 
@@ -183,8 +200,39 @@ export default function PlanoContas() {
         lockedCategoria: false,
     });
 
+    type TipoPlano = "receita" | "custo" | "despesa";
+    const [tiposAbertos, setTiposAbertos] = useState<Record<TipoPlano, boolean>>({
+        receita: true,
+        custo: true,
+        despesa: true,
+    });
+    const [catsAbertas, setCatsAbertas] = useState<Record<string, boolean>>({});
+
+    // ── Banner de sucesso (topo, 3s, com botão de fechar) ──────────────────
+    // Usado apenas para a mensagem de cadastro de categoria/subcategoria,
+    // sem afetar o sistema de toast global (bottom-right) usado no resto do app.
+    const [successMessage, setSuccessMessage] = useState<string | null>(null);
+    const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const showSuccessBanner = (message: string) => {
+        if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
+        setSuccessMessage(message);
+        successTimeoutRef.current = setTimeout(() => setSuccessMessage(null), 3000);
+    };
+
+    const closeSuccessBanner = () => {
+        if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
+        setSuccessMessage(null);
+    };
+
+    useEffect(() => {
+        return () => {
+            if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
+        };
+    }, []);
+
     const {data: contas = [], isLoading} = useQuery<PlanoConta[]>({
-        queryKey: ['plano-contas'],
+        queryKey: tenantQueryKey('plano-contas'),
         queryFn: () => fetchApiData("/plano-contas")
     });
 
@@ -198,9 +246,9 @@ export default function PlanoContas() {
             });
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({queryKey: ['plano-contas']});
+            queryClient.invalidateQueries({queryKey: tenantQueryKey('plano-contas')});
             setModal(prev => ({...prev, open: false, data: null}));
-            toast({title: 'Sucesso', description: 'Categoria salva com sucesso.'});
+            showSuccessBanner('Categoria salva com sucesso.');
         },
         onError: (error) => {
             toast({variant: 'destructive', title: 'Erro', description: error.message});
@@ -210,7 +258,7 @@ export default function PlanoContas() {
     const deleteMutation = useMutation({
         mutationFn: (id: number) => fetchApi(`/plano-contas/${id}`, {method: 'DELETE'}),
         onSuccess: () => {
-            queryClient.invalidateQueries({queryKey: ['plano-contas']});
+            queryClient.invalidateQueries({queryKey: tenantQueryKey('plano-contas')});
             toast({title: 'Sucesso', description: 'Categoria removida.'});
         },
         onError: async (error: Error) => {
@@ -307,6 +355,14 @@ export default function PlanoContas() {
     const custos = contas.filter(c => c.tipo === 'custo');
     const despesas = contas.filter(c => c.tipo === 'despesa');
 
+    const isCatAberta = (tipo: string, categoria: string) =>
+        catsAbertas[`${tipo}:${normalizeText(categoria)}`] !== false;
+
+    const toggleCat = (tipo: string, categoria: string) => {
+        const key = `${tipo}:${normalizeText(categoria)}`;
+        setCatsAbertas((prev) => ({...prev, [key]: prev[key] === false}));
+    };
+
     // Agrupa por categoria normalizada
     const groupByCategoriaOrdenado = (items: PlanoConta[]) => {
         const grouped: Record<string, { label: string; items: PlanoConta[] }> = {};
@@ -331,18 +387,30 @@ export default function PlanoContas() {
             .map(group => [group.label, group.items] as [string, PlanoConta[]]);
     };
 
-    const renderSection = (title: string, tipoCode: string, colorConfig: any, items: PlanoConta[], tipoDef: string) => {
+    const renderSection = (title: string, tipoCode: string, colorConfig: any, items: PlanoConta[], tipoDef: TipoPlano) => {
         const groupedEntries = groupByCategoriaOrdenado(items);
+        const tipoAberto = tiposAbertos[tipoDef];
 
         return (
             <div className={`glass-panel rounded-2xl overflow-hidden ${colorConfig.border}`}>
                 <div
                     className={`${colorConfig.bg} p-4 border-b ${colorConfig.borderHeader} flex justify-between items-center`}>
-                    <h3 className={`font-bold ${colorConfig.text}`}>{title}</h3>
+                    <button
+                        type="button"
+                        onClick={() => setTiposAbertos((s) => ({...s, [tipoDef]: !s[tipoDef]}))}
+                        className={`flex items-center gap-2 font-bold ${colorConfig.text} hover:opacity-90 transition-opacity`}
+                        aria-expanded={tipoAberto}
+                    >
+                        {tipoAberto
+                            ? <ChevronUp className="w-4 h-4 shrink-0"/>
+                            : <ChevronDown className="w-4 h-4 shrink-0"/>}
+                        <h3>{title}</h3>
+                    </button>
                     <span
                         className={`text-xs ${colorConfig.bgBadge} ${colorConfig.textBadge} px-2 py-1 rounded`}>Grupo {tipoCode}</span>
                 </div>
 
+                {tipoAberto && (
                 <div className="p-4 space-y-4">
                     {isLoading ? (
                         <div className="text-sm text-muted-foreground animate-pulse p-2">Carregando...</div>
@@ -350,11 +418,23 @@ export default function PlanoContas() {
                         <div className="text-sm text-muted-foreground p-4 text-center">Nenhuma categoria
                             cadastrada</div>
                     ) : (
-                        groupedEntries.map(([categoria, subcontas]) => (
+                        groupedEntries.map(([categoria, subcontas]) => {
+                            const catAberta = isCatAberta(tipoDef, categoria);
+                            return (
                             <div key={categoria} className="space-y-1">
                                 <div
                                     className="flex items-center justify-between pl-2 mb-2 border-l-2 border-white/20 group/cat">
-                                    <div className="text-sm font-bold text-white/80 capitalize">{categoria}</div>
+                                    <button
+                                        type="button"
+                                        onClick={() => toggleCat(tipoDef, categoria)}
+                                        className="flex items-center gap-1.5 text-sm font-bold text-white/80 capitalize hover:text-white transition-colors"
+                                        aria-expanded={catAberta}
+                                    >
+                                        {catAberta
+                                            ? <ChevronUp className="w-3.5 h-3.5 shrink-0 text-muted-foreground"/>
+                                            : <ChevronDown className="w-3.5 h-3.5 shrink-0 text-muted-foreground"/>}
+                                        {categoria}
+                                    </button>
                                     <button
                                         onClick={() => handleAddSubcategoria(categoria, tipoDef)}
                                         title="Adicionar subcategoria"
@@ -363,7 +443,7 @@ export default function PlanoContas() {
                                         <Plus className="w-3.5 h-3.5"/>
                                     </button>
                                 </div>
-                                {subcontas.map(cat => (
+                                {catAberta && subcontas.map(cat => (
                                     <div key={cat.id}
                                          className="p-3 bg-white/5 rounded-lg border border-white/5 flex justify-between items-center hover:bg-white/10 transition-colors group">
                      <span className="text-sm font-medium text-white pl-4 capitalize truncate max-w-[200px]">
@@ -383,7 +463,8 @@ export default function PlanoContas() {
                                     </div>
                                 ))}
                             </div>
-                        ))
+                            );
+                        })
                     )}
 
                     <button onClick={() => handleCreate(tipoDef)}
@@ -391,6 +472,7 @@ export default function PlanoContas() {
                         <Plus className="w-4 h-4"/> Adicionar Categoria
                     </button>
                 </div>
+                )}
             </div>
         );
     };
@@ -398,6 +480,24 @@ export default function PlanoContas() {
     return (
         <div className="space-y-6">
             <ConfirmDialog {...ConfirmDialogProps} />
+
+            {successMessage && (
+                <div className="fixed top-0 right-0 z-[100] w-full max-w-[420px] p-4 animate-in fade-in slide-in-from-top-full">
+                    <div className="group pointer-events-auto relative flex w-full items-center justify-between space-x-4 overflow-hidden rounded-md border bg-background text-foreground p-6 pr-8 shadow-lg">
+                        <div className="grid gap-1">
+                            <p className="text-sm font-semibold">Sucesso</p>
+                            <p className="text-sm opacity-90">{successMessage}</p>
+                        </div>
+                        <button
+                            onClick={closeSuccessBanner}
+                            className="absolute right-2 top-2 rounded-md p-1 text-foreground/50 opacity-100 transition-opacity hover:text-foreground focus:outline-none focus:ring-2"
+                            aria-label="Fechar"
+                        >
+                            <X className="h-4 w-4"/>
+                        </button>
+                    </div>
+                </div>
+            )}
 
             <PageHeader
                 title="Plano de Contas"

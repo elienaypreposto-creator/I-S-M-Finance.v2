@@ -1,0 +1,31 @@
+name: Schema migrations check
+
+on:
+  pull_request:
+    paths:
+      - "lib/db/src/schema/**"
+      - "lib/db/migrations/**"
+      - "lib/db/drizzle.config.ts"
+      - ".github/workflows/db-migrations.yml"
+
+jobs:
+  schema-needs-migration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Schema sem migration falha o CI
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          schema_changed=$(git diff --name-only "$BASE"...HEAD -- 'lib/db/src/schema/' || true)
+          mig_changed=$(git diff --name-only "$BASE"...HEAD -- 'lib/db/migrations/' || true)
+          if [ -n "$schema_changed" ] && [ -z "$mig_changed" ]; then
+            echo "::error::Alteração em lib/db/src/schema/ sem migration versionada em lib/db/migrations/."
+            echo "Gere o SQL no mesmo PR: pnpm --filter @workspace/db run db:generate"
+            echo "Arquivos de schema:"
+            echo "$schema_changed"
+            exit 1
+          fi
+          echo "OK - schema e migrations alinhados (ou só migrations mudaram)."

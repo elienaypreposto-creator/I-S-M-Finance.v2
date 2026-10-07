@@ -1,91 +1,217 @@
-import {useState, useEffect, useCallback} from "react";
-import {fetchApi, authStorage} from "@/lib/api-config";
+import {createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode} from "react";
+import {fetchApi, authStorage, refreshAccessToken} from "@/lib/api-config";
+import {nomeEmpresa, setCurrentEmpresaId} from "@/lib/tenant-query";
+import {queryClient} from "@/lib/query-client";
 
 export type AuthUser = {
     id: number;
     nome: string;
     email: string;
+    empresa_id?: number;
+    cargo?: string | null;
     bloqueado?: boolean;
     telefone?: string | null;
     celular?: string | null;
     ultimo_acesso?: string | null;
+    superadmin?: boolean;
+};
+
+export type EmpresaVinculo = {
+    id: number;
+    razao_social: string;
+    nome_fantasia: string | null;
+    slug: string;
+    papel: string;
+};
+
+export type EmpresaAtiva = {
+    id: number;
+    nome: string;
+    slug: string;
 };
 
 type MeResponse = {
     data: {
         user: AuthUser;
         permissoes?: string[];
+        empresas?: EmpresaVinculo[];
     };
 };
 
-export function useAuth() {
+// O refresh token não vem mais no body: está no cookie httpOnly.
+type SessionPayload = {
+    accessToken: string;
+    user: AuthUser;
+    permissoes?: string[];
+    empresa_id?: number;
+};
+
+type AuthContextValue = {
+    user: AuthUser | null;
+    permissions: string[];
+    empresas: EmpresaVinculo[];
+    empresaAtiva: EmpresaAtiva | null;
+    loading: boolean;
+    login: (accessToken: string, userData: AuthUser, perms?: string[], empresas?: EmpresaVinculo[]) => void;
+    logout: () => Promise<void>;
+    switchEmpresa: (empresaId: number) => Promise<void>;
+    hasPermission: (permission: string) => boolean;
+    isAuthenticated: boolean;
+};
+
+const AuthContext = createContext<AuthContextValue | null>(null);
+
+function toEmpresaAtiva(empresas: EmpresaVinculo[], empresaId: number | undefined): EmpresaAtiva | null {
+    if (!empresaId) return null;
+    const found = empresas.find((e) => e.id === empresaId);
+    if (!found) {
+        return {id: empresaId, nome: `Empresa ${empresaId}`, slug: ""};
+    }
+    return {id: found.id, nome: nomeEmpresa(found), slug: found.slug};
+}
+
+export function AuthProvider({children}: {children: ReactNode}) {
     const [user, setUser] = useState<AuthUser | null>(null);
     const [permissions, setPermissions] = useState<string[]>([]);
+    const [empresas, setEmpresas] = useState<EmpresaVinculo[]>([]);
     const [loading, setLoading] = useState(true);
 
-    const login = (accessToken: string, refreshToken: string, userData: AuthUser, perms: string[] = []) => {
-        authStorage.setTokens(accessToken, refreshToken);
-        setUser(userData);
-        setPermissions(perms);
-    };
+    const applySession = useCallback(
+        (userData: AuthUser, perms: string[] = [], vinculos?: EmpresaVinculo[]) => {
+            setUser(userData);
+            setPermissions(perms);
+            if (vinculos) setEmpresas(vinculos);
+            setCurrentEmpresaId(userData.empresa_id);
+        },
+        [],
+    );
 
-    const logout = async () => {
-        const refreshToken = authStorage.getRefreshToken();
-
-        if (refreshToken) {
-            try {
-                await fetchApi("/auth/logout", {
-                    method: "POST",
-                    body: JSON.stringify({refreshToken}),
-                });
-            } catch {
-                // Best-effort
+    const login = useCallback(
+        (
+            accessToken: string,
+            userData: AuthUser,
+            perms: string[] = [],
+            vinculos: EmpresaVinculo[] = [],
+        ) => {
+            authStorage.setAccessToken(accessToken);
+            applySession(userData, perms, vinculos);
+            if (vinculos.length === 0) {
+                void fetchApi<MeResponse>("/auth/me")
+                    .then((res) => {
+                        if (res?.data?.user) {
+                            applySession(
+                                res.data.user,
+                                Array.isArray(res.data.permissoes) ? res.data.permissoes : perms,
+                                Array.isArray(res.data.empresas) ? res.data.empresas : [],
+                            );
+                        }
+                    })
+                    .catch(() => undefined);
             }
-        }
+        },
+        [applySession],
+    );
 
+    const logout = useCallback(async () => {
+        try {
+            // O cookie do refresh vai sozinho; o servidor revoga o registro e limpa o cookie
+            await fetchApi("/auth/logout", {method: "POST"});
+        } catch {
+            // best-effort
+        }
         authStorage.clearTokens();
         setUser(null);
         setPermissions([]);
+        setEmpresas([]);
+        setCurrentEmpresaId(0);
+        queryClient.clear();
         window.location.href = "/login";
-    };
+    }, []);
+
+    const switchEmpresa = useCallback(async (empresaId: number) => {
+        const res = await fetchApi<{data: SessionPayload}>("/auth/switch-empresa", {
+            method: "POST",
+            body: JSON.stringify({empresa_id: empresaId}),
+        });
+        const {accessToken, user: nextUser, permissoes, empresa_id} = res.data;
+        if (!accessToken || !nextUser) {
+            throw new Error("Resposta do servidor inválida.");
+        }
+        const merged = {...nextUser, empresa_id: nextUser.empresa_id ?? empresa_id};
+        authStorage.setAccessToken(accessToken);
+        applySession(merged, Array.isArray(permissoes) ? permissoes : []);
+        queryClient.clear();
+        window.location.assign("/");
+    }, [applySession]);
 
     const hasPermission = useCallback(
         (permission: string) => {
             if (!user) return false;
-            return permissions.includes("*") || permissions.includes(permission);
+            if (user.superadmin) return true;
+            return permissions.includes(permission);
         },
         [user, permissions],
     );
 
+    // Ao abrir a aplicação: o access token não persiste, então obtém um novo via
+    // refresh (cookie httpOnly enviado automaticamente). Sem cookie válido → login.
     useEffect(() => {
-        const token = authStorage.getAccessToken();
-        if (!token) {
-            setLoading(false);
-            return;
-        }
+        void (async () => {
+            const token = await refreshAccessToken();
+            if (!token) {
+                setLoading(false);
+                return;
+            }
 
-        fetchApi<MeResponse>("/auth/me")
-            .then((res) => {
+            try {
+                const res = await fetchApi<MeResponse>("/auth/me");
                 if (res?.data?.user) {
-                    setUser(res.data.user);
-                    setPermissions(Array.isArray(res.data.permissoes) ? res.data.permissoes : []);
+                    applySession(
+                        res.data.user,
+                        Array.isArray(res.data.permissoes) ? res.data.permissoes : [],
+                        Array.isArray(res.data.empresas) ? res.data.empresas : [],
+                    );
                 }
-            })
-            .catch(() => {
+            } catch {
                 authStorage.clearTokens();
                 setUser(null);
                 setPermissions([]);
-            })
-            .finally(() => setLoading(false));
-    }, []);
+                setEmpresas([]);
+                setCurrentEmpresaId(0);
+            } finally {
+                setLoading(false);
+            }
+        })();
+    }, [applySession]);
 
-    return {
-        user,
-        permissions,
-        loading,
-        login,
-        logout,
-        hasPermission,
-        isAuthenticated: !!user,
-    };
+    const empresaAtiva = useMemo(
+        () => toEmpresaAtiva(empresas, user?.empresa_id),
+        [empresas, user?.empresa_id],
+    );
+
+    const value = useMemo<AuthContextValue>(
+        () => ({
+            user,
+            permissions,
+            empresas,
+            empresaAtiva,
+            loading,
+            login,
+            logout,
+            switchEmpresa,
+            hasPermission,
+            isAuthenticated: !!user,
+        }),
+        [user, permissions, empresas, empresaAtiva, loading, login, logout, switchEmpresa, hasPermission],
+    );
+
+    return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export function useAuth(): AuthContextValue {
+    const ctx = useContext(AuthContext);
+    if (!ctx) {
+        throw new Error("useAuth deve ser usado dentro de AuthProvider");
+    }
+    return ctx;
 }

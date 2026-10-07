@@ -9,7 +9,8 @@
     "build": "tsx ./build.ts --no-typecheck || echo 'Build finished with warnings'",
     "build:direct": "tsx ./build.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test src/utils/money.test.ts src/utils/conciliacao-vincular.test.ts src/utils/extrato-hash.test.ts src/utils/regras-match.test.ts"
+    "senhas:notificar": "tsx --env-file=../../.env ./src/scripts/notificar-reset-legado.ts",
+    "test": "tsx --test src/utils/money.test.ts src/utils/conciliacao-vincular.test.ts src/utils/extrato-hash.test.ts src/utils/regras-match.test.ts src/utils/permissoes-grant.test.ts src/utils/safe-error.test.ts src/utils/response.test.ts src/middlewares/request-id.test.ts src/middlewares/logger-request-id.test.ts src/lib/tenant-scope.test.ts src/lib/audit-scope.test.ts src/lib/audit-routes.test.ts src/lib/tenant-als.test.ts src/lib/rls-service.test.ts src/utils/password-policy.test.ts src/domains/lgpd/lgpd-empresa.test.ts"
   },
   "dependencies": {
     "@workspace/api-zod": "workspace:*",
@@ -20,21 +21,25 @@
     "dotenv": "^17.4.2",
     "drizzle-orm": "catalog:",
     "express": "^5",
+    "express-rate-limit": "^8.7.0",
+    "ioredis": "^6.0.0",
     "jose": "^5.10.0",
     "jsonwebtoken": "^9.0.3",
-    "multer": "1.4.5-lts.2",
-    "nodemailer": "^6.9.16",
+    "multer": "^2.0.2",
+    "nodemailer": "^7.0.0",
+    "rate-limit-redis": "^6.0.1",
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@types/bcryptjs": "^2.4.6",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
-    "@types/multer": "^1.4.13",
+    "@types/multer": "^2.0.0",
     "@types/node": "catalog:",
-    "@types/nodemailer": "^6.4.17",
+    "@types/nodemailer": "^7.0.0",
     "cross-env": "^10.1.0",
     "esbuild": "^0.27.3",
     "tsx": "catalog:"

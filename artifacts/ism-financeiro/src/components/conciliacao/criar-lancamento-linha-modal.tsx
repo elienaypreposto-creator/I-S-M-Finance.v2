@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useEffect, useState} from "react";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
@@ -5,6 +6,10 @@ import {fetchApiData} from "@/lib/api-config";
 import {formatCurrency} from "@/lib/utils";
 import {Loader2, X, Plus} from "lucide-react";
 import {invalidateRelated} from "@/App";
+import {ConfirmDialog} from "@/components/shared/confirm-dialog";
+import {useConfirm} from "@/hooks/use-confirm";
+import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
+import {ViewportOverlay} from "@/components/shared/viewport-overlay";
 
 type ParceiroOption = { id: number; nome: string };
 type PlanoContaOption = { id: number; categoria: string; subcategoria: string | null };
@@ -26,14 +31,14 @@ type CriarLancamentoLinhaModalProps = {
 };
 
 /**
- * RN-D3 (Card [+]): cria um lançamento a partir de uma linha do extrato sem
- * lançamento correspondente (ex.: antecipação de lucro do sócio). Vem
- * pré-preenchido com data/valor/natureza/descrição da linha; ao salvar, já
- * nasce vinculado e quitado por ela - sem passo extra de vincular.
+ * Cria um lançamento a partir de uma linha do extrato sem correspondente.
+ * Pré-preenchido com data/valor/natureza/descrição; ao salvar, nasce
+ * vinculado e quitado por ela.
  */
 export function CriarLancamentoLinhaModal({open, onClose, onSuccess, extratoId, linha}: CriarLancamentoLinhaModalProps) {
     const {toast} = useToast();
     const queryClient = useQueryClient();
+    const {confirm, ConfirmDialogProps} = useConfirm();
 
     const tipo = linha.tipoMovimento === "credito" ? "CR" : "CP";
 
@@ -58,25 +63,25 @@ export function CriarLancamentoLinhaModal({open, onClose, onSuccess, extratoId, 
     }, [open, linha.id]);
 
     const {data: parceiros = []} = useQuery<ParceiroOption[]>({
-        queryKey: ["parceiros-criar-lancamento-linha"],
+        queryKey: tenantQueryKey("parceiros-criar-lancamento-linha"),
         queryFn: () => fetchApiData<ParceiroOption[]>("/parceiros?limit=200"),
         enabled: open,
     });
 
     const {data: planoContas = []} = useQuery<PlanoContaOption[]>({
-        queryKey: ["plano-contas-criar-lancamento-linha"],
+        queryKey: tenantQueryKey("plano-contas-criar-lancamento-linha"),
         queryFn: () => fetchApiData<PlanoContaOption[]>("/plano-contas"),
         enabled: open,
     });
 
     const {data: departamentos = []} = useQuery<DepartamentoOption[]>({
-        queryKey: ["departamentos-criar-lancamento-linha"],
+        queryKey: tenantQueryKey("departamentos-criar-lancamento-linha"),
         queryFn: () => fetchApiData<DepartamentoOption[]>("/departamentos"),
         enabled: open,
     });
 
     const {data: centrosCusto = []} = useQuery<CentroCustoOption[]>({
-        queryKey: ["centros-custo-criar-lancamento-linha"],
+        queryKey: tenantQueryKey("centros-custo-criar-lancamento-linha"),
         queryFn: () => fetchApiData<CentroCustoOption[]>("/centros-custos"),
         enabled: open,
         retry: false,
@@ -104,7 +109,7 @@ export function CriarLancamentoLinhaModal({open, onClose, onSuccess, extratoId, 
             }),
         onSuccess: () => {
             invalidateRelated(queryClient, "conciliacao");
-            void queryClient.invalidateQueries({queryKey: ["conciliacao-extrato", extratoId]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("conciliacao-extrato", extratoId)});
             toast({
                 title: "Lançamento criado",
                 description: "A linha foi conciliada automaticamente com o novo lançamento.",
@@ -120,6 +125,27 @@ export function CriarLancamentoLinhaModal({open, onClose, onSuccess, extratoId, 
         },
     });
 
+    async function handleRequestClose() {
+        const vencimentoInicial = linha.dataMovimento ?? new Date().toISOString().slice(0, 10);
+        const dirty =
+            vencimento !== vencimentoInicial ||
+            descricao !== (linha.descricao ?? "") ||
+            parceiroId !== "" ||
+            planoContaId !== "" ||
+            departamentoId !== "" ||
+            centroCustoId !== "" ||
+            formaPagamento !== "";
+        if (dirty) {
+            const ok = await confirm(DISCARD_PROMPT);
+            if (!ok) return;
+        }
+        onClose();
+    }
+
+    useEscapeClose(open && !ConfirmDialogProps.open, () => {
+        void handleRequestClose();
+    }, 60);
+
     if (!open) return null;
 
     const inputCls =
@@ -127,7 +153,7 @@ export function CriarLancamentoLinhaModal({open, onClose, onSuccess, extratoId, 
     const labelCls = "text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1 block";
 
     return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 backdrop-blur-md p-4">
+        <ViewportOverlay className="z-[60] bg-black/75 backdrop-blur-md">
             <div className="bg-[#121417] border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]">
                 <div className="flex items-center justify-between p-5 border-b border-white/5 shrink-0">
                     <div className="flex items-center gap-3">
@@ -141,7 +167,7 @@ export function CriarLancamentoLinhaModal({open, onClose, onSuccess, extratoId, 
                             </p>
                         </div>
                     </div>
-                    <button type="button" onClick={onClose}
+                    <button type="button" onClick={() => void handleRequestClose()}
                             className="p-2 rounded-xl text-muted-foreground hover:bg-white/5 hover:text-white transition-colors">
                         <X className="w-5 h-5"/>
                     </button>
@@ -244,7 +270,7 @@ export function CriarLancamentoLinhaModal({open, onClose, onSuccess, extratoId, 
                     </div>
 
                     <div className="flex gap-3 pt-2">
-                        <button type="button" onClick={onClose}
+                        <button type="button" onClick={() => void handleRequestClose()}
                                 className="flex-1 py-2.5 rounded-xl border border-white/10 text-sm font-medium text-white hover:bg-white/5">
                             Cancelar
                         </button>
@@ -256,6 +282,7 @@ export function CriarLancamentoLinhaModal({open, onClose, onSuccess, extratoId, 
                     </div>
                 </form>
             </div>
-        </div>
+            <ConfirmDialog {...ConfirmDialogProps} />
+        </ViewportOverlay>
     );
 }

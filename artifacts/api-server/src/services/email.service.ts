@@ -252,7 +252,7 @@ export async function sendPasswordResetEmail(
     resetToken: string,
     originUrl: string,
 ): Promise<void> {
-    const link = `${originUrl}/auth/reset-password?token=${encodeURIComponent(resetToken)}`;
+    const link = `${originUrl}/redefinir-senha?token=${encodeURIComponent(resetToken)}`;
 
     await createTransporter().sendMail({
         from: FROM,
@@ -270,6 +270,45 @@ export async function sendPasswordResetEmail(
         <p style="color:#666;font-size:13px">
           Se não solicitou esta alteração, ignore este e-mail.<br>
           O link expira em 1 hora.
+        </p>
+      </div>`,
+    });
+}
+
+/** Aviso em massa: a senha antiga (hash legado) foi invalidada. Link válido por 24 h. */
+export async function sendLegacyPasswordNoticeEmail(
+    to: string,
+    nome: string,
+    resetToken: string,
+    originUrl: string,
+): Promise<void> {
+    const link = `${originUrl}/redefinir-senha?token=${encodeURIComponent(resetToken)}`;
+    const nomeSeguro = nome.replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]!));
+
+    await createTransporter().sendMail({
+        from: FROM,
+        to,
+        subject: "ISM Finance - Ação necessária: redefina sua senha",
+        text:
+            `Olá, ${nome}.\n\n` +
+            `Por segurança, a sua senha antiga foi invalidada: ela estava armazenada num formato antigo, ` +
+            `menos seguro do que o usado hoje, e por isso passou a ser considerada exposta.\n\n` +
+            `Crie uma nova senha pelo link abaixo (válido por 24 horas):\n${link}\n\n` +
+            `Se o link expirar, acesse a tela de login e use "Esqueci minha senha".`,
+        html: `
+      <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
+        <h2 style="color:#1a1a1a">Redefina a sua senha</h2>
+        <p>Olá, ${nomeSeguro}.</p>
+        <p>Por segurança, <strong>a sua senha antiga foi invalidada</strong>: ela estava armazenada num formato antigo,
+           menos seguro do que o usado hoje, e por isso passou a ser considerada exposta.</p>
+        <p>Crie uma nova senha para voltar a acessar o ISM Finance:</p>
+        <a href="${link}"
+           style="display:inline-block;margin:16px 0;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold">
+          Criar nova senha
+        </a>
+        <p style="color:#666;font-size:13px">
+          O link vale por 24 horas. Se expirar, use <em>Esqueci minha senha</em> na tela de login.<br>
+          Use 12 caracteres ou mais — uma frase longa é melhor que uma senha com símbolos.
         </p>
       </div>`,
     });

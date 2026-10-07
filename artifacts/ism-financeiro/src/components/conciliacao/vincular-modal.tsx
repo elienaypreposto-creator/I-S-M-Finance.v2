@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useEffect, useMemo, useRef, useState} from "react";
 import {createPortal} from "react-dom";
 import {useForm, useFieldArray, Controller, useWatch} from "react-hook-form";
@@ -13,15 +14,15 @@ import {
     type VincularFormValues,
 } from "@/validations/conciliacao-vincular.schema";
 import {formatValorBrInput, brMoneyDisplayToApiString} from "@/validations/lancamentos.schema";
+import {ConfirmDialog} from "@/components/shared/confirm-dialog";
+import {useConfirm} from "@/hooks/use-confirm";
+import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
 import {Loader2, X, Link2, AlertCircle, CheckCircle2, Pencil, Search} from "lucide-react";
 import {useAuth} from "@/hooks/use-auth";
 import {PERM} from "@/lib/permissoes";
 import {EditarLancamentoConciliacaoModal} from "@/components/conciliacao/editar-lancamento-modal";
 import {StatusBadge} from "@/components/shared/status-badge";
 import {invalidateRelated} from "@/App";
-// RN-D3: "Novo" - cria um lançamento a partir da linha de origem e já
-// vincula automaticamente. Função movida do botão [+] da tela de
-// conciliação para dentro deste modal.
 import {LancamentoModal, type LancamentoPrefill} from "@/components/lancamentos/lancamento-modal";
 
 export type LancamentoCompativel = {
@@ -30,14 +31,12 @@ export type LancamentoCompativel = {
     vencimento: string;
     descricao: string | null;
     valor: string | number;
-    /** Quitado antes deste vínculo - necessário para a fórmula de Modo B (1
-     *  lançamento) quando ele já tem quitação parcial/total anterior. Sem
-     *  isso o front calcula um "excedente" errado para lançamentos que já
-     *  têm status "pago"/"pago_parcial" (ver bug do card DEF-10). */
+    /** Quitado antes deste vínculo. Sem isto, o Modo B calcula excedente
+     *  em lançamentos que já estão pago / pago_parcial. */
     valor_quitado?: string | number | null;
     status: string;
     parceiro_id: number | null;
-    /** Nome do parceiro - usado na busca livre (RN-D4) e exibido no card. */
+    /** Nome do parceiro, usado na busca livre. */
     parceiro_nome?: string | null;
     plano_conta_id: number | null;
 };
@@ -66,9 +65,7 @@ type VincularModalProps = {
      *  localmente (ainda não salvo) - os vínculos reais no banco serão
      *  descartados no Salvar, então o preview também deve ignorá-los agora. */
     ignorarVinculosReais?: boolean;
-    /** Dados da linha de origem, usados para pré-preencher o formulário do
-     *  botão "Novo" (criar lançamento a partir desta linha - RN-D3, função
-     *  que antes vivia no botão [+] da tela de conciliação). */
+    /** Dados da linha de origem para pré-preencher o formulário "Novo". */
     tipoMovimento: string;
     dataMovimento: string | null;
     descricaoLinha: string | null;
@@ -133,6 +130,7 @@ function VincularFormBody({
                               onBuscarMais,
                               buscandoMais,
                               podeBuscarMais,
+                              bindRequestClose,
                           }: {
     extratoId: string;
     linhaId: number;
@@ -146,6 +144,7 @@ function VincularFormBody({
     onBuscarMais: () => void;
     buscandoMais: boolean;
     podeBuscarMais: boolean;
+    bindRequestClose?: (fn: () => void) => void;
 }) {
     const {toast} = useToast();
     const queryClient = useQueryClient();
@@ -219,8 +218,7 @@ function VincularFormBody({
         formState: {errors},
     } = form;
 
-    // RN-D4: quando "buscar mais lançamentos" traz itens novos, adiciona sem
-    // resetar o formulário (preserva seleções e valores já digitados).
+    // Itens novos da busca entram sem resetar seleções já digitadas.
     useEffect(() => {
         const idsNoForm = new Set(fields.map((f) => f.lancamento_id));
         const novos = lancamentos.filter((l) => !idsNoForm.has(l.id));
@@ -248,8 +246,28 @@ function VincularFormBody({
         [watchedItens],
     );
 
-    // RN-E1: mesma fórmula usada na validação (buildVincularFormSchema) -
-    // Modo A (2+) ou Modo B (1, considerando valor_quitado anterior).
+    const {confirm, ConfirmDialogProps} = useConfirm();
+
+    async function handleRequestClose() {
+        const dirty = selectedItens.length > 0 || Boolean(gerarParcial) || form.formState.isDirty;
+        if (dirty) {
+            const ok = await confirm(DISCARD_PROMPT);
+            if (!ok) return;
+        }
+        onClose();
+    }
+
+    useEffect(() => {
+        bindRequestClose?.(() => {
+            void handleRequestClose();
+        });
+    });
+
+    useEscapeClose(editarId == null && !ConfirmDialogProps.open, () => {
+        void handleRequestClose();
+    }, 60);
+
+    // Mesma fórmula da validação (buildVincularFormSchema).
     const {deltaCents, somaBasesCents, somaJurosCents} = useMemo(
         () => calcDeltaVincularCents(valorExtratoAbs, selectedItens, lancamentosValorById, lancamentosQuitadoById),
         [valorExtratoAbs, selectedItens, lancamentosValorById, lancamentosQuitadoById],
@@ -257,10 +275,7 @@ function VincularFormBody({
 
     const extratoCents = Math.round(Math.abs(Number(valorExtratoAbs) || 0) * 100);
 
-    // RN-E1/E2/E6: restante = Δ − Juros/Multa (Δ = extrato − bases).
-    // >0 gap no extrato (cobertura parcial OU alocar juros)
-    // <0 títulos > extrato (residual Modo A / pagamento parcial Modo B)
-    // =0 bate
+    // restante = delta - juros/multa. >0 gap; <0 residual; 0 fecha.
     const restanteCents = deltaCents != null ? deltaCents - somaJurosCents : null;
 
     const quitadoAnteriorCentsSelecionado =
@@ -292,9 +307,7 @@ function VincularFormBody({
                 gerarParcial &&
                 (selectedItens.length < 2 || Boolean(residuoIdSelecionado))));
 
-    // Auto-preenche Juros/Multa somente quando o usuário marca alocarSobraJuros
-    // e há exatamente 1 lançamento (RN-G2 / 1:1 com taxas). Sem a flag, deixa
-    // cobertura parcial (Modo A incremental).
+    // Juros/Multa só auto-preenche com 1 lançamento e alocarSobraJuros. Sem a flag, cobertura parcial.
     const [alocarSobraJuros, setAlocarSobraJuros] = useState(false);
 
     useEffect(() => {
@@ -454,7 +467,7 @@ function VincularFormBody({
                 String(formErrors.itens.message)) ||
             formErrors.residuo_lancamento_id?.message ||
             formErrors.gerar_parcial?.message ||
-            "Revise os campos do vínculo — a validação impediu o envio.";
+            "Revise os campos do vínculo - a validação impediu o envio.";
         toast({
             variant: "destructive",
             title: "Não foi possível confirmar",
@@ -476,7 +489,7 @@ function VincularFormBody({
             onSubmit={handleSubmit(onSubmit, (errs) => onInvalid(errs))}
             className="flex flex-col flex-1 min-h-0 overflow-hidden"
         >
-            {/* Lista: único filho que cresce e rola — precisa de min-h-0 no flex. */}
+            {/* Lista: único filho que cresce e rola - precisa de min-h-0 no flex. */}
             <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5">
                 <div className="space-y-2 py-4">
                     {fields.map((field, index) => {
@@ -524,16 +537,14 @@ function VincularFormBody({
                                                     <p
                                                         className="text-sm text-white font-medium mt-1 truncate"
                                                         title={l.descricao ?? ""}>
-                                                        {l.descricao ?? "—"}
+                                                        {l.descricao ?? "-"}
                                                     </p>
                                                     {l.parceiro_nome && (
                                                         <p className="text-[11px] text-muted-foreground truncate">
                                                             {l.parceiro_nome}
                                                         </p>
                                                     )}
-                                                    {/* Card 77: valor original + "Restante" (valor − valor_quitado) lado
-                                                        a lado - dá visibilidade de quanto do título já está
-                                                        comprometido com outras conciliações antes de selecionar. */}
+                                                    {/* Valor de face e restante (já comprometido noutras conciliações). */}
                                                     <p className="text-sm font-bold text-primary mt-0.5">
                                                         {formatCurrency(Number(l.valor))}
                                                         {quitadoAnteriorCents > 0 && (
@@ -544,10 +555,7 @@ function VincularFormBody({
                                                             </span>
                                                         )}
                                                     </p>
-                                                    {/* DEF-08/RN-E1: lançamento já com quitação anterior (ex.: status
-                                                        "Pago" buscado só para receber uma linha extra de juros) - mostra
-                                                        isso explicitamente, senão o usuário não entende por que o
-                                                        "Juros/Multa" pedido é maior que o valor de face do lançamento. */}
+                                                    {/* Quitação anterior visível: juros/multa pode superar o valor de face. */}
                                                     {quitadoAnteriorCents > 0 && (
                                                         <p className="text-[10px] text-amber-300/90 mt-0.5">
                                                             Já quitado: {formatCurrency(toMoney(quitadoAnteriorCents))}
@@ -632,11 +640,7 @@ function VincularFormBody({
                 </p>
             )}
 
-            {/* Barra de resumo em tempo real - recalcula a cada seleção/edição,
-                sem precisar de submit (RN-E1). Todo o cálculo roda em centavos
-                inteiros (extratoCents / somaBasesCents / restanteCents), e usa
-                a MESMA fórmula do backend (Modo A ou Modo B conforme o número
-                de lançamentos selecionados - ver calcDeltaVincularCents). */}
+            {/* Resumo em centavos, mesma fórmula do backend (calcDeltaVincularCents). */}
             <div className="shrink-0 border-t border-white/10 bg-black/40 px-5 py-3 space-y-3">
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center">
                     <div className="rounded-lg bg-white/5 px-2 py-2">
@@ -661,9 +665,7 @@ function VincularFormBody({
                             {formatCurrency(toMoney(somaJurosCents))}
                         </p>
                     </div>
-                    {/* RN-E1/E2/E6: valor restante, sempre visível e atualizado a
-                        cada clique - positivo = falta, negativo = excedente,
-                        zero = bate certinho. */}
+                    {/* Positivo = falta; negativo = excedente; zero = fecha. */}
                     <div
                         className={cn(
                             "rounded-lg px-2 py-2",
@@ -688,7 +690,7 @@ function VincularFormBody({
                                             : "text-amber-300",
                             )}>
                             {selectedItens.length === 0 || restanteCents === null
-                                ? "—"
+                                ? "-"
                                 : formatCurrency(toMoney(Math.abs(restanteCents)))}
                         </p>
                     </div>
@@ -703,7 +705,7 @@ function VincularFormBody({
                         className="flex items-center justify-center gap-2 rounded-lg bg-emerald-500/15 border border-emerald-500/30 px-3 py-2">
                         <CheckCircle2 className="w-4 h-4 text-emerald-300 shrink-0"/>
                         <p className="text-sm font-semibold text-emerald-200">
-                            ✓ Restante zerado — valores batem
+                            ✓ Restante zerado - valores batem
                         </p>
                     </div>
                 ) : showResidual ? (
@@ -729,7 +731,7 @@ function VincularFormBody({
                                         <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
                                             Cria lançamento pendente de{" "}
                                             {formatCurrency(toMoney(Math.abs(restanteCents ?? 0)))}{" "}
-                                            (pagamento parcial), com vencimento da origem — não
+                                            (pagamento parcial), com vencimento da origem - não
                                             editável.
                                         </p>
                                     </div>
@@ -768,7 +770,7 @@ function VincularFormBody({
                                                     <option
                                                         key={i.lancamento_id}
                                                         value={i.lancamento_id}>
-                                                        #{i.lancamento_id} · {l?.descricao ?? "—"} ·{" "}
+                                                        #{i.lancamento_id} · {l?.descricao ?? "-"} ·{" "}
                                                         {formatCurrency(Number(l?.valor ?? 0))}
                                                     </option>
                                                 );
@@ -793,8 +795,8 @@ function VincularFormBody({
                     <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2 space-y-2">
                         <p className="text-sm font-semibold text-amber-200 text-center">
                             {somaJurosCents > 0 && restanteCents === 0
-                                ? "Excedente alocado em Juros/Multa — valores batem"
-                                : `Falta ${formatCurrency(toMoney(restanteCents ?? 0))} para cobrir o extrato — você pode vincular agora e completar depois`}
+                                ? "Excedente alocado em Juros/Multa - valores batem"
+                                : `Falta ${formatCurrency(toMoney(restanteCents ?? 0))} para cobrir o extrato - você pode vincular agora e completar depois`}
                         </p>
                         {selectedItens.length === 1 && restanteCents !== 0 && (
                             <label className="flex items-start gap-3 cursor-pointer group">
@@ -823,7 +825,7 @@ function VincularFormBody({
                     </div>
                 ) : null}
 
-                {/* RN-D4: busca mais lançamentos enquanto o valor não bate; some assim que bater */}
+                {/* Busca mais lançamentos enquanto o valor não fecha. */}
                 {!valoresBatendo && podeBuscarMais && (
                     <div className="flex justify-center">
                         <button
@@ -845,7 +847,7 @@ function VincularFormBody({
             <div className="flex gap-3 p-5 border-t border-white/5 shrink-0">
                 <button
                     type="button"
-                    onClick={onClose}
+                    onClick={() => void handleRequestClose()}
                     className="flex-1 py-2.5 rounded-xl border border-white/10 text-sm font-medium text-white hover:bg-white/5">
                     Cancelar
                 </button>
@@ -876,10 +878,11 @@ function VincularFormBody({
                 onClose={() => setEditarId(null)}
                 onSaved={() => {
                     void queryClient.invalidateQueries({
-                        queryKey: ["conciliacao-buscar-lancamentos", linhaId],
+                        queryKey: tenantQueryKey("conciliacao-buscar-lancamentos", linhaId),
                     });
                 }}
             />
+            <ConfirmDialog {...ConfirmDialogProps} />
         </form>
     );
 }
@@ -902,10 +905,7 @@ export function VincularModal({
     const {toast} = useToast();
 
     const [diasJanela, setDiasJanela] = useState(DIAS_JANELA_INICIAL);
-    // RN-D4: campos de busca manual - descrição/parceiro (texto livre), valor
-    // e vencimento, além da janela de datas. "buscaAtiva"/"valorAtivo"/
-    // "vencimentoAtivo" só mudam ao clicar em Buscar, para não disparar uma
-    // requisição a cada tecla digitada.
+    // Só aplica busca/valor/vencimento ao clicar em Buscar (não a cada tecla).
     const [buscaTexto, setBuscaTexto] = useState("");
     const [buscaAtiva, setBuscaAtiva] = useState("");
     const [valorTexto, setValorTexto] = useState("");
@@ -913,13 +913,9 @@ export function VincularModal({
     const [vencimentoTexto, setVencimentoTexto] = useState("");
     const [vencimentoAtivo, setVencimentoAtivo] = useState("");
 
-    // RN-D3: "Novo" - abre o mesmo formulário completo de "Novo Lançamento"
-    // usado na tela de Lançamentos, pré-preenchido com tipo/vencimento/valor/
-    // descrição vindos da linha do extrato. Ao salvar, o lançamento é criado
-    // e automaticamente vinculado a esta linha (vincularAutoMutation) - sem
-    // passo extra manual. Essa função morava no botão [+] da tela de
-    // conciliação e foi movida para dentro deste modal.
+    // Formulário de novo lançamento, pré-preenchido pela linha do extrato.
     const [novoLancamentoOpen, setNovoLancamentoOpen] = useState(false);
+    const requestCloseRef = useRef(onClose);
 
     // Reseta a janela/busca sempre que uma linha diferente é aberta.
     useEffect(() => {
@@ -934,7 +930,7 @@ export function VincularModal({
     }, [linhaId]);
 
     const {data: lancamentos = [], isLoading, isFetching} = useQuery<LancamentoCompativel[]>({
-        queryKey: ["conciliacao-buscar-lancamentos", linhaId, diasJanela, buscaAtiva, valorAtivo, vencimentoAtivo],
+        queryKey: tenantQueryKey("conciliacao-buscar-lancamentos", linhaId, diasJanela, buscaAtiva, valorAtivo, vencimentoAtivo),
         queryFn: () => {
             const params = new URLSearchParams({
                 linha_id: String(linhaId),
@@ -948,13 +944,7 @@ export function VincularModal({
         enabled: open && linhaId > 0,
     });
 
-    // RN-D3: reaproveita o mesmo endpoint do fluxo de vincular manual (POST
-    // /conciliacoes/linhas/:id/vincular), sem desconto/juros e sem residuo -
-    // igual ao comportamento antigo do botão [+]. Regra de Ouro: o próprio
-    // lançamento nasce de fato (ele não tem "estado financeiro" até ser
-    // vinculado a algo), mas o VÍNCULO em si só é um preview - vira rascunho
-    // em memória (onDraftVincular) igual ao fluxo manual, só é persistido no
-    // Salvar/Conciliar do extrato.
+    // O lançamento nasce persistido; o vínculo fica em rascunho até Salvar/Conciliar.
     const vincularAutoMutation = useMutation({
         mutationFn: async ({lancamentoId, descricao}: { lancamentoId: number; descricao: string | null }) => {
             const payload: VincularPayload = {
@@ -1025,10 +1015,13 @@ export function VincularModal({
                 variant: "destructive",
                 title: "Lançamento criado, mas não foi possível vincular",
                 description: e instanceof Error
-                    ? `${e.message} — vincule manualmente pela lista abaixo.`
+                    ? `${e.message} - vincule manualmente pela lista abaixo.`
                     : "Vincule manualmente pela lista abaixo.",
             }),
     });
+
+    const showingFormBody = open && !isLoading && lancamentos.length > 0;
+    useEscapeClose(open && !novoLancamentoOpen && !showingFormBody, onClose, 60);
 
     if (!open) return null;
 
@@ -1045,15 +1038,10 @@ export function VincularModal({
     };
 
     return createPortal(
-        <div className="fixed inset-0 z-[60]">
-            {/* DialogOverlay: cobre a tela inteira, sempre fixed ao viewport. */}
-            <div className="fixed inset-0 bg-black/75 backdrop-blur-md"/>
-            {/* DialogContent: fixed + left-50%/-translate-x-50% (centraliza
-                horizontalmente) e top-[5%]/md:top-[10%] com translate-y-0
-                (NÃO usar top-1/2 -translate-y-1/2, que centralizaria
-                verticalmente) - abre quase no topo da tela. */}
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/75 backdrop-blur-md"/>
             <div
-                className="fixed left-[50%] top-[5%] md:top-[10%] -translate-x-[50%] translate-y-0 bg-[#121417] border border-white/10 rounded-2xl w-[calc(100%-2rem)] max-w-2xl max-h-[90vh] min-h-0 shadow-2xl flex flex-col overflow-hidden">
+                className="relative bg-[#121417] border border-white/10 rounded-2xl w-full max-w-2xl max-h-[90vh] min-h-0 shadow-2xl flex flex-col overflow-hidden">
                 {/* Cabeçalho com flex-wrap: em telas estreitas o bloco de ações
                     (Novo + fechar) quebra para a linha de baixo em vez de
                     espremer o título. */}
@@ -1079,7 +1067,7 @@ export function VincularModal({
                         </button>
                         <button
                             type="button"
-                            onClick={onClose}
+                            onClick={() => (showingFormBody ? requestCloseRef.current() : onClose())}
                             className="p-2 rounded-xl text-muted-foreground hover:bg-white/5 hover:text-white transition-colors">
                             <X className="w-5 h-5"/>
                         </button>
@@ -1106,8 +1094,7 @@ export function VincularModal({
                     />
                 )}
 
-                {/* RN-D4: janela de busca configurável + busca por descrição/parceiro/
-                    valor/vencimento, em vez de depender só da proximidade de data. */}
+                {/* Janela e filtros de busca (não só proximidade de data). */}
                 <div className="px-5 pt-4 pb-2 border-b border-white/5 shrink-0 space-y-2">
                     <div className="flex flex-wrap items-end gap-2">
                         <div className="flex flex-col gap-1">
@@ -1215,6 +1202,9 @@ export function VincularModal({
                         valorExtratoAbs={valorExtratoAbs}
                         lancamentos={lancamentos}
                         onClose={onClose}
+                        bindRequestClose={(fn) => {
+                            requestCloseRef.current = fn;
+                        }}
                         onDraftVincular={onDraftVincular}
                         jaVinculadoLocalCents={jaVinculadoLocalCents}
                         quitadoLocalPorLancamento={quitadoLocalPorLancamento}

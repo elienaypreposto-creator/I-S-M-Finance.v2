@@ -17,13 +17,20 @@ import {
     Loader2,
     UserCircle,
     KeyRound,
+    Building2,
 } from "lucide-react";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
+import {PERM} from "@/lib/permissoes";
+import {useAuth} from "@/hooks/use-auth";
+import {UsuarioEmpresasModal} from "./usuario-empresas-modal";
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
+import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
+import {ViewportOverlay} from "@/components/shared/viewport-overlay";
 import {
     Empty,
     EmptyHeader,
@@ -204,7 +211,12 @@ const permissoesGranulares = [
         itens: [
             {nome: "Cadastro de Usuários", codigo: "admin:usuarios:criar"},
             {nome: "Consulta de Usuários", codigo: "admin:usuarios:listar"},
+            {nome: "Edição de Usuários", codigo: "admin:usuarios:editar"},
             {nome: "Exclusão de Usuários", codigo: "admin:usuarios:deletar"},
+            {nome: "Conceder permissões a utilizadores", codigo: "admin:permissoes:conceder"},
+            {nome: "Consulta de Empresas", codigo: "admin:empresas:listar"},
+            {nome: "Cadastro de Empresas", codigo: "admin:empresas:criar"},
+            {nome: "Edição de Empresas e vínculos", codigo: "admin:empresas:editar"},
             {nome: "Cadastro de Token de API", codigo: "admin:tokens-api:criar"},
             {nome: "Consulta de Tokens de API", codigo: "admin:tokens-api:listar"},
             {nome: "Exclusão de Token de API", codigo: "admin:tokens-api:deletar"},
@@ -249,12 +261,13 @@ function getInitials(nome: string): string {
 function PermissoesModal({usuario, onClose}: { usuario: UsuarioRow; onClose: () => void }) {
     const {toast} = useToast();
     const queryClient = useQueryClient();
+    const {confirm, ConfirmDialogProps} = useConfirm();
     const [selecionadas, setSelecionadas] = useState<string[]>([]);
     const [expandidos, setExpandidos] = useState<string[]>([permissoesGranulares[0].grupo]);
     const [busca, setBusca] = useState("");
 
     const {isLoading: loadingPerms, data: fetchedPerms} = useQuery<string[]>({
-        queryKey: ["usuario-permissoes", usuario.id],
+        queryKey: tenantQueryKey("usuario-permissoes", usuario.id),
         queryFn: () => fetchApiData<string[]>(`/usuarios/${usuario.id}/permissoes`),
     });
 
@@ -269,7 +282,7 @@ function PermissoesModal({usuario, onClose}: { usuario: UsuarioRow; onClose: () 
                 body: JSON.stringify({permissoes: perms}),
             }),
         onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["usuario-permissoes", usuario.id]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("usuario-permissoes", usuario.id)});
             toast({title: "Permissões atualizadas com sucesso."});
             onClose();
         },
@@ -301,18 +314,34 @@ function PermissoesModal({usuario, onClose}: { usuario: UsuarioRow; onClose: () 
             .filter((g) => g.itens.length > 0)
         : permissoesGranulares;
 
+    const isDirty = fetchedPerms
+        ? [...selecionadas].sort().join("|") !== [...fetchedPerms].sort().join("|")
+        : false;
+
+    async function handleRequestClose() {
+        if (isDirty) {
+            const ok = await confirm(DISCARD_PROMPT);
+            if (!ok) return;
+        }
+        onClose();
+    }
+
+    useEscapeClose(!ConfirmDialogProps.open, () => {
+        void handleRequestClose();
+    }, 60);
+
     return (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+        <ViewportOverlay className="z-[60] bg-black/70">
             <div
                 className="bg-card border border-white/10 rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] flex flex-col">
                 <div className="flex items-center justify-between p-4 sm:p-5 border-b border-white/5">
                     <div>
-                        <h3 className="font-bold text-white text-sm sm:text-base">Permissões — {usuario.nome}</h3>
+                        <h3 className="font-bold text-white text-sm sm:text-base">Permissões - {usuario.nome}</h3>
                         <p className="text-xs text-muted-foreground">
                             {selecionadas.length} de {todasPermissoes.length} permissões ativas
                         </p>
                     </div>
-                    <button type="button" onClick={onClose} className="p-1.5 hover:bg-white/5 rounded-lg">
+                    <button type="button" onClick={() => void handleRequestClose()} className="p-1.5 hover:bg-white/5 rounded-lg">
                         <X className="w-5 h-5"/>
                     </button>
                 </div>
@@ -405,7 +434,7 @@ function PermissoesModal({usuario, onClose}: { usuario: UsuarioRow; onClose: () 
                 </div>
 
                 <div className="flex gap-3 p-4 sm:p-5 border-t border-white/5">
-                    <button type="button" onClick={onClose}
+                    <button type="button" onClick={() => void handleRequestClose()}
                             className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">
                         Cancelar
                     </button>
@@ -420,7 +449,8 @@ function PermissoesModal({usuario, onClose}: { usuario: UsuarioRow; onClose: () 
                     </button>
                 </div>
             </div>
-        </div>
+            <ConfirmDialog {...ConfirmDialogProps} />
+        </ViewportOverlay>
     );
 }
 
@@ -471,7 +501,7 @@ function ParceiroAutocomplete({
     const {data: parceiros = [], isLoading} = useQuery<
         { id: number; nome: string; email: string | null; telefone: string | null; celular: string | null }[]
     >({
-        queryKey: ["parceiros-search", debouncedSearch],
+        queryKey: tenantQueryKey("parceiros-search", debouncedSearch),
         queryFn: () =>
             fetchApiData(
                 `/parceiros?limit=20&search=${encodeURIComponent(debouncedSearch)}&excluir_com_usuario=true`
@@ -554,12 +584,13 @@ interface UserModalProps {
 function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
     const isEdit = !!initialData;
     const schema = isEdit ? editarUsuarioSchema : criarUsuarioSchema;
+    const {confirm, ConfirmDialogProps} = useConfirm();
 
     // [NOVO] Controla se há um parceiro selecionado via lista no autocomplete.
     // No modo edição não é necessário - campo fica desabilitado.
     const [parceiroSelecionadoId, setParceiroSelecionadoId] = useState<number | null>(null);
 
-    const {register, handleSubmit, setValue, control, formState: {errors}} = useForm<UsuarioFormValues>({
+    const {register, handleSubmit, setValue, control, formState: {errors, isDirty}} = useForm<UsuarioFormValues>({
         resolver: zodResolver(schema),
         defaultValues: {
             nome: initialData?.nome ?? "",
@@ -569,6 +600,18 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
             telefone: initialData?.telefone ?? "",
             celular: initialData?.celular ?? "",
         } as UsuarioFormValues,
+    });
+
+    async function handleRequestClose() {
+        if (isDirty) {
+            const ok = await confirm(DISCARD_PROMPT);
+            if (!ok) return;
+        }
+        onClose();
+    }
+
+    useEscapeClose(!ConfirmDialogProps.open, () => {
+        void handleRequestClose();
     });
 
     const e = errors as any;
@@ -584,7 +627,7 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
     const submitDisabled = isPending || (!isEdit && parceiroSelecionadoId === null);
 
     return (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <ViewportOverlay>
             <div
                 className="bg-card border border-white/10 rounded-2xl w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto">
                 <div
@@ -592,7 +635,7 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
                     <h2 className="text-base sm:text-lg font-bold text-white">
                         {isEdit ? "Editar Usuário" : "Novo Usuário"}
                     </h2>
-                    <button type="button" onClick={onClose} className="p-1.5 hover:bg-white/5 rounded-lg">
+                    <button type="button" onClick={() => void handleRequestClose()} className="p-1.5 hover:bg-white/5 rounded-lg">
                         <X className="w-5 h-5"/>
                     </button>
                 </div>
@@ -708,7 +751,7 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
                     </div>
 
                     <div className="flex gap-3 p-4 sm:p-6 pt-0">
-                        <button type="button" onClick={onClose}
+                        <button type="button" onClick={() => void handleRequestClose()}
                                 className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">Cancelar
                         </button>
                         <button
@@ -722,7 +765,8 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
                     </div>
                 </form>
             </div>
-        </div>
+            <ConfirmDialog {...ConfirmDialogProps} />
+        </ViewportOverlay>
     );
 }
 
@@ -730,6 +774,10 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
 export default function Usuarios() {
     const {toast} = useToast();
     const queryClient = useQueryClient();
+    const {hasPermission} = useAuth();
+    const canConcederPermissoes = hasPermission(PERM.ADMIN_PERMISSOES_CONCEDER);
+    const canGerirVinculos = hasPermission(PERM.ADMIN_EMPRESAS_LISTAR) || hasPermission(PERM.ADMIN_EMPRESAS_EDITAR);
+    const [vinculosUsuario, setVinculosUsuario] = useState<UsuarioRow | null>(null);
     const [showUserModal, setShowUserModal] = useState(false);
     const [editingUsuario, setEditingUsuario] = useState<UsuarioRow | null>(null);
     const [permissoesUsuario, setPermissoesUsuario] = useState<UsuarioRow | null>(null);
@@ -753,7 +801,7 @@ export default function Usuarios() {
     };
 
     const {data: usuarios = [], isLoading, isError, error} = useQuery<UsuarioRow[]>({
-        queryKey: ["usuarios"],
+        queryKey: tenantQueryKey("usuarios"),
         queryFn: () => fetchApiData<UsuarioRow[]>("/usuarios?limit=100"),
     });
 
@@ -771,13 +819,13 @@ export default function Usuarios() {
                 }),
             }),
         onSuccess: async (createdUser, variables) => {
-            if (variables.perfil_base && perfisBase[variables.perfil_base]) {
+            if (canConcederPermissoes && variables.perfil_base && perfisBase[variables.perfil_base]) {
                 await fetchApiData(`/usuarios/${createdUser.id}/permissoes`, {
                     method: "PUT",
                     body: JSON.stringify({permissoes: perfisBase[variables.perfil_base]}),
                 }).catch(console.error);
             }
-            void queryClient.invalidateQueries({queryKey: ["usuarios"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("usuarios")});
             toast({title: "Usuário criado com sucesso."});
             closeUserModal();
         },
@@ -799,13 +847,13 @@ export default function Usuarios() {
                 }),
             }).then((res) => ({user: res, variables: data})),
         onSuccess: async ({user, variables}) => {
-            if (variables.perfil_base && perfisBase[variables.perfil_base]) {
+            if (canConcederPermissoes && variables.perfil_base && perfisBase[variables.perfil_base]) {
                 await fetchApiData(`/usuarios/${user.id}/permissoes`, {
                     method: "PUT",
                     body: JSON.stringify({permissoes: perfisBase[variables.perfil_base]}),
                 }).catch(console.error);
             }
-            void queryClient.invalidateQueries({queryKey: ["usuarios"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("usuarios")});
             toast({title: "Usuário atualizado com sucesso."});
             closeUserModal();
         },
@@ -820,7 +868,7 @@ export default function Usuarios() {
                 body: JSON.stringify({bloqueado, perfil_base}),
             }),
         onSuccess: (_, vars) => {
-            void queryClient.invalidateQueries({queryKey: ["usuarios"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("usuarios")});
             toast({title: vars.bloqueado ? "Usuário bloqueado." : "Usuário desbloqueado."});
         },
         onError: (err: Error) =>
@@ -866,8 +914,15 @@ export default function Usuarios() {
                     onSave={handleSave}
                 />
             )}
-            {permissoesUsuario && (
+            {canConcederPermissoes && permissoesUsuario && (
                 <PermissoesModal usuario={permissoesUsuario} onClose={() => setPermissoesUsuario(null)}/>
+            )}
+            {canGerirVinculos && vinculosUsuario && (
+                <UsuarioEmpresasModal
+                    usuarioId={vinculosUsuario.id}
+                    usuarioNome={vinculosUsuario.nome}
+                    onClose={() => setVinculosUsuario(null)}
+                />
             )}
 
             <PageHeader
@@ -991,7 +1046,7 @@ export default function Usuarios() {
                                                                 {u.celular && <p>{u.celular}</p>}
                                                             </div>
                                                         ) : (
-                                                            <span className="opacity-40">—</span>
+                                                            <span className="opacity-40">-</span>
                                                         )}
                                                     </td>
                                                     <td className="px-5 py-4 text-center">
@@ -1008,10 +1063,22 @@ export default function Usuarios() {
                                                         )}
                                                     </td>
                                                     <td className="px-5 py-4 text-center text-xs text-muted-foreground">
-                                                        {u.ultimo_acesso ? new Date(u.ultimo_acesso).toLocaleDateString("pt-BR") : "—"}
+                                                        {u.ultimo_acesso ? new Date(u.ultimo_acesso).toLocaleDateString("pt-BR") : "-"}
                                                     </td>
                                                     <td className="px-5 py-4 text-right">
                                                         <div className="flex justify-end gap-1">
+                                                            {canGerirVinculos && (
+                                                            <button
+                                                                type="button"
+                                                                title="Empresas"
+                                                                className="px-2 py-1.5 hover:bg-primary/10 rounded-lg text-xs text-primary font-medium transition-colors"
+                                                                onClick={() => setVinculosUsuario(u)}
+                                                            >
+                                                                <Building2 className="w-3.5 h-3.5 inline mr-1"/>
+                                                                Empresas
+                                                            </button>
+                                                            )}
+                                                            {canConcederPermissoes && (
                                                             <button
                                                                 type="button"
                                                                 title="Permissões"
@@ -1021,6 +1088,7 @@ export default function Usuarios() {
                                                                 <Shield className="w-3.5 h-3.5 inline mr-1"/>
                                                                 Permissões
                                                             </button>
+                                                            )}
                                                             <button
                                                                 type="button"
                                                                 title="Editar"
@@ -1079,6 +1147,16 @@ export default function Usuarios() {
                                                 </div>
                                                 <div
                                                     className="flex items-center gap-2 mt-3 pt-3 border-t border-white/5">
+                                                    {canGerirVinculos && (
+                                                    <button
+                                                        type="button"
+                                                        className="flex-1 flex items-center justify-center gap-1.5 py-1.5 hover:bg-primary/10 rounded-lg text-xs text-primary font-medium"
+                                                        onClick={() => setVinculosUsuario(u)}
+                                                    >
+                                                        <Building2 className="w-3.5 h-3.5"/> Empresas
+                                                    </button>
+                                                    )}
+                                                    {canConcederPermissoes && (
                                                     <button
                                                         type="button"
                                                         className="flex-1 flex items-center justify-center gap-1.5 py-1.5 hover:bg-primary/10 rounded-lg text-xs text-primary font-medium"
@@ -1086,6 +1164,7 @@ export default function Usuarios() {
                                                     >
                                                         <Shield className="w-3.5 h-3.5"/> Permissões
                                                     </button>
+                                                    )}
                                                     <button type="button" className="p-2 hover:bg-white/10 rounded-lg"
                                                             onClick={() => openEdit(u)}>
                                                         <Pencil className="w-3.5 h-3.5 text-muted-foreground"/>

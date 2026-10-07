@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -10,6 +11,8 @@ import { departamentoFormSchema, type DepartamentoFormValues } from "@/validatio
 import { CardsSkeleton } from "@/components/shared/table-skeleton";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { useConfirm } from "@/hooks/use-confirm";
+import { DISCARD_PROMPT, useEscapeClose } from "@/hooks/use-escape-close";
+import { ViewportOverlay } from "@/components/shared/viewport-overlay";
 import {
   Empty,
   EmptyHeader,
@@ -44,18 +47,31 @@ interface DeptModalProps {
 
 function DeptModal({ onClose, initialData, isPending, onSave }: DeptModalProps) {
   const isEdit = !!initialData;
+  const { confirm, ConfirmDialogProps } = useConfirm();
 
   const {
     register,
     handleSubmit,
-    formState: { errors },
+    formState: { errors, isDirty },
   } = useForm<DepartamentoFormValues>({
     resolver: zodResolver(departamentoFormSchema),
     defaultValues: { nome: initialData?.nome ?? "" },
   });
 
+  async function handleRequestClose() {
+    if (isDirty) {
+      const ok = await confirm(DISCARD_PROMPT);
+      if (!ok) return;
+    }
+    onClose();
+  }
+
+  useEscapeClose(!ConfirmDialogProps.open, () => {
+    void handleRequestClose();
+  });
+
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <ViewportOverlay>
       <div className="bg-card border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl">
         <div className="flex items-center justify-between p-6 border-b border-white/5">
           <h2 className="text-lg font-bold text-white">
@@ -63,7 +79,7 @@ function DeptModal({ onClose, initialData, isPending, onSave }: DeptModalProps) 
           </h2>
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => void handleRequestClose()}
             className="p-1.5 hover:bg-white/5 rounded-lg transition-colors"
           >
             <X className="w-5 h-5" />
@@ -92,7 +108,7 @@ function DeptModal({ onClose, initialData, isPending, onSave }: DeptModalProps) 
           <div className="flex gap-3 pt-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={() => void handleRequestClose()}
               className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium transition-all"
             >
               Cancelar
@@ -113,7 +129,8 @@ function DeptModal({ onClose, initialData, isPending, onSave }: DeptModalProps) 
           </div>
         </form>
       </div>
-    </div>
+      <ConfirmDialog {...ConfirmDialogProps} />
+    </ViewportOverlay>
   );
 }
 
@@ -129,7 +146,7 @@ export default function Departamentos() {
   const [modalKey, setModalKey] = useState(0);
 
   const { data: departamentos = [], isLoading } = useQuery<DepartamentoRow[]>({
-    queryKey: ["departamentos"],
+    queryKey: tenantQueryKey("departamentos"),
     queryFn: () => fetchApiData<DepartamentoRow[]>("/departamentos"),
   });
 
@@ -140,7 +157,7 @@ export default function Departamentos() {
         body: JSON.stringify(payload),
       }),
     onSuccess: (item) => {
-      void queryClient.invalidateQueries({ queryKey: ["departamentos"] });
+      void queryClient.invalidateQueries({ queryKey: tenantQueryKey("departamentos") });
       toast({ title: "Departamento criado", description: `"${item.nome}" foi cadastrado.` });
       setShowCreate(false);
     },
@@ -160,7 +177,7 @@ export default function Departamentos() {
         body: JSON.stringify({ nome }),
       }),
     onSuccess: (item) => {
-      void queryClient.invalidateQueries({ queryKey: ["departamentos"] });
+      void queryClient.invalidateQueries({ queryKey: tenantQueryKey("departamentos") });
       toast({ title: "Departamento atualizado", description: `"${item.nome}" foi salvo.` });
       setEditingItem(null);
     },
@@ -177,7 +194,7 @@ export default function Departamentos() {
     mutationFn: (id: number) =>
       fetchApiData<{ deleted: boolean }>(`/departamentos/${id}`, { method: "DELETE" }),
     onSuccess: (_, id) => {
-      void queryClient.invalidateQueries({ queryKey: ["departamentos"] });
+      void queryClient.invalidateQueries({ queryKey: tenantQueryKey("departamentos") });
       const nome = departamentos.find((d) => d.id === id)?.nome ?? "";
       toast({
         title: "Departamento removido",
@@ -266,9 +283,9 @@ export default function Departamentos() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[
           { label: "Departamentos", value: String(departamentos.length), color: "text-primary" },
-          { label: "Centros de Custo", value: "—", color: "text-teal-400" },
-          { label: "Orçamento Total", value: "—", color: "text-success" },
-          { label: "Colaboradores", value: "—", color: "text-orange-400" },
+          { label: "Centros de Custo", value: "-", color: "text-teal-400" },
+          { label: "Orçamento Total", value: "-", color: "text-success" },
+          { label: "Colaboradores", value: "-", color: "text-orange-400" },
         ].map((item) => (
           <div key={item.label} className="glass-panel rounded-2xl p-4">
             <p className="text-xs text-muted-foreground mb-1">{item.label}</p>
@@ -277,7 +294,7 @@ export default function Departamentos() {
         ))}
       </div>
 
-      {/* Loading — skeleton de cards */}
+      {/* Loading - skeleton de cards */}
       {isLoading && <CardsSkeleton cards={4} />}
 
       {/* Empty state */}

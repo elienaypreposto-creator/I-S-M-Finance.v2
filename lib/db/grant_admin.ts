@@ -9,6 +9,7 @@ async function grantAdmin() {
 
     const permissoesBackend = [
         "admin:usuarios:listar", "admin:usuarios:criar", "admin:usuarios:editar", "admin:usuarios:deletar",
+        "admin:permissoes:conceder",
         "admin:tokens-api:listar", "admin:tokens-api:criar", "admin:tokens-api:editar", "admin:tokens-api:deletar",
         "admin:migrate-passwords",
         "financeiro:lancamentos:deletar", "financeiro:lancamentos:criar", "financeiro:lancamentos:editar", "financeiro:lancamentos:alterar_valor",
@@ -59,7 +60,8 @@ async function grantAdmin() {
         "financeiro:metas:criar", "financeiro:metas:listar", "financeiro:metas:deletar",
         "financeiro:fechamentos:criar", "financeiro:fechamentos:listar", "financeiro:fechamentos:deletar",
         "financeiro:lancamentos:criar", "financeiro:lancamentos:listar", "financeiro:lancamentos:editar", "financeiro:lancamentos:alterar_valor", "financeiro:lancamentos:deletar",
-        "admin:usuarios:criar", "admin:usuarios:listar", "admin:usuarios:deletar",
+        "admin:usuarios:criar", "admin:usuarios:listar", "admin:usuarios:editar", "admin:usuarios:deletar",
+        "admin:permissoes:conceder",
         "admin:tokens-api:criar", "admin:tokens-api:listar", "admin:tokens-api:deletar"
     ];
 

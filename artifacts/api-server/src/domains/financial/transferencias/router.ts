@@ -9,6 +9,7 @@ import {
     listTransferencias,
     updateTransfer,
 } from "./transferencias.service";
+import {requireTenant} from "../../../lib/tenant-scope";
 import {
     createTransferenciaBodySchema,
     updateTransferenciaBodySchema,
@@ -21,8 +22,8 @@ const router = Router();
 router.get(
     "/transferencias",
     withPermission("financeiro:transferencias:criar"),
-    asyncHandler(async (_req, res) => {
-        const items = await listTransferencias();
+    asyncHandler(async (req, res) => {
+        const items = await listTransferencias(requireTenant(req).empresaId);
         return successResponse(res, items, {total: items.length});
     }),
 );
@@ -32,7 +33,7 @@ router.post(
     withPermission("financeiro:transferencias:criar"),
     validateBody(createTransferenciaBodySchema),
     asyncHandler(async (req, res) => {
-        const result = await executeTransfer(req.body as CreateTransferenciaBody);
+        const result = await executeTransfer(requireTenant(req).empresaId, req.body as CreateTransferenciaBody);
         return successResponse(res, result, null, 201);
     }),
 );
@@ -43,7 +44,8 @@ router.put(
     validateBody(updateTransferenciaBodySchema),
     asyncHandler(async (req, res) => {
         const result = await updateTransfer(
-            req.params.grupo_id,
+            requireTenant(req).empresaId,
+            String(req.params.grupo_id),
             req.body as UpdateTransferenciaBody,
         );
         return successResponse(res, result);
@@ -54,7 +56,7 @@ router.delete(
     "/transferencias/:grupo_id",
     withPermission("admin:transferencias:deletar"),
     asyncHandler(async (req, res) => {
-        const result = await deleteTransfer(req.params.grupo_id);
+        const result = await deleteTransfer(requireTenant(req).empresaId, String(req.params.grupo_id));
         return successResponse(res, result);
     }),
 );

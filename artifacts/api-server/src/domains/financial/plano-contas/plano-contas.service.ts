@@ -2,38 +2,48 @@ import {count, eq} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {lancamentosTable, metasTable, planoContasTable} from "@workspace/db/schema";
 import {AppError} from "../../../utils/app-error";
+import {tenantScope, tenantWhere, withEmpresaId} from "../../../lib/tenant-scope";
 import type {CreatePlanoContaBody, UpdatePlanoContaBody} from "./schemas";
 
 export const planoContasService = {
-    async list() {
-        return db.select().from(planoContasTable).orderBy(planoContasTable.tipo, planoContasTable.categoria);
+    async list(empresaId: number) {
+        return db
+            .select()
+            .from(planoContasTable)
+            .where(tenantScope(planoContasTable, empresaId))
+            .orderBy(planoContasTable.tipo, planoContasTable.categoria);
     },
 
-    async create(payload: CreatePlanoContaBody) {
+    async create(empresaId: number, payload: CreatePlanoContaBody) {
         const [item] = await db
             .insert(planoContasTable)
-            .values({
-                tipo: payload.tipo,
-                categoria: payload.categoria,
-                subcategoria: payload.subcategoria ?? null,
-                codigo: payload.codigo ?? null,
-                ativo: payload.ativo ?? true,
-            })
+            .values(
+                withEmpresaId(
+                    {
+                        tipo: payload.tipo,
+                        categoria: payload.categoria,
+                        subcategoria: payload.subcategoria ?? null,
+                        codigo: payload.codigo ?? null,
+                        ativo: payload.ativo ?? true,
+                    },
+                    empresaId,
+                ),
+            )
             .returning();
 
         return item;
     },
 
-    async update(id: number, payload: UpdatePlanoContaBody) {
+    async update(empresaId: number, id: number, payload: UpdatePlanoContaBody) {
         const [[{lancamentos}], [{metas}]] = await Promise.all([
             db
                 .select({lancamentos: count()})
                 .from(lancamentosTable)
-                .where(eq(lancamentosTable.plano_conta_id, id)),
+                .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.plano_conta_id, id))),
             db
                 .select({metas: count()})
                 .from(metasTable)
-                .where(eq(metasTable.plano_conta_id, id)),
+                .where(tenantWhere(metasTable, empresaId, eq(metasTable.plano_conta_id, id))),
         ]);
 
         if (Number(lancamentos) > 0 || Number(metas) > 0) {
@@ -47,7 +57,7 @@ export const planoContasService = {
         const [item] = await db
             .update(planoContasTable)
             .set({...payload, updated_at: new Date()})
-            .where(eq(planoContasTable.id, id))
+            .where(tenantWhere(planoContasTable, empresaId, eq(planoContasTable.id, id)))
             .returning();
 
         if (!item) {
@@ -57,16 +67,16 @@ export const planoContasService = {
         return item;
     },
 
-    async remove(id: number) {
+    async remove(empresaId: number, id: number) {
         const [[{lancamentos}], [{metas}]] = await Promise.all([
             db
                 .select({lancamentos: count()})
                 .from(lancamentosTable)
-                .where(eq(lancamentosTable.plano_conta_id, id)),
+                .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.plano_conta_id, id))),
             db
                 .select({metas: count()})
                 .from(metasTable)
-                .where(eq(metasTable.plano_conta_id, id)),
+                .where(tenantWhere(metasTable, empresaId, eq(metasTable.plano_conta_id, id))),
         ]);
 
         if (Number(lancamentos) > 0 || Number(metas) > 0) {
@@ -77,7 +87,13 @@ export const planoContasService = {
             );
         }
 
-        await db.delete(planoContasTable).where(eq(planoContasTable.id, id));
+        const [item] = await db
+            .delete(planoContasTable)
+            .where(tenantWhere(planoContasTable, empresaId, eq(planoContasTable.id, id)))
+            .returning({id: planoContasTable.id});
+        if (!item) {
+            throw new AppError(404, "NOT_FOUND", "Plano de contas não encontrado.");
+        }
         return {deleted: true};
     },
 };

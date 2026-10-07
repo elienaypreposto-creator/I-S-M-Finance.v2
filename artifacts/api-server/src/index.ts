@@ -6,9 +6,12 @@ import path from "path";
 
 dotenv.config({path: path.resolve(process.cwd(), "../../.env")});
 
-import {syncAdminPermissionsOnBoot} from "@workspace/db";
+import {assertRlsRoles, syncAdminPermissionsOnBoot} from "@workspace/db";
 import app from "./app";
 import {startPromoverAtrasadosJob} from "./jobs/promover-atrasados";
+import {startArquivarAuditoriaJob} from "./jobs/arquivar-auditoria";
+import {startRetencaoLgpdJob} from "./jobs/retencao-lgpd";
+import {assertDiscoCifrado} from "./domains/lgpd/lgpd-disco";
 
 const port = process.env.PORT || 5000;
 
@@ -17,8 +20,7 @@ function runAdminPermissionsSyncOnBoot(): void {
     void syncAdminPermissionsOnBoot()
         .then((r) => {
             console.log(
-                `[boot] admin-permissions: ${r.sincronizados}/${r.emailsAlvo} usuário(s),` +
-                ` ${r.permissoesPorUsuario} permissões` +
+                `[boot] admin-permissions: ${r.sincronizados}/${r.emailsAlvo} superadmin(s) sincronizado(s)` +
                 (r.ausentes.length ? ` (ausentes: ${r.ausentes.join(", ")})` : ""),
             );
         })
@@ -28,16 +30,16 @@ function runAdminPermissionsSyncOnBoot(): void {
         });
 }
 
-// Sincroniza permissões dos Super Admins no boot (container, local, cold start).
-// Fail-soft: não bloqueia o listen nem derruba o processo.
-runAdminPermissionsSyncOnBoot();
+function listenIfLocal(): void {
+    if (process.env.NODE_ENV === "production" && process.env.RUN_LOCAL !== "true") {
+        return;
+    }
 
-// Only listen when not in a serverless environment (like Vercel)
-// or when explicitly running in development.
-if (process.env.NODE_ENV !== "production" || process.env.RUN_LOCAL === "true") {
     const server = app.listen(port, () => {
         console.log(`Server listening on port ${port}`);
         startPromoverAtrasadosJob();
+        startArquivarAuditoriaJob();
+        startRetencaoLgpdJob();
     });
 
     server.on("error", (error: any) => {
@@ -51,5 +53,20 @@ if (process.env.NODE_ENV !== "production" || process.env.RUN_LOCAL === "true") {
     });
 }
 
-// Export for Vercel serverless function
+
+void assertRlsRoles()
+    .then(() => {
+        console.log("[boot] pool padrão = ism_app; admin = ism_admin; owner = ism_owner (retenção)");
+        assertDiscoCifrado(process.env);
+        runAdminPermissionsSyncOnBoot();
+
+        listenIfLocal();
+    })
+    .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[boot] recusado - API deve ligar como ism_app/ism_admin NOSUPERUSER: ${msg}`);
+        process.exit(1);
+    });
+
+
 export default app;

@@ -5,6 +5,7 @@ import {contasBancariasTable, lancamentosTable, parceirosTable, planoContasTable
 import {errorResponse, successResponse} from "../utils/response";
 import {hojeIsoLocal} from "../utils/date-civil";
 import {fromCents, toCents} from "../utils/money";
+import {requireTenant, tenantWhere} from "../lib/tenant-scope";
 
 const router = Router();
 const STATUS_ABERTO = ["pendente", "atrasado"] as const;
@@ -45,8 +46,9 @@ function boundsMesCivil(hojeIso: string): { inicio: string; fim: string } {
     return {inicio, fim};
 }
 
-router.get("/dashboard/kpis", async (_req, res) => {
+router.get("/dashboard/kpis", async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const hoje = hojeIsoLocal();
         const {inicio, fim} = boundsMesCivil(hoje);
 
@@ -150,8 +152,12 @@ router.get("/dashboard/kpis", async (_req, res) => {
                 )`,
             })
             .from(lancamentosTable)
-            .where(sql`${lancamentosTable.status}
-            != 'cancelado'`);
+            .where(tenantWhere(
+                lancamentosTable,
+                empresaId,
+                sql`${lancamentosTable.status}
+            != 'cancelado'`,
+            ));
 
         return successResponse(res, {
             contasReceberAtraso: toNumber(totais?.contas_receber_atraso),
@@ -160,12 +166,13 @@ router.get("/dashboard/kpis", async (_req, res) => {
             contasPagarAtraso: toNumber(totais?.contas_pagar_atraso),
         });
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular KPIs.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular KPIs.", e);
     }
 });
 
-router.get("/dashboard/projecao-mes", async (_req, res) => {
+router.get("/dashboard/projecao-mes", async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const hoje = hojeIsoLocal();
         const {inicio, fim} = boundsMesCivil(hoje);
 
@@ -198,7 +205,9 @@ router.get("/dashboard/projecao-mes", async (_req, res) => {
             })
             .from(lancamentosTable)
             .where(
-                and(
+                tenantWhere(
+                    lancamentosTable,
+                    empresaId,
                     gte(lancamentosTable.vencimento, inicio),
                     lte(lancamentosTable.vencimento, fim),
                     sql`${lancamentosTable.status}
@@ -217,12 +226,13 @@ router.get("/dashboard/projecao-mes", async (_req, res) => {
             totalPagamentos: pp,
         });
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular projeção mensal.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular projeção mensal.", e);
     }
 });
 
 router.get("/dashboard/projecao-dias", async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const dias = Math.min(365, Math.max(1, parseInt(req.query.dias as string) || 30));
         const hojeStr = hojeIsoLocal();
         const fimStr = addDaysIso(hojeStr, dias);
@@ -237,7 +247,7 @@ router.get("/dashboard/projecao-dias", async (req, res) => {
                     )`,
                 })
                 .from(contasBancariasTable)
-                .where(eq(contasBancariasTable.status, "ativo")),
+                .where(tenantWhere(contasBancariasTable, empresaId, eq(contasBancariasTable.status, "ativo"))),
 
             db
                 .select({
@@ -258,8 +268,10 @@ router.get("/dashboard/projecao-dias", async (req, res) => {
                 })
                 .from(lancamentosTable)
                 .where(
-                    and(
-                        inArray(lancamentosTable.status, STATUS_QUITADO as unknown as string[]),
+                    tenantWhere(
+                        lancamentosTable,
+                        empresaId,
+                        inArray(lancamentosTable.status, STATUS_QUITADO),
                         lt(lancamentosTable.data_quitacao, hojeStr),
                     ),
                 ),
@@ -294,7 +306,9 @@ router.get("/dashboard/projecao-dias", async (req, res) => {
                 })
                 .from(lancamentosTable)
                 .where(
-                    and(
+                    tenantWhere(
+                        lancamentosTable,
+                        empresaId,
                         gte(lancamentosTable.vencimento, hojeStr),
                         lte(lancamentosTable.vencimento, fimStr),
                         sql`${lancamentosTable.status}
@@ -329,12 +343,13 @@ router.get("/dashboard/projecao-dias", async (req, res) => {
             saldo_atual: fromCents(saldoAtualCents),
         });
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular projeção diária.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular projeção diária.", e);
     }
 });
 
 router.get("/dashboard/inadimplencia-clientes", async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const hoje = hojeIsoLocal();
         const tab = resolveTabFilter(req.query.tab as string | undefined);
         const limite = parseInt(req.query.limit as string) || 10;
@@ -344,13 +359,13 @@ router.get("/dashboard/inadimplencia-clientes", async (req, res) => {
             tab === "proximos_vencer"
                 ? and(
                     eq(lancamentosTable.tipo, "CR"),
-                    inArray(lancamentosTable.status, STATUS_ABERTO as unknown as string[]),
+                    inArray(lancamentosTable.status, STATUS_ABERTO),
                     gte(lancamentosTable.vencimento, hoje),
                     lte(lancamentosTable.vencimento, janela),
                 )
                 : and(
                     eq(lancamentosTable.tipo, "CR"),
-                    inArray(lancamentosTable.status, STATUS_ABERTO as unknown as string[]),
+                    inArray(lancamentosTable.status, STATUS_ABERTO),
                     lt(lancamentosTable.vencimento, hoje),
                 );
 
@@ -388,7 +403,7 @@ router.get("/dashboard/inadimplencia-clientes", async (req, res) => {
             })
             .from(lancamentosTable)
             .leftJoin(parceirosTable, eq(lancamentosTable.parceiro_id, parceirosTable.id))
-            .where(whereClause)
+            .where(tenantWhere(lancamentosTable, empresaId, whereClause))
             .groupBy(parceirosTable.id, parceirosTable.nome)
             .orderBy(desc(sql`coalesce(sum(
             ${lancamentosTable.valor}
@@ -409,12 +424,13 @@ router.get("/dashboard/inadimplencia-clientes", async (req, res) => {
             {tab, limit: limite},
         );
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular inadimplência de clientes.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular inadimplência de clientes.", e);
     }
 });
 
 router.get("/dashboard/inadimplencia-fornecedores", async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const hoje = hojeIsoLocal();
         const tab = resolveTabFilter(req.query.tab as string | undefined);
         const limite = parseInt(req.query.limit as string) || 10;
@@ -424,13 +440,13 @@ router.get("/dashboard/inadimplencia-fornecedores", async (req, res) => {
             tab === "proximos_vencer"
                 ? and(
                     eq(lancamentosTable.tipo, "CP"),
-                    inArray(lancamentosTable.status, STATUS_ABERTO as unknown as string[]),
+                    inArray(lancamentosTable.status, STATUS_ABERTO),
                     gte(lancamentosTable.vencimento, hoje),
                     lte(lancamentosTable.vencimento, janela),
                 )
                 : and(
                     eq(lancamentosTable.tipo, "CP"),
-                    inArray(lancamentosTable.status, STATUS_ABERTO as unknown as string[]),
+                    inArray(lancamentosTable.status, STATUS_ABERTO),
                     lt(lancamentosTable.vencimento, hoje),
                 );
 
@@ -468,7 +484,7 @@ router.get("/dashboard/inadimplencia-fornecedores", async (req, res) => {
             })
             .from(lancamentosTable)
             .leftJoin(parceirosTable, eq(lancamentosTable.parceiro_id, parceirosTable.id))
-            .where(whereClause)
+            .where(tenantWhere(lancamentosTable, empresaId, whereClause))
             .groupBy(parceirosTable.id, parceirosTable.nome)
             .orderBy(desc(sql`coalesce(sum(
             ${lancamentosTable.valor}
@@ -489,12 +505,13 @@ router.get("/dashboard/inadimplencia-fornecedores", async (req, res) => {
             {tab, limit: limite},
         );
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular inadimplência de fornecedores.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular inadimplência de fornecedores.", e);
     }
 });
 
 router.get("/dashboard/alertas-atraso", async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const hoje = hojeIsoLocal();
         const risco = req.query.risco ? String(req.query.risco) : undefined;
         const limite = parseInt(req.query.limit as string) || 50;
@@ -511,9 +528,11 @@ router.get("/dashboard/alertas-atraso", async (req, res) => {
             .from(lancamentosTable)
             .leftJoin(parceirosTable, eq(lancamentosTable.parceiro_id, parceirosTable.id))
             .where(
-                and(
+                tenantWhere(
+                    lancamentosTable,
+                    empresaId,
                     eq(lancamentosTable.tipo, "CP"),
-                    inArray(lancamentosTable.status, STATUS_ABERTO as unknown as string[]),
+                    inArray(lancamentosTable.status, STATUS_ABERTO),
                     lt(lancamentosTable.vencimento, hoje),
                     risco ? sql`${lancamentosTable.riscos}
                     ?
@@ -539,12 +558,13 @@ router.get("/dashboard/alertas-atraso", async (req, res) => {
 
         return successResponse(res, data, {risco: risco ?? null, limit: limite});
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar alertas de atraso.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao listar alertas de atraso.", e);
     }
 });
 
 router.get("/dashboard/nivel-risco", async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const hoje = hojeIsoLocal();
         const agrupado = await db
             .select({
@@ -561,10 +581,12 @@ router.get("/dashboard/nivel-risco", async (req, res) => {
             })
             .from(lancamentosTable)
             .where(
-                and(
+                tenantWhere(
+                    lancamentosTable,
+                    empresaId,
                     lt(lancamentosTable.vencimento, hoje),
                     eq(lancamentosTable.tipo, "CP"),
-                    inArray(lancamentosTable.status, STATUS_ABERTO as unknown as string[]),
+                    inArray(lancamentosTable.status, STATUS_ABERTO),
                     sql`jsonb_array_length
                     (
                     ${lancamentosTable.riscos}
@@ -592,12 +614,13 @@ router.get("/dashboard/nivel-risco", async (req, res) => {
             })),
         );
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular nível de risco.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular nível de risco.", e);
     }
 });
 
 router.get("/dashboard/fluxo-caixa-mensal", async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const ano = parseInt(req.query.ano as string) || new Date().getFullYear();
         const meses = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"] as const;
         const mesExpr = extractMonth(lancamentosTable.data_quitacao);
@@ -614,9 +637,11 @@ router.get("/dashboard/fluxo-caixa-mensal", async (req, res) => {
             })
             .from(lancamentosTable)
             .where(
-                and(
+                tenantWhere(
+                    lancamentosTable,
+                    empresaId,
                     extractYearEq(lancamentosTable.data_quitacao, ano),
-                    inArray(lancamentosTable.status, STATUS_QUITADO as unknown as string[]),
+                    inArray(lancamentosTable.status, STATUS_QUITADO),
                 ),
             )
             .groupBy(mesExpr, lancamentosTable.tipo)
@@ -631,12 +656,13 @@ router.get("/dashboard/fluxo-caixa-mensal", async (req, res) => {
 
         return successResponse(res, resultado, {ano});
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro no fluxo de caixa mensal do dashboard.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro no fluxo de caixa mensal do dashboard.", e);
     }
 });
 
-router.get("/dashboard/saidas-plano-contas", async (_req, res) => {
+router.get("/dashboard/saidas-plano-contas", async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const rows = await db
             .select({
                 categoria: planoContasTable.categoria,
@@ -648,7 +674,7 @@ router.get("/dashboard/saidas-plano-contas", async (_req, res) => {
             })
             .from(lancamentosTable)
             .leftJoin(planoContasTable, eq(lancamentosTable.plano_conta_id, planoContasTable.id))
-            .where(eq(lancamentosTable.tipo, "CP"))
+            .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.tipo, "CP")))
             .groupBy(planoContasTable.categoria)
             .orderBy(sql`sum(
             ${lancamentosTable.valor}
@@ -668,12 +694,13 @@ router.get("/dashboard/saidas-plano-contas", async (_req, res) => {
 
         return successResponse(res, result);
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao consolidar saídas por plano de contas.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao consolidar saídas por plano de contas.", e);
     }
 });
 
-router.get("/dashboard/entradas-plano-contas", async (_req, res) => {
+router.get("/dashboard/entradas-plano-contas", async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const rows = await db
             .select({
                 categoria: planoContasTable.categoria,
@@ -685,7 +712,7 @@ router.get("/dashboard/entradas-plano-contas", async (_req, res) => {
             })
             .from(lancamentosTable)
             .leftJoin(planoContasTable, eq(lancamentosTable.plano_conta_id, planoContasTable.id))
-            .where(eq(lancamentosTable.tipo, "CR"))
+            .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.tipo, "CR")))
             .groupBy(planoContasTable.categoria)
             .orderBy(sql`sum(
             ${lancamentosTable.valor}
@@ -705,7 +732,7 @@ router.get("/dashboard/entradas-plano-contas", async (_req, res) => {
 
         return successResponse(res, result);
     } catch (e) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao consolidar entradas por plano de contas.", String(e));
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao consolidar entradas por plano de contas.", e);
     }
 });
 

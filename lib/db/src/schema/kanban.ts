@@ -2,9 +2,11 @@ import { pgTable, serial, text, integer, date, timestamp, jsonb, boolean } from 
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { usuariosTable } from "./usuarios";
+import { empresasTable } from "./empresas";
 
 export const kanbanCardsTable = pgTable("kanban_cards", {
   id: serial("id").primaryKey(),
+  empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
   titulo: text("titulo").notNull(),
   descricao: text("descricao"),
   coluna: text("coluna").notNull().default("solicitado"),
@@ -25,6 +27,7 @@ export const kanbanCardsTable = pgTable("kanban_cards", {
 
 export const kanbanComentariosTable = pgTable("kanban_comentarios", {
   id: serial("id").primaryKey(),
+  empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
   card_id: integer("card_id").references(() => kanbanCardsTable.id).notNull(),
   usuario_id: integer("usuario_id").references(() => usuariosTable.id).notNull(),
   comentario: text("comentario").notNull(),
@@ -33,6 +36,7 @@ export const kanbanComentariosTable = pgTable("kanban_comentarios", {
 
 export const kanbanAnexosTable = pgTable("kanban_anexos", {
   id: serial("id").primaryKey(),
+  empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
   card_id: integer("card_id").references(() => kanbanCardsTable.id).notNull(),
   usuario_id: integer("usuario_id").references(() => usuariosTable.id).notNull(),
   nome_arquivo: text("nome_arquivo").notNull(),
@@ -44,6 +48,7 @@ export const kanbanAnexosTable = pgTable("kanban_anexos", {
 
 export const kanbanHistoricoTable = pgTable("kanban_historico", {
   id: serial("id").primaryKey(),
+  empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
   card_id: integer("card_id").references(() => kanbanCardsTable.id).notNull(),
   coluna_anterior: text("coluna_anterior"),
   coluna_nova: text("coluna_nova"),
@@ -52,14 +57,14 @@ export const kanbanHistoricoTable = pgTable("kanban_historico", {
   created_at: timestamp("created_at").defaultNow().notNull(),
 });
 
-export const insertKanbanCardSchema = createInsertSchema(kanbanCardsTable).omit({ id: true, created_at: true, updated_at: true, comentarios_count: true, anexos_count: true });
+export const insertKanbanCardSchema = createInsertSchema(kanbanCardsTable).omit({ id: true, created_at: true, updated_at: true, comentarios_count: true, anexos_count: true, empresa_id: true });
 export type InsertKanbanCard = z.infer<typeof insertKanbanCardSchema>;
 export type KanbanCard = typeof kanbanCardsTable.$inferSelect;
 
-export const insertKanbanComentarioSchema = createInsertSchema(kanbanComentariosTable).omit({ id: true, created_at: true });
+export const insertKanbanComentarioSchema = createInsertSchema(kanbanComentariosTable).omit({ id: true, created_at: true, empresa_id: true });
 export type InsertComentario = z.infer<typeof insertKanbanComentarioSchema>;
 export type KanbanComentario = typeof kanbanComentariosTable.$inferSelect;
 
-export const insertKanbanAnexoSchema = createInsertSchema(kanbanAnexosTable).omit({ id: true, created_at: true });
+export const insertKanbanAnexoSchema = createInsertSchema(kanbanAnexosTable).omit({ id: true, created_at: true, empresa_id: true });
 export type InsertAnexo = z.infer<typeof insertKanbanAnexoSchema>;
 export type KanbanAnexo = typeof kanbanAnexosTable.$inferSelect;

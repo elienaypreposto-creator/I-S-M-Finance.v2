@@ -6,11 +6,13 @@ import {
     kanbanCardsTable,
     kanbanComentariosTable,
     kanbanHistoricoTable,
+    usuarioEmpresasTable,
     usuariosTable,
 } from "@workspace/db/schema";
 import {and, desc, eq, gte, lt, lte, sql} from "drizzle-orm";
 import {validateBody} from "../middlewares/validate";
 import {errorResponse, successResponse} from "../utils/response";
+import {requireTenant, tenantScope, tenantWhere, withEmpresaId} from "../lib/tenant-scope";
 
 const router = Router();
 
@@ -60,6 +62,7 @@ type PatchCardBody = z.infer<typeof patchCardBodySchema>;
 
 router.get("/cards", async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const {prioridade, responsavel_id, prazo} = req.query;
         const conditions = [];
 
@@ -103,9 +106,15 @@ router.get("/cards", async (req, res) => {
             })
             .from(kanbanCardsTable)
             .leftJoin(usuariosTable, eq(kanbanCardsTable.responsavel_id, usuariosTable.id))
-            .leftJoin(kanbanComentariosTable, eq(kanbanCardsTable.id, kanbanComentariosTable.card_id))
-            .leftJoin(kanbanAnexosTable, eq(kanbanCardsTable.id, kanbanAnexosTable.card_id))
-            .where(conditions.length > 0 ? and(...conditions) : undefined)
+            .leftJoin(
+                kanbanComentariosTable,
+                and(eq(kanbanCardsTable.id, kanbanComentariosTable.card_id), tenantScope(kanbanComentariosTable, empresaId)),
+            )
+            .leftJoin(
+                kanbanAnexosTable,
+                and(eq(kanbanCardsTable.id, kanbanAnexosTable.card_id), tenantScope(kanbanAnexosTable, empresaId)),
+            )
+            .where(tenantWhere(kanbanCardsTable, empresaId, ...conditions))
             .groupBy(kanbanCardsTable.id, usuariosTable.id, usuariosTable.nome)
             .orderBy(desc(kanbanCardsTable.created_at));
 
@@ -116,7 +125,7 @@ router.get("/cards", async (req, res) => {
 
         return successResponse(res, cards);
     } catch (error) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao buscar cards do kanban.");
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao buscar cards do kanban.", error);
     }
 });
 
@@ -125,25 +134,26 @@ router.post(
     validateBody(createCardBodySchema),
     async (req, res) => {
         try {
+            const {empresaId} = requireTenant(req);
             const {titulo, descricao, prioridade, coluna, prazo, departamentos, checklist, tags} =
                 req.body as CreateCardBody;
 
             const card = await db.transaction(async (tx) => {
                 const [inserted] = await tx
                     .insert(kanbanCardsTable)
-                    .values({titulo, descricao, prioridade, coluna, prazo, departamentos, checklist, tags})
+                    .values(withEmpresaId({titulo, descricao, prioridade, coluna, prazo, departamentos, checklist, tags}, empresaId))
                     .returning();
 
                 await tx
                     .insert(kanbanHistoricoTable)
-                    .values({card_id: inserted.id, comentario: `Tarefa "${titulo}" criada`});
+                    .values(withEmpresaId({card_id: inserted.id, comentario: `Tarefa "${titulo}" criada`}, empresaId));
 
                 return inserted;
             });
 
             return successResponse(res, card, null, 201);
         } catch (error) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao criar card do kanban.");
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao criar card do kanban.", error);
         }
     },
 );
@@ -153,6 +163,7 @@ router.patch(
     validateBody(patchCardBodySchema),
     async (req, res) => {
         try {
+            const {empresaId} = requireTenant(req);
             const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
             if (isNaN(id)) {
                 return errorResponse(res, 400, "VALIDATION_ERROR", "ID inválido.");
@@ -168,17 +179,17 @@ router.patch(
                 const [updated] = await tx
                     .update(kanbanCardsTable)
                     .set(updates)
-                    .where(eq(kanbanCardsTable.id, id))
+                    .where(tenantWhere(kanbanCardsTable, empresaId, eq(kanbanCardsTable.id, id)))
                     .returning();
 
                 if (!updated) return null;
 
                 if (updates.coluna) {
-                    await tx.insert(kanbanHistoricoTable).values({
+                    await tx.insert(kanbanHistoricoTable).values(withEmpresaId({
                         card_id: id,
                         comentario: `Movido para ${updates.coluna}`,
                         coluna_nova: updates.coluna,
-                    });
+                    }, empresaId));
                 }
 
                 return updated;
@@ -190,31 +201,32 @@ router.patch(
 
             return successResponse(res, card);
         } catch (error) {
-            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao atualizar card do kanban.");
+            return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao atualizar card do kanban.", error);
         }
     },
 );
 
 router.delete("/cards/:id", async (req, res) => {
-    try {
-        const id = parseInt(req.params.id, 10);
-        if (isNaN(id)) {
-            return errorResponse(res, 400, "VALIDATION_ERROR", "ID inválido.");
-        }
+        try {
+            const {empresaId} = requireTenant(req);
+            const id = parseInt(req.params.id, 10);
+            if (isNaN(id)) {
+                return errorResponse(res, 400, "VALIDATION_ERROR", "ID inválido.");
+            }
 
-        const deleted = await db.transaction(async (tx) => {
-            // Deleta registros filhos antes para não violar FK constraint
-            await tx.delete(kanbanHistoricoTable).where(eq(kanbanHistoricoTable.card_id, id));
-            await tx.delete(kanbanComentariosTable).where(eq(kanbanComentariosTable.card_id, id));
-            await tx.delete(kanbanAnexosTable).where(eq(kanbanAnexosTable.card_id, id));
+            const deleted = await db.transaction(async (tx) => {
+                // Deleta registros filhos antes para não violar FK constraint
+                await tx.delete(kanbanHistoricoTable).where(tenantWhere(kanbanHistoricoTable, empresaId, eq(kanbanHistoricoTable.card_id, id)));
+                await tx.delete(kanbanComentariosTable).where(tenantWhere(kanbanComentariosTable, empresaId, eq(kanbanComentariosTable.card_id, id)));
+                await tx.delete(kanbanAnexosTable).where(tenantWhere(kanbanAnexosTable, empresaId, eq(kanbanAnexosTable.card_id, id)));
 
-            const [removed] = await tx
-                .delete(kanbanCardsTable)
-                .where(eq(kanbanCardsTable.id, id))
-                .returning();
+                const [removed] = await tx
+                    .delete(kanbanCardsTable)
+                    .where(tenantWhere(kanbanCardsTable, empresaId, eq(kanbanCardsTable.id, id)))
+                    .returning();
 
-            return removed;
-        });
+                return removed;
+            });
 
         if (!deleted) {
             return errorResponse(res, 404, "NOT_FOUND", "Card não encontrado.");
@@ -222,20 +234,28 @@ router.delete("/cards/:id", async (req, res) => {
 
         return successResponse(res, { id });
     } catch (error) {
-        console.error("❌ ERRO DELETE KANBAN:", error);
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao excluir card do kanban.");
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao excluir card do kanban.", error);
     }
 });
 
-router.get("/usuarios", async (_req, res) => {
+router.get("/usuarios", async (req, res) => {
     try {
+        const {empresaId} = requireTenant(req);
         const data = await db
             .select({id: usuariosTable.id, nome: usuariosTable.nome, email: usuariosTable.email})
             .from(usuariosTable)
+            .innerJoin(
+                usuarioEmpresasTable,
+                and(
+                    eq(usuarioEmpresasTable.usuario_id, usuariosTable.id),
+                    eq(usuarioEmpresasTable.empresa_id, empresaId),
+                    eq(usuarioEmpresasTable.ativo, true),
+                ),
+            )
             .orderBy(usuariosTable.nome);
         return successResponse(res, data);
     } catch (error) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao buscar usuários do kanban.");
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno ao buscar usuários do kanban.", error);
     }
 });
 

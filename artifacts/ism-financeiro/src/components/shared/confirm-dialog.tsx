@@ -8,8 +8,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { AlertTriangle, Trash2, Edit2, type LucideIcon } from "lucide-react";
 
-// ─── Props ─────────────────────────────────────────────────────────────────────
-
 export interface ConfirmDialogProps {
   open: boolean;
   title: string;
@@ -17,13 +15,11 @@ export interface ConfirmDialogProps {
   confirmLabel?: string;
   cancelLabel?: string;
   variant?: "default" | "destructive" | "warning";
-  /** Ícone customizado. Se omitido, usa Trash2 (destructive) ou AlertTriangle (demais). */
   icon?: LucideIcon;
   onConfirm: () => void;
   onCancel: () => void;
+  confirmDisabled?: boolean;
 }
-
-// ─── Componente ────────────────────────────────────────────────────────────────
 
 export function ConfirmDialog({
   open,
@@ -35,6 +31,7 @@ export function ConfirmDialog({
   icon,
   onConfirm,
   onCancel,
+  confirmDisabled = false,
 }: ConfirmDialogProps) {
   const isDestructive = variant === "destructive";
   const isWarning     = variant === "warning";
@@ -93,8 +90,12 @@ export function ConfirmDialog({
           </button>
           <button
             type="button"
-            onClick={onConfirm}
-            className={`flex-1 py-2.5 rounded-xl text-sm font-medium text-white transition-colors ${confirmBg}`}
+            onClick={() => {
+              if (confirmDisabled) return;
+              onConfirm();
+            }}
+            disabled={confirmDisabled}
+            className={`flex-1 py-2.5 rounded-xl text-sm font-medium text-white transition-colors disabled:opacity-40 disabled:pointer-events-none ${confirmBg}`}
           >
             {confirmLabel}
           </button>

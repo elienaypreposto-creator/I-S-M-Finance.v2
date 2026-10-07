@@ -3,6 +3,8 @@ import {useLocation, useSearch} from "wouter";
 import {fetchApi} from "@/lib/api-config";
 import {useToast} from "@/hooks/use-toast";
 import {Loader2, Mail, KeyRound, Lock} from "lucide-react";
+import {SenhaForca} from "@/components/auth/senha-forca";
+import {avaliarSenha} from "@/lib/senha-policy";
 
 export default function PrimeiroAcesso() {
     const [, setLocation] = useLocation();
@@ -51,12 +53,7 @@ export default function PrimeiroAcesso() {
         }
     }
 
-    const validatePassword = (password: string) => {
-        if (password.length < 8) return "A senha deve ter no mínimo 8 caracteres.";
-        if (!/[A-Z]/.test(password)) return "A senha deve conter ao menos 1 letra maiúscula.";
-        if (!/[0-9]/.test(password)) return "A senha deve conter ao menos 1 número.";
-        return null;
-    };
+    const validatePassword = (password: string) => avaliarSenha(password, {email}).erro;
 
     async function handleSetupPassword(e: React.FormEvent) {
         e.preventDefault();
@@ -182,6 +179,7 @@ export default function PrimeiroAcesso() {
                                         placeholder="••••••••"
                                     />
                                 </div>
+                                <SenhaForca senha={novaSenha} email={email}/>
                             </div>
 
                             <div className="space-y-2">

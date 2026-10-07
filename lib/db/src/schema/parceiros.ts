@@ -2,9 +2,12 @@ import {pgTable, serial, text, varchar, boolean, integer, jsonb, timestamp, uniq
 import {createInsertSchema} from "drizzle-zod";
 import {z} from "zod/v4";
 import {departamentosTable, centrosCustosTable} from "./departamentos";
+import {empresasTable} from "./empresas";
 
 export const parceirosTable = pgTable("parceiros", {
     id: serial("id").primaryKey(),
+    // NOVO — Onda 2: FK de isolamento multi-empresa.
+    empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
     tipo_pessoa: text("tipo_pessoa").notNull(), // PF, PJ
     cpf_cnpj: text("cpf_cnpj"),
     nome: text("nome").notNull(),
@@ -30,13 +33,19 @@ export const parceirosTable = pgTable("parceiros", {
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [
-    uniqueIndex("parceiros_cpf_cnpj_unique_idx").on(table.cpf_cnpj),
+
+    // ANTES: uniqueIndex("parceiros_cpf_cnpj_unique_idx").on(table.cpf_cnpj)
+    // ALTERADO — Onda 2: CPF/CNPJ agora só precisa ser único DENTRO da mesma
+    // empresa (duas empresas podem ter o mesmo parceiro cadastrado cada uma
+    // com seu próprio registro).
+    uniqueIndex("parceiros_empresa_id_cpf_cnpj_unique_idx").on(table.empresa_id, table.cpf_cnpj),
 ]);
 
 export const insertParceiroSchema = createInsertSchema(parceirosTable).omit({
     id: true,
     created_at: true,
-    updated_at: true
+    updated_at: true,
+    empresa_id: true,
 });
 export type InsertParceiro = z.infer<typeof insertParceiroSchema>;
 export type Parceiro = typeof parceirosTable.$inferSelect;

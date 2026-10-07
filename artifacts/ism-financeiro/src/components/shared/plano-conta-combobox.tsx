@@ -1,8 +1,6 @@
-import {useEffect, useState} from "react";
-import {useQuery} from "@tanstack/react-query";
+import {useMemo, useState} from "react";
 import {Search} from "lucide-react";
 import {Popover, PopoverContent, PopoverTrigger} from "@/components/ui/popover";
-import {fetchApiData} from "@/lib/api-config";
 
 export type PlanoContaOption = {
     id: number;
@@ -10,6 +8,37 @@ export type PlanoContaOption = {
     categoria: string;
     subcategoria: string | null;
 };
+
+export function normalizePlanoSearch(s: string): string {
+    return s
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .trim()
+        .replace(/\s+/g, " ");
+}
+
+export function filterPlanoContas(
+    itens: PlanoContaOption[],
+    rawQuery: string,
+): PlanoContaOption[] {
+    const q = normalizePlanoSearch(rawQuery);
+    if (!q) return itens;
+
+    const categoriasQueCasam = new Set<string>();
+    for (const p of itens) {
+        if (normalizePlanoSearch(p.categoria).includes(q)) {
+            categoriasQueCasam.add(normalizePlanoSearch(p.categoria));
+        }
+    }
+
+    return itens.filter((p) => {
+        const cat = normalizePlanoSearch(p.categoria);
+        if (categoriasQueCasam.has(cat)) return true;
+        const sub = normalizePlanoSearch(p.subcategoria ?? "");
+        return sub.includes(q) || `${cat} ${sub}`.includes(q);
+    });
+}
 
 function groupPlanoContasPorCategoria(itens: PlanoContaOption[]): { categoria: string; itens: PlanoContaOption[] }[] {
     const map = new Map<string, PlanoContaOption[]>();
@@ -36,30 +65,12 @@ export function PlanoContaCombobox({
                                    }: PlanoContaComboboxProps) {
     const [open, setOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState("");
-    const [debouncedSearch, setDebouncedSearch] = useState("");
 
-    useEffect(() => {
-        const t = setTimeout(() => setDebouncedSearch(searchTerm.trim()), 200);
-        return () => clearTimeout(t);
-    }, [searchTerm]);
-
-    const shouldSearchServer = debouncedSearch.length >= 3;
-
-    const {data: searchResults, isFetching} = useQuery<PlanoContaOption[]>({
-        queryKey: ["plano-contas-search", debouncedSearch],
-        queryFn: () => fetchApiData<PlanoContaOption[]>(`/plano-contas?search=${encodeURIComponent(debouncedSearch)}`),
-        enabled: shouldSearchServer,
-    });
-
-    const localFiltered = searchTerm.trim().length === 0
-        ? planoContas
-        : planoContas.filter((p) => {
-            const haystack = `${p.categoria} ${p.subcategoria ?? ""}`.toLowerCase();
-            return haystack.includes(searchTerm.trim().toLowerCase());
-        });
-
-    const options = shouldSearchServer ? (searchResults ?? []) : localFiltered;
-    const grupos = groupPlanoContasPorCategoria(options);
+    const options = useMemo(
+        () => filterPlanoContas(planoContas, searchTerm),
+        [planoContas, searchTerm],
+    );
+    const grupos = useMemo(() => groupPlanoContasPorCategoria(options), [options]);
     const selected = planoContas.find((p) => String(p.id) === value)
         ?? options.find((p) => String(p.id) === value);
 
@@ -97,6 +108,8 @@ export function PlanoContaCombobox({
                     sideOffset={4}
                     className="p-0 bg-[#1a1c23] border border-white/10 rounded-xl shadow-2xl"
                     style={{width: "var(--radix-popover-trigger-width)"}}
+                    onOpenAutoFocus={(e) => e.preventDefault()}
+                    onCloseAutoFocus={(e) => e.preventDefault()}
                 >
                     <div className="p-3 border-b border-white/5">
                         <div className="flex items-center gap-2 bg-black/30 rounded-lg px-3 py-2">
@@ -124,9 +137,7 @@ export function PlanoContaCombobox({
                             Indique a categoria contábil...
                         </button>
 
-                        {shouldSearchServer && isFetching ? (
-                            <p className="px-4 py-3 text-xs text-muted-foreground text-center animate-pulse">Buscando...</p>
-                        ) : grupos.length === 0 ? (
+                        {grupos.length === 0 ? (
                             <p className="px-4 py-3 text-xs text-muted-foreground text-center">Nenhuma categoria
                                 encontrada.</p>
                         ) : (

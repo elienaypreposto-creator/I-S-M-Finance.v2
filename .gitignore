@@ -52,6 +52,3 @@ Thumbs.db
 backups/
 .env
 *.env
-/.cursor/settings.json
-/scripts/ISM-Finance-API.postman_collection.json
-/docs/

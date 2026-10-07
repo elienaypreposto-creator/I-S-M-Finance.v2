@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useState, type MouseEvent} from "react";
 import {useLocation} from "wouter";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
@@ -133,12 +134,12 @@ export default function ConciliacaoList() {
     const limit = 15;
 
     const {data: contas} = useQuery({
-        queryKey: ["contas-bancarias-filtro"],
+        queryKey: tenantQueryKey("contas-bancarias-filtro"),
         queryFn: () => fetchApiData<ContaFiltro[]>("/contas-bancarias"),
     });
 
     const {data, isLoading, isError, refetch} = useQuery({
-        queryKey: ["conciliacoes", page, limit, dataInicio, dataFim, contaId],
+        queryKey: tenantQueryKey("conciliacoes", page, limit, dataInicio, dataFim, contaId),
         queryFn: async () => {
             const params = new URLSearchParams();
             params.set("page", String(page));
@@ -161,7 +162,7 @@ export default function ConciliacaoList() {
         mutationFn: (extratoId: number) =>
             fetchApiData<{ deleted: boolean }>(`/conciliacoes/${extratoId}`, {method: "DELETE"}),
         onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["conciliacoes"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("conciliacoes")});
             toast({
                 title: "Extrato excluído",
                 description: "O extrato e a conciliação associada foram removidos.",

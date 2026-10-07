@@ -6,7 +6,7 @@
       "idx": 0,
       "version": "7",
       "when": 1777922150039,
-      "tag": "0000_naive_nightmare",
+      "tag": "0000_baseline",
       "breakpoints": true
     },
     {
@@ -63,6 +63,125 @@
       "version": "7",
       "when": 1787160500000,
       "tag": "0008_tipo_match_exato",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790166000000,
+      "tag": "0009_empresas_empresa_id_nullable",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790166100000,
+      "tag": "0010_empresa_id_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790166200000,
+      "tag": "0011_empresa_id_not_null_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790166300000,
+      "tag": "0012_usuario_empresas",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790166400000,
+      "tag": "0013_rls_ism_app",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790166500000,
+      "tag": "0014_auditoria_append_only",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1790166600000,
+      "tag": "0015_rls_revoke_public_auditoria",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790166700000,
+      "tag": "0016_auditoria_request_id_text",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790166800000,
+      "tag": "0017_colunas_pagamento_lancamentos",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790166900000,
+      "tag": "0018_permissoes_empresa_superadmin",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790167000000,
+      "tag": "0019_roles_login",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790167100000,
+      "tag": "0020_reassign_ism_owner",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790167200000,
+      "tag": "0021_tokens_api_escopos_indices_empresa",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790167300000,
+      "tag": "0022_rls_usuario_empresas_permissoes",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1790167400000,
+      "tag": "0023_senha_legada_reset",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790167500000,
+      "tag": "0024_lgpd_auditoria_sem_fk_empresa",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790167600000,
+      "tag": "0025_lgpd_dpa_empresa",
       "breakpoints": true
     }
   ]

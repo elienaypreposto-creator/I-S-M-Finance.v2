@@ -8,6 +8,9 @@ import {
     AlertDialogDescription,
 } from "@/components/ui/dialog";
 import {Ban} from "lucide-react";
+import {ConfirmDialog} from "@/components/shared/confirm-dialog";
+import {useConfirm} from "@/hooks/use-confirm";
+import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
 
 export type MotivoIgnorarPayload = {
     motivo_codigo?: string;
@@ -23,9 +26,10 @@ type Props = {
     onConfirm: (payload: MotivoIgnorarPayload) => void;
 };
 
-/** Modal de confirmação para ignorar linha — motivo opcional (ou obrigatório se parametro ativo). */
+/** Modal de confirmação para ignorar linha - motivo opcional (ou obrigatório se parametro ativo). */
 export function IgnorarLinhaModal({open, obrigatorio = false, pending, onClose, onConfirm}: Props) {
     const [motivo, setMotivo] = useState("");
+    const {confirm, ConfirmDialogProps} = useConfirm();
 
     useEffect(() => {
         if (open) setMotivo("");
@@ -33,11 +37,20 @@ export function IgnorarLinhaModal({open, obrigatorio = false, pending, onClose, 
 
     const podeConfirmar = !obrigatorio || motivo.trim().length > 0;
 
+    async function handleRequestClose() {
+        if (motivo.trim()) {
+            const ok = await confirm(DISCARD_PROMPT);
+            if (!ok) return;
+        }
+        onClose();
+    }
+
     return (
+        <>
         <AlertDialog
             open={open}
             onOpenChange={(v) => {
-                if (!v) onClose();
+                if (!v) void handleRequestClose();
             }}
         >
             <AlertDialogContent className="sm:max-w-md bg-card border border-white/10 text-white rounded-2xl">
@@ -66,7 +79,7 @@ export function IgnorarLinhaModal({open, obrigatorio = false, pending, onClose, 
                 <AlertDialogFooter className="gap-2 sm:gap-2 flex-row">
                     <button
                         type="button"
-                        onClick={onClose}
+                        onClick={() => void handleRequestClose()}
                         className="flex-1 px-3 py-2.5 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-xs font-semibold"
                     >
                         Cancelar
@@ -86,5 +99,7 @@ export function IgnorarLinhaModal({open, obrigatorio = false, pending, onClose, 
                 </AlertDialogFooter>
             </AlertDialogContent>
         </AlertDialog>
+        <ConfirmDialog {...ConfirmDialogProps} />
+        </>
     );
 }

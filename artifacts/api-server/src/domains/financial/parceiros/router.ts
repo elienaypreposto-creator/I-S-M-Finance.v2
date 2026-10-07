@@ -5,6 +5,7 @@ import {asyncHandler} from "../../../utils/async-handler";
 import {errorResponse, successResponse} from "../../../utils/response";
 import {AppError} from "../../../utils/app-error";
 import {parceirosService} from "./parceiros.service";
+import {requireTenant} from "../../../lib/tenant-scope";
 import {
     type CreateParceiroBody,
     type UpdateParceiroBody,
@@ -28,17 +29,16 @@ function isAppError(e: unknown): e is AppError {
 /** Centraliza a tradução de AppError -> errorResponse para este router. */
 function handleServiceError(e: unknown, res: Response): Response {
     if (isAppError(e)) {
-        return errorResponse(res, e.statusCode, e.code, e.message);
+        return errorResponse(res, e.statusCode, e.code, e.message, e.statusCode >= 500 ? e : null);
     }
-    console.error("[parceiros] Erro inesperado:", e);
-    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno do servidor.");
+    return errorResponse(res, 500, "INTERNAL_ERROR", "Erro interno do servidor.", e);
 }
 
 router.get(
     "/parceiros",
     asyncHandler(async (req, res) => {
         const query = listParceirosQuerySchema.parse(req.query);
-        const result = await parceirosService.list(query);
+        const result = await parceirosService.list(requireTenant(req).empresaId, query);
         return successResponse(res, result.items, result.meta);
     }),
 );
@@ -49,7 +49,7 @@ router.post(
     validateBody(createParceiroBodySchema),
     async (req: Request, res: Response) => {
         try {
-            const item = await parceirosService.create(req.body as CreateParceiroBody);
+            const item = await parceirosService.create(requireTenant(req).empresaId, req.body as CreateParceiroBody);
             return successResponse(res, item, null, 201);
         } catch (e: unknown) {
             return handleServiceError(e, res);
@@ -61,7 +61,7 @@ router.get(
     "/parceiros/:id",
     asyncHandler(async (req, res) => {
         const {id} = parceiroIdParamSchema.parse(req.params);
-        const item = await parceirosService.getById(id);
+        const item = await parceirosService.getById(requireTenant(req).empresaId, id);
         return successResponse(res, item);
     }),
 );
@@ -73,7 +73,7 @@ router.put(
     async (req: Request, res: Response) => {
         try {
             const {id} = parceiroIdParamSchema.parse(req.params);
-            const item = await parceirosService.update(id, req.body as UpdateParceiroBody);
+            const item = await parceirosService.update(requireTenant(req).empresaId, id, req.body as UpdateParceiroBody);
             return successResponse(res, item);
         } catch (e: unknown) {
             return handleServiceError(e, res);
@@ -86,7 +86,7 @@ router.delete(
     withPermission("financeiro:parceiros:deletar"),
     asyncHandler(async (req, res) => {
         const {id} = parceiroIdParamSchema.parse(req.params);
-        const result = await parceirosService.remove(id);
+        const result = await parceirosService.remove(requireTenant(req).empresaId, id);
         return successResponse(res, result);
     }),
 );

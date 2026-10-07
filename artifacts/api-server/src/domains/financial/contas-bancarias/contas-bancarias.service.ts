@@ -1,12 +1,13 @@
-import {and, count, eq, lte, sql} from "drizzle-orm";
+import {count, eq, lte, sql} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {contasBancariasTable, extratosTable, lancamentosTable} from "@workspace/db/schema";
 import {AppError} from "../../../utils/app-error";
 import {centsToDecimalString, fromCents, toCents} from "../../../utils/money";
 import {sqlLancamentosDaConta} from "../../../utils/lancamentos-conta";
+import {tenantScope, tenantWhere, withEmpresaId} from "../../../lib/tenant-scope";
 import type {CreateContaBancariaBody, UpdateContaBancariaBody} from "./schemas";
 
-async function calcularSaldoCents(contaId: number, dataRef?: string): Promise<{
+async function calcularSaldoCents(empresaId: number, contaId: number, dataRef?: string): Promise<{
     saldoInicialCents: number;
     creditosCents: number;
     debitosCents: number;
@@ -15,7 +16,7 @@ async function calcularSaldoCents(contaId: number, dataRef?: string): Promise<{
     const [conta] = await db
         .select()
         .from(contasBancariasTable)
-        .where(eq(contasBancariasTable.id, contaId))
+        .where(tenantWhere(contasBancariasTable, empresaId, eq(contasBancariasTable.id, contaId)))
         .limit(1);
 
     if (!conta) {
@@ -47,7 +48,7 @@ async function calcularSaldoCents(contaId: number, dataRef?: string): Promise<{
             valor_quitado: lancamentosTable.valor_quitado,
         })
         .from(lancamentosTable)
-        .where(and(...conditions));
+        .where(tenantWhere(lancamentosTable, empresaId, ...conditions));
 
     let creditosCents = 0;
     let debitosCents = 0;
@@ -63,11 +64,15 @@ async function calcularSaldoCents(contaId: number, dataRef?: string): Promise<{
 }
 
 export const contasBancariasService = {
-    async list() {
-        const rows = await db.select().from(contasBancariasTable).orderBy(contasBancariasTable.nome);
+    async list(empresaId: number) {
+        const rows = await db
+            .select()
+            .from(contasBancariasTable)
+            .where(tenantScope(contasBancariasTable, empresaId))
+            .orderBy(contasBancariasTable.nome);
         const withSaldo = await Promise.all(
             rows.map(async (row) => {
-                const {saldoCents} = await calcularSaldoCents(row.id);
+                const {saldoCents} = await calcularSaldoCents(empresaId, row.id);
                 return {
                     ...row,
                     saldo_atual: centsToDecimalString(saldoCents),
@@ -77,23 +82,28 @@ export const contasBancariasService = {
         return withSaldo;
     },
 
-    async create(payload: CreateContaBancariaBody) {
+    async create(empresaId: number, payload: CreateContaBancariaBody) {
         const [item] = await db
             .insert(contasBancariasTable)
-            .values({
-                tipo: payload.tipo,
-                banco: payload.banco ?? null,
-                agencia: payload.agencia ?? null,
-                digito_agencia: payload.digito_agencia ?? null,
-                conta: payload.conta ?? null,
-                digito_conta: payload.digito_conta ?? null,
-                nome: payload.nome,
-                empresa: payload.empresa ?? null,
-                saldo_inicial: payload.saldo_inicial ?? "0",
-                data_inicio: payload.data_inicio,
-                status: payload.status ?? "ativo",
-                cor: payload.cor ?? "#3BA8DC",
-            })
+            .values(
+                withEmpresaId(
+                    {
+                        tipo: payload.tipo,
+                        banco: payload.banco ?? null,
+                        agencia: payload.agencia ?? null,
+                        digito_agencia: payload.digito_agencia ?? null,
+                        conta: payload.conta ?? null,
+                        digito_conta: payload.digito_conta ?? null,
+                        nome: payload.nome,
+                        titular: payload.titular ?? payload.empresa ?? null,
+                        saldo_inicial: payload.saldo_inicial ?? "0",
+                        data_inicio: payload.data_inicio,
+                        status: payload.status ?? "ativo",
+                        cor: payload.cor ?? "#3BA8DC",
+                    },
+                    empresaId,
+                ),
+            )
             .returning();
 
         return {
@@ -102,16 +112,16 @@ export const contasBancariasService = {
         };
     },
 
-    async update(id: number, payload: UpdateContaBancariaBody) {
+    async update(empresaId: number, id: number, payload: UpdateContaBancariaBody) {
         const [[{lancamentos}], [{extratos}]] = await Promise.all([
             db
                 .select({lancamentos: count()})
                 .from(lancamentosTable)
-                .where(eq(lancamentosTable.conta_id, id)),
+                .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.conta_id, id))),
             db
                 .select({extratos: count()})
                 .from(extratosTable)
-                .where(eq(extratosTable.conta_id, id)),
+                .where(tenantWhere(extratosTable, empresaId, eq(extratosTable.conta_id, id))),
         ]);
 
         if (Number(lancamentos) > 0 || Number(extratos) > 0) {
@@ -122,10 +132,17 @@ export const contasBancariasService = {
             );
         }
 
+        const {empresa, titular, ...rest} = payload;
         const [item] = await db
             .update(contasBancariasTable)
-            .set({...payload, updated_at: new Date()})
-            .where(eq(contasBancariasTable.id, id))
+            .set({
+                ...rest,
+                ...(titular !== undefined || empresa !== undefined
+                    ? {titular: titular ?? empresa ?? null}
+                    : {}),
+                updated_at: new Date(),
+            })
+            .where(tenantWhere(contasBancariasTable, empresaId, eq(contasBancariasTable.id, id)))
             .returning();
 
         if (!item) {
@@ -138,16 +155,16 @@ export const contasBancariasService = {
         };
     },
 
-    async remove(id: number) {
+    async remove(empresaId: number, id: number) {
         const [[{lancamentos}], [{extratos}]] = await Promise.all([
             db
                 .select({lancamentos: count()})
                 .from(lancamentosTable)
-                .where(eq(lancamentosTable.conta_id, id)),
+                .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.conta_id, id))),
             db
                 .select({extratos: count()})
                 .from(extratosTable)
-                .where(eq(extratosTable.conta_id, id)),
+                .where(tenantWhere(extratosTable, empresaId, eq(extratosTable.conta_id, id))),
         ]);
 
         if (Number(lancamentos) > 0 || Number(extratos) > 0) {
@@ -158,7 +175,13 @@ export const contasBancariasService = {
             );
         }
 
-        await db.delete(contasBancariasTable).where(eq(contasBancariasTable.id, id));
+        const [item] = await db
+            .delete(contasBancariasTable)
+            .where(tenantWhere(contasBancariasTable, empresaId, eq(contasBancariasTable.id, id)))
+            .returning({id: contasBancariasTable.id});
+        if (!item) {
+            throw new AppError(404, "NOT_FOUND", "Conta bancária não encontrada.");
+        }
         return {deleted: true};
     },
 
@@ -166,11 +189,11 @@ export const contasBancariasService = {
      * Saldo posicional na data (DEF-03). Regra D-1: o saldo confiável é o do fechamento
      * do dia informado (tipicamente D-1), nunca "agora" sem data.
      */
-    async saldoNaData(id: number, data: string) {
+    async saldoNaData(empresaId: number, id: number, data: string) {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) {
             throw new AppError(400, "VALIDATION_ERROR", "Parâmetro data inválido. Use YYYY-MM-DD.");
         }
-        const calc = await calcularSaldoCents(id, data);
+        const calc = await calcularSaldoCents(empresaId, id, data);
         const [conta] = await db
             .select({
                 id: contasBancariasTable.id,
@@ -179,7 +202,7 @@ export const contasBancariasService = {
                 data_inicio: contasBancariasTable.data_inicio,
             })
             .from(contasBancariasTable)
-            .where(eq(contasBancariasTable.id, id))
+            .where(tenantWhere(contasBancariasTable, empresaId, eq(contasBancariasTable.id, id)))
             .limit(1);
 
         return {

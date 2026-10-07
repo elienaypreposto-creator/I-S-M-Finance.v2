@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useState} from "react";
 import {useForm} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
@@ -20,6 +21,8 @@ import {fetchApiData} from "@/lib/api-config";
 import {CardsSkeleton} from "@/components/shared/table-skeleton";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
+import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
+import {ViewportOverlay} from "@/components/shared/viewport-overlay";
 import {
     Empty,
     EmptyHeader,
@@ -62,18 +65,31 @@ interface FilialModalProps {
 
 function FilialModal({onClose, initialData, isPending, onSave}: FilialModalProps) {
     const isEdit = !!initialData;
+    const {confirm, ConfirmDialogProps} = useConfirm();
 
     const {
         register,
         handleSubmit,
-        formState: {errors},
+        formState: {errors, isDirty},
     } = useForm<FilialFormValues>({
         resolver: zodResolver(filialFormSchema),
         defaultValues: {nome: initialData?.nome ?? ""},
     });
 
+    async function handleRequestClose() {
+        if (isDirty) {
+            const ok = await confirm(DISCARD_PROMPT);
+            if (!ok) return;
+        }
+        onClose();
+    }
+
+    useEscapeClose(!ConfirmDialogProps.open, () => {
+        void handleRequestClose();
+    });
+
     return (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <ViewportOverlay>
             <div className="bg-card border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl">
                 <div className="flex items-center justify-between p-6 border-b border-white/5">
                     <h2 className="text-lg font-bold text-white">
@@ -81,7 +97,7 @@ function FilialModal({onClose, initialData, isPending, onSave}: FilialModalProps
                     </h2>
                     <button
                         type="button"
-                        onClick={onClose}
+                        onClick={() => void handleRequestClose()}
                         className="p-1.5 hover:bg-white/5 rounded-lg transition-colors"
                     >
                         <X className="w-5 h-5"/>
@@ -110,7 +126,7 @@ function FilialModal({onClose, initialData, isPending, onSave}: FilialModalProps
                             <Info className="w-4 h-4 text-primary shrink-0 mt-0.5"/>
                             <p className="text-xs text-muted-foreground leading-relaxed">
                                 Campos de CNPJ, endereço e contacto serão adicionados na{" "}
-                                <strong className="text-white">Fase 7 — Ampliação de Schema</strong>.
+                                <strong className="text-white">Fase 7 - Ampliação de Schema</strong>.
                             </p>
                         </div>
                     </div>
@@ -118,7 +134,7 @@ function FilialModal({onClose, initialData, isPending, onSave}: FilialModalProps
                     <div className="flex gap-3 px-6 pb-6">
                         <button
                             type="button"
-                            onClick={onClose}
+                            onClick={() => void handleRequestClose()}
                             className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium transition-colors"
                         >
                             Cancelar
@@ -134,7 +150,8 @@ function FilialModal({onClose, initialData, isPending, onSave}: FilialModalProps
                     </div>
                 </form>
             </div>
-        </div>
+            <ConfirmDialog {...ConfirmDialogProps} />
+        </ViewportOverlay>
     );
 }
 
@@ -161,7 +178,7 @@ export default function Filiais() {
 
     // ── Query ────────────────────────────────────────────────────────────────────
     const {data: filiais = [], isLoading, isError} = useQuery<FilialRow[]>({
-        queryKey: ["filiais"],
+        queryKey: tenantQueryKey("filiais"),
         queryFn: () => fetchApiData<FilialRow[]>("/filiais"),
     });
 
@@ -173,7 +190,7 @@ export default function Filiais() {
                 body: JSON.stringify({nome: data.nome}),
             }),
         onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["filiais"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("filiais")});
             toast({title: "Filial criada com sucesso."});
             closeModal();
         },
@@ -189,7 +206,7 @@ export default function Filiais() {
                 body: JSON.stringify({nome: data.nome}),
             }),
         onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["filiais"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("filiais")});
             toast({title: "Filial atualizada com sucesso."});
             closeModal();
         },
@@ -202,7 +219,7 @@ export default function Filiais() {
         mutationFn: (id: number) =>
             fetchApiData<{ deleted: boolean }>(`/filiais/${id}`, {method: "DELETE"}),
         onSuccess: () => {
-            void queryClient.invalidateQueries({queryKey: ["filiais"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("filiais")});
             toast({title: "Filial removida com sucesso."});
         },
         onError: (err: Error) => {
@@ -299,7 +316,7 @@ export default function Filiais() {
                 </div>
             </div>
 
-            {/* Loading — skeleton de cards */}
+            {/* Loading - skeleton de cards */}
             {isLoading && <CardsSkeleton cards={4}/>}
 
             {/* Erro */}

@@ -6,6 +6,10 @@ import {
 import {cn} from "@/lib/utils";
 import {Button} from "@/components/ui/button";
 import {Input} from "@/components/ui/input";
+import {ConfirmDialog} from "@/components/shared/confirm-dialog";
+import {useConfirm} from "@/hooks/use-confirm";
+import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
+import {ViewportOverlay} from "@/components/shared/viewport-overlay";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 type ChecklistItem = { id: string; texto: string; completed: boolean };
@@ -78,7 +82,7 @@ interface TaskModalProps {
         checklist: ChecklistItem[];
         tags: string[];
     }) => void;
-    /** Dados existentes — presentes quando mode === "edit" */
+    /** Dados existentes - presentes quando mode === "edit" */
     initialData?: {
         titulo: string;
         descricao: string;
@@ -119,7 +123,7 @@ export function TaskModal({
                               mode = "create",
                           }: TaskModalProps) {
 
-    // Estado do formulário — inicializado de forma lazy para evitar re-render desnecessário
+    // Estado do formulário - inicializado de forma lazy para evitar re-render desnecessário
     const [titulo, setTitulo] = useState(initialData?.titulo ?? "");
     const [descricao, setDescricao] = useState(initialData?.descricao ?? "");
     const [prioridade, setPrioridade] = useState(initialData?.prioridade ?? "media");
@@ -135,6 +139,7 @@ export function TaskModal({
     const [showNovaTag, setShowNovaTag] = useState(false);
     const [isDraggingOver, setIsDraggingOver] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const {confirm, ConfirmDialogProps} = useConfirm();
 
     /**
      * Sempre que o modal abrir, sincroniza os campos:
@@ -154,7 +159,7 @@ export function TaskModal({
             setChecklist(initialData.checklist ?? []);
             setTags(initialData.tags ?? []);
         } else {
-            // Criação — limpa tudo e aplica coluna default
+            // Criação - limpa tudo e aplica coluna default
             const blank = emptyForm(defaultColuna);
             setTitulo(blank.titulo);
             setDescricao(blank.descricao);
@@ -172,6 +177,35 @@ export function TaskModal({
         setShowNovaTag(false);
         // defaultColuna e initialData incluídos para o coluna correto ser aplicado ao abrir
     }, [open, mode, defaultColuna, initialData]);
+
+    function isFormDirty() {
+        const baseTitulo = mode === "edit" && initialData ? initialData.titulo : "";
+        const baseDesc = mode === "edit" && initialData ? (initialData.descricao ?? "") : "";
+        const basePrioridade = mode === "edit" && initialData ? (initialData.prioridade ?? "media") : "media";
+        const baseColuna = mode === "edit" && initialData ? (initialData.coluna ?? defaultColuna) : defaultColuna;
+        const basePrazo = mode === "edit" && initialData ? (initialData.prazo ?? "") : "";
+        return (
+            titulo !== baseTitulo ||
+            descricao !== baseDesc ||
+            prioridade !== basePrioridade ||
+            coluna !== baseColuna ||
+            prazo !== basePrazo ||
+            novaTag !== "" ||
+            novoChecklist !== ""
+        );
+    }
+
+    async function handleRequestClose() {
+        if (isFormDirty()) {
+            const ok = await confirm(DISCARD_PROMPT);
+            if (!ok) return;
+        }
+        onClose();
+    }
+
+    useEscapeClose(open && !ConfirmDialogProps.open, () => {
+        void handleRequestClose();
+    });
 
     // ── Checklist ──────────────────────────────────────────────────────────────
     const handleAddChecklist = () => {
@@ -236,14 +270,14 @@ export function TaskModal({
     if (!open) return null;
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+        <ViewportOverlay className="bg-black/70 backdrop-blur-sm">
             <div
                 className="bg-[#121212] border border-white/10 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
 
                 {/* Cabeçalho */}
                 <div className="flex items-center justify-between p-5 border-b border-white/10 bg-[#1A1A1A]">
                     <h2 className="text-lg font-bold text-white">{modalTitle}</h2>
-                    <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+                    <button onClick={() => void handleRequestClose()} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
                         <X className="w-5 h-5 text-gray-400"/>
                     </button>
                 </div>
@@ -524,7 +558,7 @@ export function TaskModal({
 
                 {/* Rodapé */}
                 <div className="flex items-center justify-end gap-3 p-5 border-t border-white/10 bg-[#1A1A1A]">
-                    <Button variant="ghost" onClick={onClose} className="text-gray-400 hover:text-white">
+                    <Button variant="ghost" onClick={() => void handleRequestClose()} className="text-gray-400 hover:text-white">
                         Cancelar
                     </Button>
                     <Button
@@ -538,6 +572,7 @@ export function TaskModal({
                 </div>
 
             </div>
-        </div>
+            <ConfirmDialog {...ConfirmDialogProps} />
+        </ViewportOverlay>
     );
 }

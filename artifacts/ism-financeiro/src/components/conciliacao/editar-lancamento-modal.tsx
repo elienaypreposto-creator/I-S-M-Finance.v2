@@ -1,3 +1,4 @@
+import {tenantQueryKey} from "@/lib/tenant-query";
 import {useEffect, useState} from "react";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 import {
@@ -13,6 +14,9 @@ import {fetchApiData} from "@/lib/api-config";
 import {useAuth} from "@/hooks/use-auth";
 import {PERM} from "@/lib/permissoes";
 import {Loader2, Pencil} from "lucide-react";
+import {ConfirmDialog} from "@/components/shared/confirm-dialog";
+import {useConfirm} from "@/hooks/use-confirm";
+import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
 
 type LancamentoEditavel = {
     id: number;
@@ -28,11 +32,12 @@ type Props = {
     onSaved?: () => void;
 };
 
-/** FEAT-09: editar lançamento a partir da conciliação (valor só com alterar_valor). */
+/** Edição a partir da conciliação. Valor só com permissão alterar_valor. */
 export function EditarLancamentoConciliacaoModal({open, lancamentoId, onClose, onSaved}: Props) {
     const {toast} = useToast();
     const queryClient = useQueryClient();
     const {hasPermission} = useAuth();
+    const {confirm, ConfirmDialogProps} = useConfirm();
     const canAlterarValor = hasPermission(PERM.LANCAMENTOS_ALTERAR_VALOR);
 
     const [descricao, setDescricao] = useState("");
@@ -40,7 +45,7 @@ export function EditarLancamentoConciliacaoModal({open, lancamentoId, onClose, o
     const [valor, setValor] = useState("");
 
     const {data, isLoading} = useQuery({
-        queryKey: ["lancamento-edit-conciliacao", lancamentoId],
+        queryKey: tenantQueryKey("lancamento-edit-conciliacao", lancamentoId),
         queryFn: () => fetchApiData<LancamentoEditavel>(`/lancamentos/${lancamentoId}`),
         enabled: open && lancamentoId != null,
     });
@@ -68,7 +73,7 @@ export function EditarLancamentoConciliacaoModal({open, lancamentoId, onClose, o
         },
         onSuccess: () => {
             toast({title: "Lançamento atualizado", description: "Alterações salvas com sucesso."});
-            void queryClient.invalidateQueries({queryKey: ["conciliacao"]});
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("conciliacao")});
             onSaved?.();
             onClose();
         },
@@ -78,11 +83,26 @@ export function EditarLancamentoConciliacaoModal({open, lancamentoId, onClose, o
         },
     });
 
+    async function handleRequestClose() {
+        if (data) {
+            const dirty =
+                descricao !== (data.descricao ?? "") ||
+                vencimento !== (data.vencimento?.slice(0, 10) ?? "") ||
+                (canAlterarValor && valor !== String(data.valor ?? ""));
+            if (dirty) {
+                const ok = await confirm(DISCARD_PROMPT);
+                if (!ok) return;
+            }
+        }
+        onClose();
+    }
+
     return (
+        <>
         <AlertDialog
             open={open}
             onOpenChange={(v) => {
-                if (!v) onClose();
+                if (!v) void handleRequestClose();
             }}
         >
             <AlertDialogContent className="sm:max-w-md bg-card border border-white/10 text-white rounded-2xl">
@@ -134,7 +154,7 @@ export function EditarLancamentoConciliacaoModal({open, lancamentoId, onClose, o
                             />
                             {!canAlterarValor && (
                                 <span className="block mt-1 text-[10px] text-amber-300/80 normal-case tracking-normal">
-                                    Sem permissão para alterar valor — demais campos liberados.
+                                    Sem permissão para alterar valor - demais campos liberados.
                                 </span>
                             )}
                         </label>
@@ -144,7 +164,7 @@ export function EditarLancamentoConciliacaoModal({open, lancamentoId, onClose, o
                 <AlertDialogFooter className="gap-2 flex-row">
                     <button
                         type="button"
-                        onClick={onClose}
+                        onClick={() => void handleRequestClose()}
                         className="flex-1 px-3 py-2.5 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-xs font-semibold"
                     >
                         Cancelar
@@ -160,5 +180,7 @@ export function EditarLancamentoConciliacaoModal({open, lancamentoId, onClose, o
                 </AlertDialogFooter>
             </AlertDialogContent>
         </AlertDialog>
+        <ConfirmDialog {...ConfirmDialogProps} />
+        </>
     );
 }
