@@ -1,5 +1,4 @@
 import express, {type Express} from "express";
-import cors from "cors";
 import cookieParser from "cookie-parser";
 import router from "./routes";
 import {errorHandler} from "./middlewares/error-handler";
@@ -7,6 +6,8 @@ import {auditLogger} from "./middlewares/logger";
 import {requestId} from "./middlewares/request-id";
 import {globalLimiter} from "./middlewares/rate-limit";
 import {securityHeaders} from "./middlewares/security-headers";
+import {corsPolicy, parseAllowedOrigins} from "./middlewares/cors-policy";
+import {trustProxyHops} from "./lib/client-ip";
 
 const app: Express = express();
 app.disable("x-powered-by");
@@ -14,43 +15,19 @@ app.use(securityHeaders);
 
 app.use(requestId);
 
-// Necessário para que req.ip reflita o IP real do cliente (via X-Forwarded-For)
-// atrás do proxy da Vercel / reverse proxy, em vez do IP do proxy — do contrário
-// todo o tráfego cairia no mesmo balde do rate limiter.
-app.set("trust proxy", 1);
+// req.ip = IP real do cliente: número exato de saltos de proxy confiáveis
+// (borda -> nginx web -> API). Ver lib/client-ip.ts. Sem isso o rate limit e a
+// auditoria enxergam o gateway do docker; com saltos demais, um X-Forwarded-For
+// forjado pelo cliente vira o "IP real".
+app.set("trust proxy", trustProxyHops());
 
-// Allowlist de origens: "*" é incompatível com `credentials: true`.
-// Lista separada por vírgula em CORS_ORIGINS (fallback: FRONTEND_URL).
-// Normaliza para `origin` (sem path nem barra final), que é o formato do header Origin.
-const toOrigin = (value: string): string | null => {
-    try {
-        return new URL(value).origin;
-    } catch {
-        return null;
-    }
-};
-
-const allowedOrigins = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .map(toOrigin)
-    .filter((o): o is string => o !== null);
-
+// CORS por allowlist (CORS_ORIGINS + FRONTEND_URL) + same-origin; em produção,
+// Origin fora da lista recebe 403 (fail-closed). Ver middlewares/cors-policy.ts.
+const allowedOrigins = parseAllowedOrigins();
 if (allowedOrigins.length === 0 && process.env.NODE_ENV === "production") {
-    console.warn("[CONFIG] CORS_ORIGINS/FRONTEND_URL não definido: requisições cross-origin serão bloqueadas.");
+    console.warn("[CONFIG] CORS_ORIGINS/FRONTEND_URL não definido: só same-origin será aceito.");
 }
-
-app.use(
-    cors({
-        // Sem header Origin (same-origin, curl, healthchecks) passa; com Origin, só se estiver na allowlist.
-        origin: (origin, cb) => cb(null, !origin || allowedOrigins.includes(origin)),
-        credentials: true,
-        methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-        allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "X-Request-Id"],
-        exposedHeaders: ["X-Request-Id"],
-    })
-);
+app.use(corsPolicy({allowedOrigins, enforce: process.env.NODE_ENV === "production"}));
 
 app.use(cookieParser());
 

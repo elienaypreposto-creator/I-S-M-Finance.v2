@@ -23,6 +23,7 @@ import {isAuthGlobalPath, resolveAuditEmpresaId} from "../lib/audit-scope";
 import {isApiV1Path, shouldAuditRequest} from "../lib/audit-routes";
 import {identidadeAuditoria} from "../lib/api-token-identity";
 import {auditRequestId} from "./request-id";
+import {clientIp} from "../lib/client-ip";
 
 const SENSITIVE_KEYS = new Set([
     "senha",
@@ -65,18 +66,9 @@ function sanitize(value: unknown): unknown {
     return out;
 }
 
+/** IP real do cliente (resolvido por `trust proxy`); não lê `X-Forwarded-For` à mão. */
 export function extractIp(req: Request): string | null {
-    const forwarded = req.headers["x-forwarded-for"];
-
-    if (forwarded) {
-        const first = Array.isArray(forwarded)
-            ? forwarded[0]
-            : forwarded.split(",")[0];
-
-        return first?.trim() ?? null;
-    }
-
-    return req.ip ?? req.socket.remoteAddress ?? null;
+    return clientIp(req);
 }
 
 function buildDetalhes(req: Request): Record<string, unknown> {
