@@ -46,6 +46,27 @@ const getPurposeKey = (): Uint8Array => {
     return deriveKey(`purpose:${raw}`);
 };
 
+/**
+ * Em produção a cifra do access token não pode reaproveitar a chave de assinatura:
+ * sem JWT_ENCRYPT_SECRET próprio, o fallback acima usaria JWT_SECRET para as duas coisas.
+ */
+export function assertSegredosJwt(
+    env: NodeJS.ProcessEnv,
+    sair: (code: number) => never = process.exit,
+): void {
+    if (env.NODE_ENV !== "production") return;
+    const {JWT_SECRET: assinatura, JWT_ENCRYPT_SECRET: cifra} = env;
+    if (!assinatura || !cifra) {
+        console.error("[boot][jwt] JWT_SECRET e JWT_ENCRYPT_SECRET são obrigatórios em produção. Arranque recusado.");
+        sair(1);
+        return;
+    }
+    if (assinatura === cifra) {
+        console.error("[boot][jwt] JWT_SECRET igual a JWT_ENCRYPT_SECRET. Gere segredos distintos. Arranque recusado.");
+        sair(1);
+    }
+}
+
 /** Payload do Access Token JWE -> carrega permissões e a empresa ativa da sessão. */
 export interface AccessTokenPayload {
     sub: string;

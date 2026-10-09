@@ -12,6 +12,9 @@ import {startPromoverAtrasadosJob} from "./jobs/promover-atrasados";
 import {startArquivarAuditoriaJob} from "./jobs/arquivar-auditoria";
 import {startRetencaoLgpdJob} from "./jobs/retencao-lgpd";
 import {assertDiscoCifrado} from "./domains/lgpd/lgpd-disco";
+import {assertSegredosJwt} from "./services/token.service";
+
+assertSegredosJwt(process.env);
 
 const port = process.env.PORT || 5000;
 

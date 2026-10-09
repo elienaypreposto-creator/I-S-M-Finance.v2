@@ -664,7 +664,7 @@ O projeto está configurado para deploy na **Vercel**:
 
 ### 11.1. Deploy na VM (Docker Compose)
 
-Os ambientes de teste (`ism-tst`, branch `develop`) e homologação (`ism-hml`, branch `master`) rodam via `docker-compose.yml` numa VM compartilhada. O deploy é feito pelo GitHub Actions (`.github/workflows/main.yml`), que grava o `.env` de cada ambiente a partir dos secrets `ENV_FILE_TST` e `ENV_FILE_HML`.
+Os ambientes de teste (`ism-tst`, branch `develop`) e homologação (`ism-hml`, branch `master`) rodam via `docker-compose.yml` numa VM compartilhada. O deploy é feito pelo GitHub Actions (`.github/workflows/main.yml`), que grava o `.env` de cada ambiente a partir de secrets e variables do repositório com prefixo `TST_` / `HML_` (ex.: `HML_DB_PASSWORD`, `TST_JWT_SECRET`). `JWT_SECRET` e `JWT_ENCRYPT_SECRET` têm de ser distintos entre si e entre ambientes; o deploy e a API recusam valores iguais dentro do mesmo ambiente.
 
 **Variáveis obrigatórias no `.env` usadas pelo compose:**
 

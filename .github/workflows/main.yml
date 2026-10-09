@@ -43,6 +43,10 @@ jobs:
               faltando=1
             fi
           done
+          if [ -n "$JWT_SECRET" ] && [ "$JWT_SECRET" = "$JWT_ENCRYPT_SECRET" ]; then
+            echo "::error::JWT_SECRET e JWT_ENCRYPT_SECRET iguais em $TARGET_DIR (a API recusa arrancar)."
+            faltando=1
+          fi
           if [ -z "$ISM_APP_PASSWORD" ] || [ -z "$ISM_ADMIN_PASSWORD" ] || [ -z "$ISM_OWNER_PASSWORD" ]; then
             echo "::warning::Defina TST_/HML_ISM_APP_PASSWORD, ISM_ADMIN_PASSWORD e ISM_OWNER_PASSWORD. A usar DB_PASSWORD até existirem."
           fi
