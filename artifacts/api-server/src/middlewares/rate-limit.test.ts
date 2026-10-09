@@ -10,6 +10,7 @@ import express from "express";
 import {MemoryStore} from "express-rate-limit";
 import {criarLimiters} from "./rate-limit.js";
 import {trustProxyHops} from "../lib/client-ip.js";
+import {closeRedis} from "../lib/redis.js";
 
 const GATEWAY = "172.19.0.1";
 
@@ -54,7 +55,12 @@ describe("rate limit por IP real", () => {
         await new Promise<void>((r) => server.once("listening", () => r()));
         port = (server.address() as AddressInfo).port;
     });
-    after(() => server.close());
+    // Com REDIS_URL definido, importar rate-limit abre a conexão do store global;
+    // fecha no fim para o processo do teste terminar.
+    after(async () => {
+        server.close();
+        await closeRedis();
+    });
 
     it("11ª tentativa de login do mesmo IP + e-mail em 15 min -> 429", async () => {
         const body = {email: "a@x.com", senha: "x"};
