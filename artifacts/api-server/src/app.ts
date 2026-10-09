@@ -6,8 +6,10 @@ import {errorHandler} from "./middlewares/error-handler";
 import {auditLogger} from "./middlewares/logger";
 import {requestId} from "./middlewares/request-id";
 import {globalLimiter} from "./middlewares/rate-limit";
+import {securityHeaders} from "./middlewares/security-headers";
 
 const app: Express = express();
+app.use(securityHeaders);
 
 app.use(requestId);
 
