@@ -9,6 +9,7 @@ import {globalLimiter} from "./middlewares/rate-limit";
 import {securityHeaders} from "./middlewares/security-headers";
 
 const app: Express = express();
+app.disable("x-powered-by");
 app.use(securityHeaders);
 
 app.use(requestId);

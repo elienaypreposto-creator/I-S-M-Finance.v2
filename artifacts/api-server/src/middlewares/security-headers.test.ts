@@ -37,11 +37,25 @@ describe("securityHeaders middleware", () => {
             for (const [name, value] of Object.entries(API_SECURITY_HEADERS)) {
                 assert.equal(res.headers.get(name), value, name);
             }
+            assert.equal(res.headers.get("x-powered-by"), null);
         });
     }
 
-    it("HSTS com pelo menos 1 ano", () => {
+    it("404 do Express mantém os headers (CSP do finalhandler continua default-src 'none')", async () => {
+        const res = await fetch(base + "/nao-existe");
+        assert.equal(res.status, 404);
+        for (const [name, value] of Object.entries(API_SECURITY_HEADERS)) {
+            if (name === "Content-Security-Policy") continue;
+            assert.equal(res.headers.get(name), value, name);
+        }
+        assert.match(res.headers.get("content-security-policy") ?? "", /default-src 'none'/);
+        assert.equal(res.headers.get("x-powered-by"), null);
+    });
+
+    it("HSTS com pelo menos 1 ano e CSP fechada com frame-ancestors", () => {
         const maxAge = Number(/max-age=(\d+)/.exec(API_SECURITY_HEADERS["Strict-Transport-Security"]!)?.[1]);
         assert.ok(maxAge >= 31536000);
+        assert.match(API_SECURITY_HEADERS["Content-Security-Policy"]!, /default-src 'none'/);
+        assert.match(API_SECURITY_HEADERS["Content-Security-Policy"]!, /frame-ancestors 'none'/);
     });
 });
