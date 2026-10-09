@@ -1,25 +1,18 @@
 /**
- * O driver pg, com connectionString, honra sslmode=require da URL e ignora
- * ssl.rejectUnauthorized do Pool. Esta variável precisa existir ANTES do pool.
- * Não desliga a cifra; só a validação da CA intermediária do Supabase.
+ * TLS do Postgres: ver db-ssl.ts (valida o certificado; CA própria só por conexão).
  *
  * O pooler (6543) é transaction mode: SET de sessão vaza entre clientes.
  * SET LOCAL só vale dentro de BEGIN...COMMIT.
  */
-(process.env as Record<string, string>).NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 import {drizzle, type NodePgDatabase} from "drizzle-orm/node-postgres";
 import pg from "pg";
 import * as schema from "./schema";
 import {tenantAls} from "./tenant-als";
 import {resolveDbUrls} from "./db-urls";
+import {pgTlsConfig} from "./db-ssl";
 
 const {appUrl, adminUrl, ownerUrl} = resolveDbUrls();
-
-const ssl =
-    process.env.DB_REQUIRE_SSL === "true" || appUrl.includes("supabase.co") || ownerUrl.includes("supabase.co")
-        ? {rejectUnauthorized: false}
-        : undefined;
 
 const poolMax = Math.max(5, Number(process.env.DB_POOL_MAX ?? 12) || 12);
 
@@ -27,9 +20,8 @@ const ROLE_IDENT = /^[a-z_][a-z0-9_]*$/;
 
 function makePool(connectionString: string, extra?: pg.PoolConfig): pg.Pool {
     return new pg.Pool({
-        connectionString,
+        ...pgTlsConfig(connectionString),
         max: poolMax,
-        ssl,
         idleTimeoutMillis: 30_000,
         connectionTimeoutMillis: 10_000,
         ...extra,

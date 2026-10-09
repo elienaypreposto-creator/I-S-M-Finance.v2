@@ -18,13 +18,7 @@ import {drizzle} from "drizzle-orm/node-postgres";
 import {migrate} from "drizzle-orm/node-postgres/migrator";
 import pg from "pg";
 import {pgUrlPassword} from "./src/db-urls";
-
-/**
- * Mesmo workaround do client.ts: o driver `pg` honra sslmode=require da URL e
- * valida o certificado, ignorando `ssl: { rejectUnauthorized: false }`.
- * Precisa estar definido ANTES de conectar.
- */
-(process.env as Record<string, string>).NODE_TLS_REJECT_UNAUTHORIZED = "0";
+import {pgTlsConfig} from "./src/db-ssl";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsFolder = path.join(__dirname, "migrations");
@@ -228,13 +222,7 @@ async function reassignPublicToOwner(client: pg.Client): Promise<void> {
 async function run(): Promise<void> {
     loadOptionalEnvFiles();
     const connectionString = requireMigrateUrl();
-    const client = new pg.Client({
-        connectionString,
-        ssl:
-            process.env.DB_REQUIRE_SSL === "true" || connectionString.includes("supabase.co")
-                ? {rejectUnauthorized: false}
-                : undefined,
-    });
+    const client = new pg.Client(pgTlsConfig(connectionString));
 
     await client.connect();
     try {
