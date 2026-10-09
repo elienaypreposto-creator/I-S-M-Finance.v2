@@ -180,6 +180,8 @@ describe("ISMF-27: senha só bcrypt, endpoint de migração removido, reset com 
         if (server) await new Promise((r) => server.close(r));
         await smtp?.close();
         await mod.closeDbPools();
+        // Com REDIS_URL, rate limit/lockout abrem conexão: fecha para o processo terminar.
+        await (await import("../lib/redis")).closeRedis();
     });
 
     it("hash SHA-256 legado não loga mais (401) e não é migrado para bcrypt", async () => {
