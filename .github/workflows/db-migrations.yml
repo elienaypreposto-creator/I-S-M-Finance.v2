@@ -6,6 +6,8 @@ on:
       - "lib/db/src/schema/**"
       - "lib/db/migrations/**"
       - "lib/db/drizzle.config.ts"
+      - "lib/db/package.json"
+      - "pnpm-lock.yaml"
       - ".github/workflows/db-migrations.yml"
 
 jobs:
@@ -29,3 +31,21 @@ jobs:
             exit 1
           fi
           echo "OK - schema e migrations alinhados (ou só migrations mudaram)."
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Instalar dependências
+        run: pnpm install --frozen-lockfile
+
+      - name: drizzle-kit check
+        working-directory: lib/db
+        env:
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ismfinance
+        run: pnpm exec drizzle-kit check --config ./drizzle.config.ts

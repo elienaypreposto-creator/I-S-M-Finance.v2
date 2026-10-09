@@ -86,7 +86,7 @@ export function refreshAccessToken(): Promise<string | null> {
     if (!refreshPromise) {
         const run: Promise<string | null> =
             typeof navigator !== "undefined" && "locks" in navigator
-                ? navigator.locks.request("ism-finance-refresh", doRefresh)
+                ? (navigator.locks.request("ism-finance-refresh", () => doRefresh()) as unknown as Promise<string | null>)
                 : doRefresh();
 
         refreshPromise = run.finally(() => {

@@ -65,12 +65,11 @@ const FIFTEEN_MINUTES_MS =
 getRedis();
 
 /**
- * Tipo exigido pelo rate-limit-redis.
+ * Assinatura de `sendCommand` do rate-limit-redis (cliente único, não cluster).
+ * O construtor aceita união com o modo cluster, que não tem este campo.
  */
-type RedisSendCommand =
-    ConstructorParameters<
-        typeof RedisStore
-    >[0]["sendCommand"];
+type RedisReply = boolean | number | string | Array<boolean | number | string>;
+type RedisSendCommand = (...args: string[]) => Promise<RedisReply>;
 
 /**
  * Envia comandos para o Redis.

@@ -16,8 +16,7 @@ import {and, eq, sql} from "drizzle-orm";
 import {closeDbPools, db, pool} from "./index";
 import {usuarioEmpresasTable, usuariosTable} from "./schema";
 import {PERMISSOES_ADMIN, syncAdminPermissionsOnBoot} from "./sync-admin-permissions";
-import {usuariosTable} from "./schema";
-import {syncAdminPermissionsOnBoot} from "./sync-admin-permissions";
+
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
 const ADMIN_NOME = process.env.ADMIN_NOME;
 const ADMIN_SENHA = process.env.ADMIN_SENHA;

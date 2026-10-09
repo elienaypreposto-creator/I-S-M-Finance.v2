@@ -1,6 +1,6 @@
 # Termos de uso (minuta, multiempresa)
 
-Minuta. Pendente de revisão jurídica. Data: 2026-10-05.
+Minuta. Revisão interna em 2026-10-09, com o inventário e o DPA. Data: 2026-10-05.
 
 ## Conta e empresa
 

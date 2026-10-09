@@ -1,6 +1,5 @@
 
 import { integer, pgTable, serial, text, numeric, date, timestamp } from "drizzle-orm/pg-core";
-import { pgTable, serial, text, numeric, date, timestamp, integer } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { empresasTable } from "./empresas";

@@ -183,6 +183,13 @@
       "when": 1790167600000,
       "tag": "0025_lgpd_dpa_empresa",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1790167700000,
+      "tag": "0026_lgpd_empresa_ativa_exige_dpa",
+      "breakpoints": true
     }
   ]
 }

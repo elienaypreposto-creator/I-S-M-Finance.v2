@@ -84,7 +84,6 @@ export const lancamentosTable = pgTable("lancamentos", {
     index("lancamentos_data_quitacao_idx").on(table.data_quitacao),
     index("lancamentos_empresa_id_vencimento_idx").on(table.empresa_id, table.vencimento),
     index("lancamentos_empresa_id_conta_id_idx").on(table.empresa_id, table.conta_id),
-    index("lancamentos_empresa_id_status_idx").on(table.empresa_id, table.status),
 ]);
 
 export const insertLancamentoSchema = createInsertSchema(lancamentosTable).omit({

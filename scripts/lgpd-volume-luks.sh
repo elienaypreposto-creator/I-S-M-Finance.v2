@@ -10,6 +10,35 @@ if [ -z "${PG_LUKS_PASSPHRASE:-}" ]; then
   exit 1
 fi
 
+if [ -n "${ISM_OWNER_PASSWORD:-}" ] && [ "$PG_LUKS_PASSPHRASE" = "$ISM_OWNER_PASSWORD" ]; then
+  echo "PG_LUKS_PASSPHRASE não pode ser ISM_OWNER_PASSWORD." >&2
+  exit 1
+fi
+if [ -n "${DB_PASSWORD:-}" ] && [ "$PG_LUKS_PASSPHRASE" = "$DB_PASSWORD" ]; then
+  echo "PG_LUKS_PASSPHRASE não pode ser DB_PASSWORD." >&2
+  exit 1
+fi
+
+# Montagem legada compartilhada (mapper ism-pgdata em /var/lib/ism/mnt).
+# Não é o volume do ambiente. Fecha a montagem. O ficheiro de imagem não é apagado aqui.
+LEGACY_MNT=/var/lib/ism/mnt
+LEGACY_MAP=ism-pgdata
+if findmnt -n "$LEGACY_MNT" >/dev/null 2>&1; then
+  sudo chattr -i "$LEGACY_MNT" 2>/dev/null || true
+  if ! sudo umount "$LEGACY_MNT"; then
+    echo "Não foi possível desmontar $LEGACY_MNT." >&2
+    exit 1
+  fi
+  echo "Montagem LUKS antiga $LEGACY_MNT desmontada." >&2
+fi
+if [ -b "/dev/mapper/$LEGACY_MAP" ]; then
+  if ! sudo cryptsetup luksClose "$LEGACY_MAP"; then
+    echo "Não foi possível fechar o mapper $LEGACY_MAP." >&2
+    exit 1
+  fi
+  echo "Mapper antigo $LEGACY_MAP fechado." >&2
+fi
+
 if ! sudo -n true 2>/dev/null; then
   echo "sudo sem password é obrigatório para cryptsetup." >&2
   exit 1

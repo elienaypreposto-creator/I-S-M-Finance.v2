@@ -1,5 +1,5 @@
 
-import Redis from "ioredis";
+import Redis, {type RedisOptions} from "ioredis";
 
 let client: Redis | null = null;
 let ultimoAlerta = 0;
@@ -60,7 +60,7 @@ export function getRedis(): Redis | null {
     }
 
     try {
-        const options: Redis.RedisOptions = {
+        const options: RedisOptions = {
             maxRetriesPerRequest: 1,
             enableOfflineQueue: false,
 

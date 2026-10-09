@@ -1,15 +1,15 @@
 # Plano de resposta a incidente
 
 Versão 1.0. Data: 2026-10-05.
-A LGPD não escreve "72 horas" no texto. O prazo abaixo é referência de mercado, alinhada à prática usada com a ANPD e ao art. 33 do GDPR, para incidente com risco ou dano relevante aos titulares. A revisão jurídica pode apertar ou alargar. Quem decide e quem comunica é o encarregado interno: administração da plataforma, canal encarregado@ism.finance, conta admin@ism.finance.
+A LGPD não escreve "72 horas" no texto. O prazo abaixo é referência de mercado, alinhada à prática usada com a ANPD e ao art. 33 do GDPR, para incidente com risco ou dano relevante aos titulares. Quem decide e quem comunica é o encarregado Vinicius Costa, canal encarregado@ism.finance, conta admin@ism.finance.
 
 ## Quem faz o quê
 
 | Função | Faz | Não faz |
 | --- | --- | --- |
-| Quem detecta | Engenharia de plantão, ou qualquer pessoa com acesso ao alerta, ao log ou ao relato de um cliente. Abre o registo na hora em que souber. | Não comunica o cliente por conta própria. |
-| Quem decide | Encarregado, com o responsável técnico. Classifica: sem risco relevante, ou com risco/dano aos titulares. | Não espera o fim da correção para classificar. |
-| Quem comunica | Encarregado. Fala com as empresas afectadas e, se a decisão for essa, com a ANPD. | A engenharia não envia a nota no lugar do encarregado. |
+| Quem detecta | Gabriel Pedro (gabriel.santos@ismtecnologia.com.br). Abre o registo na hora em que souber. | Não comunica o cliente por conta própria. |
+| Quem decide | Vinicius Costa (encarregado). Classifica: sem risco relevante, ou com risco/dano aos titulares. | Não espera o fim da correção para classificar. |
+| Quem comunica | Vinicius Costa. Fala com as empresas afectadas e, se a decisão for essa, com a ANPD, pelo canal encarregado@ism.finance. | Gabriel Pedro não envia a nota no lugar do encarregado. |
 
 ## Prazos
 

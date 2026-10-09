@@ -50,5 +50,12 @@ Thumbs.db
 
 # Backups
 backups/
+*~
 .env
 *.env
+# Roteiros e imagens locais ficam de fora. LGPD entra no git: o card exige o inventário neste path.
+/docs/*
+!/docs/lgpd-inventario.md
+!/docs/lgpd/
+!/docs/lgpd/**
+/.cursor/
