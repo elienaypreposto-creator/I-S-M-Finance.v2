@@ -27,7 +27,8 @@ import {denylistUser} from "../services/denylist.service";
 import {assertVinculoAtivo, listEmpresasAtivasDoUsuario} from "../services/tenant.service";
 import {invalidateTenantCache} from "../middlewares/tenant";
 import {withAuth} from "../middlewares/auth";
-import {authLimiter, loginEmailLimiter, loginLimiter} from "../middlewares/rate-limit";
+import {authLimiter, chaveIp, loginLimiter} from "../middlewares/rate-limit";
+import {loginLockout} from "../services/login-lockout.service";
 import {AppError} from "../utils/app-error";
 import {SENHA_RESET_REQUIRED, validatePasswordPolicy} from "../utils/password-policy";
 import {errorResponse, successResponse} from "../utils/response";
@@ -126,13 +127,19 @@ const SESSION_META = {
     refreshTokenExpiresIn: "7d",
 } as const;
 
-router.post("/auth/login", loginLimiter, loginEmailLimiter, async (req, res) => {
+router.post("/auth/login", loginLimiter, async (req, res) => {
     try {
         const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : null;
         const senha = typeof req.body?.senha === "string" ? req.body.senha : null;
 
         if (!email || !senha) {
             return errorResponse(res, 400, "VALIDATION_ERROR", "Campos obrigatórios: email e senha.");
+        }
+
+        // Bloqueio por conta (ISMF-7): mesmo 401 da senha errada, sem tocar no banco.
+        const ip = chaveIp(req);
+        if (await loginLockout.bloqueado(email, ip)) {
+            return errorResponse(res, 401, "INVALID_CREDENTIALS", "Email ou senha inválidos.");
         }
 
         const [usuario] = await db
@@ -153,6 +160,7 @@ router.post("/auth/login", loginLimiter, loginEmailLimiter, async (req, res) => 
         if (!usuario || usuario.bloqueado) {
             // Gasta o mesmo tempo de um login real (anti-enumeração por timing).
             await bcrypt.compare(senha, DUMMY_PASSWORD_HASH);
+            await loginLockout.registrarFalha(email, ip);
             return errorResponse(res, 401, "INVALID_CREDENTIALS", "Email ou senha inválidos.");
         }
 
@@ -181,8 +189,10 @@ router.post("/auth/login", loginLimiter, loginEmailLimiter, async (req, res) => 
         const senhaValida = await bcrypt.compare(senha, usuario.senha_hash);
 
         if (!senhaValida) {
+            await loginLockout.registrarFalha(email, ip);
             return errorResponse(res, 401, "INVALID_CREDENTIALS", "Email ou senha inválidos.");
         }
+        await loginLockout.registrarSucesso(email, ip);
 
         // Detecção de primeiro acesso
         // Critério: nunca fez login antes (ultimo_acesso === null) E não passou pelo fluxo OTP/definir-senha (senha_unica_utilizada === false).
@@ -663,6 +673,7 @@ router.post("/auth/setup-password", authLimiter, async (req, res) => {
                 updated_at: new Date(),
             })
             .where(eq(usuariosTable.id, usuarioId));
+        await loginLockout.liberar(usuario.email);
 
         // Sessões emitidas com a senha temporária não devem sobreviver à troca.
         await revokeAllTokensForUser(usuarioId);
@@ -768,6 +779,9 @@ router.post("/auth/reset-password", authLimiter, async (req, res) => {
         // Invalida todas as sessões activas - mudança de senha implica revogação obrigatória
         await revokeAllTokensForUser(usuarioId);
         clearRefreshCookie(res);
+
+        // Quem provou ser dono do e-mail sai do bloqueio por tentativas (ISMF-7).
+        await loginLockout.liberar(usuario.email);
 
         return successResponse(res, null, {message: "Senha redefinida com sucesso. Faça login."});
     } catch (error: unknown) {
