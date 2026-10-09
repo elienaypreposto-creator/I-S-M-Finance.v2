@@ -4,6 +4,7 @@ import {eq} from "drizzle-orm";
 import {withBypassRls, type TenantDb} from "@workspace/db";
 import {tokensApiTable} from "@workspace/db/schema";
 import {errorResponse} from "../utils/response";
+import {aplicarIdentidadeToken, hashConfere} from "../lib/api-token-identity";
 
 // Extensão de tipos do Express.
 declare global {
@@ -32,33 +33,6 @@ const getBearerToken = (authHeader?: string) => {
 
     return token;
 };
-
-function popularContexto(
-    req: Request,
-    tokenRow: {
-        id: number;
-        empresa_id: number;
-        escopos: string[] | null;
-    },
-) {
-    req.tenant = {
-        empresaId: tokenRow.empresa_id,
-    };
-
-    req.apiToken = {
-        id: tokenRow.id,
-        escopos: tokenRow.escopos ?? [],
-    };
-
-    // Mantido por compatibilidade com o auditLogger.
-    req.user = {
-        id: tokenRow.id,
-        email: "api-v1@token",
-        permissions: ["*"],
-        empresaId: tokenRow.empresa_id,
-        superadmin: false,
-    };
-}
 
 function agendarAtualizacaoUso(req: Request, tokenId: number) {
     const ip = req.ip ?? req.socket?.remoteAddress ?? null;
@@ -169,21 +143,7 @@ export const v1AuthMiddleware = async (
                 );
             }
 
-            const secretHash = crypto
-                .createHash("sha256")
-                .update(secret)
-                .digest();
-
-            const storedHash = Buffer.from(
-                tokenRow.token_hash,
-                "hex",
-            );
-
-            const valido =
-                secretHash.length === storedHash.length &&
-                crypto.timingSafeEqual(secretHash, storedHash);
-
-            if (!valido) {
+            if (!hashConfere(secret, tokenRow.token_hash)) {
                 return errorResponse(
                     res,
                     401,
@@ -192,7 +152,7 @@ export const v1AuthMiddleware = async (
                 );
             }
 
-            popularContexto(req, tokenRow);
+            aplicarIdentidadeToken(req, tokenRow);
             agendarAtualizacaoUso(req, tokenRow.id);
 
             return next();
@@ -216,6 +176,7 @@ export const v1AuthMiddleware = async (
                     .select({
                         id: tokensApiTable.id,
                         empresa_id: tokensApiTable.empresa_id,
+                        token_hash: tokensApiTable.token_hash,
                         escopos: tokensApiTable.escopos,
                         ativo: tokensApiTable.ativo,
                         data_expiracao: tokensApiTable.data_expiracao,
@@ -225,7 +186,9 @@ export const v1AuthMiddleware = async (
                     .limit(1),
             );
 
-            if (!tokenRow || !tokenRow.ativo) {
+            // A busca é pelo hash (unique/indexado), então o tempo não depende do
+            // segredo; ainda assim confirma em tempo constante (defesa em profundidade).
+            if (!tokenRow || !tokenRow.ativo || !hashConfere(rawToken, tokenRow.token_hash)) {
                 return errorResponse(
                     res,
                     401,
@@ -258,7 +221,7 @@ export const v1AuthMiddleware = async (
                 );
             }
 
-            popularContexto(req, tokenRow);
+            aplicarIdentidadeToken(req, tokenRow);
             agendarAtualizacaoUso(req, tokenRow.id);
 
             return next();
