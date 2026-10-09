@@ -784,6 +784,7 @@ Prazos que o job aplica: `PRAZO_EXTRATO_ANOS` e `PRAZO_AUDITORIA_MESES` em `arti
 | Peça | Ficheiro |
 |------|----------|
 | Backup diário, restore e teste de restore | `docs/backup.md` |
+| Firewall, SSH e fail2ban (runbook com rollback) | `docs/runbook-endurecimento-vm.md` |
 
 
 
