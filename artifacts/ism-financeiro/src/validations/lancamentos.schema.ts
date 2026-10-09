@@ -275,6 +275,15 @@ export const lancamentoModalFormSchema = z.object({
     centro_custo_id: optionalIdSelect,
     riscos: z.array(z.string()),
 
+    // Campos planos ainda usados pelos modais de lançamento (além do array pagamentos).
+    forma_pagamento: z.string().optional(),
+    chave_pix: z.string().optional(),
+    tipo_chave_pix: z.string().optional(),
+    banco_codigo: z.string().optional(),
+    banco_nome: z.string().optional(),
+    banco_agencia: z.string().optional(),
+    banco_conta: z.string().optional(),
+
     // Split de pagamento - array vazio = sem forma de pagamento informada (CR ou CP sem detalhe)
     pagamentos: z.array(pagamentoItemFormSchema),
 });

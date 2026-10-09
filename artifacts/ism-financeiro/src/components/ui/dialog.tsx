@@ -1,5 +1,6 @@
 import * as React from "react"
 import * as AlertDialogPrimitive from "@radix-ui/react-alert-dialog"
+import * as DialogPrimitive from "@radix-ui/react-dialog"
 
 import { cn } from "@/lib/utils"
 import { buttonVariants } from "@/components/ui/button"
@@ -124,7 +125,28 @@ const AlertDialogCancel = React.forwardRef<
 ))
 AlertDialogCancel.displayName = AlertDialogPrimitive.Cancel.displayName
 
+const Dialog = DialogPrimitive.Root
+const DialogContent = React.forwardRef<
+  React.ElementRef<typeof DialogPrimitive.Content>,
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
+>(({ className, ...props }, ref) => (
+  <DialogPrimitive.Portal>
+    <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/80" />
+    <DialogPrimitive.Content
+      ref={ref}
+      className={cn(
+        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg sm:rounded-lg",
+        className
+      )}
+      {...props}
+    />
+  </DialogPrimitive.Portal>
+))
+DialogContent.displayName = DialogPrimitive.Content.displayName
+
 export {
+  Dialog,
+  DialogContent,
   AlertDialog,
   AlertDialogPortal,
   AlertDialogOverlay,

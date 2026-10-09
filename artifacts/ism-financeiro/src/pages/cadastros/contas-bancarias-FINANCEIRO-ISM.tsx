@@ -52,7 +52,10 @@ type ContaBancaria = {
     nome: string;
     banco: string | null;
     agencia: string | null;
+    digito_agencia?: string | null;
     conta: string | null;
+    digito_conta?: string | null;
+    empresa?: string | null;
     tipo: string;
     status: string;
     cor: string;
@@ -575,7 +578,10 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
             nome: initialData?.nome ?? "",
             banco: initialData?.banco ?? "",
             agencia: initialData?.agencia ?? "",
+            digito_agencia: initialData?.digito_agencia ?? "",
             conta: initialData?.conta ?? "",
+            digito_conta: initialData?.digito_conta ?? "",
+            empresa: initialData?.empresa ?? "",
             saldo_inicial_br: initialData
                 ? apiValorToValorBr(initialData.saldo_inicial)
                 : "",

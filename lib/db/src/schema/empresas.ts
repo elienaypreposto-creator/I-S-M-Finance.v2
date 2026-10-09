@@ -1,4 +1,5 @@
-import {pgTable, serial, text, boolean, timestamp} from "drizzle-orm/pg-core";
+import {sql} from "drizzle-orm";
+import {boolean, check, pgTable, serial, text, timestamp} from "drizzle-orm/pg-core";
 import {createInsertSchema} from "drizzle-zod";
 import {z} from "zod/v4";
 
@@ -14,7 +15,12 @@ export const empresasTable = pgTable("empresas", {
     dpa_assinado_em: timestamp("dpa_assinado_em"),
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => [
+    check(
+        "empresas_ativa_exige_dpa",
+        sql`${table.ativa} = false OR ${table.dpa_assinado_em} IS NOT NULL`,
+    ),
+]);
 
 export const insertEmpresaSchema = createInsertSchema(empresasTable).omit({
     id: true,

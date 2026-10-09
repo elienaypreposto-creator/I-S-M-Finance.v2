@@ -1,6 +1,6 @@
 # Minuta de acordo de tratamento (DPA)
 
-Versão 1.0. Data do aceite do operador e da empresa `ism`: 2026-10-05. O texto pode ainda ser revisto por jurídico. O registo de aceite não está em branco: está na tabela abaixo e na coluna `empresas.dpa_assinado_em`.
+Versão 1.1. Data do aceite do operador e da empresa `ism`: 2026-10-05. Revisão interna do texto registrada em 2026-10-09 por Vinicius Costa (encarregado) e Gabriel Pedro (implementação): papéis, suboperadores, retenção e a regra de empresa ativa. Não é parecer de escritório externo. O registo de aceite está na tabela abaixo e na coluna `empresas.dpa_assinado_em`.
 
 ## Partes
 
@@ -45,7 +45,9 @@ Pedido de exportação e, em seguida, eliminação. Prazos do inventário que se
 
 ## Aceite registado
 
-A empresa só fica ativa com `dpa_representante` e `dpa_assinado_em` na linha de `empresas` (migração `0025_lgpd_dpa_empresa`). Criar empresa sem o nome do representante é recusado. Activar uma empresa sem esse registo também.
+A empresa só fica ativa com `dpa_representante` e `dpa_assinado_em` na linha de `empresas` (migração `0025_lgpd_dpa_empresa`). A migração `0026_lgpd_empresa_ativa_exige_dpa` desativa quem já estava ativo sem data e impede `ativa = true` sem `dpa_assinado_em`, inclusive fora da API. Criar empresa sem o nome do representante é recusado. Activar uma empresa sem esse registo também.
+
+O aceite de cliente que está no banco é o da ISM Tecnologia (`slug=ism`). Uma empresa de teste sem esse par, como `filial-sul-teste`, não permanece ativa. Não se grava assinatura de cliente que não foi dada.
 
 A empresa inicial do schema (`slug` `ism`, razão social ISM Tecnologia) é, ao mesmo tempo, a operação e o primeiro controlador. O aceite dela está na migração e nesta tabela.
 

@@ -5,7 +5,7 @@ import {z} from "zod/v4";
 import {contasBancariasTable} from "./contas-bancarias";
 import {parceirosTable} from "./parceiros";
 import {planoContasTable} from "./plano-contas";
-import {departamentosTable} from "./departamentos";
+import {centrosCustosTable, departamentosTable} from "./departamentos";
 import {empresasTable} from "./empresas";
 import {naturezaRegraConciliacaoEnum, tipoMatchRegraConciliacaoEnum} from "./enums";
 

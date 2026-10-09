@@ -1,6 +1,6 @@
 # Política de privacidade (minuta, multiempresa)
 
-Minuta para publicação. Pendente de revisão jurídica e do nome do encarregado. Data da minuta: 2026-10-05.
+Minuta para publicação. Revisão interna em 2026-10-09. Encarregado: Vinicius Costa, canal encarregado@ism.finance. Data da minuta: 2026-10-05.
 
 ## Quem é quem
 

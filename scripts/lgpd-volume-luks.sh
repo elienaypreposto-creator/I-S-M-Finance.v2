@@ -2,12 +2,31 @@
 # Abre o volume do Postgres num ficheiro LUKS2 e monta-o antes do contentor.
 # Sem este passo o deploy não escreve ISM_DISCO_CIFRADO=1 e a API recusa arrancar.
 # Corre na pasta do ambiente (ism-tst, ism-hml): cada ambiente tem o seu ficheiro, chave e montagem.
-# A chave em /var/lib/ism/<ambiente>/pg-luks.key é criada uma vez. Não a substituir: sem ela o volume não abre.
+# pg-luks.key abre o volume. Se o conteúdo ainda for a senha do banco, este script troca a chave.
 set -euo pipefail
 
-if [ -z "${PG_LUKS_PASSPHRASE:-}" ]; then
-  echo "PG_LUKS_PASSPHRASE vazio. Volume em claro recusado." >&2
-  exit 1
+# A frase pode repetir a senha do banco em deploys antigos. Isso não pode
+# continuar a ser a chave do volume: mais abaixo ela é trocada se o ficheiro
+# pg-luks.key ainda for essa senha.
+
+# Montagem legada compartilhada (mapper ism-pgdata em /var/lib/ism/mnt).
+# Não é o volume do ambiente. Fecha a montagem. O ficheiro de imagem não é apagado aqui.
+LEGACY_MNT=/var/lib/ism/mnt
+LEGACY_MAP=ism-pgdata
+if findmnt -n "$LEGACY_MNT" >/dev/null 2>&1; then
+  sudo chattr -i "$LEGACY_MNT" 2>/dev/null || true
+  if ! sudo umount "$LEGACY_MNT"; then
+    echo "Não foi possível desmontar $LEGACY_MNT." >&2
+    exit 1
+  fi
+  echo "Montagem LUKS antiga $LEGACY_MNT desmontada." >&2
+fi
+if [ -b "/dev/mapper/$LEGACY_MAP" ]; then
+  if ! sudo cryptsetup luksClose "$LEGACY_MAP"; then
+    echo "Não foi possível fechar o mapper $LEGACY_MAP." >&2
+    exit 1
+  fi
+  echo "Mapper antigo $LEGACY_MAP fechado." >&2
 fi
 
 if ! sudo -n true 2>/dev/null; then
@@ -43,7 +62,42 @@ fi
 
 sudo mkdir -p "$BASE"
 
+chave_igual_a() {
+  local valor="$1"
+  [ -n "$valor" ] || return 1
+  [ -f "$KEY" ] || return 1
+  printf '%s' "$valor" | sudo cmp -s - "$KEY"
+}
+
+if [ -f "$KEY" ] && [ -f "$IMG" ]; then
+  if chave_igual_a "${ISM_OWNER_PASSWORD:-}" || chave_igual_a "${DB_PASSWORD:-}" || chave_igual_a "${PG_LUKS_PASSPHRASE:-}"; then
+    nova="$(mktemp)"
+    umask 077
+    openssl rand -base64 48 | tr -d '\n' > "$nova"
+    sudo cryptsetup luksChangeKey --batch-mode --key-file "$KEY" --new-keyfile "$nova" "$IMG"
+    sudo install -m 400 -o root "$nova" "$KEY"
+    rm -f "$nova"
+    echo "Chave LUKS substituída. O ficheiro deixou de ser a senha do banco." >&2
+  fi
+fi
+
 if [ ! -f "$KEY" ]; then
+  if [ -z "${PG_LUKS_PASSPHRASE:-}" ]; then
+    echo "PG_LUKS_PASSPHRASE vazio e não há chave. Volume em claro recusado." >&2
+    exit 1
+  fi
+  if [ -n "${ISM_OWNER_PASSWORD:-}" ] && [ "$PG_LUKS_PASSPHRASE" = "$ISM_OWNER_PASSWORD" ]; then
+    echo "PG_LUKS_PASSPHRASE não pode ser ISM_OWNER_PASSWORD ao criar a chave." >&2
+    exit 1
+  fi
+  if [ -n "${DB_PASSWORD:-}" ] && [ "$PG_LUKS_PASSPHRASE" = "$DB_PASSWORD" ]; then
+    echo "PG_LUKS_PASSPHRASE não pode ser DB_PASSWORD ao criar a chave." >&2
+    exit 1
+  fi
+  if [ -f "$IMG" ]; then
+    echo "A imagem LUKS existe e o ficheiro de chave não. Não invento outra chave." >&2
+    exit 1
+  fi
   umask 077
   printf '%s' "$PG_LUKS_PASSPHRASE" | sudo tee "$KEY" >/dev/null
   sudo chmod 400 "$KEY"
@@ -116,5 +170,14 @@ fi
 
 sudo chown -R 70:70 "$DATA"
 sudo cryptsetup status "$MAP" | sudo tee "$BASE/evidencia-disco.txt" >/dev/null
+igual_owner=0
+if chave_igual_a "${ISM_OWNER_PASSWORD:-}" || chave_igual_a "${DB_PASSWORD:-}"; then
+  igual_owner=1
+fi
+echo "LUKS_KEY_IGUAL_OWNER=$igual_owner" | sudo tee -a "$BASE/evidencia-disco.txt" >/dev/null
+if [ "$igual_owner" -eq 1 ]; then
+  echo "A chave LUKS continua igual à senha do banco." >&2
+  exit 1
+fi
 echo "DISCO_CIFRADO=1"
 echo "PGDATA_MOUNT=$DATA"

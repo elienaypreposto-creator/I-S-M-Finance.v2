@@ -107,7 +107,7 @@ O projeto utiliza **pnpm workspaces** como ferramenta de monorepo. Os pacotes s�
 
 - **Supabase** como provedor PostgreSQL (acessado via `@supabase/supabase-js` — ver `artifacts/api-server/src/lib/supabase.ts`)
 - **Drizzle ORM** para definição de schema e queries
-- Migrações via `drizzle-kit push`
+- Migrações versionadas em `lib/db/migrations/`, aplicadas com `pnpm --filter @workspace/db run db:migrate`
 
 ---
 
@@ -612,7 +612,7 @@ O frontend usa **Wouter** como router, com `AppLayout` envolvendo todas as rotas
 ┌─────────────────────────────────────────────────┐
 │           DATABASE (Supabase PostgreSQL)         │
 │  13 tabelas + JSONB columns                      │
-│  Migrations via drizzle-kit push                 │
+│  Migrations versionadas (db:migrate)             │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -640,7 +640,10 @@ pnpm run build
 # Typecheck
 pnpm run typecheck
 
-# Push do schema do banco (Drizzle)
+# Migrations versionadas (deploy, TST e HML)
+pnpm --filter @workspace/db run db:migrate
+
+# Push do schema — somente desenvolvimento local, nunca no deploy
 pnpm --filter @workspace/db run push
 
 # Regenerar cliente API (Orval)

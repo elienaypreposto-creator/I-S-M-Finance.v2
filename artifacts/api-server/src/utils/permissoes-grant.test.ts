@@ -10,6 +10,7 @@ describe("validatePermissoesGrant (Card 91)", () => {
     it("rejeita auto-atribuição de '*' no próprio utilizador", () => {
         const result = validatePermissoesGrant({
             actorUserId: ACTOR_ID,
+            actorSuperadmin: false,
             targetUserId: ACTOR_ID,
             actorPermissions: ["admin:usuarios:editar"],
             requested: ["*"],
@@ -24,32 +25,35 @@ describe("validatePermissoesGrant (Card 91)", () => {
     it("rejeita conceder '*' sempre — inclusive se o actor já for superutilizador", () => {
         const semCuringa = validatePermissoesGrant({
             actorUserId: ACTOR_ID,
+            actorSuperadmin: false,
             targetUserId: TARGET_ID,
             actorPermissions: ["admin:permissoes:conceder", "admin:usuarios:listar"],
             requested: ["*"],
         });
         assert.equal(semCuringa.ok, false);
         if (!semCuringa.ok) {
-            assert.equal(semCuringa.status, 403);
-            assert.equal(semCuringa.code, "PRIVILEGE_ESCALATION");
+            assert.equal(semCuringa.status, 400);
+            assert.equal(semCuringa.code, "VALIDATION_ERROR");
         }
 
         const superuser = validatePermissoesGrant({
             actorUserId: ACTOR_ID,
+            actorSuperadmin: true,
             targetUserId: TARGET_ID,
             actorPermissions: ["*"],
             requested: ["*"],
         });
         assert.equal(superuser.ok, false);
         if (!superuser.ok) {
-            assert.equal(superuser.status, 403);
-            assert.equal(superuser.code, "PRIVILEGE_ESCALATION");
+            assert.equal(superuser.status, 400);
+            assert.equal(superuser.code, "VALIDATION_ERROR");
         }
     });
 
     it("rejeita conceder permissão que o actor não possui", () => {
         const result = validatePermissoesGrant({
             actorUserId: ACTOR_ID,
+            actorSuperadmin: false,
             targetUserId: TARGET_ID,
             actorPermissions: ["admin:usuarios:editar"],
             requested: ["admin:usuarios:editar", "admin:usuarios:deletar"],
@@ -64,6 +68,7 @@ describe("validatePermissoesGrant (Card 91)", () => {
     it("rejeita código fora do catálogo", () => {
         const result = validatePermissoesGrant({
             actorUserId: ACTOR_ID,
+            actorSuperadmin: false,
             targetUserId: TARGET_ID,
             actorPermissions: ["admin:usuarios:editar", "sudo:root"],
             requested: ["sudo:root"],
@@ -75,9 +80,10 @@ describe("validatePermissoesGrant (Card 91)", () => {
         }
     });
 
-    it("bloqueia reescrever um alvo que já tem '*' — inclusive pelo próprio superutilizador", () => {
+    it("não-superadmin não altera alvo com permissão que não possui; superadmin substitui lista legada", () => {
         const comum = validatePermissoesGrant({
             actorUserId: ACTOR_ID,
+            actorSuperadmin: false,
             targetUserId: TARGET_ID,
             actorPermissions: ["admin:permissoes:conceder"],
             requested: ["admin:usuarios:editar"],
@@ -91,22 +97,20 @@ describe("validatePermissoesGrant (Card 91)", () => {
 
         const superuser = validatePermissoesGrant({
             actorUserId: ACTOR_ID,
+            actorSuperadmin: true,
             targetUserId: TARGET_ID,
             actorPermissions: ["*"],
             requested: ["dashboard:ver"],
             targetCurrentPermissions: ["*"],
         });
-        assert.equal(superuser.ok, false);
-        if (!superuser.ok) {
-            assert.equal(superuser.status, 403);
-            assert.equal(superuser.code, "FORBIDDEN");
-        }
+        assert.deepEqual(superuser, {ok: true, permissoes: ["dashboard:ver"]});
     });
 
     it("permite Admin com catálogo completo conceder subset a outro utilizador", () => {
         const requested = ["dashboard:ver", "admin:usuarios:listar", "financeiro:lancamentos:listar"];
         const result = validatePermissoesGrant({
             actorUserId: ACTOR_ID,
+            actorSuperadmin: false,
             targetUserId: TARGET_ID,
             actorPermissions: PERMISSOES_ADMIN,
             requested,
@@ -125,19 +129,21 @@ describe("validatePermissoesGrant (Card 91)", () => {
     it("nunca permite superutilizador conceder '*' via API (só seed)", () => {
         const result = validatePermissoesGrant({
             actorUserId: ACTOR_ID,
+            actorSuperadmin: true,
             targetUserId: TARGET_ID,
             actorPermissions: ["*"],
             requested: ["*"],
         });
         assert.equal(result.ok, false);
         if (!result.ok) {
-            assert.equal(result.code, "PRIVILEGE_ESCALATION");
+            assert.equal(result.code, "VALIDATION_ERROR");
         }
     });
 
     it("deduplica códigos e aceita lista vazia (revogar todas as permissões do alvo)", () => {
         const result = validatePermissoesGrant({
             actorUserId: ACTOR_ID,
+            actorSuperadmin: false,
             targetUserId: TARGET_ID,
             actorPermissions: PERMISSOES_ADMIN,
             requested: ["dashboard:ver", " dashboard:ver ", "dashboard:ver"],
@@ -146,6 +152,7 @@ describe("validatePermissoesGrant (Card 91)", () => {
 
         const cleared = validatePermissoesGrant({
             actorUserId: ACTOR_ID,
+            actorSuperadmin: false,
             targetUserId: TARGET_ID,
             actorPermissions: PERMISSOES_ADMIN,
             requested: [],

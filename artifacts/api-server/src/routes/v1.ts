@@ -1,5 +1,5 @@
 import {Router} from "express";
-import {and, desc, eq, sql} from "drizzle-orm";
+import {desc, eq, sql} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {
     contasBancariasTable,
@@ -77,7 +77,6 @@ router.get("/bancos", withScope("v1:bancos:ler"), async (req, res) => {
             .select()
             .from(contasBancariasTable)
             .where(tenantScope(contasBancariasTable, empresaId))
-            .where(eq(contasBancariasTable.empresa_id, empresaId))
             .orderBy(contasBancariasTable.nome);
 
         return successResponse(
@@ -171,12 +170,6 @@ router.get("/contasPagar", withScope("v1:lancamentos:ler"), async (req, res) => 
                     lancamentosTable,
                     empresaId,
                     eq(lancamentosTable.tipo, "CP"),
-                ),
-            )
-            .where(
-                and(
-                    eq(lancamentosTable.tipo, "CP"),
-                    eq(lancamentosTable.empresa_id, empresaId),
                 ),
             )
             .orderBy(desc(lancamentosTable.updated_at))
@@ -278,12 +271,6 @@ router.get("/contasReceber", withScope("v1:lancamentos:ler"), async (req, res) =
                     eq(lancamentosTable.tipo, "CR"),
                 ),
             )
-            .where(
-                and(
-                    eq(lancamentosTable.tipo, "CR"),
-                    eq(lancamentosTable.empresa_id, empresaId),
-                ),
-            )
             .orderBy(desc(lancamentosTable.updated_at))
             .limit(limit)
             .offset(offset);
@@ -319,7 +306,6 @@ router.get("/pessoas", withScope("v1:parceiros:ler"), async (req, res) => {
             .select()
             .from(parceirosTable)
             .where(tenantScope(parceirosTable, empresaId))
-            .where(eq(parceirosTable.empresa_id, empresaId))
             .orderBy(parceirosTable.nome);
 
         return successResponse(res, items, {
@@ -347,7 +333,6 @@ router.get("/filiais", withScope("v1:filiais:ler"), async (req, res) => {
             .select()
             .from(filiaisTable)
             .where(tenantScope(filiaisTable, empresaId))
-            .where(eq(filiaisTable.empresa_id, empresaId))
             .orderBy(filiaisTable.nome);
 
         return successResponse(res, items);
@@ -373,7 +358,6 @@ router.get("/planoContas", withScope("v1:planoContas:ler"), async (req, res) => 
             .select()
             .from(planoContasTable)
             .where(tenantScope(planoContasTable, empresaId))
-            .where(eq(planoContasTable.empresa_id, empresaId))
             .orderBy(
                 planoContasTable.categoria,
                 planoContasTable.subcategoria,
@@ -408,7 +392,6 @@ router.get(
                 })
                 .from(planoContasTable)
                 .where(tenantScope(planoContasTable, empresaId))
-                .where(eq(planoContasTable.empresa_id, empresaId))
                 .groupBy(planoContasTable.categoria)
                 .orderBy(planoContasTable.categoria);
 
