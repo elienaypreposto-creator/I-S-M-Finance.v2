@@ -10,7 +10,7 @@ Para abrir: `openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in ficheiro.sql.e
 
 O dado do banco fica num ficheiro LUKS2 por ambiente, `/var/lib/ism/<ambiente>/pgdata.img` (ex.: `ism-tst`, `ism-hml`), aberto por `scripts/lgpd-volume-luks.sh` antes do `docker compose`. O contentor recebe o diretório já montado (`PGDATA_MOUNT`). O `cryptsetup status` tem de mostrar `type: LUKS`. Essa saída fica em `/var/lib/ism/<ambiente>/evidencia-disco.txt` na máquina de deploy.
 
-A frase de unlock vem do secret `TST_LUKS_PASSPHRASE` ou `HML_LUKS_PASSPHRASE`. Não é escrita no `.env` e não pode ser igual a `ISM_OWNER_PASSWORD` nem a `DB_PASSWORD`. O ficheiro de chave que já existir em `/var/lib/ism/<ambiente>/pg-luks.key` não é reescrito neste passo. Trocar a chave de um volume já aberto é `cryptsetup luksChangeKey` manual, fora do deploy.
+A frase de unlock, quando o secret `TST_LUKS_PASSPHRASE` ou `HML_LUKS_PASSPHRASE` existe, não é escrita no `.env` e não pode ser igual a `ISM_OWNER_PASSWORD` nem a `DB_PASSWORD`. Serve só para criar um volume novo. Se `/var/lib/ism/<ambiente>/pg-luks.key` já existir e o conteúdo for uma dessas senhas, o script corre `cryptsetup luksChangeKey` e grava uma chave aleatória no mesmo caminho. A imagem que já existe sem esse ficheiro não recebe uma chave inventada.
 
 A montagem antiga `/var/lib/ism/mnt` (mapper `ism-pgdata`, sem o nome do ambiente) é desmontada e o mapper é fechado no início do script. O ficheiro de imagem antigo, se ainda existir, não é apagado pelo script: confirma-se que o Postgres vivo está em `/var/lib/ism/ism-tst` ou `ism-hml` e só então se remove o ficheiro na VM.
 

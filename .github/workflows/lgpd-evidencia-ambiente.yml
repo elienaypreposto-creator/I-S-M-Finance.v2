@@ -1,0 +1,19 @@
+name: Evidencia LGPD ambiente
+
+on:
+  workflow_dispatch:
+
+jobs:
+  evidencia:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: DPA, export, eliminacao e chave LUKS na VM
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ubuntu
+          key: ${{ secrets.SSH_KEY }}
+          command_timeout: 20m
+          script_path: scripts/lgpd-evidencia-ambiente.sh

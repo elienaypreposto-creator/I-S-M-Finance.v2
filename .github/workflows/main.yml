@@ -32,7 +32,7 @@ jobs:
       - name: Validar variáveis do ambiente
         run: |
           faltando=0
-          for v in PORT WEB_PORT API_PORT DB_PORT SMTP_HOST SMTP_PORT SMTP_USER DB_PASSWORD JWT_SECRET JWT_ENCRYPT_SECRET SMTP_PASS REDIS_PASSWORD LUKS_PASSPHRASE; do
+          for v in PORT WEB_PORT API_PORT DB_PORT SMTP_HOST SMTP_PORT SMTP_USER DB_PASSWORD JWT_SECRET JWT_ENCRYPT_SECRET SMTP_PASS REDIS_PASSWORD; do
             if [ -z "${!v}" ]; then
               echo "::error::$v não definida para $TARGET_DIR"
               faltando=1
@@ -85,15 +85,17 @@ jobs:
               > .env
             chmod 600 .env
 
-            if [ -z "${LUKS_PASSPHRASE:-}" ]; then
-              echo "LUKS_PASSPHRASE ausente. O unlock do volume não usa senha do banco."
-              exit 1
+            if [ -n "${LUKS_PASSPHRASE:-}" ]; then
+              if [ "$LUKS_PASSPHRASE" = "$ISM_OWNER_PASSWORD" ] || [ "$LUKS_PASSPHRASE" = "$DB_PASSWORD" ]; then
+                echo "LUKS_PASSPHRASE não pode repetir ISM_OWNER_PASSWORD nem DB_PASSWORD."
+                exit 1
+              fi
+              export PG_LUKS_PASSPHRASE="$LUKS_PASSPHRASE"
+            else
+              # Sem secret dedicado, o script abre a chave que já está na VM
+              # e troca-a se o ficheiro ainda for a senha do banco.
+              export PG_LUKS_PASSPHRASE="${ISM_OWNER_PASSWORD:-$DB_PASSWORD}"
             fi
-            if [ "$LUKS_PASSPHRASE" = "$ISM_OWNER_PASSWORD" ] || [ "$LUKS_PASSPHRASE" = "$DB_PASSWORD" ]; then
-              echo "LUKS_PASSPHRASE não pode repetir ISM_OWNER_PASSWORD nem DB_PASSWORD."
-              exit 1
-            fi
-            export PG_LUKS_PASSPHRASE="$LUKS_PASSPHRASE"
             eval "$(bash scripts/lgpd-volume-luks.sh | tee /dev/stderr | grep '^PGDATA_MOUNT=')"
             if [ -z "${PGDATA_MOUNT:-}" ]; then
               echo "Volume LUKS não devolveu PGDATA_MOUNT. Deploy interrompido."
