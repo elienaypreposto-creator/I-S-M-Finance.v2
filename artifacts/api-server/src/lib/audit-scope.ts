@@ -5,7 +5,7 @@
  */
 
 const AUTH_GLOBAL_PATH =
-    /\/auth\/(login|refresh|logout|select-empresa|switch-empresa|verify-otp|setup-password|forgot-password|reset-password|migrate-passwords)(?:\?|$)/;
+    /\/auth\/(login|refresh|logout|select-empresa|switch-empresa|verify-otp|setup-password|forgot-password|reset-password)(?:\?|$)/;
 
 const EMPRESA_SELECTION_PATH = /\/auth\/(select-empresa|switch-empresa)(?:\?|$)/;
 

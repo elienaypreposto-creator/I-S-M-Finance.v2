@@ -16,6 +16,7 @@ jobs:
       WEB_PORT: ${{ vars[format('{0}_WEB_PORT', github.ref_name == 'master' && 'HML' || 'TST')] }}
       API_PORT: ${{ vars[format('{0}_API_PORT', github.ref_name == 'master' && 'HML' || 'TST')] }}
       DB_PORT: ${{ vars[format('{0}_DB_PORT', github.ref_name == 'master' && 'HML' || 'TST')] }}
+      FRONTEND_URL: ${{ vars[format('{0}_FRONTEND_URL', github.ref_name == 'master' && 'HML' || 'TST')] }}
       SMTP_HOST: ${{ vars[format('{0}_SMTP_HOST', github.ref_name == 'master' && 'HML' || 'TST')] }}
       SMTP_PORT: ${{ vars[format('{0}_SMTP_PORT', github.ref_name == 'master' && 'HML' || 'TST')] }}
       SMTP_USER: ${{ vars[format('{0}_SMTP_USER', github.ref_name == 'master' && 'HML' || 'TST')] }}
@@ -31,7 +32,7 @@ jobs:
       - name: Validar variáveis do ambiente
         run: |
           faltando=0
-          for v in PORT WEB_PORT API_PORT DB_PORT SMTP_HOST SMTP_PORT SMTP_USER DB_PASSWORD JWT_SECRET JWT_ENCRYPT_SECRET SMTP_PASS REDIS_PASSWORD; do
+          for v in PORT WEB_PORT API_PORT DB_PORT FRONTEND_URL SMTP_HOST SMTP_PORT SMTP_USER DB_PASSWORD JWT_SECRET JWT_ENCRYPT_SECRET SMTP_PASS REDIS_PASSWORD; do
             if [ -z "${!v}" ]; then
               echo "::error::$v não definida para $TARGET_DIR"
               faltando=1
@@ -53,7 +54,7 @@ jobs:
           host: ${{ secrets.SERVER_IP }}
           username: ubuntu
           key: ${{ secrets.SSH_KEY }}
-          envs: TARGET_DIR,PORT,WEB_PORT,API_PORT,DB_PORT,SMTP_HOST,SMTP_PORT,SMTP_USER,DB_PASSWORD,ISM_APP_PASSWORD,ISM_ADMIN_PASSWORD,ISM_OWNER_PASSWORD,JWT_SECRET,JWT_ENCRYPT_SECRET,SMTP_PASS,REDIS_PASSWORD
+          envs: TARGET_DIR,PORT,WEB_PORT,API_PORT,DB_PORT,FRONTEND_URL,SMTP_HOST,SMTP_PORT,SMTP_USER,DB_PASSWORD,ISM_APP_PASSWORD,ISM_ADMIN_PASSWORD,ISM_OWNER_PASSWORD,JWT_SECRET,JWT_ENCRYPT_SECRET,SMTP_PASS,REDIS_PASSWORD
           script: |
             set -e
             echo "Iniciando deploy no diretório: $TARGET_DIR para a branch: ${{ github.ref_name }}"
@@ -70,6 +71,7 @@ jobs:
               "WEB_PORT=$WEB_PORT" \
               "API_PORT=$API_PORT" \
               "DB_PORT=$DB_PORT" \
+              "FRONTEND_URL=$FRONTEND_URL" \
               "DB_PASSWORD=$DB_PASSWORD" \
               "ISM_APP_PASSWORD=$ISM_APP_PASSWORD" \
               "ISM_ADMIN_PASSWORD=$ISM_ADMIN_PASSWORD" \
