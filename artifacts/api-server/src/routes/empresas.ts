@@ -4,6 +4,7 @@ import {and, desc, eq, ne} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {empresasTable} from "@workspace/db/schema";
 import {withPermission} from "../middlewares/withPermission";
+import {withSuperadmin} from "../middlewares/withSuperadmin";
 import {PERM} from "../constants/permissoes";
 import {validateBody} from "../middlewares/validate";
 import {errorResponse, successResponse} from "../utils/response";
@@ -60,7 +61,7 @@ async function uniqueSlug(desired: string, exceptId?: number): Promise<string> {
     return `${desired}-${Date.now()}`;
 }
 
-router.get("/empresas", withPermission(PERM.ADMIN_EMPRESAS_LISTAR), async (req, res) => {
+router.get("/empresas", withSuperadmin, async (req, res) => {
     try {
         const items = await db.select().from(empresasTable).orderBy(desc(empresasTable.id));
         return successResponse(res, items);
@@ -69,7 +70,7 @@ router.get("/empresas", withPermission(PERM.ADMIN_EMPRESAS_LISTAR), async (req, 
     }
 });
 
-router.post("/empresas", withPermission(PERM.ADMIN_EMPRESAS_CRIAR), validateBody(createEmpresaBodySchema), async (req, res) => {
+router.post("/empresas", withSuperadmin, validateBody(createEmpresaBodySchema), async (req, res) => {
     try {
         const body = req.body as CreateEmpresaBody;
         const slug = await uniqueSlug(slugify(body.slug || body.razao_social));
