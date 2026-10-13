@@ -74,7 +74,11 @@ if [ -f "$KEY" ] && [ -f "$IMG" ]; then
     nova="$(mktemp)"
     umask 077
     openssl rand -base64 48 | tr -d '\n' > "$nova"
-    sudo cryptsetup luksChangeKey --batch-mode --key-file "$KEY" --new-keyfile "$nova" "$IMG"
+    if ! sudo cryptsetup luksChangeKey --batch-mode --key-file "$KEY" "$IMG" "$nova"; then
+      rm -f "$nova"
+      echo "luksChangeKey falhou. O ficheiro de chave ficou como estava." >&2
+      exit 1
+    fi
     sudo install -m 400 -o root "$nova" "$KEY"
     rm -f "$nova"
     echo "Chave LUKS substituída. O ficheiro deixou de ser a senha do banco." >&2

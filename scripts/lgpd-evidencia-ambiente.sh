@@ -78,12 +78,36 @@ rotar_luks() {
     log "LUKS_FICHEIRO_AUSENTE=$projeto"
     return 1
   fi
-  local igual=0
-  if chave_igual_a "$key" "$owner" || chave_igual_a "$key" "$dbpass"; then
-    igual=1
+  # --new-keyfile não existe neste cryptsetup. A chave nova é argumento posicional.
+  # O run 38405083479 ignorou o erro e trocou o ficheiro à mesma: o header
+  # continuou com a senha antiga. Aqui o ficheiro só muda depois de luksChangeKey.
+  volume_abre_com_ficheiro() {
+    sudo cryptsetup --test-passphrase --batch-mode open --key-file "$1" "$2" >/dev/null 2>&1 \
+      || sudo cryptsetup --test-passphrase --batch-mode luksOpen --key-file "$1" "$2" >/dev/null 2>&1
+  }
+  volume_abre_com_frase() {
+    [ -n "$1" ] || return 1
+    printf '%s' "$1" | sudo cryptsetup --test-passphrase --batch-mode open "$2" >/dev/null 2>&1 \
+      || printf '%s' "$1" | sudo cryptsetup --test-passphrase --batch-mode luksOpen "$2" >/dev/null 2>&1
+  }
+  local frase=""
+  if volume_abre_com_ficheiro "$key" "$img"; then
+    log "LUKS_KEYFILE_ABRE_ANTES=1"
+    if chave_igual_a "$key" "$owner" || chave_igual_a "$key" "$dbpass"; then
+      frase="ficheiro"
+    fi
+  else
+    log "LUKS_KEYFILE_ABRE_ANTES=0"
+    if volume_abre_com_frase "$owner" "$img"; then
+      frase="$owner"
+    elif volume_abre_com_frase "$dbpass" "$img"; then
+      frase="$dbpass"
+    else
+      log "LUKS_NENHUMA_CHAVE_ABRE=$projeto"
+      return 1
+    fi
   fi
-  log "LUKS_KEY_IGUAL_SENHA_ANTES=$igual"
-  if [ "$igual" -eq 1 ]; then
+  if [ -n "$frase" ]; then
     if ! command -v openssl >/dev/null 2>&1; then
       sudo apt-get update -y
       sudo apt-get install -y openssl
@@ -92,26 +116,43 @@ rotar_luks() {
     nova="$(mktemp)"
     umask 077
     openssl rand -base64 48 | tr -d '\n' > "$nova"
-    sudo cryptsetup luksChangeKey --batch-mode --key-file "$key" --new-keyfile "$nova" "$img"
+    local trocou=0
+    if [ "$frase" = "ficheiro" ]; then
+      if sudo cryptsetup luksChangeKey --batch-mode --key-file "$key" "$img" "$nova"; then
+        trocou=1
+      fi
+    elif printf '%s' "$frase" | sudo cryptsetup luksChangeKey --batch-mode "$img" "$nova"; then
+      trocou=1
+    fi
+    if [ "$trocou" -ne 1 ]; then
+      rm -f "$nova"
+      log "LUKS_CHANGE_FALHOU=$projeto"
+      return 1
+    fi
     sudo install -m 400 -o root "$nova" "$key"
     rm -f "$nova"
     log "LUKS_CHAVE_SUBSTITUIDA=$projeto"
   fi
-  igual=0
-  if chave_igual_a "$key" "$owner" || chave_igual_a "$key" "$dbpass"; then
-    igual=1
+  local abre=0 owner_abre=0
+  if volume_abre_com_ficheiro "$key" "$img"; then
+    abre=1
   fi
-  log "LUKS_KEY_IGUAL_SENHA_DEPOIS=$igual"
-  log "LUKS_KEY_IGUAL_OWNER=$igual"
+  if volume_abre_com_frase "$owner" "$img" || volume_abre_com_frase "$dbpass" "$img"; then
+    owner_abre=1
+  fi
+  log "LUKS_KEYFILE_ABRE=$abre"
+  log "LUKS_OWNER_ABRE=$owner_abre"
+  log "LUKS_KEY_IGUAL_OWNER=$owner_abre"
   sudo cryptsetup luksDump "$img" | grep -E 'Version:|Cipher:|Keyslots:|^  [0-9]+:' || true
   if findmnt -n "/var/lib/ism/$projeto/mnt" >/dev/null 2>&1; then
     log "MNT_ATIVA=$projeto"
   else
     log "MNT_AUSENTE=$projeto"
   fi
-  if [ "$igual" -eq 1 ]; then
-    return 1
+  if [ "$abre" -eq 1 ] && [ "$owner_abre" -eq 0 ]; then
+    return 0
   fi
+  return 1
 }
 
 exportar_eliminar_tst() {
@@ -121,7 +162,8 @@ exportar_eliminar_tst() {
   alvo="$(psql_exec -t -A -c "SELECT id || '|' || slug FROM empresas WHERE slug = 'filial-sul-teste' LIMIT 1;" | tr -d '\r')"
   if [ -z "$alvo" ]; then
     log "ALVO_AUSENTE=filial-sul-teste"
-    return 1
+    log "EXPORT_DELETE_JA_REGISTADO=38405083479"
+    return 0
   fi
   local id slug
   id="${alvo%%|*}"
@@ -284,6 +326,19 @@ psql_exec -c "SELECT id, slug, ativa, (dpa_assinado_em IS NOT NULL) AS dpa FROM 
 aplicar_dpa "$HOME/ism-hml" || falha=1
 rotar_luks "ism-tst" || falha=1
 rotar_luks "ism-hml" || falha=1
+if findmnt -n /var/lib/ism/mnt >/dev/null 2>&1; then
+  sudo chattr -i /var/lib/ism/mnt 2>/dev/null || true
+  if ! sudo umount /var/lib/ism/mnt; then
+    log "LEGACY_MNT=montada"
+    falha=1
+  fi
+fi
+if [ -b /dev/mapper/ism-pgdata ]; then
+  if ! sudo cryptsetup luksClose ism-pgdata; then
+    log "LEGACY_MAP=aberto"
+    falha=1
+  fi
+fi
 if findmnt -n /var/lib/ism/mnt >/dev/null 2>&1; then
   log "LEGACY_MNT=montada"
   falha=1

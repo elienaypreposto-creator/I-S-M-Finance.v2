@@ -10,12 +10,16 @@
 
 O `[db:migrate]` passa a imprimir `[db:migrate] Aplicada: <tag>` para cada hash novo em `drizzle.__drizzle_migrations`. Sem migration nova, imprime `Nenhuma migration nova.`
 
-## Execução na VM (run 37982854289)
+## Execução na VM
 
-https://github.com/elienaypreposto-creator/I-S-M-Finance.v2/actions/runs/37982854289 terminou `success` em `master` (`59bb7c3`) e não tocou TST nem HML. O `appleboy/ssh-action@v1.0.3` não reconhece `script_path`. O log mostra o aviso `Unexpected input(s) 'script_path'`, o bloco `======CMD======` vazio e `Successfully executed commands to all host`. Não há `EMPRESAS_DEPOIS`, `EXPORT_HTTP`, `DELETE_HTTP` nem `LUKS_KEY_IGUAL_OWNER`.
+O run https://github.com/elienaypreposto-creator/I-S-M-Finance.v2/actions/runs/37982854289 não executou o script (`script_path` ignorado pelo ssh-action v1.0.3).
 
-O deploy https://github.com/elienaypreposto-creator/I-S-M-Finance.v2/actions/runs/37976158378 também é desse commit e não corre o script de evidência.
+O run https://github.com/elienaypreposto-creator/I-S-M-Finance.v2/actions/runs/38405083479 executou o script e falhou no fim (`EVIDENCIA_FIM falha=1`). O que esse log já prova:
 
-## DPA, export e LUKS — o que o próximo run tem de imprimir
+- TST, antes do DELETE: `filial-sul-teste` ficou `ativa=f` e `dpa=f`. `ism` permaneceu `ativa=t` e `dpa=t`. O `CHECK empresas_ativa_exige_dpa` foi criado em TST e em HML (`UPDATE 1` em TST, `UPDATE 0` em HML).
+- `EXPORT_DOWNLOAD_HTTP=200`, `EXPORT_BYTES=493018`, `DELETE_HTTP=200`, `DELETE_ELIMINADA=1`. Depois do DELETE, TST só tem a empresa `ism`.
+- `luksChangeKey --new-keyfile` não existe nesse `cryptsetup` (`--new-keyfile: unknown option`). O script mesmo assim substituiu `pg-luks.key`. O header LUKS não mudou; o ficheiro deixou de abrir o volume. A montagem antiga `/var/lib/ism/mnt` continuava montada (`LEGACY_MNT=montada`). Não reiniciar a VM antes do run de reparo: o volume segue aberto, mas um `luksOpen` com o ficheiro atual falha.
 
-O script aplica o SQL da `0026` (empresa sem `dpa_assinado_em` fica inativa, com `CHECK`) e em seguida chama export e eliminação de `filial-sul-teste`. Se essa empresa não existir, o script termina com erro (`ALVO_AUSENTE`), em vez de sair verde. A chave LUKS é trocada com `luksChangeKey` quando o ficheiro ainda é `ISM_OWNER_PASSWORD` ou `DB_PASSWORD`. O log precisa conter `EXPORT_DOWNLOAD_HTTP=200`, `DELETE_HTTP=200`, `DELETE_ELIMINADA=1` e `LUKS_KEY_IGUAL_OWNER=0` duas vezes (TST e HML).
+## Reparo pendente
+
+`filial-sul-teste` já foi eliminada nesse run. O próximo disparo não repete o DELETE: regista `EXPORT_DELETE_JA_REGISTADO=38405083479`. A troca da chave usa `luksChangeKey <imagem> <ficheiro-novo>` (sem `--new-keyfile`) e só grava `pg-luks.key` se o comando sair 0. O fecho é `LUKS_KEYFILE_ABRE=1` e `LUKS_OWNER_ABRE=0` em TST e HML, mais `LEGACY_MNT=ausente`.

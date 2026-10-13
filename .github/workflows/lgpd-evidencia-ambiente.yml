@@ -42,9 +42,11 @@ jobs:
         run: |
           set -euo pipefail
           log=evidencia/vm.log
-          grep -q "EXPORT_DOWNLOAD_HTTP=200" "$log"
-          grep -q "DELETE_HTTP=200" "$log"
-          grep -q "DELETE_ELIMINADA=1" "$log"
+          if ! grep -q "DELETE_ELIMINADA=1" "$log"; then
+            grep -q "EXPORT_DELETE_JA_REGISTADO=38405083479" "$log"
+          fi
+          test "$(grep -c 'LUKS_KEYFILE_ABRE=1' "$log")" -ge 2
+          test "$(grep -c 'LUKS_OWNER_ABRE=0' "$log")" -ge 2
           test "$(grep -c 'LUKS_KEY_IGUAL_OWNER=0' "$log")" -ge 2
-          grep -q "filial-sul-teste" "$log"
+          grep -q "LEGACY_MNT=ausente" "$log"
           grep -q "EVIDENCIA_FIM falha=0" "$log"
