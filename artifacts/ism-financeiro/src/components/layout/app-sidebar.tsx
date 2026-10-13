@@ -18,8 +18,6 @@ import {
     LineChart,
     Wallet,
     UserCheck,
-    Scale,
-    ListFilter,
 } from "lucide-react";
 import {
     Sidebar,
@@ -53,26 +51,14 @@ const cadastrosItems: NavItem[] = [
     {title: "Plano de Contas", url: "/cadastros/plano-contas", icon: Briefcase},
     {title: "Metas Financeiras", url: "/cadastros/metas", icon: Target},
     {title: "Departamentos", url: "/cadastros/departamentos", icon: Building2},
-    {
-        title: "Regras de Conciliação",
-        url: "/cadastros/regras-conciliacao",
-        icon: ListFilter,
-        permission: PERM.CONCILIACAO_ACESSAR,
-    },
 ];
 
-const relatoriosItems = [
+const relatoriosItems: NavItem[] = [
     {title: "Fechamento Mensal", url: "/relatorios/fechamento-mensal", icon: Wallet},
     {title: "Contábil/Fiscal", url: "/relatorios/contabil-fiscal", icon: FileText},
     {title: "DRE Gerencial", url: "/relatorios/dre", icon: BarChart3},
     {title: "Fluxo de Caixa", url: "/relatorios/fluxo-caixa", icon: LineChart},
     {title: "Relatório de Metas", url: "/relatorios/metas", icon: Target},
-    {
-        title: "Conciliação Bancária",
-        url: "/relatorios/conciliacao",
-        icon: Scale,
-        permission: PERM.RELATORIOS_CONCILIACAO,
-    },
 ];
 
 const configItems = [

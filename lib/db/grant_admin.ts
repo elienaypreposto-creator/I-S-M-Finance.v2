@@ -11,7 +11,6 @@ async function grantAdmin() {
         "admin:usuarios:listar", "admin:usuarios:criar", "admin:usuarios:editar", "admin:usuarios:deletar",
         "admin:permissoes:conceder",
         "admin:tokens-api:listar", "admin:tokens-api:criar", "admin:tokens-api:editar", "admin:tokens-api:deletar",
-        "admin:migrate-passwords",
         "financeiro:lancamentos:deletar", "financeiro:lancamentos:criar", "financeiro:lancamentos:editar", "financeiro:lancamentos:alterar_valor",
         "financeiro:parceiros:criar", "financeiro:parceiros:editar", "financeiro:parceiros:deletar",
         "financeiro:metas:editar",

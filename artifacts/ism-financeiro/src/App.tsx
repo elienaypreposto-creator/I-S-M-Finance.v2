@@ -19,14 +19,12 @@ import PlanoContas from "./pages/cadastros/plano-contas-FINANCEIRO-ISM";
 import ContasBancarias from "./pages/cadastros/contas-bancarias-FINANCEIRO-ISM";
 import Metas from "./pages/cadastros/metas";
 import Departamentos from "./pages/cadastros/departamentos";
-import RegrasConciliacao from "./pages/cadastros/regras-conciliacao";
 
 import FechamentoMensal from "./pages/relatorios/fechamento-mensal";
 import ContabilFiscal from "./pages/relatorios/contabil-fiscal";
 import DreGerencial from "./pages/relatorios/dre-FINANCEIRO-ISM";
 import FluxoCaixa from "./pages/relatorios/fluxo-caixa-FINANCEIRO-ISM";
 import MetasRelatorio from "./pages/relatorios/metas-relatorio";
-import RelatorioConciliacao from "./pages/relatorios/relatorio-conciliacao";
 
 import Usuarios from "./pages/configuracoes/usuarios";
 import Filiais from "./pages/configuracoes/filiais";
@@ -121,22 +119,14 @@ function Router() {
             <PrivateRoute path="/cadastros/contas-bancarias" component={ContasBancarias}/>
             <PrivateRoute path="/cadastros/metas" component={Metas}/>
             <PrivateRoute path="/cadastros/departamentos" component={Departamentos}/>
-            <PrivateRoute
-                path="/cadastros/regras-conciliacao"
-                component={RegrasConciliacao}
-                permission={PERM.CONCILIACAO_ACESSAR}
-            />
+            <Route path="/cadastros/regras-conciliacao"><Redirect to="/conciliacao" replace/></Route>
 
             <PrivateRoute path="/relatorios/fechamento-mensal" component={FechamentoMensal}/>
             <PrivateRoute path="/relatorios/contabil-fiscal" component={ContabilFiscal}/>
             <PrivateRoute path="/relatorios/dre" component={DreGerencial}/>
             <PrivateRoute path="/relatorios/fluxo-caixa" component={FluxoCaixa}/>
             <PrivateRoute path="/relatorios/metas" component={MetasRelatorio}/>
-            <PrivateRoute
-                path="/relatorios/conciliacao"
-                component={RelatorioConciliacao}
-                permission={PERM.RELATORIOS_CONCILIACAO}
-            />
+            <Route path="/relatorios/conciliacao"><Redirect to="/conciliacao" replace/></Route>
 
             <PrivateRoute path="/configuracoes/usuarios" component={Usuarios}/>
             <PrivateRoute path="/admin/usuarios" component={Usuarios}/>

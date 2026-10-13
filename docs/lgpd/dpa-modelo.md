@@ -45,7 +45,7 @@ Pedido de exportação e, em seguida, eliminação. Prazos do inventário que se
 
 ## Aceite registado
 
-A empresa só fica ativa com `dpa_representante` e `dpa_assinado_em` na linha de `empresas` (migração `0025_lgpd_dpa_empresa`). A migração `0026_lgpd_empresa_ativa_exige_dpa` desativa quem já estava ativo sem data e impede `ativa = true` sem `dpa_assinado_em`, inclusive fora da API. Criar empresa sem o nome do representante é recusado. Activar uma empresa sem esse registo também.
+A empresa só fica ativa com `dpa_representante` e `dpa_assinado_em` na linha de `empresas` (migração `0025_lgpd_dpa_empresa`). A migração `0027_lgpd_empresa_ativa_exige_dpa` desativa quem já estava ativo sem data e impede `ativa = true` sem `dpa_assinado_em`, inclusive fora da API. Criar empresa sem o nome do representante é recusado. Activar uma empresa sem esse registo também.
 
 O aceite de cliente que está no banco é o da ISM Tecnologia (`slug=ism`). Uma empresa de teste sem esse par, como `filial-sul-teste`, não permanece ativa. Não se grava assinatura de cliente que não foi dada.
 

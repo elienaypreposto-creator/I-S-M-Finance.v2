@@ -82,7 +82,6 @@ export const PERMISSOES_ADMIN = [
     "admin:usuarios:editar",
     "admin:usuarios:deletar",
     "admin:permissoes:conceder",
-    "admin:migrate-passwords",
 
     "admin:empresas:listar",
     "admin:empresas:criar",

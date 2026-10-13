@@ -208,10 +208,6 @@ export const verifyPurposeToken = async (
     return {sub, email, purpose};
 };
 
-/** SHA-256 de senhas legadas -> usado exclusivamente para migração transparente no login. */
-export const sha256Hash = (value: string): string =>
-    crypto.createHash("sha256").update(value, "utf8").digest("hex");
-
 /** SHA-256 de um token opaco -> usado para armazenar e comparar refresh tokens no banco. */
 export const hashToken = (token: string): string =>
     crypto.createHash("sha256").update(token, "utf8").digest("hex");
