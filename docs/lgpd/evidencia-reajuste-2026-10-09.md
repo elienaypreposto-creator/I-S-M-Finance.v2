@@ -10,16 +10,12 @@
 
 O `[db:migrate]` passa a imprimir `[db:migrate] Aplicada: <tag>` para cada hash novo em `drizzle.__drizzle_migrations`. Sem migration nova, imprime `Nenhuma migration nova.`
 
-## DPA e empresa ativa
+## Execução na VM (run 37982854289)
 
-A migração `0026_lgpd_empresa_ativa_exige_dpa` faz `ativa = false` onde `dpa_assinado_em` é nulo e cria `CHECK (ativa = false OR dpa_assinado_em IS NOT NULL)`. É o que tira `filial-sul-teste` do estado ativo sem inventar assinatura. Aplica no próximo `db:migrate` de TST e HML. Não foi executada contra esses bancos a partir desta estação.
+https://github.com/elienaypreposto-creator/I-S-M-Finance.v2/actions/runs/37982854289 terminou `success` em `master` (`59bb7c3`) e não tocou TST nem HML. O `appleboy/ssh-action@v1.0.3` não reconhece `script_path`. O log mostra o aviso `Unexpected input(s) 'script_path'`, o bloco `======CMD======` vazio e `Successfully executed commands to all host`. Não há `EMPRESAS_DEPOIS`, `EXPORT_HTTP`, `DELETE_HTTP` nem `LUKS_KEY_IGUAL_OWNER`.
 
-O aceite que já existe no schema é o da empresa `slug=ism` (ISM Tecnologia), migração `0025`.
+O deploy https://github.com/elienaypreposto-creator/I-S-M-Finance.v2/actions/runs/37976158378 também é desse commit e não corre o script de evidência.
 
-## Export e eliminação em ambiente
+## DPA, export e LUKS — o que o próximo run tem de imprimir
 
-As rotas e a suíte local já estavam conferidas na verificação de 09/10. Esta estação não tem sessão nos hosts TST/HML, então não há log novo de `GET /admin/empresas/:id/export` nem de `DELETE` contra esses ambientes.
-
-## LUKS
-
-O workflow deixa de copiar `ISM_OWNER_PASSWORD` para a frase de unlock e não grava essa frase no `.env`. O secret esperado é `TST_LUKS_PASSPHRASE` ou `HML_LUKS_PASSPHRASE`, diferente da senha do banco. O script fecha a montagem antiga `/var/lib/ism/mnt` (mapper `ism-pgdata`) quando ela existir. Não apaga o ficheiro de imagem. A chave já gravada em `/var/lib/ism/<ambiente>/pg-luks.key` não é trocada automaticamente.
+O script aplica o SQL da `0026` (empresa sem `dpa_assinado_em` fica inativa, com `CHECK`) e em seguida chama export e eliminação de `filial-sul-teste`. Se essa empresa não existir, o script termina com erro (`ALVO_AUSENTE`), em vez de sair verde. A chave LUKS é trocada com `luksChangeKey` quando o ficheiro ainda é `ISM_OWNER_PASSWORD` ou `DB_PASSWORD`. O log precisa conter `EXPORT_DOWNLOAD_HTTP=200`, `DELETE_HTTP=200`, `DELETE_ELIMINADA=1` e `LUKS_KEY_IGUAL_OWNER=0` duas vezes (TST e HML).

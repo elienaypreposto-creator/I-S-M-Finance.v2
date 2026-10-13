@@ -102,6 +102,7 @@ rotar_luks() {
     igual=1
   fi
   log "LUKS_KEY_IGUAL_SENHA_DEPOIS=$igual"
+  log "LUKS_KEY_IGUAL_OWNER=$igual"
   sudo cryptsetup luksDump "$img" | grep -E 'Version:|Cipher:|Keyslots:|^  [0-9]+:' || true
   if findmnt -n "/var/lib/ism/$projeto/mnt" >/dev/null 2>&1; then
     log "MNT_ATIVA=$projeto"
@@ -120,7 +121,7 @@ exportar_eliminar_tst() {
   alvo="$(psql_exec -t -A -c "SELECT id || '|' || slug FROM empresas WHERE slug = 'filial-sul-teste' LIMIT 1;" | tr -d '\r')"
   if [ -z "$alvo" ]; then
     log "ALVO_AUSENTE=filial-sul-teste"
-    return 0
+    return 1
   fi
   local id slug
   id="${alvo%%|*}"
