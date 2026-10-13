@@ -20,6 +20,9 @@ O run https://github.com/elienaypreposto-creator/I-S-M-Finance.v2/actions/runs/3
 - `EXPORT_DOWNLOAD_HTTP=200`, `EXPORT_BYTES=493018`, `DELETE_HTTP=200`, `DELETE_ELIMINADA=1`. Depois do DELETE, TST só tem a empresa `ism`.
 - `luksChangeKey --new-keyfile` não existe nesse `cryptsetup` (`--new-keyfile: unknown option`). O script mesmo assim substituiu `pg-luks.key`. O header LUKS não mudou; o ficheiro deixou de abrir o volume. A montagem antiga `/var/lib/ism/mnt` continuava montada (`LEGACY_MNT=montada`). Não reiniciar a VM antes do run de reparo: o volume segue aberto, mas um `luksOpen` com o ficheiro atual falha.
 
-## Reparo pendente
+## Reparo (run 38406268258)
 
-`filial-sul-teste` já foi eliminada nesse run. O próximo disparo não repete o DELETE: regista `EXPORT_DELETE_JA_REGISTADO=38405083479`. A troca da chave usa `luksChangeKey <imagem> <ficheiro-novo>` (sem `--new-keyfile`) e só grava `pg-luks.key` se o comando sair 0. O fecho é `LUKS_KEYFILE_ABRE=1` e `LUKS_OWNER_ABRE=0` em TST e HML, mais `LEGACY_MNT=ausente`.
+https://github.com/elienaypreposto-creator/I-S-M-Finance.v2/actions/runs/38406268258 terminou `success` (`EVIDENCIA_FIM falha=0`). O passo «Exigir os três marcadores» passou. Artefato: `lgpd-evidencia-vm`.
+
+- TST e HML: só a empresa `ism`, `ativa=t`, `dpa=t`. `filial-sul-teste` ausente (`EXPORT_DELETE_JA_REGISTADO=38405083479`).
+- Em TST e em HML: `LUKS_KEYFILE_ABRE_ANTES=0`, `LUKS_CHAVE_SUBSTITUIDA`, `LUKS_KEYFILE_ABRE=1`, `LUKS_OWNER_ABRE=0`, `LUKS_KEY_IGUAL_OWNER=0`. `MNT_ATIVA` nos dois. `LEGACY_MNT=ausente` e `LEGACY_MAP=ausente`.
