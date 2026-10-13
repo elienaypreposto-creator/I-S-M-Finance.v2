@@ -3,6 +3,7 @@ import {useEffect, useMemo, useState, useRef} from "react";
 import {useForm, Controller} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {PageHeader} from "@/components/shared/page-header";
+import {BotaoBloquear, BotaoEditar, BotaoExcluir} from "@/components/shared/botoes-acao";
 import {
     Plus,
     Landmark,
@@ -11,11 +12,7 @@ import {
     CheckCircle,
     AlertCircle,
     X,
-    Pencil,
-    Lock,
-    Unlock,
     Loader2,
-    Trash2,
     PiggyBank,
     PackageOpen,
     CheckCircle2,
@@ -28,6 +25,7 @@ import {
     Info,
 } from "lucide-react";
 import {formatCurrency, cn} from "@/lib/utils";
+import {classeSaldo} from "@/lib/saldo";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
@@ -780,7 +778,8 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
 
     return (
         <ViewportOverlay>
-            <div className="bg-card border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]">
+            <div
+                className="bg-card border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]">
                 {/* Header fixo */}
                 <div className="flex items-center justify-between p-6 border-b border-white/5 flex-shrink-0">
                     <h2 className="text-lg font-bold text-white">
@@ -1213,10 +1212,6 @@ export default function ContasBancarias() {
         filteredContas.length,
     );
 
-    const totalSaldoCents = contas
-        .filter((c) => c.status === "ativo")
-        .reduce((acc, c) => acc + toCents(c.saldo_atual), 0);
-
     if (isLoading)
         return (
             <div className="flex items-center justify-center h-64">
@@ -1266,25 +1261,6 @@ export default function ContasBancarias() {
                     </div>
                 }
             />
-
-            {/* Saldo consolidado */}
-            <div className="glass-panel rounded-2xl p-6">
-                <div className="flex items-center justify-between">
-                    <div>
-                        <p className="text-sm text-muted-foreground">
-                            Saldo Consolidado (contas ativas)
-                        </p>
-                        <p className="text-3xl font-bold text-white mt-1">
-                            {showSaldos
-                                ? formatCurrency(totalSaldoCents / 100)
-                                : "R$ ••••••"}
-                        </p>
-                    </div>
-                    <div className="w-14 h-14 bg-primary/20 rounded-2xl flex items-center justify-center">
-                        <Landmark className="w-7 h-7 text-primary"/>
-                    </div>
-                </div>
-            </div>
 
             {/* Busca */}
             <div className="glass-panel rounded-2xl p-4">
@@ -1416,14 +1392,17 @@ export default function ContasBancarias() {
 
                                         {/* Saldo Atual */}
                                         <td className="px-5 py-4 text-right">
-                        <span
-                            className="font-bold"
-                            style={{color: conta.cor}}
-                        >
-                          {showSaldos
-                              ? formatCurrency(toCents(conta.saldo_atual) / 100)
-                              : "R$ ••••••"}
-                        </span>
+                                            {showSaldos ? (
+                                                <span
+                                                    className={cn("font-bold", classeSaldo(toCents(conta.saldo_atual) / 100))}>
+                                {formatCurrency(toCents(conta.saldo_atual) / 100)}
+                            </span>
+                                            ) : (
+                                                <span className="font-bold text-muted-foreground"
+                                                      aria-label="Saldo oculto">
+                                <span aria-hidden="true">R$ ••••••</span>
+                            </span>
+                                            )}
                                         </td>
 
                                         {/* Status */}
@@ -1448,16 +1427,9 @@ export default function ContasBancarias() {
                                         {/* Ações */}
                                         <td className="px-5 py-4">
                                             <div className="flex items-center justify-end gap-2">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setEditingConta(conta)}
-                                                    title="Editar"
-                                                    className="p-2 bg-white/5 hover:bg-white/10 rounded-lg text-muted-foreground hover:text-white transition-colors"
-                                                >
-                                                    <Pencil className="w-4 h-4"/>
-                                                </button>
-                                                <button
-                                                    type="button"
+                                                <BotaoEditar onClick={() => setEditingConta(conta)}/>
+                                                <BotaoBloquear
+                                                    bloqueado={conta.status !== "ativo"}
                                                     onClick={() =>
                                                         blockMutation.mutate({
                                                             id: conta.id,
@@ -1467,32 +1439,8 @@ export default function ContasBancarias() {
                                                                     : "ativo",
                                                         })
                                                     }
-                                                    title={
-                                                        conta.status === "ativo"
-                                                            ? "Bloquear"
-                                                            : "Desbloquear"
-                                                    }
-                                                    className={cn(
-                                                        "p-2 rounded-lg transition-colors",
-                                                        conta.status === "ativo"
-                                                            ? "bg-white/5 hover:bg-orange-500/20 text-muted-foreground hover:text-orange-400"
-                                                            : "bg-success/20 text-success hover:bg-success/30",
-                                                    )}
-                                                >
-                                                    {conta.status === "ativo" ? (
-                                                        <Lock className="w-4 h-4"/>
-                                                    ) : (
-                                                        <Unlock className="w-4 h-4"/>
-                                                    )}
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleDelete(conta)}
-                                                    title="Excluir"
-                                                    className="p-2 bg-white/5 hover:bg-destructive/20 rounded-lg text-muted-foreground hover:text-destructive transition-colors"
-                                                >
-                                                    <Trash2 className="w-4 h-4"/>
-                                                </button>
+                                                />
+                                                <BotaoExcluir onClick={() => handleDelete(conta)}/>
                                             </div>
                                         </td>
                                     </tr>

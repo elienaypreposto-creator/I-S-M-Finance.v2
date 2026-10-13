@@ -1,4 +1,4 @@
-import {count, desc, eq, gte, ilike, lte} from "drizzle-orm";
+import {count, desc, eq, gte, ilike, lte, or} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {
     contasBancariasTable,
@@ -59,7 +59,12 @@ export const lancamentosService = {
             parceiro_id ? eq(lancamentosTable.parceiro_id, parceiro_id) : undefined,
             data_inicio ? gte(lancamentosTable.vencimento, data_inicio) : undefined,
             data_fim ? lte(lancamentosTable.vencimento, data_fim) : undefined,
-            search ? ilike(lancamentosTable.descricao, `%${search}%`) : undefined,
+            search
+                ? or(
+                    ilike(lancamentosTable.descricao, `%${search}%`),
+                    ilike(lancamentosTable.numero_documento, `%${search}%`),
+                )
+                : undefined,
         );
 
         const [totalResult] = await db.select({count: count()}).from(lancamentosTable).where(where);
@@ -75,6 +80,9 @@ export const lancamentosService = {
                 parceiro_id: lancamentosTable.parceiro_id,
                 parceiro_nome: parceirosTable.nome,
                 descricao: lancamentosTable.descricao,
+                tipo_documento: lancamentosTable.tipo_documento,
+                numero_documento: lancamentosTable.numero_documento,
+                observacao: lancamentosTable.observacao,
                 valor: lancamentosTable.valor,
                 desconto: lancamentosTable.desconto,
                 juros: lancamentosTable.juros,
@@ -140,6 +148,9 @@ export const lancamentosService = {
                         conta_id: payload.conta_id ?? null,
                         parceiro_id: payload.parceiro_id ?? null,
                         descricao: payload.descricao ?? null,
+                        tipo_documento: payload.tipo_documento ?? null,
+                        numero_documento: payload.numero_documento ?? null,
+                        observacao: payload.observacao ?? null,
                         valor: payload.valor,
                         desconto: payload.desconto ?? "0",
                         juros: payload.juros ?? "0",
@@ -189,7 +200,7 @@ export const lancamentosService = {
         const departamentoFinal = payload.departamento_id ?? autoFill.departamento_id;
         const centroCustoFinal = payload.centro_custo_id ?? autoFill.centro_custo_id;
 
-        const {empresa_id: _ignored, ...safePayload} = payload as UpdateLancamentoBody & {empresa_id?: unknown};
+        const {empresa_id: _ignored, ...safePayload} = payload as UpdateLancamentoBody & { empresa_id?: unknown };
         const updateData = {
             ...safePayload,
             departamento_id: departamentoFinal ?? payload.departamento_id,

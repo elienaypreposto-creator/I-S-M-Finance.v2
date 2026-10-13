@@ -39,7 +39,7 @@ paths:
   /healthz:
     get:
       operationId: healthCheck
-      tags: [health]
+      tags: [ health ]
       summary: Health check
       responses:
         "200":
@@ -52,7 +52,7 @@ paths:
   /dashboard/kpis:
     get:
       operationId: getDashboardKpis
-      tags: [dashboard]
+      tags: [ dashboard ]
       summary: Get dashboard KPI cards
       responses:
         "200":
@@ -65,7 +65,7 @@ paths:
   /dashboard/projecao-mes:
     get:
       operationId: getDashboardProjecaoMes
-      tags: [dashboard]
+      tags: [ dashboard ]
       summary: Current month projection
       responses:
         "200":
@@ -78,13 +78,13 @@ paths:
   /dashboard/projecao-dias:
     get:
       operationId: getDashboardProjecaoDias
-      tags: [dashboard]
+      tags: [ dashboard ]
       parameters:
         - name: dias
           in: query
           schema:
             type: integer
-            enum: [15, 30, 60]
+            enum: [ 15, 30, 60 ]
             default: 30
       summary: Cash flow projection for next N days
       responses:
@@ -100,13 +100,13 @@ paths:
   /dashboard/inadimplencia-clientes:
     get:
       operationId: getDashboardInadimplenciaClientes
-      tags: [dashboard]
+      tags: [ dashboard ]
       parameters:
         - name: tab
           in: query
           schema:
             type: string
-            enum: [inadimplente, proximos_vencer, vencidos]
+            enum: [ inadimplente, proximos_vencer, vencidos ]
             default: inadimplente
       responses:
         "200":
@@ -121,13 +121,13 @@ paths:
   /dashboard/inadimplencia-fornecedores:
     get:
       operationId: getDashboardInadimplenciaFornecedores
-      tags: [dashboard]
+      tags: [ dashboard ]
       parameters:
         - name: tab
           in: query
           schema:
             type: string
-            enum: [inadimplente, proximos_vencer, vencidos]
+            enum: [ inadimplente, proximos_vencer, vencidos ]
             default: inadimplente
       responses:
         "200":
@@ -142,7 +142,7 @@ paths:
   /dashboard/dias-atraso:
     get:
       operationId: getDashboardDiasAtraso
-      tags: [dashboard]
+      tags: [ dashboard ]
       responses:
         "200":
           description: Days overdue chart data
@@ -156,7 +156,7 @@ paths:
   /dashboard/nivel-risco:
     get:
       operationId: getDashboardNivelRisco
-      tags: [dashboard]
+      tags: [ dashboard ]
       responses:
         "200":
           description: Risk level data
@@ -170,7 +170,7 @@ paths:
   /dashboard/fluxo-caixa-mensal:
     get:
       operationId: getDashboardFluxoCaixaMensal
-      tags: [dashboard]
+      tags: [ dashboard ]
       parameters:
         - name: ano
           in: query
@@ -189,7 +189,7 @@ paths:
   /dashboard/saidas-plano-contas:
     get:
       operationId: getDashboardSaidasPlanoContas
-      tags: [dashboard]
+      tags: [ dashboard ]
       responses:
         "200":
           description: Expenses by account plan
@@ -203,7 +203,7 @@ paths:
   /dashboard/entradas-plano-contas:
     get:
       operationId: getDashboardEntradasPlanoContas
-      tags: [dashboard]
+      tags: [ dashboard ]
       responses:
         "200":
           description: Revenue by account plan
@@ -217,7 +217,7 @@ paths:
   /lancamentos:
     get:
       operationId: getLancamentos
-      tags: [lancamentos]
+      tags: [ lancamentos ]
       parameters:
         - name: page
           in: query
@@ -233,12 +233,12 @@ paths:
           in: query
           schema:
             type: string
-            enum: [CP, CR]
+            enum: [ CP, CR ]
         - name: status
           in: query
           schema:
             type: string
-            enum: [pendente, pago, recebido, atrasado, cancelado]
+            enum: [ pendente, pago, recebido, atrasado, cancelado ]
         - name: conta_id
           in: query
           schema:
@@ -270,7 +270,7 @@ paths:
                 $ref: "#/components/schemas/LancamentoListResponse"
     post:
       operationId: createLancamento
-      tags: [lancamentos]
+      tags: [ lancamentos ]
       requestBody:
         required: true
         content:
@@ -288,7 +288,7 @@ paths:
   /lancamentos/{id}:
     get:
       operationId: getLancamento
-      tags: [lancamentos]
+      tags: [ lancamentos ]
       parameters:
         - name: id
           in: path
@@ -304,7 +304,7 @@ paths:
                 $ref: "#/components/schemas/Lancamento"
     put:
       operationId: updateLancamento
-      tags: [lancamentos]
+      tags: [ lancamentos ]
       parameters:
         - name: id
           in: path
@@ -326,7 +326,7 @@ paths:
                 $ref: "#/components/schemas/Lancamento"
     delete:
       operationId: deleteLancamento
-      tags: [lancamentos]
+      tags: [ lancamentos ]
       parameters:
         - name: id
           in: path
@@ -340,7 +340,7 @@ paths:
   /parceiros:
     get:
       operationId: getParceiros
-      tags: [parceiros]
+      tags: [ parceiros ]
       parameters:
         - name: page
           in: query
@@ -369,7 +369,7 @@ paths:
                 $ref: "#/components/schemas/ParceirosListResponse"
     post:
       operationId: createParceiro
-      tags: [parceiros]
+      tags: [ parceiros ]
       requestBody:
         required: true
         content:
@@ -387,7 +387,7 @@ paths:
   /parceiros/{id}:
     get:
       operationId: getParceiro
-      tags: [parceiros]
+      tags: [ parceiros ]
       parameters:
         - name: id
           in: path
@@ -403,7 +403,7 @@ paths:
                 $ref: "#/components/schemas/Parceiro"
     put:
       operationId: updateParceiro
-      tags: [parceiros]
+      tags: [ parceiros ]
       parameters:
         - name: id
           in: path
@@ -425,7 +425,7 @@ paths:
                 $ref: "#/components/schemas/Parceiro"
     delete:
       operationId: deleteParceiro
-      tags: [parceiros]
+      tags: [ parceiros ]
       parameters:
         - name: id
           in: path
@@ -439,7 +439,7 @@ paths:
   /contas-bancarias:
     get:
       operationId: getContasBancarias
-      tags: [contas-bancarias]
+      tags: [ contas-bancarias ]
       parameters:
         - name: search
           in: query
@@ -456,7 +456,7 @@ paths:
                   $ref: "#/components/schemas/ContaBancaria"
     post:
       operationId: createContaBancaria
-      tags: [contas-bancarias]
+      tags: [ contas-bancarias ]
       requestBody:
         required: true
         content:
@@ -474,7 +474,7 @@ paths:
   /contas-bancarias/{id}:
     put:
       operationId: updateContaBancaria
-      tags: [contas-bancarias]
+      tags: [ contas-bancarias ]
       parameters:
         - name: id
           in: path
@@ -496,7 +496,7 @@ paths:
                 $ref: "#/components/schemas/ContaBancaria"
     delete:
       operationId: deleteContaBancaria
-      tags: [contas-bancarias]
+      tags: [ contas-bancarias ]
       parameters:
         - name: id
           in: path
@@ -510,7 +510,7 @@ paths:
   /plano-contas:
     get:
       operationId: getPlanoContas
-      tags: [plano-contas]
+      tags: [ plano-contas ]
       responses:
         "200":
           description: Chart of accounts
@@ -522,7 +522,7 @@ paths:
                   $ref: "#/components/schemas/PlanoContaItem"
     post:
       operationId: createPlanoContaItem
-      tags: [plano-contas]
+      tags: [ plano-contas ]
       requestBody:
         required: true
         content:
@@ -540,7 +540,7 @@ paths:
   /plano-contas/{id}:
     put:
       operationId: updatePlanoContaItem
-      tags: [plano-contas]
+      tags: [ plano-contas ]
       parameters:
         - name: id
           in: path
@@ -562,7 +562,7 @@ paths:
                 $ref: "#/components/schemas/PlanoContaItem"
     delete:
       operationId: deletePlanoContaItem
-      tags: [plano-contas]
+      tags: [ plano-contas ]
       parameters:
         - name: id
           in: path
@@ -576,7 +576,7 @@ paths:
   /metas:
     get:
       operationId: getMetas
-      tags: [metas]
+      tags: [ metas ]
       parameters:
         - name: ano
           in: query
@@ -594,7 +594,7 @@ paths:
                   $ref: "#/components/schemas/Meta"
     post:
       operationId: saveMeta
-      tags: [metas]
+      tags: [ metas ]
       requestBody:
         required: true
         content:
@@ -612,7 +612,7 @@ paths:
   /conciliacoes:
     get:
       operationId: getConciliacoes
-      tags: [conciliacao]
+      tags: [ conciliacao ]
       parameters:
         - name: page
           in: query
@@ -628,7 +628,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [pendente, conciliado]
+            enum: [ pendente, conciliado ]
         - name: conta_id
           in: query
           schema:
@@ -648,7 +648,7 @@ paths:
   /conciliacoes/importar:
     post:
       operationId: importarConciliacao
-      tags: [conciliacao]
+      tags: [ conciliacao ]
       requestBody:
         required: true
         content:
@@ -672,7 +672,7 @@ paths:
   /conciliacoes/{id}:
     get:
       operationId: getConciliacao
-      tags: [conciliacao]
+      tags: [ conciliacao ]
       parameters:
         - name: id
           in: path
@@ -688,7 +688,7 @@ paths:
                 $ref: "#/components/schemas/ConciliacaoDetail"
     delete:
       operationId: deleteConciliacao
-      tags: [conciliacao]
+      tags: [ conciliacao ]
       parameters:
         - name: id
           in: path
@@ -702,7 +702,7 @@ paths:
   /conciliacoes/{id}/conciliar:
     post:
       operationId: conciliar
-      tags: [conciliacao]
+      tags: [ conciliacao ]
       parameters:
         - name: id
           in: path
@@ -720,7 +720,7 @@ paths:
   /conciliacoes/{id}/itens/{itemId}/ignorar:
     post:
       operationId: ignorarItemConciliacao
-      tags: [conciliacao]
+      tags: [ conciliacao ]
       parameters:
         - name: id
           in: path
@@ -743,7 +743,7 @@ paths:
   /conciliacoes/{id}/itens/{itemId}/vincular:
     post:
       operationId: vincularItemConciliacao
-      tags: [conciliacao]
+      tags: [ conciliacao ]
       parameters:
         - name: id
           in: path
@@ -772,7 +772,7 @@ paths:
   /kanban/cards:
     get:
       operationId: getKanbanCards
-      tags: [kanban]
+      tags: [ kanban ]
       responses:
         "200":
           description: All kanban cards
@@ -784,7 +784,7 @@ paths:
                   $ref: "#/components/schemas/KanbanCard"
     post:
       operationId: createKanbanCard
-      tags: [kanban]
+      tags: [ kanban ]
       requestBody:
         required: true
         content:
@@ -802,7 +802,7 @@ paths:
   /kanban/cards/{id}:
     put:
       operationId: updateKanbanCard
-      tags: [kanban]
+      tags: [ kanban ]
       parameters:
         - name: id
           in: path
@@ -824,7 +824,7 @@ paths:
                 $ref: "#/components/schemas/KanbanCard"
     delete:
       operationId: deleteKanbanCard
-      tags: [kanban]
+      tags: [ kanban ]
       parameters:
         - name: id
           in: path
@@ -838,7 +838,7 @@ paths:
   /relatorios/fechamento-mensal:
     get:
       operationId: getRelatorioFechamentoMensal
-      tags: [relatorios]
+      tags: [ relatorios ]
       parameters:
         - name: mes
           in: query
@@ -861,7 +861,7 @@ paths:
   /relatorios/dre:
     get:
       operationId: getRelatorioDre
-      tags: [relatorios]
+      tags: [ relatorios ]
       parameters:
         - name: ano
           in: query
@@ -872,7 +872,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [competencia, caixa]
+            enum: [ competencia, caixa ]
             default: competencia
       responses:
         "200":
@@ -885,7 +885,7 @@ paths:
   /relatorios/fluxo-caixa:
     get:
       operationId: getRelatorioFluxoCaixa
-      tags: [relatorios]
+      tags: [ relatorios ]
       parameters:
         - name: ano
           in: query
@@ -903,7 +903,7 @@ paths:
   /relatorios/metas:
     get:
       operationId: getRelatorioMetas
-      tags: [relatorios]
+      tags: [ relatorios ]
       parameters:
         - name: ano
           in: query
@@ -921,7 +921,7 @@ paths:
   /relatorios/contabil-fiscal:
     get:
       operationId: getRelatorioContabilFiscal
-      tags: [relatorios]
+      tags: [ relatorios ]
       parameters:
         - name: data_inicio
           in: query
@@ -947,7 +947,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [CP, CR, ambos]
+            enum: [ CP, CR, ambos ]
             default: ambos
       responses:
         "200":
@@ -962,7 +962,7 @@ paths:
   /usuarios:
     get:
       operationId: getUsuarios
-      tags: [usuarios]
+      tags: [ usuarios ]
       parameters:
         - name: page
           in: query
@@ -987,7 +987,7 @@ paths:
                 $ref: "#/components/schemas/UsuariosListResponse"
     post:
       operationId: createUsuario
-      tags: [usuarios]
+      tags: [ usuarios ]
       requestBody:
         required: true
         content:
@@ -1005,7 +1005,7 @@ paths:
   /usuarios/{id}:
     put:
       operationId: updateUsuario
-      tags: [usuarios]
+      tags: [ usuarios ]
       parameters:
         - name: id
           in: path
@@ -1029,7 +1029,7 @@ paths:
   /usuarios/{id}/permissoes:
     get:
       operationId: getUsuarioPermissoes
-      tags: [usuarios]
+      tags: [ usuarios ]
       parameters:
         - name: id
           in: path
@@ -1047,7 +1047,7 @@ paths:
                   type: string
     put:
       operationId: updateUsuarioPermissoes
-      tags: [usuarios]
+      tags: [ usuarios ]
       parameters:
         - name: id
           in: path
@@ -1080,7 +1080,7 @@ paths:
   /filiais:
     get:
       operationId: getFiliais
-      tags: [filiais]
+      tags: [ filiais ]
       responses:
         "200":
           description: List of branches
@@ -1092,7 +1092,7 @@ paths:
                   $ref: "#/components/schemas/Filial"
     post:
       operationId: createFilial
-      tags: [filiais]
+      tags: [ filiais ]
       requestBody:
         required: true
         content:
@@ -1110,7 +1110,7 @@ paths:
   /filiais/{id}:
     put:
       operationId: updateFilial
-      tags: [filiais]
+      tags: [ filiais ]
       parameters:
         - name: id
           in: path
@@ -1132,7 +1132,7 @@ paths:
                 $ref: "#/components/schemas/Filial"
     delete:
       operationId: deleteFilial
-      tags: [filiais]
+      tags: [ filiais ]
       parameters:
         - name: id
           in: path
@@ -1146,7 +1146,7 @@ paths:
   /tokens-api:
     get:
       operationId: getTokensApi
-      tags: [tokens-api]
+      tags: [ tokens-api ]
       responses:
         "200":
           description: List of API tokens
@@ -1158,7 +1158,7 @@ paths:
                   $ref: "#/components/schemas/TokenApi"
     post:
       operationId: createTokenApi
-      tags: [tokens-api]
+      tags: [ tokens-api ]
       requestBody:
         required: true
         content:
@@ -1176,7 +1176,7 @@ paths:
   /tokens-api/{id}:
     put:
       operationId: updateTokenApi
-      tags: [tokens-api]
+      tags: [ tokens-api ]
       parameters:
         - name: id
           in: path
@@ -1198,7 +1198,7 @@ paths:
                 $ref: "#/components/schemas/TokenApi"
     delete:
       operationId: deleteTokenApi
-      tags: [tokens-api]
+      tags: [ tokens-api ]
       parameters:
         - name: id
           in: path
@@ -1212,7 +1212,7 @@ paths:
   /departamentos:
     get:
       operationId: getDepartamentos
-      tags: [departamentos]
+      tags: [ departamentos ]
       responses:
         "200":
           description: List of departments
@@ -1224,7 +1224,7 @@ paths:
                   $ref: "#/components/schemas/Departamento"
     post:
       operationId: createDepartamento
-      tags: [departamentos]
+      tags: [ departamentos ]
       requestBody:
         required: true
         content:
@@ -1242,7 +1242,7 @@ paths:
   /departamentos/{id}:
     put:
       operationId: updateDepartamento
-      tags: [departamentos]
+      tags: [ departamentos ]
       parameters:
         - name: id
           in: path
@@ -1264,7 +1264,7 @@ paths:
                 $ref: "#/components/schemas/Departamento"
     delete:
       operationId: deleteDepartamento
-      tags: [departamentos]
+      tags: [ departamentos ]
       parameters:
         - name: id
           in: path
@@ -1278,7 +1278,7 @@ paths:
   /centros-custos:
     get:
       operationId: getCentrosCustos
-      tags: [departamentos]
+      tags: [ departamentos ]
       responses:
         "200":
           description: List of cost centers
@@ -1290,7 +1290,7 @@ paths:
                   $ref: "#/components/schemas/CentroCusto"
     post:
       operationId: createCentroCusto
-      tags: [departamentos]
+      tags: [ departamentos ]
       requestBody:
         required: true
         content:
@@ -1308,7 +1308,7 @@ paths:
   /centros-custos/{id}:
     put:
       operationId: updateCentroCusto
-      tags: [departamentos]
+      tags: [ departamentos ]
       parameters:
         - name: id
           in: path
@@ -1330,7 +1330,7 @@ paths:
                 $ref: "#/components/schemas/CentroCusto"
     delete:
       operationId: deleteCentroCusto
-      tags: [departamentos]
+      tags: [ departamentos ]
       parameters:
         - name: id
           in: path
@@ -1344,10 +1344,10 @@ paths:
   /v1/bancos:
     get:
       operationId: apiV1Bancos
-      tags: [tokens-api]
+      tags: [ tokens-api ]
       summary: PowerBI - List bank accounts
       security:
-        - BearerAuth: []
+        - BearerAuth: [ ]
       responses:
         "200":
           description: Bank accounts list
@@ -1361,10 +1361,10 @@ paths:
   /v1/contasPagar:
     get:
       operationId: apiV1ContasPagar
-      tags: [tokens-api]
+      tags: [ tokens-api ]
       summary: PowerBI - List payables
       security:
-        - BearerAuth: []
+        - BearerAuth: [ ]
       parameters:
         - name: page
           in: query
@@ -1387,10 +1387,10 @@ paths:
   /v1/contasReceber:
     get:
       operationId: apiV1ContasReceber
-      tags: [tokens-api]
+      tags: [ tokens-api ]
       summary: PowerBI - List receivables
       security:
-        - BearerAuth: []
+        - BearerAuth: [ ]
       parameters:
         - name: page
           in: query
@@ -1413,10 +1413,10 @@ paths:
   /v1/pessoas:
     get:
       operationId: apiV1Pessoas
-      tags: [tokens-api]
+      tags: [ tokens-api ]
       summary: PowerBI - List people/partners
       security:
-        - BearerAuth: []
+        - BearerAuth: [ ]
       responses:
         "200":
           description: People list
@@ -1428,10 +1428,10 @@ paths:
   /v1/filiais:
     get:
       operationId: apiV1Filiais
-      tags: [tokens-api]
+      tags: [ tokens-api ]
       summary: PowerBI - List branches
       security:
-        - BearerAuth: []
+        - BearerAuth: [ ]
       responses:
         "200":
           description: Branches list
@@ -1445,10 +1445,10 @@ paths:
   /v1/planoContas:
     get:
       operationId: apiV1PlanoContas
-      tags: [tokens-api]
+      tags: [ tokens-api ]
       summary: PowerBI - Chart of accounts
       security:
-        - BearerAuth: []
+        - BearerAuth: [ ]
       responses:
         "200":
           description: Chart of accounts
@@ -1462,10 +1462,10 @@ paths:
   /v1/categoriaPlanoConta:
     get:
       operationId: apiV1CategoriaPlanoConta
-      tags: [tokens-api]
+      tags: [ tokens-api ]
       summary: PowerBI - Account plan categories
       security:
-        - BearerAuth: []
+        - BearerAuth: [ ]
       responses:
         "200":
           description: Categories list
@@ -1479,10 +1479,10 @@ paths:
   /v1/tipoDocumentos:
     get:
       operationId: apiV1TipoDocumentos
-      tags: [tokens-api]
+      tags: [ tokens-api ]
       summary: PowerBI - Document types
       security:
-        - BearerAuth: []
+        - BearerAuth: [ ]
       responses:
         "200":
           description: Document types list
@@ -1497,7 +1497,7 @@ paths:
                       type: integer
                     nome:
                       type: string
-                  required: [id, nome]
+                  required: [ id, nome ]
 
 components:
   securitySchemes:
@@ -1648,7 +1648,7 @@ components:
           type: integer
         tipo:
           type: string
-          enum: [CP, CR]
+          enum: [ CP, CR ]
         vencimento:
           type: string
           format: date
@@ -1665,11 +1665,23 @@ components:
           type: string
         descricao:
           type: string
+        tipo_documento:
+          type: string
+          nullable: true
+          enum: [ nota_fiscal, boleto, fatura, recibo, contrato, guia_imposto, folha, outros ]
+        numero_documento:
+          type: string
+          nullable: true
+          maxLength: 60
+        observacao:
+          type: string
+          nullable: true
+          maxLength: 1000
         valor:
           type: number
         status:
           type: string
-          enum: [pendente, pago, recebido, atrasado, cancelado]
+          enum: [ pendente, pago, recebido, atrasado, cancelado ]
         plano_conta_id:
           type: integer
         plano_conta_nome:
@@ -1704,7 +1716,7 @@ components:
       properties:
         tipo:
           type: string
-          enum: [CP, CR]
+          enum: [ CP, CR ]
         vencimento:
           type: string
           format: date
@@ -1717,11 +1729,23 @@ components:
           type: integer
         descricao:
           type: string
+        tipo_documento:
+          type: string
+          nullable: true
+          enum: [ nota_fiscal, boleto, fatura, recibo, contrato, guia_imposto, folha, outros ]
+        numero_documento:
+          type: string
+          nullable: true
+          maxLength: 60
+        observacao:
+          type: string
+          nullable: true
+          maxLength: 1000
         valor:
           type: number
         status:
           type: string
-          enum: [pendente, pago, recebido, atrasado, cancelado]
+          enum: [ pendente, pago, recebido, atrasado, cancelado ]
         plano_conta_id:
           type: integer
         departamento_id:
@@ -1747,7 +1771,7 @@ components:
       properties:
         tipo:
           type: string
-          enum: [CP, CR]
+          enum: [ CP, CR ]
         vencimento:
           type: string
           format: date
@@ -1760,11 +1784,23 @@ components:
           type: integer
         descricao:
           type: string
+        tipo_documento:
+          type: string
+          nullable: true
+          enum: [ nota_fiscal, boleto, fatura, recibo, contrato, guia_imposto, folha, outros ]
+        numero_documento:
+          type: string
+          nullable: true
+          maxLength: 60
+        observacao:
+          type: string
+          nullable: true
+          maxLength: 1000
         valor:
           type: number
         status:
           type: string
-          enum: [pendente, pago, recebido, atrasado, cancelado]
+          enum: [ pendente, pago, recebido, atrasado, cancelado ]
         plano_conta_id:
           type: integer
         departamento_id:
@@ -1802,7 +1838,7 @@ components:
           type: integer
         tipo_pessoa:
           type: string
-          enum: [PF, PJ]
+          enum: [ PF, PJ ]
         cpf_cnpj:
           type: string
         nome:
@@ -1846,7 +1882,7 @@ components:
           type: integer
         tipo:
           type: string
-          enum: [cpf, cnpj, email, telefone, aleatoria]
+          enum: [ cpf, cnpj, email, telefone, aleatoria ]
         chave:
           type: string
       required:
@@ -1878,7 +1914,7 @@ components:
       properties:
         tipo_pessoa:
           type: string
-          enum: [PF, PJ]
+          enum: [ PF, PJ ]
         cpf_cnpj:
           type: string
         nome:
@@ -1911,7 +1947,7 @@ components:
       properties:
         tipo_pessoa:
           type: string
-          enum: [PF, PJ]
+          enum: [ PF, PJ ]
         cpf_cnpj:
           type: string
         nome:
@@ -1965,7 +2001,7 @@ components:
           type: integer
         tipo:
           type: string
-          enum: [corrente, movimento, poupanca]
+          enum: [ corrente, movimento, poupanca ]
         banco:
           type: string
         agencia:
@@ -1997,7 +2033,7 @@ components:
       properties:
         tipo:
           type: string
-          enum: [corrente, movimento, poupanca]
+          enum: [ corrente, movimento, poupanca ]
         banco:
           type: string
         agencia:
@@ -2041,7 +2077,7 @@ components:
           type: integer
         tipo:
           type: string
-          enum: [receita, custo, despesa]
+          enum: [ receita, custo, despesa ]
         categoria:
           type: string
         subcategoria:
@@ -2060,7 +2096,7 @@ components:
       properties:
         tipo:
           type: string
-          enum: [receita, custo, despesa]
+          enum: [ receita, custo, despesa ]
         categoria:
           type: string
         subcategoria:
@@ -2141,7 +2177,7 @@ components:
           format: date
         status:
           type: string
-          enum: [pendente, conciliado]
+          enum: [ pendente, conciliado ]
         total:
           type: integer
         conciliados:
@@ -2193,10 +2229,10 @@ components:
           type: number
         status:
           type: string
-          enum: [pendente, vinculado, ignorado]
+          enum: [ pendente, vinculado, ignorado ]
         tipo_extrato:
           type: string
-          enum: [debito, credito]
+          enum: [ debito, credito ]
         descricao:
           type: string
         data:
@@ -2248,7 +2284,7 @@ components:
           type: string
         coluna:
           type: string
-          enum: [solicitado, em_analise, em_execucao, aguardando_aprovacao, concluido]
+          enum: [ solicitado, em_analise, em_execucao, aguardando_aprovacao, concluido ]
         responsavel_id:
           type: integer
         responsavel_nome:
@@ -2258,7 +2294,7 @@ components:
           format: date
         prioridade:
           type: string
-          enum: [baixa, media, alta, urgente]
+          enum: [ baixa, media, alta, urgente ]
         criado_por:
           type: integer
         created_at:
@@ -2308,7 +2344,7 @@ components:
           format: date
         prioridade:
           type: string
-          enum: [baixa, media, alta, urgente]
+          enum: [ baixa, media, alta, urgente ]
       required:
         - titulo
         - prioridade
@@ -2322,7 +2358,7 @@ components:
           type: string
         coluna:
           type: string
-          enum: [solicitado, em_analise, em_execucao, aguardando_aprovacao, concluido]
+          enum: [ solicitado, em_analise, em_execucao, aguardando_aprovacao, concluido ]
         responsavel_id:
           type: integer
         prazo:
@@ -2330,7 +2366,7 @@ components:
           format: date
         prioridade:
           type: string
-          enum: [baixa, media, alta, urgente]
+          enum: [ baixa, media, alta, urgente ]
         comentario:
           type: string
 
@@ -2407,7 +2443,7 @@ components:
           type: string
         tipo:
           type: string
-          enum: [header, categoria, total, subtotal]
+          enum: [ header, categoria, total, subtotal ]
         valores:
           type: object
           additionalProperties:
@@ -2442,7 +2478,7 @@ components:
           type: string
         tipo:
           type: string
-          enum: [saldo_inicial, entradas, saidas, transferencias, total, saldo_final]
+          enum: [ saldo_inicial, entradas, saidas, transferencias, total, saldo_final ]
         linhas:
           type: array
           items:
@@ -2525,7 +2561,7 @@ components:
           type: string
         tipo:
           type: string
-          enum: [CP, CR]
+          enum: [ CP, CR ]
       required:
         - conta_bancaria
         - data

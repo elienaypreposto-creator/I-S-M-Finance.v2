@@ -11,6 +11,28 @@ export const lancamentoStatusEnum = z.enum([
     "pago_parcial",
 ]);
 
+export const tipoDocumentoLancamentoEnum = z.enum([
+    "nota_fiscal",
+    "boleto",
+    "fatura",
+    "recibo",
+    "contrato",
+    "guia_imposto",
+    "folha",
+    "outros",
+]);
+
+function textoOpcional(max: number) {
+    return z
+        .union([z.string().trim().max(max), z.null()])
+        .optional()
+        .transform((v) => {
+            if (v === undefined) return undefined;
+            if (v === null || v === "") return null;
+            return v;
+        });
+}
+
 const dadosPagamentoPixSchema = z.object({
     tipo: z.literal("PIX"),
     tipo_chave: z.enum(["cpf", "cnpj", "email", "telefone", "aleatoria"]),
@@ -66,6 +88,16 @@ const lancamentoBaseSchema = z.object({
     conta_id: nullableId,
     parceiro_id: nullableId,
     descricao: z.string().trim().min(1).nullable().optional(),
+    tipo_documento: z
+        .union([tipoDocumentoLancamentoEnum, z.null(), z.literal("")])
+        .optional()
+        .transform((v) => {
+            if (v === undefined) return undefined;
+            if (v === null || v === "") return null;
+            return v;
+        }),
+    numero_documento: textoOpcional(60),
+    observacao: textoOpcional(1000),
     valor: z.union([z.string(), z.number()]).transform((v) => String(v)),
     // Ajustam o valor líquido do título (editáveis no fluxo de edição da aba
     // Lançamentos) sem alterar o valor de face (`valor`) acima. Sem essas

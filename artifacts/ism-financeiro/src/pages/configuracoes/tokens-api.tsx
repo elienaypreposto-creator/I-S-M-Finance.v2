@@ -12,12 +12,12 @@ import {
   X,
   Code,
   Key,
-  Trash2,
   Loader2,
   AlertCircle,
   ShieldOff,
   Shield,
 } from "lucide-react";
+import { BotaoExcluir } from "@/components/shared/botoes-acao";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { fetchApiData } from "@/lib/api-config";
@@ -417,15 +417,10 @@ export default function TokensApi() {
                               <ShieldOff className="w-4 h-4 text-muted-foreground" />
                             )}
                           </button>
-                          <button
-                            type="button"
-                            title="Excluir token"
-                            disabled={deleteMutation.isPending}
+                          <BotaoExcluir
                             onClick={() => handleDelete(t)}
-                            className="p-2 hover:bg-destructive/20 rounded-lg transition-colors disabled:opacity-40"
-                          >
-                            <Trash2 className="w-4 h-4 text-destructive" />
-                          </button>
+                            disabled={deleteMutation.isPending}
+                          />
                         </div>
                       </div>
                     </div>

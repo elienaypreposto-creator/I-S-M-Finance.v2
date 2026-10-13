@@ -4,7 +4,8 @@ import {useForm} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {z} from "zod";
 import {PageHeader} from "@/components/shared/page-header";
-import {Plus, Edit, Trash2, Lock, ChevronDown, ChevronUp, X} from "lucide-react";
+import {Plus, Lock, ChevronDown, ChevronUp, X} from "lucide-react";
+import {BotaoEditar, BotaoExcluir} from "@/components/shared/botoes-acao";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
@@ -146,7 +147,7 @@ function FormModal({
                             placeholder="Ex: Despesas Administrativas"
                         />
                         {lockedCategoria && (
-                            <p className="text-xs text-red-400/80 mt-1">Categoria travada — você está adicionando uma
+                            <p className="text-xs text-red-400/80 mt-1">Categoria travada - você está adicionando uma
                                 subcategoria</p>
                         )}
                         {errors.categoria && (
@@ -447,18 +448,12 @@ export default function PlanoContas() {
                                     <div key={cat.id}
                                          className="p-3 bg-white/5 rounded-lg border border-white/5 flex justify-between items-center hover:bg-white/10 transition-colors group">
                      <span className="text-sm font-medium text-white pl-4 capitalize truncate max-w-[200px]">
-                       {cat.subcategoria?.trim() || "—"}
+                       {cat.subcategoria?.trim() || "-"}
                      </span>
                                         <div
                                             className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button onClick={() => handleEdit(cat)}
-                                                    className="text-muted-foreground hover:text-white p-1">
-                                                <Edit className="w-4 h-4"/>
-                                            </button>
-                                            <button onClick={() => handleDelete(cat)}
-                                                    className="text-muted-foreground hover:text-rose-400 p-1">
-                                                <Trash2 className="w-4 h-4"/>
-                                            </button>
+                                            <BotaoEditar onClick={() => handleEdit(cat)}/>
+                                            <BotaoExcluir onClick={() => handleDelete(cat)}/>
                                         </div>
                                     </div>
                                 ))}

@@ -3,7 +3,8 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { PageHeader } from "@/components/shared/page-header";
-import { Plus, Building2, ChevronDown, ChevronRight, Pencil, Trash2, Users, X, Loader2 } from "lucide-react";
+import { Plus, Building2, ChevronDown, ChevronRight, Users, X, Loader2 } from "lucide-react";
+import { BotaoEditar, BotaoExcluir } from "@/components/shared/botoes-acao";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { fetchApiData } from "@/lib/api-config";
@@ -356,28 +357,12 @@ export default function Departamentos() {
                     </div>
                   </button>
 
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => openEdit(dept)}
-                      className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-                      title="Editar"
-                    >
-                      <Pencil className="w-4 h-4 text-muted-foreground" />
-                    </button>
-                    <button
-                      type="button"
+                  <div className="flex items-center gap-2 shrink-0">
+                    <BotaoEditar onClick={() => openEdit(dept)} />
+                    <BotaoExcluir
                       onClick={() => handleDelete(dept)}
                       disabled={deleteMutation.isPending}
-                      className="p-2 hover:bg-destructive/20 rounded-lg transition-colors disabled:opacity-50"
-                      title="Excluir"
-                    >
-                      {deleteMutation.isPending ? (
-                        <Loader2 className="w-4 h-4 animate-spin text-destructive" />
-                      ) : (
-                        <Trash2 className="w-4 h-4 text-muted-foreground" />
-                      )}
-                    </button>
+                    />
                     <button
                       type="button"
                       onClick={() => toggle(dept.id)}

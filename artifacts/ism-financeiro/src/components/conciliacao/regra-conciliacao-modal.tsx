@@ -5,7 +5,8 @@ import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
 import {cn} from "@/lib/utils";
-import {Loader2, X, Pencil, Trash2} from "lucide-react";
+import {Loader2, X} from "lucide-react";
+import {BotaoEditar, BotaoExcluir} from "@/components/shared/botoes-acao";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
 import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
@@ -464,7 +465,7 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill, varian
                                 <th className="px-3 py-2.5 font-semibold uppercase tracking-wide">Departamento</th>
                                 <th className="px-3 py-2.5 font-semibold uppercase tracking-wide">Forma de Pagamento
                                 </th>
-                                <th className="px-3 py-2.5 font-semibold uppercase tracking-wide text-right w-20">Ações</th>
+                                <th className="px-3 py-2.5 font-semibold uppercase tracking-wide text-right">Ações</th>
                             </tr>
                             </thead>
                             <tbody className="divide-y divide-white/5">
@@ -500,26 +501,12 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill, varian
                                         <td className="px-3 py-2.5 text-white/80">{row.departamento_nome ?? "-"}</td>
                                         <td className="px-3 py-2.5 text-white/80">{row.forma_pagamento ?? "-"}</td>
                                         <td className="px-3 py-2.5">
-                                            <div className="flex items-center justify-end gap-1">
+                                            <div className="flex items-center justify-end gap-2">
                                                 <RequiresPermission permission={PERM.REGRAS_CONCILIACAO_EDITAR}>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => fillFromRow(row)}
-                                                        className="p-1.5 rounded-lg text-muted-foreground hover:text-white hover:bg-white/10"
-                                                        title="Editar"
-                                                    >
-                                                        <Pencil className="w-4 h-4"/>
-                                                    </button>
+                                                    <BotaoEditar onClick={() => fillFromRow(row)}/>
                                                 </RequiresPermission>
                                                 <RequiresPermission permission={PERM.REGRAS_CONCILIACAO_DELETAR}>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => void askDelete(row)}
-                                                        className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                                                        title="Excluir"
-                                                    >
-                                                        <Trash2 className="w-4 h-4"/>
-                                                    </button>
+                                                    <BotaoExcluir onClick={() => void askDelete(row)}/>
                                                 </RequiresPermission>
                                             </div>
                                         </td>

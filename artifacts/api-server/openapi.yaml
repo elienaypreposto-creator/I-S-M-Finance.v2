@@ -16,14 +16,14 @@ tags:
 paths:
   /healthz:
     get:
-      tags: [Auth]
+      tags: [ Auth ]
       operationId: healthCheck
       responses:
         "200":
           description: OK
   /auth/login:
     post:
-      tags: [Auth]
+      tags: [ Auth ]
       operationId: postAuthLogin
       summary: Login com email e senha
       requestBody:
@@ -32,7 +32,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [email, senha]
+              required: [ email, senha ]
               properties:
                 email: { type: string, format: email }
                 senha: { type: string }
@@ -47,11 +47,11 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
   /auth/me:
     get:
-      tags: [Auth]
+      tags: [ Auth ]
       operationId: getAuthMe
       summary: Usuário autenticado + permissões
       security:
-        - bearerAuth: []
+        - bearerAuth: [ ]
       responses:
         "200":
           description: Usuário atual
@@ -63,9 +63,9 @@ paths:
           $ref: "#/components/responses/UnauthorizedError"
   /lancamentos:
     get:
-      tags: [Lancamentos]
+      tags: [ Lancamentos ]
       operationId: getLancamentos
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       parameters:
         - in: query
           name: page
@@ -75,7 +75,7 @@ paths:
           schema: { type: integer, default: 20 }
         - in: query
           name: tipo
-          schema: { type: string, enum: [CP, CR] }
+          schema: { type: string, enum: [ CP, CR ] }
         - in: query
           name: status
           schema: { type: string }
@@ -101,9 +101,9 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ApiEnvelopePaginated" }
     post:
-      tags: [Lancamentos]
+      tags: [ Lancamentos ]
       operationId: postLancamentos
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       description: Aplica preenchimento automático de departamento e centro de custo via parceiro quando esses campos não forem enviados.
       requestBody:
         required: true
@@ -118,10 +118,10 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /lancamentos/{id}:
     get:
-      tags: [Lancamentos]
+      tags: [ Lancamentos ]
       operationId: getLancamentoById
-      security: [{ bearerAuth: [] }]
-      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      security: [ { bearerAuth: [ ] } ]
+      parameters: [ { $ref: "#/components/parameters/IdPath" } ]
       responses:
         "200":
           description: Lançamento
@@ -129,11 +129,11 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
     put:
-      tags: [Lancamentos]
+      tags: [ Lancamentos ]
       operationId: putLancamentoById
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       description: Também aplica preenchimento automático por parceiro quando necessário.
-      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      parameters: [ { $ref: "#/components/parameters/IdPath" } ]
       requestBody:
         required: true
         content:
@@ -146,10 +146,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
     delete:
-      tags: [Lancamentos]
+      tags: [ Lancamentos ]
       operationId: deleteLancamentoById
-      security: [{ bearerAuth: [] }]
-      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      security: [ { bearerAuth: [ ] } ]
+      parameters: [ { $ref: "#/components/parameters/IdPath" } ]
       responses:
         "200":
           description: Lançamento removido
@@ -160,9 +160,9 @@ paths:
           $ref: "#/components/responses/ForbiddenError"
   /conciliacoes:
     get:
-      tags: [Conciliacoes]
+      tags: [ Conciliacoes ]
       operationId: getConciliacoes
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       responses:
         "200":
           description: Lista de conciliações
@@ -171,16 +171,16 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /conciliacoes/importar:
     post:
-      tags: [Conciliacoes]
+      tags: [ Conciliacoes ]
       operationId: postConciliacoesImportar
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       requestBody:
         required: true
         content:
           multipart/form-data:
             schema:
               type: object
-              required: [conta_id, arquivo]
+              required: [ conta_id, arquivo ]
               properties:
                 conta_id:
                   type: integer
@@ -198,9 +198,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /conciliacoes/{extrato_id}:
     get:
-      tags: [Conciliacoes]
+      tags: [ Conciliacoes ]
       operationId: getConciliacaoExtratoDetalhe
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       parameters:
         - in: path
           name: extrato_id
@@ -214,9 +214,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /conciliacoes/buscar-lancamentos:
     get:
-      tags: [Conciliacoes]
+      tags: [ Conciliacoes ]
       operationId: getConciliacoesBuscarLancamentos
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       parameters:
         - in: query
           name: linha_id
@@ -233,9 +233,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /conciliacoes/linhas/{linha_id}/ignorar:
     post:
-      tags: [Conciliacoes]
+      tags: [ Conciliacoes ]
       operationId: postConciliacoesLinhaIgnorar
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       parameters:
         - in: path
           name: linha_id
@@ -249,9 +249,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /conciliacoes/linhas/{linha_id}/vincular:
     post:
-      tags: [Conciliacoes]
+      tags: [ Conciliacoes ]
       operationId: postConciliacoesLinhaVincular
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       parameters:
         - in: path
           name: linha_id
@@ -282,9 +282,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /conciliacoes/{extrato_id}/finalizar:
     post:
-      tags: [Conciliacoes]
+      tags: [ Conciliacoes ]
       operationId: postConciliacoesFinalizarExtrato
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       parameters:
         - in: path
           name: extrato_id
@@ -298,9 +298,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /dashboard/kpis:
     get:
-      tags: [Dashboard]
+      tags: [ Dashboard ]
       operationId: getDashboardKpis
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       responses:
         "200":
           description: KPIs do dashboard
@@ -309,9 +309,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /dashboard/projecao-mes:
     get:
-      tags: [Dashboard]
+      tags: [ Dashboard ]
       operationId: getDashboardProjecaoMes
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       responses:
         "200":
           description: Projeção mensal
@@ -320,9 +320,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /dashboard/projecao-dias:
     get:
-      tags: [Dashboard]
+      tags: [ Dashboard ]
       operationId: getDashboardProjecaoDias
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       parameters:
         - in: query
           name: dias
@@ -335,13 +335,13 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /dashboard/inadimplencia-clientes:
     get:
-      tags: [Dashboard]
+      tags: [ Dashboard ]
       operationId: getDashboardInadimplenciaClientes
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       parameters:
         - in: query
           name: tab
-          schema: { type: string, enum: [vencidos, proximos_vencer], default: vencidos }
+          schema: { type: string, enum: [ vencidos, proximos_vencer ], default: vencidos }
         - in: query
           name: limit
           schema: { type: integer, default: 10 }
@@ -353,13 +353,13 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /dashboard/inadimplencia-fornecedores:
     get:
-      tags: [Dashboard]
+      tags: [ Dashboard ]
       operationId: getDashboardInadimplenciaFornecedores
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       parameters:
         - in: query
           name: tab
-          schema: { type: string, enum: [vencidos, proximos_vencer], default: vencidos }
+          schema: { type: string, enum: [ vencidos, proximos_vencer ], default: vencidos }
         - in: query
           name: limit
           schema: { type: integer, default: 10 }
@@ -371,9 +371,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /dashboard/alertas-atraso:
     get:
-      tags: [Dashboard]
+      tags: [ Dashboard ]
       operationId: getDashboardAlertasAtraso
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       parameters:
         - in: query
           name: risco
@@ -389,9 +389,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /dashboard/nivel-risco:
     get:
-      tags: [Dashboard]
+      tags: [ Dashboard ]
       operationId: getDashboardNivelRisco
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       responses:
         "200":
           description: Nível de risco
@@ -400,9 +400,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /dashboard/fluxo-caixa-mensal:
     get:
-      tags: [Dashboard]
+      tags: [ Dashboard ]
       operationId: getDashboardFluxoCaixaMensal
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       parameters:
         - in: query
           name: ano
@@ -415,9 +415,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /dashboard/saidas-plano-contas:
     get:
-      tags: [Dashboard]
+      tags: [ Dashboard ]
       operationId: getDashboardSaidasPlanoContas
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       responses:
         "200":
           description: Saídas por plano de contas
@@ -426,9 +426,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /dashboard/entradas-plano-contas:
     get:
-      tags: [Dashboard]
+      tags: [ Dashboard ]
       operationId: getDashboardEntradasPlanoContas
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       responses:
         "200":
           description: Entradas por plano de contas
@@ -437,9 +437,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /relatorios/fechamento-mensal:
     get:
-      tags: [Relatorios]
+      tags: [ Relatorios ]
       operationId: getRelatoriosFechamentoMensal
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       parameters:
         - in: query
           name: mes
@@ -457,16 +457,16 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /relatorios/dre:
     get:
-      tags: [Relatorios]
+      tags: [ Relatorios ]
       operationId: getRelatoriosDre
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       parameters:
         - in: query
           name: ano
           schema: { type: integer }
         - in: query
           name: regime
-          schema: { type: string, enum: [competencia, caixa], default: competencia }
+          schema: { type: string, enum: [ competencia, caixa ], default: competencia }
       responses:
         "200":
           description: Relatório DRE
@@ -475,9 +475,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /relatorios/fluxo-caixa:
     get:
-      tags: [Relatorios]
+      tags: [ Relatorios ]
       operationId: getRelatoriosFluxoCaixa
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       parameters:
         - in: query
           name: ano
@@ -490,9 +490,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /relatorios/metas:
     get:
-      tags: [Relatorios]
+      tags: [ Relatorios ]
       operationId: getRelatoriosMetas
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       parameters:
         - in: query
           name: ano
@@ -505,9 +505,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /relatorios/contabil-fiscal:
     get:
-      tags: [Relatorios]
+      tags: [ Relatorios ]
       operationId: getRelatoriosContabilFiscal
-      security: [{ bearerAuth: [] }]
+      security: [ { bearerAuth: [ ] } ]
       parameters:
         - in: query
           name: data_inicio
@@ -520,7 +520,7 @@ paths:
           schema: { type: integer }
         - in: query
           name: tipo
-          schema: { type: string, enum: [CP, CR, ambos], default: ambos }
+          schema: { type: string, enum: [ CP, CR, ambos ], default: ambos }
       responses:
         "200":
           description: Relatório contábil/fiscal
@@ -529,9 +529,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /v1/bancos:
     get:
-      tags: [PowerBI v1]
+      tags: [ PowerBI v1 ]
       operationId: getV1Bancos
-      security: [{ bearerV1Token: [] }]
+      security: [ { bearerV1Token: [ ] } ]
       responses:
         "200":
           description: Contas bancárias (extração)
@@ -540,9 +540,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /v1/contasPagar:
     get:
-      tags: [PowerBI v1]
+      tags: [ PowerBI v1 ]
       operationId: getV1ContasPagar
-      security: [{ bearerV1Token: [] }]
+      security: [ { bearerV1Token: [ ] } ]
       parameters:
         - in: query
           name: limit
@@ -558,9 +558,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /v1/contasReceber:
     get:
-      tags: [PowerBI v1]
+      tags: [ PowerBI v1 ]
       operationId: getV1ContasReceber
-      security: [{ bearerV1Token: [] }]
+      security: [ { bearerV1Token: [ ] } ]
       parameters:
         - in: query
           name: limit
@@ -576,9 +576,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /v1/pessoas:
     get:
-      tags: [PowerBI v1]
+      tags: [ PowerBI v1 ]
       operationId: getV1Pessoas
-      security: [{ bearerV1Token: [] }]
+      security: [ { bearerV1Token: [ ] } ]
       responses:
         "200":
           description: Parceiros/pessoas
@@ -587,9 +587,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /v1/filiais:
     get:
-      tags: [PowerBI v1]
+      tags: [ PowerBI v1 ]
       operationId: getV1Filiais
-      security: [{ bearerV1Token: [] }]
+      security: [ { bearerV1Token: [ ] } ]
       responses:
         "200":
           description: Filiais
@@ -598,9 +598,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /v1/planoContas:
     get:
-      tags: [PowerBI v1]
+      tags: [ PowerBI v1 ]
       operationId: getV1PlanoContas
-      security: [{ bearerV1Token: [] }]
+      security: [ { bearerV1Token: [ ] } ]
       responses:
         "200":
           description: Plano de contas
@@ -609,9 +609,9 @@ paths:
               schema: { $ref: "#/components/schemas/ApiEnvelopeGeneric" }
   /v1/categoriaPlanoConta:
     get:
-      tags: [PowerBI v1]
+      tags: [ PowerBI v1 ]
       operationId: getV1CategoriaPlanoConta
-      security: [{ bearerV1Token: [] }]
+      security: [ { bearerV1Token: [ ] } ]
       responses:
         "200":
           description: Categorias do plano de contas
@@ -647,11 +647,11 @@ components:
       properties:
         code: { type: string }
         message: { type: string }
-        details: {}
+        details: { }
     ApiEnvelopeGeneric:
       type: object
       properties:
-        data: {}
+        data: { }
         meta:
           nullable: true
           type: object
@@ -720,13 +720,13 @@ components:
         email: { type: string, format: email }
     VincularLinhaRequest:
       type: object
-      required: [lancamentos]
+      required: [ lancamentos ]
       properties:
         lancamentos:
           type: array
           items:
             type: object
-            required: [lancamento_id]
+            required: [ lancamento_id ]
             properties:
               lancamento_id: { type: integer }
               desconto: { type: number, default: 0 }
@@ -736,14 +736,20 @@ components:
           default: false
     LancamentoInput:
       type: object
-      required: [tipo, vencimento, valor]
+      required: [ tipo, vencimento, valor ]
       properties:
-        tipo: { type: string, enum: [CP, CR] }
+        tipo: { type: string, enum: [ CP, CR ] }
         vencimento: { type: string, format: date }
         competencia: { type: string, format: date }
         conta_id: { type: integer }
         parceiro_id: { type: integer }
         descricao: { type: string }
+        tipo_documento:
+          type: string
+          nullable: true
+          enum: [ nota_fiscal, boleto, fatura, recibo, contrato, guia_imposto, folha, outros ]
+        numero_documento: { type: string, nullable: true, maxLength: 60 }
+        observacao: { type: string, nullable: true, maxLength: 1000 }
         valor: { type: number }
         status: { type: string }
         plano_conta_id: { type: integer }

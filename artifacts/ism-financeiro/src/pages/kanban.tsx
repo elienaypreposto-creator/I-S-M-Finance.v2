@@ -1,5 +1,5 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
-import {useState, useMemo, useRef, useEffect} from "react";
+import {useState, useMemo} from "react";
 import {createPortal} from "react-dom";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {
@@ -12,7 +12,8 @@ import {
 import {useDroppable} from "@dnd-kit/core";
 import {SortableContext, verticalListSortingStrategy, useSortable} from "@dnd-kit/sortable";
 import {CSS} from "@dnd-kit/utilities";
-import {Plus, Search, Loader2, Pencil, Trash2, MoreHorizontal} from "lucide-react";
+import {Plus, Search, Loader2} from "lucide-react";
+import {BotaoEditar, BotaoExcluir} from "@/components/shared/botoes-acao";
 import {cn} from "@/lib/utils";
 import {Button} from "@/components/ui/button";
 import {Input} from "@/components/ui/input";
@@ -89,67 +90,6 @@ function sanitizePatch(data: Record<string, any>): Record<string, any> {
     );
 }
 
-// ─── CardMenu ─────────────────────────────────────────────────────────────────
-function CardMenu({
-                      onEdit,
-                      onDelete,
-                  }: {
-    onEdit: (e: React.MouseEvent) => void;
-    onDelete: (e: React.MouseEvent) => void;
-}) {
-    const [open, setOpen] = useState(false);
-    const ref = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        if (!open) return;
-        const handler = (e: MouseEvent) => {
-            if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-        };
-        document.addEventListener("mousedown", handler);
-        return () => document.removeEventListener("mousedown", handler);
-    }, [open]);
-
-    return (
-        <div ref={ref} className="relative" onClick={e => e.stopPropagation()}>
-            <button
-                onClick={e => {
-                    e.stopPropagation();
-                    setOpen(v => !v);
-                }}
-                className="p-1 rounded hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
-            >
-                <MoreHorizontal className="w-4 h-4"/>
-            </button>
-
-            {open && (
-                <div
-                    className="absolute right-0 top-6 z-50 w-36 rounded-lg border border-white/10 bg-[#1E1E1E] shadow-xl py-1">
-                    <button
-                        onClick={e => {
-                            setOpen(false);
-                            onEdit(e);
-                        }}
-                        className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors"
-                    >
-                        <Pencil className="w-3.5 h-3.5"/>
-                        Editar
-                    </button>
-                    <button
-                        onClick={e => {
-                            setOpen(false);
-                            onDelete(e);
-                        }}
-                        className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors"
-                    >
-                        <Trash2 className="w-3.5 h-3.5"/>
-                        Excluir
-                    </button>
-                </div>
-            )}
-        </div>
-    );
-}
-
 // ─── SortableCard ─────────────────────────────────────────────────────────────
 function SortableCard({
                           card,
@@ -184,13 +124,15 @@ function SortableCard({
                 onClick={undefined}
                 isDragging={isDragging}
                 menuSlot={
-                    <div data-card-menu onPointerDown={e => e.stopPropagation()}>
-                        <CardMenu
-                            onEdit={e => {
+                    <div data-card-menu className="flex items-center gap-2" onPointerDown={e => e.stopPropagation()}>
+                        <BotaoEditar
+                            onClick={e => {
                                 e.stopPropagation();
                                 onEdit(card);
                             }}
-                            onDelete={e => {
+                        />
+                        <BotaoExcluir
+                            onClick={e => {
                                 e.stopPropagation();
                                 onDelete(card);
                             }}
