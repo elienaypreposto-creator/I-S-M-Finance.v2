@@ -3,7 +3,13 @@
 set -euo pipefail
 set +x
 
-log() { printf '%s\n' "$*"; }
+RESUMO="${HOME}/ism-tst/evidencia-http.txt"
+log() {
+  printf '%s\n' "$*"
+  if [ -d "${HOME}/ism-tst" ]; then
+    printf '%s\n' "$*" >> "$RESUMO"
+  fi
+}
 
 ler_env() {
   local ficheiro="$1" chave="$2" linha
@@ -158,18 +164,19 @@ rotar_luks() {
 exportar_eliminar_tst() {
   local dir="$HOME/ism-tst"
   cd "$dir"
+  psql_exec -v ON_ERROR_STOP=1 -c "INSERT INTO empresas (razao_social, slug, ativa, dpa_representante, dpa_assinado_em) VALUES ('Evidencia LGPD temporaria', 'lgpd-evidencia-tmp', true, 'evidencia automatizada', now()) ON CONFLICT (slug) DO UPDATE SET razao_social = EXCLUDED.razao_social, ativa = true, dpa_representante = EXCLUDED.dpa_representante, dpa_assinado_em = now();" >/dev/null
   local alvo
-  alvo="$(psql_exec -t -A -c "SELECT id || '|' || slug FROM empresas WHERE slug = 'filial-sul-teste' LIMIT 1;" | tr -d '\r')"
+  alvo="$(psql_exec -t -A -c "SELECT id || '|' || slug FROM empresas WHERE slug = 'lgpd-evidencia-tmp';" | tr -d '\r')"
+  alvo="${alvo%%$'\n'*}"
   if [ -z "$alvo" ]; then
-    log "ALVO_AUSENTE=filial-sul-teste"
-    log "EXPORT_DELETE_JA_REGISTADO=38405083479"
-    return 0
+    log "ALVO_AUSENTE=lgpd-evidencia-tmp"
+    return 1
   fi
   local id slug
   id="${alvo%%|*}"
   slug="${alvo#*|}"
   log "ALVO_ID=$id ALVO_SLUG=$slug"
-  if [ "$slug" != "filial-sul-teste" ]; then
+  if [ "$slug" != "lgpd-evidencia-tmp" ] || [ "$slug" = "ism" ]; then
     log "ALVO_SLUG_INESPERADO"
     return 1
   fi
@@ -316,6 +323,7 @@ JS
   docker compose exec -T api rm -f /tmp/lgpd-http.mjs /tmp/lgpd-email.txt /tmp/lgpd-razao.txt || true
 }
 
+: > "${HOME}/ism-tst/evidencia-http.txt"
 log "EVIDENCIA_INICIO"
 falha=0
 aplicar_dpa "$HOME/ism-tst" || falha=1

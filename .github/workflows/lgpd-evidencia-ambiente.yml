@@ -22,13 +22,27 @@ jobs:
           script_path: scripts/lgpd-evidencia-ambiente.sh
           capture_stdout: true
 
+      - name: Trazer o resumo gravado na VM
+        id: resumo
+        if: always()
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ubuntu
+          key: ${{ secrets.SSH_KEY }}
+          command_timeout: 2m
+          script: cat /home/ubuntu/ism-tst/evidencia-http.txt
+          capture_stdout: true
+
       - name: Gravar log da VM
         if: always()
         env:
           VM_LOG: ${{ steps.vm.outputs.stdout }}
+          RESUMO: ${{ steps.resumo.outputs.stdout }}
         run: |
           mkdir -p evidencia
           printf '%s\n' "$VM_LOG" > evidencia/vm.log
+          printf '%s\n' "$RESUMO" >> evidencia/vm.log
 
       - name: Publicar evidência
         if: always()
@@ -42,9 +56,10 @@ jobs:
         run: |
           set -euo pipefail
           log=evidencia/vm.log
-          if ! grep -q "DELETE_ELIMINADA=1" "$log"; then
-            grep -q "EXPORT_DELETE_JA_REGISTADO=38405083479" "$log"
-          fi
+          grep -q "EXPORT_DOWNLOAD_HTTP=200" "$log"
+          grep -q "DELETE_HTTP=200" "$log"
+          grep -q "DELETE_ELIMINADA=1" "$log"
+          grep -q "ALVO_SLUG=lgpd-evidencia-tmp" "$log"
           test "$(grep -c 'LUKS_KEYFILE_ABRE=1' "$log")" -ge 2
           test "$(grep -c 'LUKS_OWNER_ABRE=0' "$log")" -ge 2
           test "$(grep -c 'LUKS_KEY_IGUAL_OWNER=0' "$log")" -ge 2
