@@ -6,7 +6,7 @@ import {DateRangePicker} from "@/components/shared/date-range-picker";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {Popover, PopoverContent, PopoverTrigger} from "@/components/ui/popover";
-import {filterPlanoContas} from "@/components/shared/plano-conta-combobox";
+import {filterPlanoContas, type PlanoContaOption} from "@/components/shared/plano-conta-combobox";
 import {Calendar as CalendarPicker} from "@/components/ui/calendar";
 import {format as formatBtn, parseISO} from "date-fns";
 import {ptBR} from "date-fns/locale";
@@ -315,8 +315,8 @@ function CompetenciaPicker({
 }
 
 
-function groupPlanoContasPorCategoria(itens: PlanoConta[]): { categoria: string; itens: PlanoConta[] }[] {
-    const map = new Map<string, PlanoConta[]>();
+function groupPlanoContasPorCategoria(itens: PlanoContaOption[]): { categoria: string; itens: PlanoContaOption[] }[] {
+    const map = new Map<string, PlanoContaOption[]>();
     for (const item of itens) {
         const lista = map.get(item.categoria) ?? [];
         lista.push(item);
@@ -345,7 +345,7 @@ function PlanoContaCombobox({
     const grupos = groupPlanoContasPorCategoria(options);
     const selected = planoContas.find((p) => String(p.id) === value);
 
-    const handleSelect = (p: PlanoConta) => {
+    const handleSelect = (p: PlanoContaOption) => {
         onChange(String(p.id));
         setOpen(false);
         setSearchTerm("");

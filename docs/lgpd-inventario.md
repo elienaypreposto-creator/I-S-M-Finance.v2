@@ -1,7 +1,7 @@
 # Inventário de dados pessoais
 
 Versão 1.0. Data: 2026-10-05. Autor da versão: engenharia.
-Estado: mapa do schema em `develop`. Revisão jurídica ainda não feita. Os prazos abaixo são regra operacional deste sistema, não parecer.
+Revisão interna registrada em 2026-10-09 por Vinicius Costa (encarregado) e Gabriel Pedro (implementação). Escopo: classes do inventário, bases do art. 7º (V, II e IX) e prazos operacionais de extrato e auditoria. Não é parecer de escritório externo.
 
 O operador trata dados das empresas clientes. Cada empresa cliente é a fonte dos dados de negócio (parceiros, extratos, lançamentos). O operador trata usuários que entram no sistema, sessão, tokens e logs.
 
@@ -14,7 +14,7 @@ Legenda:
 - sensível: art. 5º, II. Neste schema, não há coluna dedicada
 - técnico: identificador interno, estado, data de sistema
 
-Base legal usada na operação (sujeita à revisão jurídica):
+Base legal usada na operação (revisão interna de 2026-10-09):
 
 - contrato: art. 7º, V, para cadastro da empresa cliente e dos usuários que ela autoriza
 - obrigação legal: art. 7º, II, para lançamento, extrato e conciliação enquanto o prazo fiscal não vence

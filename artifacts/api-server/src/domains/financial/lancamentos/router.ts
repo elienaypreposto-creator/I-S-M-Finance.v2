@@ -67,7 +67,7 @@ router.put(
                 Number.isFinite(valorAtual) &&
                 Math.round(valorNovo * 100) !== Math.round(valorAtual * 100)
             ) {
-                if (!hasPermission(req.user, PERM.LANCAMENTOS_ALTERAR_VALOR)) {
+                if (!hasPermission(req.user?.permissions, PERM.LANCAMENTOS_ALTERAR_VALOR)) {
                     throw new AppError(
                         403,
                         "FORBIDDEN",

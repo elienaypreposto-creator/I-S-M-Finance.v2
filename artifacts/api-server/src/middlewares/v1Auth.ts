@@ -56,6 +56,7 @@ function popularContexto(
         email: "api-v1@token",
         permissions: ["*"],
         empresaId: tokenRow.empresa_id,
+        superadmin: false,
     };
 }
 
