@@ -18,6 +18,8 @@ import {Calendar as CalendarPicker} from "@/components/ui/calendar";
 import {format as formatBtn, parseISO} from "date-fns";
 import {ptBR} from "date-fns/locale";
 import {cn} from "@/lib/utils";
+import {TIPOS_DOCUMENTO_LANCAMENTO} from "@/lib/lancamento-documento";
+import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from "@/components/ui/select";
 import {fetchApiData} from "@/lib/api-config";
 import {useEscapeClose} from "@/hooks/use-escape-close";
 import {
@@ -443,9 +445,13 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     const hydratedAtRef = useRef<number>(0);
 
     function buildInitialValues(): LancamentoModalFormValues {
-        if (editItem) return getLancamentoModalDefaultValues(editItem);
-        if (prefill) return buildDefaultValuesFromPrefill(prefill);
-        return getLancamentoModalDefaultValues(null);
+        const criar = !editItem;
+        const base = editItem
+            ? getLancamentoModalDefaultValues(editItem)
+            : prefill
+                ? buildDefaultValuesFromPrefill(prefill)
+                : getLancamentoModalDefaultValues(null);
+        return {...base, exigir_tipo_documento: criar, exigir_descricao: criar};
     }
 
     const form = useForm<LancamentoModalFormValues>({
@@ -460,7 +466,7 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
         watch,
         setValue,
         reset,
-        formState: {errors, isDirty},
+        formState: {errors, isDirty, dirtyFields},
     } = form;
 
     const {data: editItemFull, dataUpdatedAt} = useQuery<LancamentoEditItem>({
@@ -478,6 +484,9 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     const status = watch("status");
     const riscos = watch("riscos");
     const departamento_id = watch("departamento_id");
+    const observacao = watch("observacao") ?? "";
+    const exigirTipoDocumento = watch("exigir_tipo_documento");
+    const exigirDescricao = watch("exigir_descricao");
     const isCP = tipo === "CP";
 
     const valorBr = watch("valorBr");
@@ -547,6 +556,16 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     // (2) um refetch por foco de janela no meio da edição não sobrescreve o
     // que o usuário digitou (isso já está coberto por `refetchOnWindowFocus:
     // false` acima, então aqui só filtramos re-renders sem busca nova).
+    useEffect(() => {
+        if (!editItem) return;
+        if (dirtyFields.tipo_documento) {
+            setValue("exigir_tipo_documento", true, {shouldValidate: true});
+        }
+        if (dirtyFields.descricao) {
+            setValue("exigir_descricao", true, {shouldValidate: true});
+        }
+    }, [editItem, dirtyFields.tipo_documento, dirtyFields.descricao, setValue]);
+
     useEffect(() => {
         if (editItemFull && dataUpdatedAt !== hydratedAtRef.current) {
             reset(getLancamentoModalDefaultValues(editItemFull));
@@ -804,30 +823,92 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                     {errors.parceiro_id && <p className={errorCls}>{errors.parceiro_id.message}</p>}
                                 </div>
 
-                                {/* Descrição */}
-                                <div>
-                                    <label className={labelCls}>Título / Descrição</label>
-                                    <input type="text" {...register("descricao")} className={inputCls}
-                                           placeholder="Ex: Manutenção servidor AWS, Aluguel Setembro..."/>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label htmlFor="tipo-documento" className={labelCls}>
+                                            Tipo de documento{exigirTipoDocumento ? " *" : ""}
+                                        </label>
+                                        <Controller name="tipo_documento" control={control} render={({field}) => (
+                                            <Select
+                                                value={field.value || undefined}
+                                                onValueChange={(value) => {
+                                                    field.onChange(value);
+                                                    if (editItem) {
+                                                        setValue("exigir_tipo_documento", true, {
+                                                            shouldValidate: true,
+                                                            shouldDirty: true
+                                                        });
+                                                    }
+                                                }}
+                                            >
+                                                <SelectTrigger
+                                                    id="tipo-documento"
+                                                    aria-required={exigirTipoDocumento}
+                                                    aria-invalid={!!errors.tipo_documento}
+                                                    aria-describedby={errors.tipo_documento ? "tipo-documento-erro" : undefined}
+                                                    className={cn(selectCls, "h-auto shadow-none")}
+                                                >
+                                                    <SelectValue placeholder="Selecione..."/>
+                                                </SelectTrigger>
+                                                <SelectContent className="z-[90] bg-[#1a1c23] border-white/10 text-white">
+                                                    {TIPOS_DOCUMENTO_LANCAMENTO.map((tipoDoc) => (
+                                                        <SelectItem
+                                                            key={tipoDoc.value}
+                                                            value={tipoDoc.value}
+                                                            className="text-white focus:bg-primary/20 focus:text-white"
+                                                        >
+                                                            {tipoDoc.label}
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        )}/>
+                                        {errors.tipo_documento && (
+                                            <p id="tipo-documento-erro"
+                                               className={errorCls}>{errors.tipo_documento.message}</p>
+                                        )}
+                                    </div>
+                                    <div>
+                                        <label htmlFor="numero-documento" className={labelCls}>Nº do documento</label>
+                                        <input
+                                            id="numero-documento"
+                                            type="text"
+                                            maxLength={60}
+                                            {...register("numero_documento")}
+                                            className={inputCls}
+                                            placeholder="Ex.: 12345"
+                                            aria-invalid={!!errors.numero_documento}
+                                            aria-describedby={errors.numero_documento ? "numero-documento-erro" : undefined}
+                                        />
+                                        {errors.numero_documento && (
+                                            <p id="numero-documento-erro"
+                                               className={errorCls}>{errors.numero_documento.message}</p>
+                                        )}
+                                    </div>
                                 </div>
 
-                                {/* Departamento */}
                                 <div>
-                                    <label className={labelCls}>
-                                        <Building2 className="w-3 h-3 inline mr-1"/> Departamento
+                                    <label htmlFor="lancamento-descricao" className={labelCls}>
+                                        Descrição{exigirDescricao ? " *" : ""}
                                     </label>
-                                    <select {...register("departamento_id")} className={selectCls}
-                                            onChange={(e) => {
-                                                setValue("departamento_id", e.target.value, {shouldDirty: true});
-                                                setValue("centro_custo_id", "", {shouldDirty: true});
-                                            }}>
-                                        <option value="">Selecione o departamento...</option>
-                                        {departamentos.map((d) => (
-                                            <option key={d.id} value={d.id}>{d.nome}</option>
-                                        ))}
-                                    </select>
-                                    {errors.departamento_id &&
-                                        <p className={errorCls}>{errors.departamento_id.message}</p>}
+                                    <input
+                                        id="lancamento-descricao"
+                                        type="text"
+                                        {...register("descricao")}
+                                        className={inputCls}
+                                        placeholder="Ex.: Manutenção servidor AWS - Outubro"
+                                        aria-required={exigirDescricao}
+                                        aria-invalid={!!errors.descricao}
+                                        aria-describedby={errors.descricao ? "lancamento-descricao-erro lancamento-descricao-hint" : "lancamento-descricao-hint"}
+                                    />
+                                    <p id="lancamento-descricao-hint"
+                                       className="text-[10px] text-muted-foreground mt-1">
+                                        Aparece na lista de lançamentos e na busca.
+                                    </p>
+                                    {errors.descricao && (
+                                        <p id="lancamento-descricao-erro"
+                                           className={errorCls}>{errors.descricao.message}</p>
+                                    )}
                                 </div>
                             </div>
 
@@ -929,6 +1010,28 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                         </div>
                                     </div>
                                 )}
+
+                                <div>
+                                    <label className={labelCls} htmlFor="lancamento-departamento">
+                                        <Building2 className="w-3 h-3 inline mr-1"/> Departamento
+                                    </label>
+                                    <select
+                                        id="lancamento-departamento"
+                                        {...register("departamento_id")}
+                                        className={selectCls}
+                                        onChange={(e) => {
+                                            setValue("departamento_id", e.target.value, {shouldDirty: true});
+                                            setValue("centro_custo_id", "", {shouldDirty: true});
+                                        }}
+                                    >
+                                        <option value="">Selecione o departamento...</option>
+                                        {departamentos.map((d) => (
+                                            <option key={d.id} value={d.id}>{d.nome}</option>
+                                        ))}
+                                    </select>
+                                    {errors.departamento_id &&
+                                        <p className={errorCls}>{errors.departamento_id.message}</p>}
+                                </div>
 
                                 {/* Centro de Custo (filtrado por departamento) */}
                                 <div>
@@ -1047,6 +1150,30 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                     </div>
                                 )}
                             </div>
+                        </div>
+
+                        <div>
+                            <label htmlFor="lancamento-observacao" className={labelCls}>Observação</label>
+                            <textarea
+                                id="lancamento-observacao"
+                                rows={3}
+                                maxLength={1000}
+                                {...register("observacao")}
+                                className={cn(inputCls, "resize-y min-h-[4.5rem]")}
+                                placeholder="Informações adicionais (opcional): condições, referência do pedido, contato..."
+                                aria-invalid={!!errors.observacao}
+                                aria-describedby={errors.observacao ? "observacao-erro observacao-contador" : "observacao-contador"}
+                            />
+                            <p id="observacao-contador" className="text-[10px] text-muted-foreground mt-1 text-right"
+                               aria-hidden="true">
+                                {observacao.length}/1000
+                            </p>
+                            <p className="sr-only" aria-live="polite">
+                                {observacao.length >= 900 ? `${observacao.length} de 1000 caracteres` : ""}
+                            </p>
+                            {errors.observacao && (
+                                <p id="observacao-erro" className={errorCls}>{errors.observacao.message}</p>
+                            )}
                         </div>
 
                         {/* Formas de Pagamento - sub-seções modulares por tipo */}

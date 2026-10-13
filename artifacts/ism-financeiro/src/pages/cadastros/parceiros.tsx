@@ -13,13 +13,12 @@ import {
 } from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {PageHeader} from "@/components/shared/page-header";
+import {BotaoBloquear, BotaoEditar, BotaoExcluir} from "@/components/shared/botoes-acao";
 import {
     Plus,
     Search,
     Download,
-    Edit2,
     Trash2,
-    Ban,
     CheckCircle,
     X,
     AlertTriangle,
@@ -1298,29 +1297,14 @@ export default function Parceiros() {
                         </span>
                                         </td>
                                         <td className="px-5 py-4">
-                                            <div className="flex items-center justify-end gap-1">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleEdit(p)}
-                                                    className="p-1.5 rounded-md hover:bg-white/10 text-muted-foreground hover:text-white transition-colors"
-                                                    title="Editar">
-                                                    <Edit2 className="w-4 h-4"/>
-                                                </button>
-                                                <button
-                                                    type="button"
+                                            <div className="flex items-center justify-end gap-2">
+                                                <BotaoEditar onClick={() => handleEdit(p)}/>
+                                                <BotaoBloquear
+                                                    bloqueado={!isAtivo}
+                                                    title={isAtivo ? "Inativar" : "Ativar"}
                                                     onClick={() => handleToggleAtivo(p)}
-                                                    className={`p-1.5 rounded-md transition-colors ${isAtivo ? "hover:bg-warning/20 text-success hover:text-warning" : "hover:bg-success/20 text-muted-foreground hover:text-success"}`}
-                                                    title={isAtivo ? "Inativar" : "Ativar"}>
-                                                    {isAtivo ? <CheckCircle className="w-4 h-4"/> :
-                                                        <Ban className="w-4 h-4"/>}
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleDelete(p)}
-                                                    className="p-1.5 rounded-md hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
-                                                    title="Excluir">
-                                                    <Trash2 className="w-4 h-4"/>
-                                                </button>
+                                                />
+                                                <BotaoExcluir onClick={() => handleDelete(p)}/>
                                             </div>
                                         </td>
                                     </tr>

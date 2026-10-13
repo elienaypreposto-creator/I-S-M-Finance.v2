@@ -20,8 +20,8 @@ import {
     FileStack,
     ChevronLeft,
     ChevronRight,
-    Trash2,
 } from "lucide-react";
+import {BotaoExcluir} from "@/components/shared/botoes-acao";
 
 export type ConciliacaoListItem = {
     conciliacao_id: number;
@@ -279,7 +279,7 @@ export default function ConciliacaoList() {
                             <th className="px-4 py-3 font-semibold text-right">IGNORADOS</th>
                             <th className="px-4 py-3 font-semibold text-right">PENDENTES</th>
                             <th className="px-4 py-3 font-semibold text-right">TOTAL</th>
-                            <th className="px-3 py-3 font-semibold w-12" aria-label="Ações"/>
+                            <th className="px-3 py-3 font-semibold" aria-label="Ações"/>
                         </tr>
                         </thead>
                         <tbody className="divide-y divide-white/5">
@@ -367,19 +367,10 @@ export default function ConciliacaoList() {
                                     </td>
                                     <td className="px-3 py-3 text-center">
                                         {canDelete && row.status !== "conciliado" ? (
-                                            <button
-                                                type="button"
-                                                title="Excluir extrato"
+                                            <BotaoExcluir
                                                 disabled={deleteMutation.isPending}
                                                 onClick={(e) => void handleDelete(row, e)}
-                                                className="inline-flex p-1.5 rounded-lg text-muted-foreground hover:text-red-300 hover:bg-red-500/15 transition-colors disabled:opacity-40"
-                                            >
-                                                {deleteMutation.isPending ? (
-                                                    <Loader2 className="w-4 h-4 animate-spin"/>
-                                                ) : (
-                                                    <Trash2 className="w-4 h-4"/>
-                                                )}
-                                            </button>
+                                            />
                                         ) : null}
                                     </td>
                                 </tr>

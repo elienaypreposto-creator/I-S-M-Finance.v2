@@ -4,11 +4,10 @@ import {useForm} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {z} from "zod";
 import {PageHeader} from "@/components/shared/page-header";
+import {BotaoEditar, BotaoExcluir} from "@/components/shared/botoes-acao";
 import {
     Plus,
     Building,
-    Pencil,
-    Trash2,
     X,
     Loader2,
     AlertCircle,
@@ -400,24 +399,12 @@ export default function Filiais() {
 
                                         {/* Ações */}
                                         <div
-                                            className="flex items-center gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-all shrink-0">
-                                            <button
-                                                type="button"
-                                                title="Editar filial"
-                                                onClick={() => openEdit(filial)}
-                                                className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-                                            >
-                                                <Pencil className="w-4 h-4 text-muted-foreground"/>
-                                            </button>
-                                            <button
-                                                type="button"
-                                                title="Excluir filial"
-                                                disabled={deleteMutation.isPending}
+                                            className="flex items-center gap-2 sm:opacity-0 sm:group-hover:opacity-100 transition-all shrink-0">
+                                            <BotaoEditar onClick={() => openEdit(filial)}/>
+                                            <BotaoExcluir
                                                 onClick={() => handleDelete(filial)}
-                                                className="p-2 hover:bg-destructive/20 rounded-lg transition-colors disabled:opacity-40"
-                                            >
-                                                <Trash2 className="w-4 h-4 text-destructive"/>
-                                            </button>
+                                                disabled={deleteMutation.isPending}
+                                            />
                                         </div>
                                     </div>
                                 </div>

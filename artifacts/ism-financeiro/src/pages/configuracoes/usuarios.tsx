@@ -3,11 +3,10 @@ import {useForm, Controller} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {z} from "zod";
 import {PageHeader} from "@/components/shared/page-header";
+import {BotaoBloquear, BotaoEditar} from "@/components/shared/botoes-acao";
 import {
     Plus,
     Shield,
-    Pencil,
-    Trash2,
     CheckCircle,
     XCircle,
     X,
@@ -1066,7 +1065,7 @@ export default function Usuarios() {
                                                         {u.ultimo_acesso ? new Date(u.ultimo_acesso).toLocaleDateString("pt-BR") : "-"}
                                                     </td>
                                                     <td className="px-5 py-4 text-right">
-                                                        <div className="flex justify-end gap-1">
+                                                        <div className="flex justify-end items-center gap-2">
                                                             {canGerirVinculos && (
                                                             <button
                                                                 type="button"
@@ -1089,24 +1088,12 @@ export default function Usuarios() {
                                                                 Permissões
                                                             </button>
                                                             )}
-                                                            <button
-                                                                type="button"
-                                                                title="Editar"
-                                                                className="p-1.5 hover:bg-white/10 rounded-lg"
-                                                                onClick={() => openEdit(u)}
-                                                            >
-                                                                <Pencil className="w-3.5 h-3.5 text-muted-foreground"/>
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                title={u.bloqueado ? "Desbloquear" : "Bloquear"}
+                                                            <BotaoEditar onClick={() => openEdit(u)}/>
+                                                            <BotaoBloquear
+                                                                bloqueado={u.bloqueado}
                                                                 disabled={toggleBloqueadoMutation.isPending}
-                                                                className="p-1.5 hover:bg-warning/20 rounded-lg disabled:opacity-40"
                                                                 onClick={() => handleToggleBloqueado(u)}
-                                                            >
-                                                                <Trash2
-                                                                    className={`w-3.5 h-3.5 ${u.bloqueado ? "text-success" : "text-destructive"}`}/>
-                                                            </button>
+                                                            />
                                                         </div>
                                                     </td>
                                                 </tr>
@@ -1165,19 +1152,12 @@ export default function Usuarios() {
                                                         <Shield className="w-3.5 h-3.5"/> Permissões
                                                     </button>
                                                     )}
-                                                    <button type="button" className="p-2 hover:bg-white/10 rounded-lg"
-                                                            onClick={() => openEdit(u)}>
-                                                        <Pencil className="w-3.5 h-3.5 text-muted-foreground"/>
-                                                    </button>
-                                                    <button
-                                                        type="button"
+                                                    <BotaoEditar onClick={() => openEdit(u)}/>
+                                                    <BotaoBloquear
+                                                        bloqueado={u.bloqueado}
                                                         disabled={toggleBloqueadoMutation.isPending}
-                                                        className="p-2 hover:bg-warning/20 rounded-lg disabled:opacity-40"
                                                         onClick={() => handleToggleBloqueado(u)}
-                                                    >
-                                                        <Trash2
-                                                            className={`w-3.5 h-3.5 ${u.bloqueado ? "text-success" : "text-destructive"}`}/>
-                                                    </button>
+                                                    />
                                                 </div>
                                             </div>
                                         ))}
