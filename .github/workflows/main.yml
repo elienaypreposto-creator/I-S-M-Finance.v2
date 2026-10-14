@@ -7,7 +7,11 @@ on:
       - develop
 
 jobs:
+  testes:
+    uses: ./.github/workflows/ci.yml
+
   deploy:
+    needs: testes
     runs-on: ubuntu-latest
     env:
       # master -> HML, develop -> TST. Variáveis e secrets usam o prefixo do ambiente (ex.: HML_DB_PORT).

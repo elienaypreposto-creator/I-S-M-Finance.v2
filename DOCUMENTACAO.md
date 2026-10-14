@@ -694,6 +694,18 @@ ssh -N -L 5435:127.0.0.1:5435 ubuntu@<ip-da-vm>
 # depois conecte em localhost:5435
 ```
 
+### 11.2. Esteira de testes
+
+`.github/workflows/ci.yml` roda em todo PR para `develop`/`master` e antes de cada deploy (`main.yml` só faz deploy se a esteira passar). Localmente, a mesma bateria roda com `pnpm test:all` (sobe um Postgres descartável no Docker):
+
+1. typecheck (libs, API e front) e testes unitários (API e front);
+2. migrations em banco vazio, duas vezes (idempotência);
+3. `schema:drift`: compara o schema Drizzle com o banco migrado — schema alterado sem migration reprova;
+4. `rls:smoke` e `seed:teste` (duas empresas e um usuário de teste);
+5. API compilada + `artifacts/api-server/test/e2e/fluxo-conciliacao.mjs` (fluxo conciliação → lançamentos, isolamento entre empresas e carga curta).
+
+Cenários do e2e ainda não entregues ficam em `PENDENTES` no próprio arquivo: rodam e aparecem como TODO, sem reprovar.
+
 ---
 
 ## 12. Convenções e Padrões

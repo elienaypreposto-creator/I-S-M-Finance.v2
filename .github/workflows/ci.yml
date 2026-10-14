@@ -1,0 +1,48 @@
+name: Esteira de testes
+
+on:
+  pull_request:
+    branches: [develop, master]
+  workflow_call:
+
+concurrency:
+  group: testes-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ism_user
+          POSTGRES_PASSWORD: ci_bootstrap
+          POSTGRES_DB: ismfinance
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ism_user -d ismfinance"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # Lockfile congelado: pnpm 10 ou dependência fora do lock reprova aqui.
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck, unitários, migrations, drift, RLS e e2e
+        run: node scripts/test-all.mjs
+        env:
+          TEST_PG_URL: postgresql://ism_user:ci_bootstrap@127.0.0.1:5432/ismfinance
