@@ -29,9 +29,11 @@ async function main(): Promise<void> {
             ["Empresa Teste B", "teste-b"],
         ]) {
             const {rows} = await client.query<{id: number}>(
-                `INSERT INTO empresas (razao_social, nome_fantasia, slug)
-                 VALUES ($1, $1, $2)
-                 ON CONFLICT (slug) DO UPDATE SET ativa = true
+                `INSERT INTO empresas (razao_social, nome_fantasia, slug, dpa_representante, dpa_assinado_em)
+                 VALUES ($1, $1, $2, 'Esteira de testes', now())
+                 ON CONFLICT (slug) DO UPDATE SET ativa = true,
+                     dpa_assinado_em = COALESCE(empresas.dpa_assinado_em, now()),
+                     dpa_representante = COALESCE(empresas.dpa_representante, 'Esteira de testes')
                  RETURNING id`,
                 [razao, slug],
             );
