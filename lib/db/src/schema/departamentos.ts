@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, timestamp } from "drizzle-orm/pg-core";
+import {pgTable, serial, text, integer, timestamp, index} from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { empresasTable } from "./empresas";
@@ -8,7 +8,9 @@ export const departamentosTable = pgTable("departamentos", {
   empresa_id: integer("empresa_id").references(() => empresasTable.id).notNull(),
   nome: text("nome").notNull(),
   created_at: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => [
+    index("departamentos_empresa_id_idx").on(table.empresa_id),
+]);
 
 export const centrosCustosTable = pgTable("centros_custos", {
   id: serial("id").primaryKey(),
@@ -16,7 +18,9 @@ export const centrosCustosTable = pgTable("centros_custos", {
   nome: text("nome").notNull(),
   departamento_id: integer("departamento_id").references(() => departamentosTable.id),
   created_at: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => [
+    index("centros_custos_empresa_id_idx").on(table.empresa_id),
+]);
 
 export const insertDepartamentoSchema = createInsertSchema(departamentosTable).omit({ id: true, created_at: true, empresa_id: true });
 export type InsertDepartamento = z.infer<typeof insertDepartamentoSchema>;

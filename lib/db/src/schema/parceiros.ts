@@ -1,4 +1,4 @@
-import {pgTable, serial, text, varchar, boolean, integer, jsonb, timestamp, uniqueIndex} from "drizzle-orm/pg-core";
+import {pgTable, serial, text, varchar, boolean, integer, jsonb, timestamp, uniqueIndex, index} from "drizzle-orm/pg-core";
 import {createInsertSchema} from "drizzle-zod";
 import {z} from "zod/v4";
 import {departamentosTable, centrosCustosTable} from "./departamentos";
@@ -39,6 +39,7 @@ export const parceirosTable = pgTable("parceiros", {
     // empresa (duas empresas podem ter o mesmo parceiro cadastrado cada uma
     // com seu próprio registro).
     uniqueIndex("parceiros_empresa_id_cpf_cnpj_unique_idx").on(table.empresa_id, table.cpf_cnpj),
+    index("parceiros_empresa_id_nome_idx").on(table.empresa_id, table.nome),
 ]);
 
 export const insertParceiroSchema = createInsertSchema(parceirosTable).omit({

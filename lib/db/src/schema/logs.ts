@@ -1,4 +1,4 @@
-import {pgTable, serial, text, integer, timestamp, jsonb, varchar} from "drizzle-orm/pg-core";
+import {pgTable, serial, text, integer, timestamp, jsonb, varchar, index} from "drizzle-orm/pg-core";
 import {usuariosTable} from "./usuarios";
 import {tokensApiTable} from "./tokens-api";
 export const logsSistemaTable = pgTable("logs_sistema", {
@@ -27,7 +27,12 @@ export const logsAuditoriaTable = pgTable("logs_auditoria", {
     token_api_id: integer("token_api_id").references(() => tokensApiTable.id, {onDelete: "set null"}),
     duracao_ms: integer("duracao_ms"),
     created_at: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => [
+    index("logs_auditoria_empresa_id_idx").on(table.empresa_id),
+    index("logs_auditoria_empresa_id_created_at_idx").on(table.empresa_id, table.created_at.desc()),
+    index("logs_auditoria_usuario_id_created_at_idx").on(table.usuario_id, table.created_at.desc()),
+    index("logs_auditoria_request_id_idx").on(table.request_id),
+]);
 
 export type LogSistema = typeof logsSistemaTable.$inferSelect;
 export type InsertLogSistema = typeof logsSistemaTable.$inferInsert;

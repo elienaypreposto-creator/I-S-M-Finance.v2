@@ -1,4 +1,4 @@
-import { integer, pgTable, serial, text, boolean, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import {integer, pgTable, serial, text, boolean, timestamp, uniqueIndex, index} from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { empresasTable } from "./empresas";
@@ -15,6 +15,7 @@ export const planoContasTable = pgTable("plano_contas", {
   updated_at: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [
   uniqueIndex("plano_contas_empresa_id_codigo_unique").on(table.empresa_id, table.codigo),
+  index("plano_contas_empresa_id_codigo_idx").on(table.empresa_id, table.codigo),
 ]);
 
 export const insertPlanoContaSchema = createInsertSchema(planoContasTable).omit({ id: true, created_at: true, updated_at: true, empresa_id: true });
