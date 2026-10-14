@@ -5,7 +5,6 @@
  * 1. /healthz              — sem autenticação
  * 2. /auth/*               — sem autenticação (login, refresh, logout)
  *    └─ /auth/me           — requer withAuth (declarado dentro do router de auth)
- *    └─ /auth/migrate-*    — requer withAuth + withPermission (declarado dentro)
  *    └─ /auth/switch-empresa — requer withAuth
  * 3. /v1/*                 — autenticação por API Token (v1AuthMiddleware)
  * 4. withAuth              — TODAS as rotas abaixo exigem JWT válido
