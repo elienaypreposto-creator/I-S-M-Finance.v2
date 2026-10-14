@@ -2,6 +2,10 @@
  * Catálogo canônico de permissões do Super Admin (API + UI).
  * Fonte única - manter alinhado a withPermission / grant_admin.
  *
+ * Cadastro de empresas (listar todas, criar, editar) NÃO está aqui: é operação
+ * do ISM e só `usuarios.superadmin` libera (withSuperadmin). Ver ISMF-16 e a
+ * migration 0029.
+ *
  * Módulo sem I/O de banco para poder ser importado em testes e no validador
  * de concessão sem instanciar o pool Postgres.
  */
@@ -82,10 +86,6 @@ export const PERMISSOES_ADMIN = [
     "admin:usuarios:editar",
     "admin:usuarios:deletar",
     "admin:permissoes:conceder",
-
-    "admin:empresas:listar",
-    "admin:empresas:criar",
-    "admin:empresas:editar",
 
     "admin:tokens-api:listar",
     "admin:tokens-api:criar",

@@ -7,7 +7,6 @@ import {tenantQueryKey, nomeEmpresa} from "@/lib/tenant-query";
 import {useToast} from "@/hooks/use-toast";
 import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {useAuth} from "@/hooks/use-auth";
-import {PERM} from "@/lib/permissoes";
 import {ViewportOverlay} from "@/components/shared/viewport-overlay";
 import {CampoBusca, contemBusca, useParametrosUrl} from "@/components/shared/filtros";
 
@@ -22,9 +21,11 @@ type EmpresaRow = {
 };
 
 export default function AdminEmpresas() {
-    const {hasPermission} = useAuth();
-    const canCriar = hasPermission(PERM.ADMIN_EMPRESAS_CRIAR);
-    const canEditar = hasPermission(PERM.ADMIN_EMPRESAS_EDITAR);
+    const {user} = useAuth();
+    // Cadastro de empresas é operação do ISM: só superadmin (ISMF-16).
+    const isSuperadmin = user?.superadmin === true;
+    const canCriar = isSuperadmin;
+    const canEditar = isSuperadmin;
     const {toast} = useToast();
     const queryClient = useQueryClient();
     const [showModal, setShowModal] = useState(false);
@@ -36,7 +37,7 @@ export default function AdminEmpresas() {
     const {data: empresas = [], isLoading} = useQuery({
         queryKey: tenantQueryKey("admin-empresas"),
         queryFn: () => fetchApiData<EmpresaRow[]>("/empresas"),
-        enabled: hasPermission(PERM.ADMIN_EMPRESAS_LISTAR),
+        enabled: isSuperadmin,
     });
 
     // Busca por nome (?q=) filtrada no navegador: nome fantasia ou razão social.
@@ -86,8 +87,8 @@ export default function AdminEmpresas() {
         onError: (err: Error) => toast({title: "Erro", description: err.message, variant: "destructive"}),
     });
 
-    if (!hasPermission(PERM.ADMIN_EMPRESAS_LISTAR)) {
-        return <p className="text-sm text-destructive">Sem permissão para listar empresas.</p>;
+    if (!isSuperadmin) {
+        return <p className="text-sm text-destructive">Cadastro de empresas exige acesso de superadmin.</p>;
     }
 
     return (

@@ -83,8 +83,8 @@ type MenuSection = {
 export function AppSidebar() {
     const [location] = useLocation();
     const {state} = useSidebar();
-    const {hasPermission} = useAuth();
-    const canListarEmpresas = hasPermission(PERM.ADMIN_EMPRESAS_LISTAR);
+    const {hasPermission, user} = useAuth();
+    const canListarEmpresas = user?.superadmin === true;
     const isCollapsed = state === "collapsed";
     const [expandedSections, setExpandedSections] = useState<string[]>(["Cadastros", "Relatórios", "Configurações"]);
 

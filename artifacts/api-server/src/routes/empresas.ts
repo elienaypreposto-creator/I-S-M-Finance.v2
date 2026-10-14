@@ -3,12 +3,15 @@ import {z} from "zod";
 import {and, desc, eq, ne} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {empresasTable} from "@workspace/db/schema";
-import {withPermission} from "../middlewares/withPermission";
 import {withSuperadmin} from "../middlewares/withSuperadmin";
-import {PERM} from "../constants/permissoes";
 import {validateBody} from "../middlewares/validate";
 import {errorResponse, successResponse} from "../utils/response";
 
+/**
+ * Cadastro de empresas (tenants) é operação do ISM, não de uma empresa:
+ * listar todas, criar e editar exigem `superadmin` (ISMF-16). Não existe
+ * permissão concedível que libere estas rotas.
+ */
 const router = Router();
 
 const createEmpresaBodySchema = z.object({
@@ -106,7 +109,7 @@ router.post("/empresas", withSuperadmin, validateBody(createEmpresaBodySchema), 
     }
 });
 
-router.patch("/empresas/:id", withPermission(PERM.ADMIN_EMPRESAS_EDITAR), validateBody(updateEmpresaBodySchema), async (req, res) => {
+router.patch("/empresas/:id", withSuperadmin, validateBody(updateEmpresaBodySchema), async (req, res) => {
     try {
         const id = parseInt(String(req.params.id), 10);
         if (!Number.isInteger(id) || id <= 0) {

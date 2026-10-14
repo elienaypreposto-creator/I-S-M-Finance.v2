@@ -20,7 +20,7 @@ import {Router, type Request, type Response} from "express";
 import bcrypt from "bcryptjs";
 import {and, eq} from "drizzle-orm";
 import {db} from "@workspace/db";
-import {permissoesTable, refreshTokensTable, usuarioEmpresasTable, usuariosTable} from "@workspace/db/schema";
+import {refreshTokensTable, usuariosTable} from "@workspace/db/schema";
 import {sendPasswordResetEmail} from "../services/email.service";
 import {revokeAllTokensForUser} from "../services/session.service";
 import {denylistUser} from "../services/denylist.service";
@@ -38,7 +38,7 @@ import {
     readRefreshToken,
     setRefreshCookie,
 } from "../utils/refresh-cookie";
-import {ADMIN_USUARIOS_AUTOMATICAS, PERMISSOES_ADMIN} from "../constants/permissoes";
+import {fetchPermissions} from "../services/permissions.service";
 import {
     hashToken,
     signAccessToken,
@@ -57,42 +57,6 @@ const DUMMY_PASSWORD_HASH = bcrypt.hashSync("dummy-password-for-timing", BCRYPT_
 
 // CSRF: o csrfGuard (X-Requested-With) é aplicado apenas nas rotas que consomem o cookie
 // do refresh token: /auth/refresh, /auth/switch-empresa e /auth/logout (ver refresh-cookie.ts).
-
-/**
- * Permissões da empresa ativa. Superadmin global recebe o catálogo completo
- * (não depende de linhas em `usuario_permissoes` por tenant) para o frontend
- * não esconder menus ao trocar de empresa. Admin de empresa soma
- * `ADMIN_USUARIOS_AUTOMATICAS` sem gravar wildcard.
- */
-const fetchPermissions = async (
-    usuarioId: number,
-    empresaId: number,
-    superadmin = false,
-): Promise<string[]> => {
-    if (superadmin) {
-        return [...PERMISSOES_ADMIN];
-    }
-
-    const [rows, vinculo] = await Promise.all([
-        db
-            .select({codigo_permissao: permissoesTable.codigo_permissao})
-            .from(permissoesTable)
-            .where(and(eq(permissoesTable.usuario_id, usuarioId), eq(permissoesTable.empresa_id, empresaId))),
-        db
-            .select({papel: usuarioEmpresasTable.papel})
-            .from(usuarioEmpresasTable)
-            .where(and(eq(usuarioEmpresasTable.usuario_id, usuarioId), eq(usuarioEmpresasTable.empresa_id, empresaId)))
-            .limit(1),
-    ]);
-
-    const permissoes = rows.map((r) => r.codigo_permissao);
-    if (vinculo[0]?.papel === "admin") {
-        for (const codigo of ADMIN_USUARIOS_AUTOMATICAS) {
-            if (!permissoes.includes(codigo)) permissoes.push(codigo);
-        }
-    }
-    return permissoes;
-};
 
 function attachTenantForAudit(
     req: Request,

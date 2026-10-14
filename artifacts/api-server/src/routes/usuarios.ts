@@ -8,7 +8,7 @@
  * PUT    /usuarios/:id/permissoes        - Substituição de permissões (empresa ativa do autor)
  *                                         (exige admin:permissoes:conceder; allowlist z.enum; "*" recusado;
  *                                          auditoria com detalhes.antes / detalhes.depois)
- * GET    /usuarios/:id/empresas           - Lista vínculos do usuário com empresas
+ * GET    /usuarios/:id/empresas           - Lista vínculos do usuário com empresas (exige superadmin)
  * PUT    /usuarios/:id/empresas           - Cria/atualiza vínculo (exige superadmin)
  * DELETE /usuarios/:id/empresas/:empresaId - Remove vínculo (exige superadmin)
  *
@@ -862,7 +862,7 @@ const upsertVinculoBodySchema = z.object({
 
 router.get(
     "/usuarios/:id/empresas",
-    withPermission(PERM.ADMIN_EMPRESAS_LISTAR),
+    withSuperadmin,
     async (req, res) => {
         try {
             const id = parseInt(
