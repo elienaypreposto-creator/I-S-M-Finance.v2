@@ -779,6 +779,12 @@ Inventário versionado: `docs/lgpd-inventario.md`.
 
 Prazos que o job aplica: `PRAZO_EXTRATO_ANOS` e `PRAZO_AUDITORIA_MESES` em `artifacts/api-server/src/domains/lgpd/lgpd-prazos.ts`, os mesmos números do inventário.
 
+## 16. Operação da VM
+
+| Peça | Ficheiro |
+|------|----------|
+| Backup diário, restore e teste de restore | `docs/backup.md` |
+
 
 
 Após conectar com sucesso os containers, tem que criar o banco de dados a primeira vez: 

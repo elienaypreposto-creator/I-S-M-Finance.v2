@@ -1,0 +1,15 @@
+# Backup diário do Postgres de um ambiente do ISM Finance. Instância = pasta do ambiente (ism-tst, ism-hml).
+# Instalado por scripts/backup-instalar-timer.sh, que troca @@USER@@ e @@HOME@@.
+[Unit]
+Description=Backup do Postgres do ISM Finance (%i)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=@@USER@@
+WorkingDirectory=@@HOME@@/%i
+ExecStart=/bin/bash @@HOME@@/%i/scripts/backup-db.sh
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=1h

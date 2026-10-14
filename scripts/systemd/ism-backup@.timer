@@ -1,0 +1,11 @@
+# 05:00 UTC = 02:00 em Brasília (a VM está em UTC). Persistent: se a VM estiver desligada, corre ao voltar.
+[Unit]
+Description=Backup diário do Postgres do ISM Finance (%i)
+
+[Timer]
+OnCalendar=*-*-* 05:00:00 UTC
+RandomizedDelaySec=20min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
