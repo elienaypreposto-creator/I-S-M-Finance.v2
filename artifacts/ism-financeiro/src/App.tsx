@@ -52,7 +52,9 @@ function PrivateRoute({
     const token = authStorage.getToken();
     const {hasPermission, loading} = useAuth();
 
-    if (!token) {
+    // No F5 o access token (só em memória) ainda não voltou do refresh: espera a sessão
+    // antes de mandar para o login, senão a URL (e os filtros nela) se perde.
+    if (!token && !loading) {
         return <Redirect to="/login"/>;
     }
 

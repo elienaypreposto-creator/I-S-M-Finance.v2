@@ -13,3 +13,10 @@ export const updateDepartamentoBodySchema = createDepartamentoBodySchema;
 
 export type CreateDepartamentoBody = z.infer<typeof createDepartamentoBodySchema>;
 export type UpdateDepartamentoBody = z.infer<typeof updateDepartamentoBodySchema>;
+
+/** GET /centros-custos: `departamento_id` opcional restringe aos centros do departamento. */
+export const listCentrosCustosQuerySchema = z.object({
+  departamento_id: z.coerce.number().int().positive().optional(),
+});
+
+export type ListCentrosCustosQuery = z.infer<typeof listCentrosCustosQuerySchema>;

@@ -1,4 +1,4 @@
-import {count, desc, eq, gte, ilike, lte, or} from "drizzle-orm";
+import {count, desc, eq, sql, type SQL} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {
     contasBancariasTable,
@@ -10,7 +10,14 @@ import {
 } from "@workspace/db/schema";
 import {AppError} from "../../../utils/app-error";
 import {tenantWhere, withEmpresaId} from "../../../lib/tenant-scope";
-import type {CreateLancamentoBody, ListLancamentosQuery, UpdateLancamentoBody} from "./schemas";
+import {
+    LIMITE_EXPORT_LANCAMENTOS,
+    type CreateLancamentoBody,
+    type FiltrosLancamentos,
+    type ListLancamentosQuery,
+    type UpdateLancamentoBody,
+} from "./schemas";
+import {montarWhereLancamentos} from "./lancamentos.filtros";
 import {statusAbertoPorVencimento} from "../../../utils/conciliacao-vincular";
 import {hojeIsoLocal} from "../../../utils/date-civil";
 
@@ -45,90 +52,116 @@ const resolveDepartamentoCentroByParceiro = async (empresaId: number, parceiroId
     };
 };
 
+/** Valor líquido exibido na lista: max(valor - desconto + juros, 0). */
+const valorLiquidoSql = sql`greatest(${lancamentosTable.valor} - coalesce(${lancamentosTable.desconto}, 0) + coalesce(${lancamentosTable.juros}, 0), 0)`;
+
+async function buscarItens(where: SQL, limit: number, offset: number) {
+    const items = await db
+        .select({
+            id: lancamentosTable.id,
+            tipo: lancamentosTable.tipo,
+            vencimento: lancamentosTable.vencimento,
+            competencia: lancamentosTable.competencia,
+            conta_id: lancamentosTable.conta_id,
+            conta_nome: contasBancariasTable.nome,
+            parceiro_id: lancamentosTable.parceiro_id,
+            parceiro_nome: parceirosTable.nome,
+            descricao: lancamentosTable.descricao,
+            tipo_documento: lancamentosTable.tipo_documento,
+            numero_documento: lancamentosTable.numero_documento,
+            observacao: lancamentosTable.observacao,
+            valor: lancamentosTable.valor,
+            desconto: lancamentosTable.desconto,
+            juros: lancamentosTable.juros,
+            status: lancamentosTable.status,
+            plano_conta_id: lancamentosTable.plano_conta_id,
+            plano_conta_categoria: planoContasTable.categoria,
+            plano_conta_subcategoria: planoContasTable.subcategoria,
+            departamento_id: lancamentosTable.departamento_id,
+            departamento_nome: departamentosTable.nome,
+            centro_custo_id: lancamentosTable.centro_custo_id,
+            centro_custo_nome: centrosCustosTable.nome,
+            parcela_atual: lancamentosTable.parcela_atual,
+            total_parcelas: lancamentosTable.total_parcelas,
+            riscos: lancamentosTable.riscos,
+            dados_pagamento: lancamentosTable.dados_pagamento,
+            created_at: lancamentosTable.created_at,
+        })
+        .from(lancamentosTable)
+        .leftJoin(contasBancariasTable, eq(lancamentosTable.conta_id, contasBancariasTable.id))
+        .leftJoin(parceirosTable, eq(lancamentosTable.parceiro_id, parceirosTable.id))
+        .leftJoin(planoContasTable, eq(lancamentosTable.plano_conta_id, planoContasTable.id))
+        .leftJoin(departamentosTable, eq(lancamentosTable.departamento_id, departamentosTable.id))
+        .leftJoin(centrosCustosTable, eq(lancamentosTable.centro_custo_id, centrosCustosTable.id))
+        .where(where)
+        .orderBy(desc(lancamentosTable.vencimento), desc(lancamentosTable.id))
+        .limit(limit)
+        .offset(offset);
+
+    return items.map((item) => {
+        const valorBruto = Number(item.valor ?? 0);
+        const desconto = Number(item.desconto ?? 0);
+        const juros = Number(item.juros ?? 0);
+        return {
+            ...item,
+            plano_conta_nome: formatPlanoContaPath(item.plano_conta_categoria, item.plano_conta_subcategoria),
+            valor: Math.max(valorBruto - desconto + juros, 0),
+            valor_bruto: valorBruto,
+            desconto,
+            juros,
+        };
+    });
+}
+
+/** Quantidade e totais líquidos por tipo (resumo da linha de filtros). */
+async function resumir(where: SQL) {
+    const linhas = await db
+        .select({
+            tipo: lancamentosTable.tipo,
+            quantidade: count(),
+            total: sql<string>`coalesce(sum(${valorLiquidoSql}), 0)`,
+        })
+        .from(lancamentosTable)
+        .leftJoin(parceirosTable, eq(lancamentosTable.parceiro_id, parceirosTable.id))
+        .where(where)
+        .groupBy(lancamentosTable.tipo);
+
+    const totalDo = (t: "CR" | "CP") => Number(linhas.find((l) => l.tipo === t)?.total ?? 0);
+    return {
+        total: linhas.reduce((acc, l) => acc + Number(l.quantidade), 0),
+        totais: {receber: totalDo("CR"), pagar: totalDo("CP")},
+    };
+}
+
 export const lancamentosService = {
     async list(empresaId: number, query: ListLancamentosQuery) {
-        const {page, limit, tipo, status, conta_id, parceiro_id, data_inicio, data_fim, search} = query;
+        const {page, limit, ...filtros} = query;
         const offset = (page - 1) * limit;
+        const where = montarWhereLancamentos(empresaId, filtros);
 
-        const where = tenantWhere(
-            lancamentosTable,
-            empresaId,
-            tipo ? eq(lancamentosTable.tipo, tipo) : undefined,
-            status ? eq(lancamentosTable.status, status) : undefined,
-            conta_id ? eq(lancamentosTable.conta_id, conta_id) : undefined,
-            parceiro_id ? eq(lancamentosTable.parceiro_id, parceiro_id) : undefined,
-            data_inicio ? gte(lancamentosTable.vencimento, data_inicio) : undefined,
-            data_fim ? lte(lancamentosTable.vencimento, data_fim) : undefined,
-            search
-                ? or(
-                    ilike(lancamentosTable.descricao, `%${search}%`),
-                    ilike(lancamentosTable.numero_documento, `%${search}%`),
-                )
-                : undefined,
-        );
-
-        const [totalResult] = await db.select({count: count()}).from(lancamentosTable).where(where);
-
-        const items = await db
-            .select({
-                id: lancamentosTable.id,
-                tipo: lancamentosTable.tipo,
-                vencimento: lancamentosTable.vencimento,
-                competencia: lancamentosTable.competencia,
-                conta_id: lancamentosTable.conta_id,
-                conta_nome: contasBancariasTable.nome,
-                parceiro_id: lancamentosTable.parceiro_id,
-                parceiro_nome: parceirosTable.nome,
-                descricao: lancamentosTable.descricao,
-                tipo_documento: lancamentosTable.tipo_documento,
-                numero_documento: lancamentosTable.numero_documento,
-                observacao: lancamentosTable.observacao,
-                valor: lancamentosTable.valor,
-                desconto: lancamentosTable.desconto,
-                juros: lancamentosTable.juros,
-                status: lancamentosTable.status,
-                plano_conta_id: lancamentosTable.plano_conta_id,
-                plano_conta_categoria: planoContasTable.categoria,
-                plano_conta_subcategoria: planoContasTable.subcategoria,
-                departamento_id: lancamentosTable.departamento_id,
-                departamento_nome: departamentosTable.nome,
-                centro_custo_id: lancamentosTable.centro_custo_id,
-                centro_custo_nome: centrosCustosTable.nome,
-                parcela_atual: lancamentosTable.parcela_atual,
-                total_parcelas: lancamentosTable.total_parcelas,
-                riscos: lancamentosTable.riscos,
-                dados_pagamento: lancamentosTable.dados_pagamento,
-                created_at: lancamentosTable.created_at,
-            })
-            .from(lancamentosTable)
-            .leftJoin(contasBancariasTable, eq(lancamentosTable.conta_id, contasBancariasTable.id))
-            .leftJoin(parceirosTable, eq(lancamentosTable.parceiro_id, parceirosTable.id))
-            .leftJoin(planoContasTable, eq(lancamentosTable.plano_conta_id, planoContasTable.id))
-            .leftJoin(departamentosTable, eq(lancamentosTable.departamento_id, departamentosTable.id))
-            .leftJoin(centrosCustosTable, eq(lancamentosTable.centro_custo_id, centrosCustosTable.id))
-            .where(where)
-            .orderBy(desc(lancamentosTable.vencimento), desc(lancamentosTable.id))
-            .limit(limit)
-            .offset(offset);
+        // Sequencial: na transação do tenant as consultas dividem a mesma conexão.
+        const resumo = await resumir(where);
+        const items = await buscarItens(where, limit, offset);
 
         return {
-            items: items.map((item) => {
-                const valorBruto = Number(item.valor ?? 0);
-                const desconto = Number(item.desconto ?? 0);
-                const juros = Number(item.juros ?? 0);
-                return {
-                    ...item,
-                    plano_conta_nome: formatPlanoContaPath(
-                        item.plano_conta_categoria,
-                        item.plano_conta_subcategoria,
-                    ),
-                    valor: Math.max(valorBruto - desconto + juros, 0),
-                    valor_bruto: valorBruto,
-                    desconto,
-                    juros,
-                };
-            }),
-            meta: {total: totalResult.count, page, limit},
+            items,
+            meta: {total: resumo.total, page, limit, totais: resumo.totais},
+        };
+    },
+
+    /** Export sem paginação, com teto de LIMITE_EXPORT_LANCAMENTOS linhas. */
+    async exportar(empresaId: number, filtros: FiltrosLancamentos) {
+        const where = montarWhereLancamentos(empresaId, filtros);
+        const resumo = await resumir(where);
+        const items = await buscarItens(where, LIMITE_EXPORT_LANCAMENTOS, 0);
+        return {
+            items,
+            meta: {
+                total: resumo.total,
+                exportados: items.length,
+                truncado: resumo.total > items.length,
+                limite: LIMITE_EXPORT_LANCAMENTOS,
+            },
         };
     },
 

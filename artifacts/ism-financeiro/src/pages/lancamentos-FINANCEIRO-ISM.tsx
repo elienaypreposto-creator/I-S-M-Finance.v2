@@ -1,11 +1,21 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
-import {useState} from "react";
+import {useMemo, useState} from "react";
 import {StatusBadge} from "@/components/shared/status-badge";
-import {formatCurrency, formatDate} from "@/lib/utils";
+import {cn, formatCurrency, formatDate} from "@/lib/utils";
 import {DateRangePicker} from "@/components/shared/date-range-picker";
-import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
+import {keepPreviousData, useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
-import {Plus, Search, Filter, Download, Loader2, AlertCircle, Calendar} from "lucide-react";
+import {Plus, Download, Loader2, AlertCircle, Calendar} from "lucide-react";
+import {
+    CampoBusca,
+    FiltrosAtivos,
+    FiltrosPopover,
+    FOCO_VISIVEL,
+    separarMulti,
+    useFiltrosNaUrl,
+    type DefinicaoFiltro,
+    type OpcaoFiltro,
+} from "@/components/shared/filtros";
 import {BotaoEditar, BotaoExcluir} from "@/components/shared/botoes-acao";
 import {ApiEnvelope, fetchApi, fetchApiData} from "@/lib/api-config";
 import {LancamentoModal} from "@/components/lancamentos/lancamento-modal";
@@ -127,13 +137,39 @@ function podeExcluirLancamento(status: string): boolean {
     return status === "pendente" || status === "atrasado";
 }
 
+/** "Pago/Recebido" é uma opção só na tela; na API vira os dois status. */
+const STATUS_QUITADO = "quitado";
+
+const STATUS_OPCOES: OpcaoFiltro[] = [
+    {valor: "pendente", rotulo: "Pendente"},
+    {valor: "atrasado", rotulo: "Atrasado"},
+    {valor: STATUS_QUITADO, rotulo: "Pago/Recebido"},
+    {valor: "pago_parcial", rotulo: "Pago parcial"},
+    {valor: "cancelado", rotulo: "Cancelado"},
+];
+
+function statusFiltroParaApi(valor: string): string {
+    return separarMulti(valor)
+        .flatMap((s) => (s === STATUS_QUITADO ? ["pago", "recebido"] : [s]))
+        .join(",");
+}
+
+type ContaOpcao = { id: number; nome: string };
+type ParceiroOpcao = { id: number; nome: string; tipo_pessoa?: string | null };
+type PlanoContaOpcao = { id: number; categoria: string; subcategoria: string | null };
+type DepartamentoOpcao = { id: number; nome: string };
+type CentroCustoOpcao = { id: number; nome: string; departamento_id: number | null };
+
+type LancamentosMeta = { total?: number; totais?: { receber: number; pagar: number } };
+type ExportMeta = { total: number; exportados: number; truncado: boolean; limite: number };
+
+const TABS = [
+    {key: "todos", label: "Todos"},
+    {key: "cr", label: "C.R"},
+    {key: "cp", label: "C.P"},
+];
+
 export default function Lancamentos() {
-    const [activeTab, setActiveTab] = useState("todos");
-    const [search, setSearch] = useState("");
-    const [debouncedSearch, setDebouncedSearch] = useState("");
-    const [page, setPage] = useState(1);
-    const [dateStart, setDateStart] = useState("");
-    const [dateEnd, setDateEnd] = useState("");
     const [modalOpen, setModalOpen] = useState(false);
     const [editItem, setEditItem] = useState<Lancamento | null>(null);
     const queryClient = useQueryClient();
@@ -141,31 +177,115 @@ export default function Lancamentos() {
     const {confirm, ConfirmDialogProps} = useConfirm();
     const limit = 25;
 
-    const handleSearchChange = (value: string) => {
-        setSearch(value);
-        clearTimeout((window as any)._searchTimeout);
-        (window as any)._searchTimeout = setTimeout(() => {
-            setDebouncedSearch(value);
-            setPage(1);
-        }, 400);
-    };
+    // ── Opções dos filtros ──────────────────────────────────────────────────────
+    const {data: contas = []} = useQuery({
+        queryKey: tenantQueryKey("contas-bancarias-filtro"),
+        queryFn: () => fetchApiData<ContaOpcao[]>("/contas-bancarias"),
+        staleTime: 60_000,
+    });
+    const {data: parceiros = []} = useQuery({
+        queryKey: tenantQueryKey("parceiros-filtro"),
+        queryFn: () => fetchApiData<ParceiroOpcao[]>("/parceiros?limit=200&page=1"),
+        staleTime: 60_000,
+    });
+    const {data: planoContas = []} = useQuery({
+        queryKey: tenantQueryKey("plano-contas-filtro"),
+        queryFn: () => fetchApiData<PlanoContaOpcao[]>("/plano-contas"),
+        staleTime: 60_000,
+    });
+    const {data: departamentos = []} = useQuery({
+        queryKey: tenantQueryKey("departamentos-filtro"),
+        queryFn: () => fetchApiData<DepartamentoOpcao[]>("/departamentos"),
+        staleTime: 60_000,
+    });
+    const {data: centrosCusto = []} = useQuery({
+        queryKey: tenantQueryKey("centros-custos-filtro"),
+        queryFn: () => fetchApiData<CentroCustoOpcao[]>("/centros-custos"),
+        staleTime: 60_000,
+    });
 
+    const definicoes: DefinicaoFiltro[] = useMemo(() => [
+        {chave: "status", rotulo: "Status", tipo: "multi", opcoes: STATUS_OPCOES},
+        {chave: "valor", rotulo: "Valor (R$)", tipo: "faixa-moeda"},
+        {
+            chave: "conta_id",
+            rotulo: "Conta bancária",
+            tipo: "select",
+            placeholder: "Todas as contas",
+            opcoes: contas.map((c) => ({valor: String(c.id), rotulo: c.nome})),
+        },
+        {
+            chave: "parceiro_id",
+            rotulo: "Cliente/Fornecedor",
+            tipo: "combobox",
+            placeholder: "Buscar parceiro…",
+            opcoes: parceiros.map((p) => ({valor: String(p.id), rotulo: p.nome})),
+        },
+        {
+            chave: "plano_conta_id",
+            rotulo: "Plano de contas",
+            tipo: "combobox",
+            placeholder: "Todas as categorias",
+            opcoes: planoContas.map((p) => ({
+                valor: String(p.id),
+                rotulo: p.subcategoria ? `${p.categoria} / ${p.subcategoria}` : p.categoria,
+                grupo: p.categoria,
+            })),
+        },
+        {
+            chave: "departamento_id",
+            rotulo: "Departamento",
+            tipo: "select",
+            placeholder: "Todos",
+            opcoes: departamentos.map((d) => ({valor: String(d.id), rotulo: d.nome})),
+        },
+        {
+            chave: "centro_custo_id",
+            rotulo: "Centro de custo",
+            tipo: "select",
+            dependeDe: "departamento_id",
+            placeholder: "Todos",
+            placeholderDependente: "Selecione o departamento",
+            opcoes: (rascunho) =>
+                centrosCusto
+                    .filter((c) => String(c.departamento_id ?? "") === rascunho.departamento_id)
+                    .map((c) => ({valor: String(c.id), rotulo: c.nome})),
+        },
+    ], [contas, parceiros, planoContas, departamentos, centrosCusto]);
+
+    const filtros = useFiltrosNaUrl(definicoes);
+    const {ler, atualizar, pagina: page, irParaPagina} = filtros;
+
+    const activeTab = ler("tipo") === "cr" || ler("tipo") === "cp" ? ler("tipo") : "todos";
     const tipo = activeTab === "cr" ? "CR" : activeTab === "cp" ? "CP" : undefined;
+    const busca = ler("q");
+    const dateStart = ler("data_inicio");
+    const dateEnd = ler("data_fim");
 
-    const {data, isLoading, isError} = useQuery<LancamentosListResult>({
-        queryKey: tenantQueryKey("lancamentos", tipo, debouncedSearch, page, dateStart, dateEnd),
+    /** Mesmos parâmetros para a listagem e o export. */
+    const paramsFiltro = useMemo(() => {
+        const params = new URLSearchParams();
+        if (tipo) params.set("tipo", tipo);
+        if (busca) params.set("search", busca);
+        if (dateStart) params.set("data_inicio", dateStart);
+        if (dateEnd) params.set("data_fim", dateEnd);
+        for (const [chave, valor] of Object.entries(filtros.valores)) {
+            params.set(chave, chave === "status" ? statusFiltroParaApi(valor) : valor);
+        }
+        return params.toString();
+    }, [tipo, busca, dateStart, dateEnd, filtros.valores]);
+
+    const {data, isLoading, isError} = useQuery<LancamentosListResult & { totais?: LancamentosMeta["totais"] }>({
+        queryKey: tenantQueryKey("lancamentos", paramsFiltro, page),
         queryFn: async () => {
-            const params = new URLSearchParams();
-            if (tipo) params.set("tipo", tipo);
-            if (debouncedSearch) params.set("search", debouncedSearch);
-            if (dateStart) params.set("data_inicio", dateStart);
-            if (dateEnd) params.set("data_fim", dateEnd);
+            const params = new URLSearchParams(paramsFiltro);
             params.set("page", String(page));
             params.set("limit", String(limit));
             const envelope = await fetchApi<ApiEnvelope<Lancamento[]>>(`/lancamentos?${params}`);
-            const meta = envelope.meta as { total?: number } | null;
-            return {items: envelope.data, total: meta?.total ?? 0};
+            const meta = envelope.meta as LancamentosMeta | null;
+            return {items: envelope.data, total: meta?.total ?? 0, totais: meta?.totais};
         },
+        placeholderData: keepPreviousData,
     });
 
     const deleteMutation = useMutation({
@@ -215,6 +335,8 @@ export default function Lancamentos() {
     const lancamentos = data?.items ?? [];
     const total = data?.total ?? 0;
     const totalPages = Math.ceil(total / limit);
+    const setPage = (updater: number | ((p: number) => number)) =>
+        irParaPagina(typeof updater === "function" ? updater(page) : updater);
 
     // ── Exportação ──────────────────────────────────────────────────────────────
     const [isExporting, setIsExporting] = useState(false);
@@ -237,14 +359,9 @@ export default function Lancamentos() {
     async function handleExportLancamentos() {
         setIsExporting(true);
         try {
-            const params = new URLSearchParams();
-            if (tipo) params.set("tipo", tipo);
-            if (debouncedSearch) params.set("search", debouncedSearch);
-            if (dateStart) params.set("data_inicio", dateStart);
-            if (dateEnd) params.set("data_fim", dateEnd);
-            params.set("page", "1");
-            params.set("limit", "5000");
-            const envelope = await fetchApi<ApiEnvelope<Lancamento[]>>(`/lancamentos?${params}`);
+            // Mesmos filtros da tela, sem paginação (a API limita a 10 mil linhas).
+            const envelope = await fetchApi<ApiEnvelope<Lancamento[]>>(`/lancamentos/export?${paramsFiltro}`);
+            const meta = envelope.meta as ExportMeta | null;
             const rows = envelope.data.map((l) => ({
                 ...l,
                 valor_fmt: fmtBRL(Number(l.valor)),
@@ -255,6 +372,12 @@ export default function Lancamentos() {
             })) as Record<string, unknown>[];
             const suffix = activeTab !== "todos" ? `_${activeTab.toUpperCase()}` : "";
             exportToExcel(`Lancamentos${suffix}_${new Date().toISOString().split("T")[0]}`, rows, EXPORT_COLUMNS_LANC);
+            if (meta?.truncado) {
+                toast({
+                    title: "Exportação parcial",
+                    description: `O filtro tem ${meta.total.toLocaleString("pt-BR")} lançamentos; o arquivo traz os ${meta.limite.toLocaleString("pt-BR")} mais recentes. Refine os filtros para exportar o restante.`,
+                });
+            }
         } catch {
             toast({variant: "destructive", title: "Erro", description: "Não foi possível exportar os lançamentos."});
         } finally {
@@ -262,11 +385,9 @@ export default function Lancamentos() {
         }
     }
 
-    const TABS = [
-        {key: "todos", label: "Todos"},
-        {key: "cr", label: "C.R"},
-        {key: "cp", label: "C.P"},
-    ];
+    const anuncio = isLoading
+        ? ""
+        : `${total.toLocaleString("pt-BR")} ${total === 1 ? "lançamento encontrado" : "lançamentos encontrados"}`;
 
     return (
         <div className="flex flex-col gap-2 h-full">
@@ -287,7 +408,7 @@ export default function Lancamentos() {
             )}
 
             {/* Header compacto */}
-            <div className="flex items-center justify-between px-1 py-1">
+            <div className="flex flex-wrap items-center justify-between gap-2 px-1 py-1">
                 <div>
                     <h1 className="text-base font-bold text-white leading-tight">Lançamentos Financeiros</h1>
                     <p className="text-xs text-muted-foreground">Gerencie suas contas a pagar e a receber</p>
@@ -296,17 +417,17 @@ export default function Lancamentos() {
                     <button
                         onClick={handleExportLancamentos}
                         disabled={isExporting || total === 0}
-                        title="Exportar XLSX"
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                        title="Exportar XLSX com os filtros aplicados"
+                        className={cn("flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed", FOCO_VISIVEL)}
                     >
-                        {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin"/> :
-                            <Download className="w-3.5 h-3.5"/>}
+                        {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true"/> :
+                            <Download className="w-3.5 h-3.5" aria-hidden="true"/>}
                         {isExporting ? "Exportando…" : "Exportar XLSX"}
                     </button>
                     <button
                         onClick={() => setModalOpen(true)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-xs font-medium transition-all shadow-md shadow-primary/30">
-                        <Plus className="w-3.5 h-3.5"/>
+                        className={cn("flex items-center gap-1.5 px-3 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-xs font-medium transition-all shadow-md shadow-primary/30", FOCO_VISIVEL)}>
+                        <Plus className="w-3.5 h-3.5" aria-hidden="true"/>
                         Novo Lançamento
                     </button>
                 </div>
@@ -314,60 +435,73 @@ export default function Lancamentos() {
 
             {/* Painel principal */}
             <div className="glass-panel rounded-2xl flex flex-col overflow-hidden flex-1 min-h-0">
-                {/* Toolbar */}
+                {/* Toolbar: tipo, período e Filtros à esquerda; busca à direita */}
                 <div
                     className="px-4 py-2.5 border-b border-white/5 flex flex-wrap items-center justify-between gap-3 bg-black/10">
-                    <div className="flex items-center gap-4">
-                        <div className="flex bg-black/20 rounded-lg p-0.5 border border-white/5">
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                        <div className="flex bg-black/20 rounded-lg p-0.5 border border-white/5" role="group" aria-label="Tipo de lançamento">
                             {TABS.map(({key, label}) => (
                                 <button key={key}
-                                        onClick={() => {
-                                            setActiveTab(key);
-                                            setPage(1);
-                                        }}
-                                        className={`px-4 py-1 rounded-md text-xs font-bold transition-colors ${
+                                        type="button"
+                                        aria-pressed={activeTab === key}
+                                        onClick={() => atualizar({tipo: key === "todos" ? null : key})}
+                                        className={cn(`px-4 py-1 rounded-md text-xs font-bold transition-colors ${
                                             activeTab === key
                                                 ? key === "cr" ? "bg-teal-500/20 text-teal-300 shadow-sm"
                                                     : key === "cp" ? "bg-orange-500/20 text-orange-300 shadow-sm"
                                                         : "bg-white/10 text-white shadow-sm"
                                                 : "text-muted-foreground hover:text-white"
-                                        }`}>
+                                        }`, FOCO_VISIVEL)}>
                                     {label}
                                 </button>
                             ))}
                         </div>
 
-                        <div className="flex items-center gap-2">
-                            <DateRangePicker
-                                startDate={dateStart}
-                                endDate={dateEnd}
-                                onChange={(start: string, end: string) => {
-                                    setDateStart(start);
-                                    setDateEnd(end);
-                                    setPage(1);
-                                }}
-                            />
-                        </div>
+                        <DateRangePicker
+                            startDate={dateStart}
+                            endDate={dateEnd}
+                            onChange={(start: string, end: string) => {
+                                atualizar({data_inicio: start || null, data_fim: end || null});
+                            }}
+                        />
+
+                        <FiltrosPopover
+                            definicoes={definicoes}
+                            valores={filtros.valores}
+                            contagem={filtros.contagem}
+                            onAplicar={filtros.aplicar}
+                        />
                     </div>
 
-                    <div className="flex items-center gap-2">
-                        <div
-                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-black/20 border border-white/5 focus-within:border-primary/50 transition-all">
-                            <Search className="w-3.5 h-3.5 text-muted-foreground"/>
-                            <input
-                                type="text"
-                                placeholder="Buscar por descrição ou nº do documento..."
-                                value={search}
-                                onChange={e => handleSearchChange(e.target.value)}
-                                className="bg-transparent border-none outline-none text-xs w-52 placeholder:text-muted-foreground text-white"
-                            />
-                        </div>
-                        <button
-                            className="p-1.5 rounded-lg bg-white/5 border border-white/5 hover:bg-white/10 transition-colors text-muted-foreground hover:text-white">
-                            <Filter className="w-4 h-4"/>
-                        </button>
-                    </div>
+                    <CampoBusca
+                        valor={busca}
+                        onBuscar={(termo) => atualizar({q: termo || null})}
+                        placeholder="Buscar por descrição, parceiro ou documento…"
+                        rotulo="Buscar lançamentos por descrição, parceiro ou documento"
+                    />
                 </div>
+
+                <FiltrosAtivos
+                    chips={filtros.chips}
+                    onRemover={filtros.remover}
+                    onLimparTodos={filtros.limpar}
+                    anuncio={anuncio}
+                    resumo={
+                        !isLoading && data ? (
+                            <span>
+                                {total.toLocaleString("pt-BR")} {total === 1 ? "lançamento" : "lançamentos"}
+                                {data.totais && (
+                                    <>
+                                        {" · "}A receber{" "}
+                                        <strong className="text-teal-300">{formatCurrency(data.totais.receber)}</strong>
+                                        {" · "}A pagar{" "}
+                                        <strong className="text-orange-300">{formatCurrency(data.totais.pagar)}</strong>
+                                    </>
+                                )}
+                            </span>
+                        ) : undefined
+                    }
+                />
 
                 {/* Table */}
                 <div className="overflow-x-auto flex-1">
@@ -525,7 +659,7 @@ export default function Lancamentos() {
                 <div
                     className="px-4 py-2.5 border-t border-white/5 flex items-center justify-between text-xs text-muted-foreground bg-black/10">
           <span>
-            {isLoading ? "..." : `${(page - 1) * limit + 1}–${Math.min(page * limit, total)} de ${total.toLocaleString("pt-BR")} registros`}
+            {isLoading ? "..." : total === 0 ? "0 registros" : `${(page - 1) * limit + 1}–${Math.min(page * limit, total)} de ${total.toLocaleString("pt-BR")} registros`}
           </span>
                     <div className="flex gap-1">
                         <button disabled={page <= 1} onClick={() => setPage(p => p - 1)}
@@ -538,6 +672,7 @@ export default function Lancamentos() {
                             if (pageNum > totalPages) return null;
                             return (
                                 <button key={pageNum} onClick={() => setPage(pageNum)}
+                                        aria-current={pageNum === page ? "page" : undefined}
                                         className={`px-2.5 py-1 rounded font-medium transition-colors ${pageNum === page ? "bg-primary text-white" : "hover:bg-white/5"}`}>
                                     {pageNum}
                                 </button>
