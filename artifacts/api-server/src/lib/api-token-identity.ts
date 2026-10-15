@@ -9,6 +9,7 @@
  */
 
 import crypto from "crypto";
+import {hojeIsoLocal} from "../utils/date-civil";
 
 export type TokenApiContexto = {
     id: number;
@@ -59,4 +60,12 @@ export function hashConfere(valor: string, storedHex: string | null | undefined)
     const calculado = crypto.createHash("sha256").update(valor).digest();
     const armazenado = Buffer.from(storedHex, "hex");
     return calculado.length === armazenado.length && crypto.timingSafeEqual(calculado, armazenado);
+}
+
+/**
+ * Token com `data_expiracao` (coluna date, "YYYY-MM-DD") vale até o fim desse dia civil
+ * em America/Sao_Paulo. Com "hoje" em UTC, expirava ~3h antes (a partir das 21h BRT).
+ */
+export function tokenExpirado(dataExpiracao: string | null | undefined, agora: Date = new Date()): boolean {
+    return !!dataExpiracao && dataExpiracao < hojeIsoLocal(agora);
 }

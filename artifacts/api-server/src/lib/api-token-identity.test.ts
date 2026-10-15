@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import {describe, it} from "node:test";
-import {aplicarIdentidadeToken, hashConfere, identidadeAuditoria} from "./api-token-identity";
+import {aplicarIdentidadeToken, hashConfere, identidadeAuditoria, tokenExpirado} from "./api-token-identity";
 import {shouldAuditRequest} from "./audit-routes";
 
 const sha = (v: string) => crypto.createHash("sha256").update(v).digest("hex");
@@ -58,5 +58,19 @@ describe("hashConfere (tempo constante)", () => {
         assert.equal(hashConfere("segredo", ""), false);
         assert.equal(hashConfere("segredo", "abc"), false);
         assert.equal(hashConfere("segredo", "z".repeat(64)), false);
+    });
+});
+
+describe("tokenExpirado (dia civil de São Paulo)", () => {
+    it("vale até o fim do dia civil local, não até 21h BRT (00h UTC)", () => {
+        // 23:30 BRT de 15/10 = 02:30 UTC de 16/10: ainda é dia 15 em São Paulo.
+        assert.equal(tokenExpirado("2026-10-15", new Date("2026-10-16T02:30:00Z")), false);
+        // 00:30 BRT de 16/10: o dia 15 acabou.
+        assert.equal(tokenExpirado("2026-10-15", new Date("2026-10-16T03:30:00Z")), true);
+    });
+
+    it("sem data de expiração não expira", () => {
+        assert.equal(tokenExpirado(null), false);
+        assert.equal(tokenExpirado(undefined), false);
     });
 });

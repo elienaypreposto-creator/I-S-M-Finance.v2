@@ -4,7 +4,7 @@ import {eq} from "drizzle-orm";
 import {withBypassRls, type TenantDb} from "@workspace/db";
 import {tokensApiTable} from "@workspace/db/schema";
 import {errorResponse} from "../utils/response";
-import {aplicarIdentidadeToken, hashConfere} from "../lib/api-token-identity";
+import {aplicarIdentidadeToken, hashConfere, tokenExpirado} from "../lib/api-token-identity";
 
 // Extensão de tipos do Express.
 declare global {
@@ -71,8 +71,6 @@ export const v1AuthMiddleware = async (
             );
         }
 
-        const hoje = new Date().toISOString().split("T")[0];
-
         /**
          * ============================================================
          * TOKEN NOVO
@@ -131,10 +129,7 @@ export const v1AuthMiddleware = async (
                 );
             }
 
-            if (
-                tokenRow.data_expiracao &&
-                tokenRow.data_expiracao < hoje
-            ) {
+            if (tokenExpirado(tokenRow.data_expiracao)) {
                 return errorResponse(
                     res,
                     401,
@@ -209,10 +204,7 @@ export const v1AuthMiddleware = async (
                 );
             }
 
-            if (
-                tokenRow.data_expiracao &&
-                tokenRow.data_expiracao < hoje
-            ) {
+            if (tokenExpirado(tokenRow.data_expiracao)) {
                 return errorResponse(
                     res,
                     401,
