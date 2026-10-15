@@ -666,6 +666,8 @@ O projeto está configurado para deploy na **Vercel**:
 
 Os ambientes de teste (`ism-tst`, branch `develop`) e homologação (`ism-hml`, branch `master`) rodam via `docker-compose.yml` numa VM compartilhada. O deploy é feito pelo GitHub Actions (`.github/workflows/main.yml`), que grava o `.env` de cada ambiente a partir de secrets e variables do repositório com prefixo `TST_` / `HML_` (ex.: `HML_DB_PASSWORD`, `TST_JWT_SECRET`). `JWT_SECRET` e `JWT_ENCRYPT_SECRET` têm de ser distintos entre si e entre ambientes; o deploy e a API recusam valores iguais dentro do mesmo ambiente.
 
+Variables (`vars`): `<AMB>_PORT`, `_WEB_PORT`, `_API_PORT`, `_DB_PORT`, `_FRONTEND_URL`, `_SMTP_HOST`, `_SMTP_PORT`, `_SMTP_USER`. Secrets: `<AMB>_DB_PASSWORD`, `_ISM_APP_PASSWORD`, `_ISM_ADMIN_PASSWORD`, `_ISM_OWNER_PASSWORD`, `_JWT_SECRET`, `_JWT_ENCRYPT_SECRET`, `_SMTP_PASS`, `_LUKS_PASSPHRASE` e `REDIS_PASSWORD` (sem prefixo). O passo "Validar variáveis do ambiente" do `main.yml` falha se faltar alguma obrigatória; não há mais `.env` inteiro guardado em secret.
+
 **Variáveis obrigatórias no `.env` usadas pelo compose:**
 
 | Variável | Uso |
