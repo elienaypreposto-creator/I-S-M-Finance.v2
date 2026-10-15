@@ -56,7 +56,7 @@ export function IgnorarLinhaModal({open, obrigatorio = false, pending, onClose, 
             <AlertDialogContent className="sm:max-w-md bg-card border border-white/10 text-white rounded-2xl">
                 <AlertDialogHeader>
                     <AlertDialogTitle className="flex items-center gap-2 text-base">
-                        <Ban className="w-4 h-4 text-amber-300"/>
+                        <Ban aria-hidden="true" className="w-4 h-4 text-amber-300"/>
                         Ignorar movimentação
                     </AlertDialogTitle>
                     <AlertDialogDescription className="text-sm text-muted-foreground">
@@ -64,7 +64,7 @@ export function IgnorarLinhaModal({open, obrigatorio = false, pending, onClose, 
                     </AlertDialogDescription>
                 </AlertDialogHeader>
 
-                <label className="text-[10px] uppercase tracking-wide text-muted-foreground block">
+                <label className="text-xs uppercase tracking-wide text-muted-foreground block">
                     Motivo {obrigatorio ? "(obrigatório)" : "(opcional)"}
                     <textarea
                         value={motivo}
@@ -72,7 +72,7 @@ export function IgnorarLinhaModal({open, obrigatorio = false, pending, onClose, 
                         rows={3}
                         maxLength={500}
                         placeholder="Ex.: transferência entre contas próprias, duplicado…"
-                        className="mt-1.5 w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2.5 text-xs text-white resize-none placeholder:text-white/30 focus:outline-none focus:ring-1 focus:ring-amber-500/40"
+                        className="mt-1.5 w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2.5 text-xs text-white resize-none placeholder:text-white/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60"
                     />
                 </label>
 

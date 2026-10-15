@@ -9,7 +9,6 @@ import {
     Shield,
     CheckCircle,
     XCircle,
-    X,
     ChevronDown,
     ChevronRight,
     Search,
@@ -35,8 +34,18 @@ import {tenantQueryKey} from "@/lib/tenant-query";
 import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
-import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
-import {ViewportOverlay} from "@/components/shared/viewport-overlay";
+import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
+import {
+    Modal,
+    ModalBody,
+    ModalFooter,
+    ModalForm,
+    ModalHeader,
+    ModalSpinner,
+    modalBtnPrimaryCls,
+    modalBtnSecondaryCls,
+    modalGridCls,
+} from "@/components/ui/modal-responsivo";
 import {
     Empty,
     EmptyHeader,
@@ -113,6 +122,8 @@ const inputCls = (hasError?: boolean) =>
     `w-full bg-white/5 border rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors ${
         hasError ? "border-destructive/60 focus:border-destructive" : "border-white/10"
     }`;
+
+const userLabelCls = "text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block";
 
 // ─── Permissões (estáticas) ────────────────────────────────────────────────────
 const permissoesGranulares = [
@@ -330,131 +341,134 @@ function PermissoesModal({usuario, onClose}: { usuario: UsuarioRow; onClose: () 
         onClose();
     }
 
-    useEscapeClose(!ConfirmDialogProps.open, () => {
-        void handleRequestClose();
-    }, 60);
-
     return (
-        <ViewportOverlay className="z-[60] bg-black/70">
-            <div
-                className="bg-card border border-white/10 rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] flex flex-col">
-                <div className="flex items-center justify-between p-4 sm:p-5 border-b border-white/5">
-                    <div>
-                        <h3 className="font-bold text-white text-sm sm:text-base">Permissões - {usuario.nome}</h3>
-                        <p className="text-xs text-muted-foreground">
-                            {selecionadas.length} de {todasPermissoes.length} permissões ativas
-                        </p>
-                    </div>
-                    <button type="button" onClick={() => void handleRequestClose()} className="p-1.5 hover:bg-white/5 rounded-lg">
-                        <X className="w-5 h-5"/>
-                    </button>
-                </div>
-
-                <div className="px-4 pt-3 pb-2 border-b border-white/5 flex flex-wrap gap-2 items-center">
-                    <span className="text-xs text-muted-foreground">Perfil rápido:</span>
-                    {Object.keys(perfisBase).map((p) => (
-                        <button
-                            key={p}
-                            type="button"
-                            onClick={() => setSelecionadas(perfisBase[p] ?? [])}
-                            className="text-xs px-2.5 py-1 bg-white/5 hover:bg-white/10 rounded-lg text-muted-foreground hover:text-white transition-colors border border-white/10"
-                        >
-                            {p}
-                        </button>
-                    ))}
-                </div>
-
-                <div className="p-3 sm:p-4 border-b border-white/5">
-                    <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-3 py-2.5">
-                        <Search className="w-4 h-4 text-muted-foreground shrink-0"/>
-                        <input
-                            value={busca}
-                            onChange={(e) => setBusca(e.target.value)}
-                            placeholder="Buscar permissão..."
-                            className="bg-transparent outline-none text-sm text-white placeholder:text-muted-foreground w-full"
-                        />
-                    </div>
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-2 sm:p-3 space-y-1">
-                    {loadingPerms ? (
-                        <div className="flex items-center justify-center h-24 gap-3 text-muted-foreground">
-                            <Loader2 className="w-5 h-5 animate-spin"/>
-                            <span className="text-sm">Carregando permissões…</span>
+        <Modal
+            onClose={() => void handleRequestClose()}
+            // O 1º focável do corpo é um "Perfil rápido" (troca tudo com Enter): começa pela busca.
+            initialFocus={(content) => content.querySelector<HTMLElement>("#permissoes-busca")}
+        >
+            <ModalHeader
+                title={`Permissões - ${usuario.nome}`}
+                description={`${selecionadas.length} de ${todasPermissoes.length} permissões ativas`}
+            />
+            <ModalBody className="space-y-4">
+                <div className="flex flex-col md:flex-row md:items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                        <label htmlFor="permissoes-busca" className="sr-only">Buscar permissão</label>
+                        <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-3 py-2.5">
+                            <Search aria-hidden="true" className="w-4 h-4 text-muted-foreground shrink-0"/>
+                            <input
+                                id="permissoes-busca"
+                                value={busca}
+                                onChange={(e) => setBusca(e.target.value)}
+                                placeholder="Buscar permissão..."
+                                className="bg-transparent outline-none text-sm text-white placeholder:text-muted-foreground w-full"
+                            />
                         </div>
-                    ) : (
-                        filtered.map((grupo) => (
-                            <div key={grupo.grupo} className="border border-white/5 rounded-xl overflow-hidden">
-                                <button
-                                    type="button"
-                                    onClick={() => toggleGrupo(grupo.grupo)}
-                                    className="w-full flex items-center justify-between px-3 sm:px-4 py-3 bg-white/5 hover:bg-white/10 transition-colors"
-                                >
-                                    <div className="flex items-center gap-2 sm:gap-3 text-left">
+                    </div>
+                    <div role="group" aria-labelledby="permissoes-perfil-rapido-label"
+                         className="flex flex-wrap gap-2 items-center">
+                        <span id="permissoes-perfil-rapido-label" className="text-xs text-muted-foreground">
+                            Perfil rápido:
+                        </span>
+                        {Object.keys(perfisBase).map((p) => (
+                            <button
+                                key={p}
+                                type="button"
+                                onClick={() => setSelecionadas(perfisBase[p] ?? [])}
+                                className="text-xs px-2.5 py-1 bg-white/5 hover:bg-white/10 rounded-lg text-muted-foreground hover:text-white transition-colors border border-white/10"
+                            >
+                                {p}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                {loadingPerms ? (
+                    <div className="flex items-center justify-center h-24 gap-3 text-muted-foreground">
+                        <Loader2 aria-hidden="true" className="w-5 h-5 animate-spin"/>
+                        <span className="text-sm">Carregando permissões…</span>
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start">
+                        {filtered.map((grupo, gi) => {
+                            const aberto = expandidos.includes(grupo.grupo);
+                            const listaId = `permissoes-grupo-${gi}`;
+                            const marcadas = grupo.itens.filter((i) => selecionadas.includes(i.codigo)).length;
+                            return (
+                                <div key={grupo.grupo} className="border border-white/5 rounded-xl overflow-hidden">
+                                    <div className="flex items-center gap-2 sm:gap-3 pl-3 sm:pl-4 bg-white/5 hover:bg-white/10 transition-colors">
                                         <input
                                             type="checkbox"
                                             className="accent-primary w-4 h-4 shrink-0"
+                                            aria-label={`Marcar todas de ${grupo.grupo}`}
                                             checked={grupo.itens.every((i) => selecionadas.includes(i.codigo))}
                                             onChange={() => toggleTodosGrupo(grupo.grupo, grupo.itens)}
-                                            onClick={(e) => e.stopPropagation()}
                                         />
-                                        <span
-                                            className="font-semibold text-white text-xs sm:text-sm">{grupo.grupo}</span>
-                                        <span className="text-xs text-muted-foreground">
-                      {grupo.itens.filter((i) => selecionadas.includes(i.codigo)).length}/{grupo.itens.length}
-                    </span>
+                                        <button
+                                            type="button"
+                                            onClick={() => toggleGrupo(grupo.grupo)}
+                                            aria-expanded={aberto}
+                                            aria-controls={aberto ? listaId : undefined}
+                                            className="flex-1 min-w-0 flex items-center justify-between gap-2 pr-3 sm:pr-4 py-3 text-left"
+                                        >
+                                            <span className="flex items-center gap-2 sm:gap-3 min-w-0">
+                                                <span className="font-semibold text-white text-xs sm:text-sm">{grupo.grupo}</span>
+                                                <span className="text-xs text-muted-foreground">
+                                                    {marcadas}/{grupo.itens.length}
+                                                </span>
+                                            </span>
+                                            {aberto ? (
+                                                <ChevronDown aria-hidden="true" className="w-4 h-4 text-muted-foreground shrink-0"/>
+                                            ) : (
+                                                <ChevronRight aria-hidden="true" className="w-4 h-4 text-muted-foreground shrink-0"/>
+                                            )}
+                                        </button>
                                     </div>
-                                    {expandidos.includes(grupo.grupo) ? (
-                                        <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0"/>
-                                    ) : (
-                                        <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0"/>
+                                    {aberto && (
+                                        <div id={listaId} role="group" aria-label={grupo.grupo}
+                                             className="divide-y divide-white/5">
+                                            {grupo.itens.map((item) => (
+                                                <label
+                                                    key={item.codigo}
+                                                    className="flex items-center gap-3 px-4 sm:px-5 py-2.5 cursor-pointer hover:bg-white/5 transition-colors"
+                                                >
+                                                    <input
+                                                        type="checkbox"
+                                                        className="accent-primary w-4 h-4 shrink-0"
+                                                        checked={selecionadas.includes(item.codigo)}
+                                                        onChange={() => toggle(item.codigo)}
+                                                    />
+                                                    <span
+                                                        className="text-xs sm:text-sm text-muted-foreground flex-1">{item.nome}</span>
+                                                    {selecionadas.includes(item.codigo) && (
+                                                        <CheckCircle aria-hidden="true" className="w-3.5 h-3.5 text-success shrink-0"/>
+                                                    )}
+                                                </label>
+                                            ))}
+                                        </div>
                                     )}
-                                </button>
-                                {expandidos.includes(grupo.grupo) && (
-                                    <div className="divide-y divide-white/5">
-                                        {grupo.itens.map((item) => (
-                                            <label
-                                                key={item.codigo}
-                                                className="flex items-center gap-3 px-4 sm:px-5 py-2.5 cursor-pointer hover:bg-white/5 transition-colors"
-                                            >
-                                                <input
-                                                    type="checkbox"
-                                                    className="accent-primary w-4 h-4 shrink-0"
-                                                    checked={selecionadas.includes(item.codigo)}
-                                                    onChange={() => toggle(item.codigo)}
-                                                />
-                                                <span
-                                                    className="text-xs sm:text-sm text-muted-foreground flex-1">{item.nome}</span>
-                                                {selecionadas.includes(item.codigo) && (
-                                                    <CheckCircle className="w-3.5 h-3.5 text-success shrink-0"/>
-                                                )}
-                                            </label>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        ))
-                    )}
-                </div>
-
-                <div className="flex gap-3 p-4 sm:p-5 border-t border-white/5">
-                    <button type="button" onClick={() => void handleRequestClose()}
-                            className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">
-                        Cancelar
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => saveMutation.mutate(selecionadas)}
-                        disabled={saveMutation.isPending}
-                        className="flex-1 py-2.5 bg-primary hover:bg-primary/90 disabled:opacity-60 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-2"
-                    >
-                        {saveMutation.isPending && <Loader2 className="w-4 h-4 animate-spin"/>}
-                        Salvar Permissões
-                    </button>
-                </div>
-            </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+            </ModalBody>
+            <ModalFooter hint="Esc fecha">
+                <button type="button" onClick={() => void handleRequestClose()} className={modalBtnSecondaryCls}>
+                    Cancelar
+                </button>
+                <button
+                    type="button"
+                    onClick={() => saveMutation.mutate(selecionadas)}
+                    disabled={saveMutation.isPending}
+                    className={modalBtnPrimaryCls}
+                >
+                    {saveMutation.isPending ? <ModalSpinner/> : "Salvar Permissões"}
+                </button>
+            </ModalFooter>
             <ConfirmDialog {...ConfirmDialogProps} />
-        </ViewportOverlay>
+        </Modal>
     );
 }
 
@@ -469,6 +483,7 @@ function useDebounce<T>(value: T, delay: number): T {
 }
 
 function ParceiroAutocomplete({
+                                  id,
                                   value,
                                   onChange,
                                   onSelectFull,
@@ -476,6 +491,7 @@ function ParceiroAutocomplete({
                                   disabled,
                                   hasError,
                               }: {
+    id?: string;
     value: string;
     onChange: (val: string) => void;
     onSelectFull: (parceiro: any) => void;
@@ -539,7 +555,9 @@ function ParceiroAutocomplete({
     return (
         <div className="relative" ref={wrapperRef}>
             <input
+                id={id}
                 type="text"
+                aria-invalid={hasError || undefined}
                 disabled={disabled}
                 value={search}
                 onChange={handleInputChange}
@@ -614,10 +632,6 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
         onClose();
     }
 
-    useEscapeClose(!ConfirmDialogProps.open, () => {
-        void handleRequestClose();
-    });
-
     const e = errors as any;
 
     const handleParceiroSelect = (parceiro: any) => {
@@ -631,24 +645,13 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
     const submitDisabled = isPending || (!isEdit && parceiroSelecionadoId === null);
 
     return (
-        <ViewportOverlay>
-            <div
-                className="bg-card border border-white/10 rounded-2xl w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto">
-                <div
-                    className="flex items-center justify-between p-4 sm:p-6 border-b border-white/5 sticky top-0 bg-card z-10">
-                    <h2 className="text-base sm:text-lg font-bold text-white">
-                        {isEdit ? "Editar Usuário" : "Novo Usuário"}
-                    </h2>
-                    <button type="button" onClick={() => void handleRequestClose()} className="p-1.5 hover:bg-white/5 rounded-lg">
-                        <X className="w-5 h-5"/>
-                    </button>
-                </div>
-
-                <form onSubmit={handleSubmit(onSave)} noValidate>
-                    <div className="p-4 sm:p-6 space-y-4">
+        <Modal onClose={() => void handleRequestClose()}>
+            <ModalHeader title={isEdit ? "Editar Usuário" : "Novo Usuário"}/>
+            <ModalForm onSubmit={handleSubmit(onSave)} noValidate>
+                <ModalBody>
+                    <div className={modalGridCls}>
                         <div>
-                            <label
-                                className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                            <label htmlFor="usuario-nome" className={userLabelCls}>
                                 Nome Completo <span className="text-destructive">*</span>
                             </label>
                             <Controller
@@ -656,6 +659,7 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
                                 control={control}
                                 render={({field}) => (
                                     <ParceiroAutocomplete
+                                        id="usuario-nome"
                                         value={field.value}
                                         onChange={field.onChange}
                                         onSelectFull={handleParceiroSelect}
@@ -675,68 +679,66 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
                         </div>
 
                         <div>
-                            <label
-                                className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                            <label htmlFor="usuario-email" className={userLabelCls}>
                                 E-mail (Login) <span className="text-destructive">*</span>
                             </label>
-                            <input {...register("email")} type="email" disabled={isEdit}
+                            <input id="usuario-email" {...register("email")} type="email" disabled={isEdit}
+                                   aria-invalid={!!e.email}
                                    className={inputCls(!!e.email) + " disabled:opacity-50"}
                                    placeholder="joao@empresa.com.br"/>
                             <FieldError message={e.email?.message}/>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label
-                                    className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Cargo</label>
-                                <input {...register("cargo")} className={inputCls(!!e.cargo)}
-                                       placeholder="Ex: Analista"/>
-                                <FieldError message={e.cargo?.message}/>
-                            </div>
-                            <div>
-                                <label
-                                    className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Perfil
-                                    Base <span className="text-destructive">*</span></label>
-                                <select
-                                    {...register("perfil_base")}
-                                    className={`w-full bg-white/5 border rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors [&>option]:bg-[#1A1A24] [&>option]:text-white ${e.perfil_base ? "border-destructive/60" : "border-white/10"}`}
-                                >
+                        <div>
+                            <label htmlFor="usuario-cargo" className={userLabelCls}>Cargo</label>
+                            <input id="usuario-cargo" {...register("cargo")} aria-invalid={!!e.cargo}
+                                   className={inputCls(!!e.cargo)}
+                                   placeholder="Ex: Analista"/>
+                            <FieldError message={e.cargo?.message}/>
+                        </div>
+                        <div>
+                            <label htmlFor="usuario-perfil-base" className={userLabelCls}>
+                                Perfil Base <span className="text-destructive">*</span>
+                            </label>
+                            <select
+                                id="usuario-perfil-base"
+                                {...register("perfil_base")}
+                                aria-invalid={!!e.perfil_base}
+                                className={`w-full bg-white/5 border rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors [&>option]:bg-[#1A1A24] [&>option]:text-white ${e.perfil_base ? "border-destructive/60" : "border-white/10"}`}
+                            >
 
-                                    {Object.keys(perfisBase).map((p) => <option key={p} value={p}>{p}</option>)}
-                                </select>
-                            </div>
+                                {Object.keys(perfisBase).map((p) => <option key={p} value={p}>{p}</option>)}
+                            </select>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label
-                                    className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Telefone</label>
-                                <Controller name="telefone" control={control} render={({field}) => (
-                                    <input value={field.value ?? ""}
-                                           onChange={(ev) => field.onChange(mascararTelefone(ev.target.value))}
-                                           className={inputCls(!!e.telefone)} placeholder="(11) 3456-7890"
-                                           inputMode="tel"/>
-                                )}/>
-                                <FieldError message={e.telefone?.message}/>
-                            </div>
-                            <div>
-                                <label
-                                    className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Celular</label>
-                                <Controller name="celular" control={control} render={({field}) => (
-                                    <input value={field.value ?? ""}
-                                           onChange={(ev) => field.onChange(mascararTelefone(ev.target.value))}
-                                           className={inputCls(!!e.celular)} placeholder="(11) 9 9999-9999"
-                                           inputMode="tel"/>
-                                )}/>
-                                <FieldError message={e.celular?.message}/>
-                            </div>
+                        <div>
+                            <label htmlFor="usuario-telefone" className={userLabelCls}>Telefone</label>
+                            <Controller name="telefone" control={control} render={({field}) => (
+                                <input id="usuario-telefone" value={field.value ?? ""}
+                                       onChange={(ev) => field.onChange(mascararTelefone(ev.target.value))}
+                                       aria-invalid={!!e.telefone}
+                                       className={inputCls(!!e.telefone)} placeholder="(11) 3456-7890"
+                                       inputMode="tel"/>
+                            )}/>
+                            <FieldError message={e.telefone?.message}/>
+                        </div>
+                        <div>
+                            <label htmlFor="usuario-celular" className={userLabelCls}>Celular</label>
+                            <Controller name="celular" control={control} render={({field}) => (
+                                <input id="usuario-celular" value={field.value ?? ""}
+                                       onChange={(ev) => field.onChange(mascararTelefone(ev.target.value))}
+                                       aria-invalid={!!e.celular}
+                                       className={inputCls(!!e.celular)} placeholder="(11) 9 9999-9999"
+                                       inputMode="tel"/>
+                            )}/>
+                            <FieldError message={e.celular?.message}/>
                         </div>
 
                         {/* Nota informativa sobre credenciais de acesso - apenas na criação */}
                         {!isEdit && (
-                            <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-2">
+                            <div className="col-span-full rounded-xl border border-white/10 bg-white/5 p-4 space-y-2">
                                 <div className="flex items-center gap-2">
-                                    <KeyRound className="w-4 h-4 text-primary shrink-0"/>
+                                    <KeyRound aria-hidden="true" className="w-4 h-4 text-primary shrink-0"/>
                                     <p className="text-xs font-semibold text-white uppercase tracking-wide">
                                         Credenciais de Acesso
                                     </p>
@@ -753,24 +755,18 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
                             </div>
                         )}
                     </div>
-
-                    <div className="flex gap-3 p-4 sm:p-6 pt-0">
-                        <button type="button" onClick={() => void handleRequestClose()}
-                                className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">Cancelar
-                        </button>
-                        <button
-                            type="submit"
-                            disabled={submitDisabled}
-                            className="flex-1 py-2.5 bg-primary hover:bg-primary/90 disabled:opacity-60 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-2"
-                        >
-                            {isPending && <Loader2 className="w-4 h-4 animate-spin"/>}
-                            {isEdit ? "Salvar Alterações" : "Criar Usuário"}
-                        </button>
-                    </div>
-                </form>
-            </div>
+                </ModalBody>
+                <ModalFooter hint="* Campos obrigatórios · Esc fecha">
+                    <button type="button" onClick={() => void handleRequestClose()} className={modalBtnSecondaryCls}>
+                        Cancelar
+                    </button>
+                    <button type="submit" disabled={submitDisabled} className={modalBtnPrimaryCls}>
+                        {isPending ? <ModalSpinner/> : isEdit ? "Salvar Alterações" : "Criar Usuário"}
+                    </button>
+                </ModalFooter>
+            </ModalForm>
             <ConfirmDialog {...ConfirmDialogProps} />
-        </ViewportOverlay>
+        </Modal>
     );
 }
 

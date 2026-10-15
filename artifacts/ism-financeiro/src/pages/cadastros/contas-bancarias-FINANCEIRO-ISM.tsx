@@ -11,7 +11,6 @@ import {
     EyeOff,
     CheckCircle,
     AlertCircle,
-    X,
     Loader2,
     PiggyBank,
     PackageOpen,
@@ -41,8 +40,20 @@ import {
 } from "@/validations/lancamentos.schema";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
-import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
-import {ViewportOverlay} from "@/components/shared/viewport-overlay";
+import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
+import {
+    Modal,
+    ModalBody,
+    ModalFooter,
+    ModalForm,
+    ModalHeader,
+    ModalSpinner,
+    focarPrimeiro,
+    modalBtnPrimaryCls,
+    modalBtnSecondaryCls,
+    modalGrid2Cls,
+    modalGridCls,
+} from "@/components/ui/modal-responsivo";
 import {
     CampoBusca,
     FiltrosAtivos,
@@ -105,7 +116,7 @@ function formatDateBr(iso: string): string {
 }
 
 // ─── Tipos de conta disponíveis (derivados do schema canônico) ────────────────
-const TIPO_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+const TIPO_ICONS: Record<string, React.ComponentType<{ className?: string; "aria-hidden"?: React.AriaAttributes["aria-hidden"] }>> = {
     "Conta Corrente": Landmark,
     "Conta Movimento": PackageOpen,
     "Conta Poupança": PiggyBank,
@@ -402,11 +413,12 @@ function StepPanel({
             <div className="flex items-center justify-between px-4 py-3 bg-white/[0.03]">
                 <div className="flex items-center gap-3">
                     {status === "completed" ? (
-                        <CheckCircle2 className="w-5 h-5 text-success flex-shrink-0"/>
+                        <CheckCircle2 aria-hidden="true" className="w-5 h-5 text-success flex-shrink-0"/>
                     ) : (
                         <div
+                            aria-hidden="true"
                             className={cn(
-                                "w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold flex-shrink-0",
+                                "w-5 h-5 rounded-full border-2 flex items-center justify-center text-xs font-bold flex-shrink-0",
                                 status === "active"
                                     ? "border-primary text-primary"
                                     : "border-white/20 text-white/20",
@@ -417,18 +429,23 @@ function StepPanel({
                     )}
                     <div>
                         <p
+                            id={`conta-passo-${stepNumber}-titulo`}
                             className={cn(
                                 "text-sm font-semibold leading-tight",
                                 status === "pending" ? "text-white/40" : "text-white",
                             )}
                         >
+                            <span className="sr-only">Passo {stepNumber}: </span>
                             {title}
                             {status !== "pending" && (
                                 <span className="text-destructive ml-0.5">*</span>
                             )}
+                            <span className="sr-only">
+                                {status === "completed" ? " (concluído)" : status === "pending" ? " (pendente)" : ""}
+                            </span>
                         </p>
                         {status === "completed" && summary && (
-                            <p className="text-[11px] text-muted-foreground mt-0.5">
+                            <p className="text-xs text-muted-foreground mt-0.5">
                                 {summary}
                             </p>
                         )}
@@ -438,6 +455,7 @@ function StepPanel({
                     <button
                         type="button"
                         onClick={onEdit}
+                        aria-label={`Editar passo ${stepNumber}: ${title}`}
                         className="text-xs text-primary hover:text-primary/80 font-semibold transition-colors"
                     >
                         Editar
@@ -447,7 +465,7 @@ function StepPanel({
 
             {/* Step body - visível apenas quando ativo */}
             {status === "active" && (
-                <div className="p-5 border-t border-white/5 space-y-4">{children}</div>
+                <div data-passo-ativo="" className="p-5 border-t border-white/5 space-y-4">{children}</div>
             )}
         </div>
     );
@@ -455,12 +473,15 @@ function StepPanel({
 
 // ─── Campo de texto padrão ─────────────────────────────────────────────────
 function Field({
+                   id,
                    label,
                    required,
                    error,
                    hint,
                    children,
                }: {
+    /** id do campo (o `<label>` aponta para ele). */
+    id: string;
     label: string;
     required?: boolean;
     error?: string;
@@ -469,15 +490,15 @@ function Field({
 }) {
     return (
         <div>
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+            <label htmlFor={id} className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
                 {label}
                 {required && <span className="text-destructive ml-0.5">*</span>}
             </label>
             {children}
             {hint && !error && (
-                <p className="text-[11px] text-muted-foreground/70 mt-1.5">{hint}</p>
+                <p className="text-xs text-muted-foreground/70 mt-1.5">{hint}</p>
             )}
-            {error && <p className="text-[11px] text-destructive mt-1">{error}</p>}
+            {error && <p className="text-xs text-destructive mt-1">{error}</p>}
         </div>
     );
 }
@@ -492,9 +513,11 @@ const continueBtnClass =
 
 // ─── Select de Banco (dropdown customizado, tema escuro, com logo real) ───
 function BancoSelect({
+                         id,
                          value,
                          onChange,
                      }: {
+    id?: string;
     value: string;
     onChange: (v: string) => void;
 }) {
@@ -521,7 +544,9 @@ function BancoSelect({
     return (
         <div className="relative" ref={containerRef}>
             <button
+                id={id}
                 type="button"
+                aria-expanded={open}
                 onClick={() => setOpen((o) => !o)}
                 className={cn(selectClass, "flex items-center gap-2.5")}
             >
@@ -538,6 +563,7 @@ function BancoSelect({
         </span>
             </button>
             <ChevronDown
+                aria-hidden="true"
                 className={cn(
                     "absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none transition-transform",
                     open && "rotate-180",
@@ -791,216 +817,229 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
         onClose();
     }
 
-    useEscapeClose(!ConfirmDialogProps.open, () => {
-        void handleRequestClose();
-    });
+    // Ao trocar de passo o conteúdo do passo anterior some: leva o foco ao
+    // primeiro campo do passo aberto (na abertura, quem foca é o Modal).
+    const bodyRef = useRef<HTMLDivElement>(null);
+    const primeiroPassoRef = useRef(true);
+    useEffect(() => {
+        if (primeiroPassoRef.current) {
+            primeiroPassoRef.current = false;
+            return;
+        }
+        focarPrimeiro(bodyRef.current?.querySelector<HTMLElement>("[data-passo-ativo]"));
+    }, [activeStep]);
 
     return (
-        <ViewportOverlay>
-            <div
-                className="bg-card border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]">
-                {/* Header fixo */}
-                <div className="flex items-center justify-between p-6 border-b border-white/5 flex-shrink-0">
-                    <h2 className="text-lg font-bold text-white">
-                        {initialData ? "Editar Conta Bancária" : "Cadastrar conta bancária"}
-                    </h2>
-                    <button
-                        type="button"
-                        onClick={() => void handleRequestClose()}
-                        className="p-1.5 hover:bg-white/5 rounded-lg transition-colors"
-                    >
-                        <X className="w-5 h-5"/>
-                    </button>
-                </div>
+        <Modal onClose={() => void handleRequestClose()}>
+            <ModalHeader title={initialData ? "Editar Conta Bancária" : "Cadastrar conta bancária"}/>
 
+            <ModalForm noValidate onSubmit={(e) => e.preventDefault()}>
                 {/* Accordion com scroll */}
-                <div className="overflow-y-auto flex-1 min-h-0">
-                    <form
-                        noValidate
-                        onSubmit={(e) => e.preventDefault()}
-                        className="p-5 space-y-3"
+                <ModalBody ref={bodyRef} className="space-y-3">
+                    {/* ── Passo 1: Tipo de Conta ── */}
+                    <StepPanel
+                        stepNumber={1}
+                        title="Escolha o tipo de conta"
+                        status={getStatus(1)}
+                        summary={step1Summary}
+                        onEdit={() => setActiveStep(1)}
                     >
-                        {/* ── Passo 1: Tipo de Conta ── */}
-                        <StepPanel
-                            stepNumber={1}
-                            title="Escolha o tipo de conta"
-                            status={getStatus(1)}
-                            summary={step1Summary}
-                            onEdit={() => setActiveStep(1)}
-                        >
-                            <div className="flex flex-col gap-2">
-                                {ACCOUNT_TYPES.map(({value, label, Icon}) => {
-                                    const selected = tipo === value;
-                                    return (
-                                        <button
-                                            key={value}
-                                            type="button"
-                                            onClick={() => handleSelectTipo(value)}
-                                            className={cn(
-                                                "w-full flex items-center justify-between gap-3 px-4 py-3.5 rounded-xl border-2 text-left transition-all",
-                                                selected
-                                                    ? "border-primary bg-primary/5 text-white"
-                                                    : "border-white/10 bg-white/5 text-muted-foreground hover:border-white/20 hover:text-white",
-                                            )}
-                                        >
-                                            <div className="flex items-center gap-2.5 min-w-0">
-                        <span
-                            className={cn(
-                                "w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0",
-                                selected ? "border-primary" : "border-white/20",
-                            )}
-                        >
-                          {selected && (
-                              <span className="w-2 h-2 rounded-full bg-primary"/>
-                          )}
-                        </span>
-                                                <span className="text-sm font-medium truncate">
-                          {label}
-                        </span>
-                                            </div>
-                                            <Icon
+                        <div role="group" aria-labelledby="conta-passo-1-titulo"
+                             className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                            {ACCOUNT_TYPES.map(({value, label, Icon}) => {
+                                const selected = tipo === value;
+                                return (
+                                    <button
+                                        key={value}
+                                        type="button"
+                                        aria-pressed={selected}
+                                        onClick={() => handleSelectTipo(value)}
+                                        className={cn(
+                                            "w-full flex items-center justify-between gap-3 px-4 py-3.5 rounded-xl border-2 text-left transition-all",
+                                            selected
+                                                ? "border-primary bg-primary/5 text-white"
+                                                : "border-white/10 bg-white/5 text-muted-foreground hover:border-white/20 hover:text-white",
+                                        )}
+                                    >
+                                        <div className="flex items-center gap-2.5 min-w-0">
+                                            <span
+                                                aria-hidden="true"
                                                 className={cn(
-                                                    "w-5 h-5 flex-shrink-0",
-                                                    selected ? "text-primary" : "text-muted-foreground/60",
+                                                    "w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0",
+                                                    selected ? "border-primary" : "border-white/20",
                                                 )}
-                                            />
-                                        </button>
-                                    );
-                                })}
-                            </div>
+                                            >
+                                                {selected && (
+                                                    <span className="w-2 h-2 rounded-full bg-primary"/>
+                                                )}
+                                            </span>
+                                            <span className="text-sm font-medium truncate">
+                                                {label}
+                                            </span>
+                                        </div>
+                                        <Icon
+                                            aria-hidden="true"
+                                            className={cn(
+                                                "w-5 h-5 flex-shrink-0",
+                                                selected ? "text-primary" : "text-muted-foreground/60",
+                                            )}
+                                        />
+                                    </button>
+                                );
+                            })}
+                        </div>
 
-                            <button
-                                type="button"
-                                disabled={!step1Valid}
-                                onClick={handleStep1Continue}
-                                className={continueBtnClass}
-                            >
-                                Continuar
-                            </button>
-                        </StepPanel>
-
-                        {/* ── Passo 2: Preencha os dados ── */}
-                        <StepPanel
-                            stepNumber={2}
-                            title="Preencha os dados"
-                            status={getStatus(2)}
-                            summary={step2Summary}
-                            onEdit={() => setActiveStep(2)}
+                        <button
+                            type="button"
+                            disabled={!step1Valid}
+                            onClick={handleStep1Continue}
+                            className={continueBtnClass}
                         >
-                            {tipo !== TIPO_SEM_BANCO ? (
-                                /* Conta Corrente e Conta Poupança: Banco + Agência + Conta + Nome */
-                                <div className="space-y-4">
-                                    <Field label="Banco" required error={errors.banco?.message}>
-                                        <Controller
-                                            name="banco"
-                                            control={control}
-                                            render={({field}) => (
-                                                <BancoSelect
-                                                    value={field.value ?? ""}
-                                                    onChange={field.onChange}
-                                                />
-                                            )}
-                                        />
-                                    </Field>
+                            Continuar
+                        </button>
+                    </StepPanel>
 
-                                    <Field
-                                        label="Agência (sem dígito)"
-                                        required
-                                        error={errors.agencia?.message}
-                                    >
-                                        <Controller
-                                            name="agencia"
-                                            control={control}
-                                            render={({field}) => (
-                                                <input
-                                                    type="text"
-                                                    inputMode="numeric"
-                                                    autoComplete="off"
-                                                    value={field.value ?? ""}
-                                                    onChange={(e) =>
-                                                        field.onChange(maskAgencia(e.target.value))
-                                                    }
-                                                    className={monoInputClass}
-                                                    placeholder="0000"
-                                                    maxLength={4}
-                                                />
-                                            )}
-                                        />
-                                    </Field>
+                    {/* ── Passo 2: Preencha os dados ── */}
+                    <StepPanel
+                        stepNumber={2}
+                        title="Preencha os dados"
+                        status={getStatus(2)}
+                        summary={step2Summary}
+                        onEdit={() => setActiveStep(2)}
+                    >
+                        {tipo !== TIPO_SEM_BANCO ? (
+                            /* Conta Corrente e Conta Poupança: Banco + Agência + Conta + Nome */
+                            <div className={modalGridCls}>
+                                <Field id="conta-banco" label="Banco" required error={errors.banco?.message}>
+                                    <Controller
+                                        name="banco"
+                                        control={control}
+                                        render={({field}) => (
+                                            <BancoSelect
+                                                id="conta-banco"
+                                                value={field.value ?? ""}
+                                                onChange={field.onChange}
+                                            />
+                                        )}
+                                    />
+                                </Field>
 
-                                    <Field
-                                        label="Conta (com dígito)"
-                                        required
-                                        error={errors.conta?.message}
-                                    >
-                                        <Controller
-                                            name="conta"
-                                            control={control}
-                                            render={({field}) => (
-                                                <input
-                                                    type="text"
-                                                    inputMode="numeric"
-                                                    autoComplete="off"
-                                                    value={field.value ?? ""}
-                                                    onChange={(e) =>
-                                                        field.onChange(maskConta(e.target.value))
-                                                    }
-                                                    className={monoInputClass}
-                                                    placeholder="00000-0"
-                                                    maxLength={9}
-                                                />
-                                            )}
-                                        />
-                                    </Field>
-
-                                    <Field
-                                        label="Nome da conta"
-                                        required
-                                        error={errors.nome?.message}
-                                        hint="Dê um nome para identificar esta conta depois."
-                                    >
-                                        <input
-                                            {...register("nome")}
-                                            className={inputClass}
-                                            placeholder={getNomePlaceholder()}
-                                        />
-                                    </Field>
-                                </div>
-                            ) : (
-                                /* Conta Movimento (Caixinha): apenas Nome */
                                 <Field
+                                    id="conta-agencia"
+                                    label="Agência (sem dígito)"
+                                    required
+                                    error={errors.agencia?.message}
+                                >
+                                    <Controller
+                                        name="agencia"
+                                        control={control}
+                                        render={({field}) => (
+                                            <input
+                                                id="conta-agencia"
+                                                type="text"
+                                                inputMode="numeric"
+                                                autoComplete="off"
+                                                aria-invalid={!!errors.agencia}
+                                                value={field.value ?? ""}
+                                                onChange={(e) =>
+                                                    field.onChange(maskAgencia(e.target.value))
+                                                }
+                                                className={monoInputClass}
+                                                placeholder="0000"
+                                                maxLength={4}
+                                            />
+                                        )}
+                                    />
+                                </Field>
+
+                                <Field
+                                    id="conta-conta"
+                                    label="Conta (com dígito)"
+                                    required
+                                    error={errors.conta?.message}
+                                >
+                                    <Controller
+                                        name="conta"
+                                        control={control}
+                                        render={({field}) => (
+                                            <input
+                                                id="conta-conta"
+                                                type="text"
+                                                inputMode="numeric"
+                                                autoComplete="off"
+                                                aria-invalid={!!errors.conta}
+                                                value={field.value ?? ""}
+                                                onChange={(e) =>
+                                                    field.onChange(maskConta(e.target.value))
+                                                }
+                                                className={monoInputClass}
+                                                placeholder="00000-0"
+                                                maxLength={9}
+                                            />
+                                        )}
+                                    />
+                                </Field>
+
+                                <Field
+                                    id="conta-nome"
+                                    label="Nome da conta"
+                                    required
+                                    error={errors.nome?.message}
+                                    hint="Dê um nome para identificar esta conta depois."
+                                >
+                                    <input
+                                        id="conta-nome"
+                                        {...register("nome")}
+                                        aria-invalid={!!errors.nome}
+                                        className={inputClass}
+                                        placeholder={getNomePlaceholder()}
+                                    />
+                                </Field>
+                            </div>
+                        ) : (
+                            /* Conta Movimento (Caixinha): apenas Nome */
+                            <div className={modalGridCls}>
+                                <Field
+                                    id="conta-nome"
                                     label="Nome da conta movimento"
                                     required
                                     error={errors.nome?.message}
                                     hint="Dê um nome para identificar esta conta depois."
                                 >
                                     <input
+                                        id="conta-nome"
                                         {...register("nome")}
+                                        aria-invalid={!!errors.nome}
                                         className={inputClass}
                                         placeholder={getNomePlaceholder()}
                                     />
                                 </Field>
-                            )}
+                            </div>
+                        )}
 
-                            {/* Cor (opcional) */}
-                            <div>
-                                <label
-                                    className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                                    Cor de Identificação
-                                </label>
-                                <div className="flex flex-wrap gap-2 p-2 bg-white/5 border border-white/10 rounded-xl">
-                                    {COLOR_PALETTE.map((c) => (
+                        {/* Cor (opcional) */}
+                        <div>
+                            <p id="conta-cor-rotulo"
+                               className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                                Cor de Identificação
+                            </p>
+                            <div role="group" aria-labelledby="conta-cor-rotulo"
+                                 className="flex flex-wrap gap-2 p-2 bg-white/5 border border-white/10 rounded-xl">
+                                {COLOR_PALETTE.map((c) => {
+                                    const nomeCor =
+                                        BANCOS_BR.find((b) => b.cor === c)?.nome ??
+                                        CORES_EXTRAS.find((e) => e.cor === c)?.nome ??
+                                        "Cor padrão";
+                                    return (
                                         <button
                                             key={c}
                                             type="button"
                                             onClick={() =>
                                                 setValue("cor", c, {shouldValidate: true})
                                             }
-                                            title={
-                                                BANCOS_BR.find((b) => b.cor === c)?.nome ??
-                                                CORES_EXTRAS.find((e) => e.cor === c)?.nome ??
-                                                "Cor padrão"
-                                            }
+                                            title={nomeCor}
+                                            aria-label={nomeCor}
+                                            aria-pressed={cor === c}
                                             className={cn(
                                                 "w-8 h-8 rounded-lg border-2 transition-all",
                                                 cor === c
@@ -1009,45 +1048,50 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                                             )}
                                             style={{backgroundColor: c}}
                                         />
-                                    ))}
-                                </div>
+                                    );
+                                })}
                             </div>
+                        </div>
 
-                            <div className="border-t border-white/5 pt-4">
-                                <button
-                                    type="button"
-                                    disabled={!step2Valid}
-                                    onClick={() => void handleStep2Continue()}
-                                    className={continueBtnClass}
-                                >
-                                    Continuar
-                                </button>
-                            </div>
-                        </StepPanel>
+                        <div className="border-t border-white/5 pt-4">
+                            <button
+                                type="button"
+                                disabled={!step2Valid}
+                                onClick={() => void handleStep2Continue()}
+                                className={continueBtnClass}
+                            >
+                                Continuar
+                            </button>
+                        </div>
+                    </StepPanel>
 
-                        {/* ── Passo 3: Defina a forma de cadastro ── */}
-                        <StepPanel
-                            stepNumber={3}
-                            title="Dados Iniciais da Conta"
-                            status={getStatus(3)}
-                            onEdit={() => setActiveStep(3)}
-                        >
-                            {/* Caixa de instrução */}
-                            <div className="border border-primary/30 bg-primary/5 rounded-xl p-4 space-y-4">
-                                <p className="flex items-start gap-2 text-xs text-primary/90 font-medium">
-                                    <Info className="w-4 h-4 flex-shrink-0 mt-0.5"/>
+                    {/* ── Passo 3: Defina a forma de cadastro ── */}
+                    <StepPanel
+                        stepNumber={3}
+                        title="Dados Iniciais da Conta"
+                        status={getStatus(3)}
+                        onEdit={() => setActiveStep(3)}
+                    >
+                        {/* Caixa de instrução */}
+                        <div className="border border-primary/30 bg-primary/5 rounded-xl p-4">
+                            <div className={modalGrid2Cls}>
+                                <p className="col-span-full flex items-start gap-2 text-xs text-primary/90 font-medium">
+                                    <Info aria-hidden="true" className="w-4 h-4 flex-shrink-0 mt-0.5"/>
                                     Informe uma data de início e o saldo do dia anterior:
                                 </p>
 
                                 {/* Data de início */}
                                 <Field
+                                    id="conta-data-inicio"
                                     label="Início dos lançamentos"
                                     required
                                     error={errors.data_inicio?.message}
                                 >
                                     <input
+                                        id="conta-data-inicio"
                                         type="date"
                                         {...register("data_inicio")}
+                                        aria-invalid={!!errors.data_inicio}
                                         max={maxDataInicio}
                                         className={inputClass}
                                     />
@@ -1055,22 +1099,26 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
 
                                 {/* Saldo do dia anterior */}
                                 <Field
+                                    id="conta-saldo-inicial"
                                     label="Saldo final da conta no dia anterior"
                                     required
                                     error={errors.saldo_inicial_br?.message}
                                 >
                                     <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground text-sm font-bold">
-                      R$
-                    </span>
+                                        <span aria-hidden="true"
+                                              className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground text-sm font-bold">
+                                            R$
+                                        </span>
                                         <Controller
                                             name="saldo_inicial_br"
                                             control={control}
                                             render={({field}) => (
                                                 <input
+                                                    id="conta-saldo-inicial"
                                                     type="text"
                                                     inputMode="numeric"
                                                     autoComplete="off"
+                                                    aria-invalid={!!errors.saldo_inicial_br}
                                                     value={field.value}
                                                     onChange={(e) =>
                                                         field.onChange(formatValorBrInput(e.target.value))
@@ -1083,37 +1131,35 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                                     </div>
                                 </Field>
                             </div>
+                        </div>
+                    </StepPanel>
+                </ModalBody>
 
-                            {/* Ações */}
-                            <div className="flex gap-3 pt-1">
-                                <button
-                                    type="button"
-                                    onClick={() => void handleRequestClose()}
-                                    className="px-5 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium transition-all"
-                                >
-                                    Cancelar
-                                </button>
-                                <button
-                                    type="button"
-                                    disabled={mutation.isPending || !step3Valid}
-                                    onClick={() => void handleSave()}
-                                    className="px-6 py-2.5 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-success flex items-center gap-2"
-                                >
-                                    {mutation.isPending ? (
-                                        <Loader2 className="w-4 h-4 animate-spin"/>
-                                    ) : initialData ? (
-                                        "Salvar Alterações"
-                                    ) : (
-                                        "Salvar"
-                                    )}
-                                </button>
-                            </div>
-                        </StepPanel>
-                    </form>
-                </div>
-            </div>
+                <ModalFooter hint="* Campos obrigatórios · Esc fecha">
+                    <button type="button" onClick={() => void handleRequestClose()} className={modalBtnSecondaryCls}>
+                        Cancelar
+                    </button>
+                    {/* Salvar só no passo 3, como antes da migração. */}
+                    {activeStep === 3 && (
+                        <button
+                            type="button"
+                            disabled={mutation.isPending || !step3Valid}
+                            onClick={() => void handleSave()}
+                            className={modalBtnPrimaryCls}
+                        >
+                            {mutation.isPending ? (
+                                <ModalSpinner/>
+                            ) : initialData ? (
+                                "Salvar Alterações"
+                            ) : (
+                                "Salvar"
+                            )}
+                        </button>
+                    )}
+                </ModalFooter>
+            </ModalForm>
             <ConfirmDialog {...ConfirmDialogProps} />
-        </ViewportOverlay>
+        </Modal>
     );
 }
 

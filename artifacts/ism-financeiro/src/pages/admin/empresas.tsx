@@ -8,7 +8,17 @@ import {useToast} from "@/hooks/use-toast";
 import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {useAuth} from "@/hooks/use-auth";
 import {PERM} from "@/lib/permissoes";
-import {ViewportOverlay} from "@/components/shared/viewport-overlay";
+import {
+    Modal,
+    ModalBody,
+    ModalFooter,
+    ModalForm,
+    ModalHeader,
+    ModalSpinner,
+    modalBtnPrimaryCls,
+    modalBtnSecondaryCls,
+    modalGridCls,
+} from "@/components/ui/modal-responsivo";
 import {CampoBusca, contemBusca, useParametrosUrl} from "@/components/shared/filtros";
 
 type EmpresaRow = {
@@ -178,6 +188,9 @@ function TodasEmpresas({isSuperadmin}: {isSuperadmin: boolean}) {
         onError: (err: Error) => toast({title: "Erro", description: err.message, variant: "destructive"}),
     });
 
+    const podeCriar = razao.trim().length >= 2 && dpaRepresentante.trim().length >= 2 && !createMutation.isPending;
+    const labelCls = "text-xs uppercase tracking-widest text-muted-foreground font-bold mb-1.5 block";
+
     if (!isSuperadmin) {
         return <p className="text-sm text-destructive">Cadastro de empresas exige acesso de superadmin.</p>;
     }
@@ -287,61 +300,67 @@ function TodasEmpresas({isSuperadmin}: {isSuperadmin: boolean}) {
             )}
 
             {showModal && (
-                <ViewportOverlay>
-                    <div className="glass-panel w-full max-w-md rounded-2xl p-6 space-y-4">
-                        <h2 className="text-lg font-bold text-white">Nova empresa</h2>
-                        <label className="block space-y-1">
-                            <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Razão social</span>
-                            <input
-                                value={razao}
-                                onChange={(e) => setRazao(e.target.value)}
-                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50"
-                            />
-                        </label>
-                        <label className="block space-y-1">
-                            <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Nome fantasia</span>
-                            <input
-                                value={fantasia}
-                                onChange={(e) => setFantasia(e.target.value)}
-                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50"
-                            />
-                        </label>
-                        <label className="block space-y-1">
-                            <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">CNPJ (opcional)</span>
-                            <input
-                                value={cnpj}
-                                onChange={(e) => setCnpj(e.target.value)}
-                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50"
-                            />
-                        </label>
-                        <label className="block space-y-1">
-                            <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Representante que aceita o DPA</span>
-                            <input
-                                value={dpaRepresentante}
-                                onChange={(e) => setDpaRepresentante(e.target.value)}
-                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50"
-                            />
-                        </label>
-                        <div className="flex gap-2 pt-2">
-                            <button
-                                type="button"
-                                onClick={() => setShowModal(false)}
-                                className="flex-1 py-2.5 rounded-xl text-sm bg-white/5 text-muted-foreground"
-                            >
+                <Modal onClose={() => setShowModal(false)}>
+                    <ModalHeader title="Nova empresa"/>
+                    <ModalForm
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            if (!podeCriar) return;
+                            createMutation.mutate();
+                        }}
+                    >
+                        <ModalBody>
+                            <div className={modalGridCls}>
+                                <div>
+                                    <label htmlFor="empresa-razao-social" className={labelCls}>Razão social *</label>
+                                    <input
+                                        id="empresa-razao-social"
+                                        value={razao}
+                                        onChange={(e) => setRazao(e.target.value)}
+                                        className={inputCls}
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="empresa-nome-fantasia" className={labelCls}>Nome fantasia</label>
+                                    <input
+                                        id="empresa-nome-fantasia"
+                                        value={fantasia}
+                                        onChange={(e) => setFantasia(e.target.value)}
+                                        className={inputCls}
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="empresa-cnpj" className={labelCls}>CNPJ (opcional)</label>
+                                    <input
+                                        id="empresa-cnpj"
+                                        value={cnpj}
+                                        onChange={(e) => setCnpj(e.target.value)}
+                                        className={inputCls}
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="empresa-dpa-representante" className={labelCls}>
+                                        Representante que aceita o DPA *
+                                    </label>
+                                    <input
+                                        id="empresa-dpa-representante"
+                                        value={dpaRepresentante}
+                                        onChange={(e) => setDpaRepresentante(e.target.value)}
+                                        className={inputCls}
+                                    />
+                                </div>
+                            </div>
+                        </ModalBody>
+                        <ModalFooter hint="* Campos obrigatórios · Esc fecha">
+                            <button type="button" onClick={() => setShowModal(false)} className={modalBtnSecondaryCls}>
                                 Cancelar
                             </button>
-                            <button
-                                type="button"
-                                disabled={razao.trim().length < 2 || dpaRepresentante.trim().length < 2 || createMutation.isPending}
-                                onClick={() => createMutation.mutate()}
-                                className="flex-1 py-2.5 rounded-xl text-sm bg-primary text-white disabled:opacity-50 inline-flex items-center justify-center gap-2"
-                            >
-                                {createMutation.isPending && <Loader2 className="w-4 h-4 animate-spin"/>}
-                                Criar
+                            <button type="submit" disabled={!podeCriar} className={modalBtnPrimaryCls}>
+                                {createMutation.isPending ? <ModalSpinner/> : "Criar"}
                             </button>
-                        </div>
-                    </div>
-                </ViewportOverlay>
+                        </ModalFooter>
+                    </ModalForm>
+                </Modal>
             )}
         </div>
     );

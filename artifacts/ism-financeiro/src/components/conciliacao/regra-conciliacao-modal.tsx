@@ -1,15 +1,15 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
 import {useEffect, useMemo, useState} from "react";
-import {createPortal} from "react-dom";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
 import {cn} from "@/lib/utils";
-import {Loader2, X} from "lucide-react";
+import {Loader2} from "lucide-react";
 import {BotaoEditar, BotaoExcluir} from "@/components/shared/botoes-acao";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
-import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
+import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
+import {Modal, ModalBody, ModalFooter, ModalForm, ModalHeader, ModalSpinner, modalBtnPrimaryCls, modalBtnSecondaryCls} from "@/components/ui/modal-responsivo";
 import {RequiresPermission} from "@/components/auth/requires-permission";
 import {PERM} from "@/lib/permissoes";
 import {ParceiroCombobox} from "@/components/shared/parceiro-combobox";
@@ -76,6 +76,7 @@ function TextoExatoSwitch({
             type="button"
             role="switch"
             aria-checked={checked}
+            aria-labelledby="regra-exato-label"
             onClick={() => onChange(!checked)}
             className={cn(
                 "relative inline-flex h-9 w-[84px] shrink-0 items-center rounded-full px-1.5 gap-1 transition-colors",
@@ -84,14 +85,14 @@ function TextoExatoSwitch({
         >
             {checked ? (
                 <>
-                    <span className="flex-1 text-[11px] font-black uppercase tracking-wide text-white pl-0.5">Sim</span>
+                    <span className="flex-1 text-xs font-black uppercase tracking-wide text-white pl-0.5">Sim</span>
                     <span className="h-6 w-6 rounded-full bg-white shadow-md shrink-0"/>
                 </>
             ) : (
                 <>
                     <span className="h-6 w-6 rounded-full bg-white/80 shadow-md shrink-0"/>
                     <span
-                        className="flex-1 text-[11px] font-black uppercase tracking-wide text-muted-foreground">Não</span>
+                        className="flex-1 text-xs font-black uppercase tracking-wide text-muted-foreground">Não</span>
                 </>
             )}
         </button>
@@ -188,10 +189,6 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill, varian
         }
         onClose();
     }
-
-    useEscapeClose(ativo && !asPage && !parceiroSubModal && !ConfirmDialogProps.open, () => {
-        void handleRequestClose();
-    }, 60);
 
     useEffect(() => {
         if (!ativo) return;
@@ -340,206 +337,161 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill, varian
 
     const inputCls =
         "w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-primary/50 transition-all placeholder:text-muted-foreground/30";
-    const labelCls = "text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5 block";
+    const labelCls = "text-xs font-bold text-muted-foreground uppercase tracking-widest mb-1.5 block";
     const selectCls =
         "w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-primary/50 transition-all appearance-none cursor-pointer [&>option]:bg-[#1a1c23]";
     const podeSalvar = textoGatilho.trim().length > 0 && !saveMutation.isPending;
 
-    const card = (
-            <div
-                className={cn(
-                    "bg-[#121417] border border-white/10 rounded-2xl shadow-2xl flex flex-col",
-                    asPage ? "w-full" : "relative w-full max-w-6xl max-h-[90vh]",
-                )}
-            >
-                <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 shrink-0">
-                    <h2 className="text-base font-bold text-white">
-                        {asPage ? "Cadastro de regras" : "Cadastro Texto Conciliação"}
-                    </h2>
-                    {!asPage && (
-                    <button
-                        type="button"
-                        onClick={() => void handleRequestClose()}
-                        className="p-2 rounded-xl text-muted-foreground hover:bg-white/5 hover:text-white transition-colors"
+    const campos = (
+        <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-x-[1.8em] gap-y-[1.2em]">
+                <div>
+                    <label htmlFor="regra-natureza" className={labelCls}>Tipo</label>
+                    <select
+                        id="regra-natureza"
+                        value={natureza}
+                        onChange={(e) => setNatureza(e.target.value as "entrada" | "saida")}
+                        className={selectCls}
                     >
-                        <X className="w-5 h-5"/>
-                    </button>
-                    )}
+                        <option value="entrada">Receita</option>
+                        <option value="saida">Despesa</option>
+                    </select>
                 </div>
-
-                <form
-                    onSubmit={(e) => {
-                        e.preventDefault();
-                        if (podeSalvar) saveMutation.mutate();
-                    }}
-                    className="flex flex-col flex-1 min-h-0"
-                >
-                    <div className="px-6 pt-5 pb-4 space-y-4 shrink-0">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                            <div>
-                                <span className={labelCls}>Tipo</span>
-                                <select
-                                    value={natureza}
-                                    onChange={(e) => setNatureza(e.target.value as "entrada" | "saida")}
-                                    className={selectCls}
-                                >
-                                    <option value="entrada">Receita</option>
-                                    <option value="saida">Despesa</option>
-                                </select>
-                            </div>
-                            <div>
-                                <span className={labelCls}>Texto Conciliação</span>
-                                <input
-                                    type="text"
-                                    value={textoGatilho}
-                                    onChange={(e) => setTextoGatilho(e.target.value)}
-                                    className={inputCls}
-                                    placeholder="Ex: TARIFA PIX"
-                                    required
-                                />
-                            </div>
-                            <div>
-                                <span className={labelCls}>Categoria Financeira</span>
-                                <PlanoContaCombobox
-                                    value={planoContaId}
-                                    onChange={setPlanoContaId}
-                                    planoContas={listaPlanoContas}
-                                />
-                            </div>
-                            <div>
-                                <span className={labelCls}>Texto Exato</span>
-                                <div className="h-[42px] flex items-center">
-                                    <TextoExatoSwitch checked={textoExato} onChange={setTextoExato}/>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                            <div>
-                                <span className={labelCls}>Cliente</span>
-                                <ParceiroCombobox
-                                    value={parceiroId}
-                                    onChange={setParceiroId}
-                                    parceiros={listaParceiros}
-                                    search={searchParceiro}
-                                    onSearchChange={setSearchParceiro}
-                                    isLoading={isFetchingParceiros}
-                                    onEdit={(p) => setParceiroSubModal({mode: "edit", data: p})}
-                                    onCreateNew={() => setParceiroSubModal({mode: "create"})}
-                                />
-                            </div>
-                            <div>
-                                <span className={labelCls}>Departamento</span>
-                                <select value={departamentoId} onChange={(e) => setDepartamentoId(e.target.value)}
-                                        className={selectCls}>
-                                    <option value="">Selecione o departamento...</option>
-                                    {departamentos.map((d) => (
-                                        <option key={d.id} value={d.id}>{d.nome}</option>
-                                    ))}
-                                </select>
-                            </div>
-                            <div>
-                                <span className={labelCls}>Forma de Pagamento</span>
-                                <select value={formaPagamento} onChange={(e) => setFormaPagamento(e.target.value)}
-                                        className={selectCls}>
-                                    <option value="">Selecione...</option>
-                                    <option value="PIX">PIX</option>
-                                    <option value="TED">TED</option>
-                                    <option value="Boleto">Boleto</option>
-                                </select>
-                            </div>
-                        </div>
+                <div>
+                    <label htmlFor="regra-texto" className={labelCls}>Texto Conciliação</label>
+                    <input
+                        id="regra-texto"
+                        type="text"
+                        value={textoGatilho}
+                        onChange={(e) => setTextoGatilho(e.target.value)}
+                        className={inputCls}
+                        placeholder="Ex: TARIFA PIX"
+                        required
+                    />
+                </div>
+                <div>
+                    <span className={labelCls}>Categoria Financeira</span>
+                    <PlanoContaCombobox
+                        value={planoContaId}
+                        onChange={setPlanoContaId}
+                        planoContas={listaPlanoContas}
+                    />
+                </div>
+                <div>
+                    <span id="regra-exato-label" className={labelCls}>Texto Exato</span>
+                    <div className="h-[2.6em] flex items-center">
+                        <TextoExatoSwitch checked={textoExato} onChange={setTextoExato}/>
                     </div>
-
-                    <div
-                        className="flex-1 min-h-0 overflow-y-auto border-t border-white/5 mx-6 mb-4 rounded-xl bg-black/20">
-                        <table className="w-full text-left text-xs">
-                            <thead
-                                className="sticky top-0 bg-[#1a1c23] text-muted-foreground border-b border-white/5 z-10">
-                            <tr>
-                                <th className="px-3 py-2.5 font-semibold uppercase tracking-wide">Tipo</th>
-                                <th className="px-3 py-2.5 font-semibold uppercase tracking-wide">Texto Conciliação</th>
-                                <th className="px-3 py-2.5 font-semibold uppercase tracking-wide">Exato</th>
-                                <th className="px-3 py-2.5 font-semibold uppercase tracking-wide">Categoria</th>
-                                <th className="px-3 py-2.5 font-semibold uppercase tracking-wide">Cliente/Fornecedor</th>
-                                <th className="px-3 py-2.5 font-semibold uppercase tracking-wide">Departamento</th>
-                                <th className="px-3 py-2.5 font-semibold uppercase tracking-wide">Forma de Pagamento
-                                </th>
-                                <th className="px-3 py-2.5 font-semibold uppercase tracking-wide text-right">Ações</th>
-                            </tr>
-                            </thead>
-                            <tbody className="divide-y divide-white/5">
-                            {loadingRegras ? (
-                                <tr>
-                                    <td colSpan={8} className="py-10 text-center text-muted-foreground">
-                                        <Loader2 className="w-6 h-6 animate-spin mx-auto text-primary"/>
-                                    </td>
-                                </tr>
-                            ) : regras.length === 0 ? (
-                                <tr>
-                                    <td colSpan={8} className="py-10 text-center text-muted-foreground">
-                                        Nenhuma regra cadastrada.
-                                    </td>
-                                </tr>
-                            ) : (
-                                regras.map((row) => (
-                                    <tr
-                                        key={row.id}
-                                        className={cn(
-                                            "hover:bg-white/[0.04] transition-colors",
-                                            editItem?.id === row.id && "bg-primary/10",
-                                        )}
-                                    >
-                                        <td className="px-3 py-2.5 text-white whitespace-nowrap">{labelTipo(row.natureza)}</td>
-                                        <td className="px-3 py-2.5 text-white font-medium max-w-[200px] truncate"
-                                            title={row.texto_gatilho}>
-                                            {row.texto_gatilho}
-                                        </td>
-                                        <td className="px-3 py-2.5 text-white/80 uppercase">{row.tipo_match === "exato" ? "Sim" : "Não"}</td>
-                                        <td className="px-3 py-2.5 text-white/80 max-w-[180px] truncate">{labelCategoria(row)}</td>
-                                        <td className="px-3 py-2.5 text-white/80 max-w-[180px] truncate">{row.parceiro_nome ?? "-"}</td>
-                                        <td className="px-3 py-2.5 text-white/80">{row.departamento_nome ?? "-"}</td>
-                                        <td className="px-3 py-2.5 text-white/80">{row.forma_pagamento ?? "-"}</td>
-                                        <td className="px-3 py-2.5">
-                                            <div className="flex items-center justify-end gap-2">
-                                                <RequiresPermission permission={PERM.REGRAS_CONCILIACAO_EDITAR}>
-                                                    <BotaoEditar onClick={() => fillFromRow(row)}/>
-                                                </RequiresPermission>
-                                                <RequiresPermission permission={PERM.REGRAS_CONCILIACAO_DELETAR}>
-                                                    <BotaoExcluir onClick={() => void askDelete(row)}/>
-                                                </RequiresPermission>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))
-                            )}
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/5 shrink-0">
-                        <button
-                            type="button"
-                            onClick={() => void handleRequestClose()}
-                            className="px-6 py-2.5 rounded-xl border border-white/10 text-sm font-medium text-white hover:bg-white/5"
-                        >
-                            {asPage ? "Limpar" : "Cancelar"}
-                        </button>
-                        <RequiresPermission
-                            permission={editItem ? PERM.REGRAS_CONCILIACAO_EDITAR : PERM.REGRAS_CONCILIACAO_CRIAR}>
-                            <button
-                                type="submit"
-                                disabled={!podeSalvar}
-                                className="px-8 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50 min-w-[120px]"
-                            >
-                                {saveMutation.isPending && <Loader2 className="w-4 h-4 animate-spin"/>}
-                                Salvar
-                            </button>
-                        </RequiresPermission>
-                    </div>
-                </form>
+                </div>
             </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-[1.8em] gap-y-[1.2em]">
+                <div>
+                    <span className={labelCls}>Cliente</span>
+                    <ParceiroCombobox
+                        value={parceiroId}
+                        onChange={setParceiroId}
+                        parceiros={listaParceiros}
+                        search={searchParceiro}
+                        onSearchChange={setSearchParceiro}
+                        isLoading={isFetchingParceiros}
+                        onEdit={(p) => setParceiroSubModal({mode: "edit", data: p})}
+                        onCreateNew={() => setParceiroSubModal({mode: "create"})}
+                    />
+                </div>
+                <div>
+                    <label htmlFor="regra-departamento" className={labelCls}>Departamento</label>
+                    <select id="regra-departamento" value={departamentoId} onChange={(e) => setDepartamentoId(e.target.value)}
+                            className={selectCls}>
+                        <option value="">Selecione o departamento...</option>
+                        {departamentos.map((d) => (
+                            <option key={d.id} value={d.id}>{d.nome}</option>
+                        ))}
+                    </select>
+                </div>
+                <div>
+                    <label htmlFor="regra-forma" className={labelCls}>Forma de Pagamento</label>
+                    <select id="regra-forma" value={formaPagamento} onChange={(e) => setFormaPagamento(e.target.value)}
+                            className={selectCls}>
+                        <option value="">Selecione...</option>
+                        <option value="PIX">PIX</option>
+                        <option value="TED">TED</option>
+                        <option value="Boleto">Boleto</option>
+                    </select>
+                </div>
+            </div>
+        </div>
     );
+
+    const tabela = (
+        <table className="w-full text-left text-xs">
+            <thead
+                className="sticky top-0 bg-[#1a1c23] text-muted-foreground border-b border-white/5 z-10">
+            <tr>
+                <th className="px-3 py-2.5 font-semibold uppercase tracking-wide">Tipo</th>
+                <th className="px-3 py-2.5 font-semibold uppercase tracking-wide">Texto Conciliação</th>
+                <th className="px-3 py-2.5 font-semibold uppercase tracking-wide">Exato</th>
+                <th className="px-3 py-2.5 font-semibold uppercase tracking-wide">Categoria</th>
+                <th className="px-3 py-2.5 font-semibold uppercase tracking-wide">Cliente/Fornecedor</th>
+                <th className="px-3 py-2.5 font-semibold uppercase tracking-wide">Departamento</th>
+                <th className="px-3 py-2.5 font-semibold uppercase tracking-wide">Forma de Pagamento
+                </th>
+                <th className="px-3 py-2.5 font-semibold uppercase tracking-wide text-right">Ações</th>
+            </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+            {loadingRegras ? (
+                <tr>
+                    <td colSpan={8} className="py-10 text-center text-muted-foreground">
+                        <Loader2 className="w-6 h-6 animate-spin mx-auto text-primary"/>
+                    </td>
+                </tr>
+            ) : regras.length === 0 ? (
+                <tr>
+                    <td colSpan={8} className="py-10 text-center text-muted-foreground">
+                        Nenhuma regra cadastrada.
+                    </td>
+                </tr>
+            ) : (
+                regras.map((row) => (
+                    <tr
+                        key={row.id}
+                        className={cn(
+                            "hover:bg-white/[0.04] transition-colors",
+                            editItem?.id === row.id && "bg-primary/10",
+                        )}
+                    >
+                        <td className="px-3 py-2.5 text-white whitespace-nowrap">{labelTipo(row.natureza)}</td>
+                        <td className="px-3 py-2.5 text-white font-medium max-w-[200px] truncate"
+                            title={row.texto_gatilho}>
+                            {row.texto_gatilho}
+                        </td>
+                        <td className="px-3 py-2.5 text-white/80 uppercase">{row.tipo_match === "exato" ? "Sim" : "Não"}</td>
+                        <td className="px-3 py-2.5 text-white/80 max-w-[180px] truncate">{labelCategoria(row)}</td>
+                        <td className="px-3 py-2.5 text-white/80 max-w-[180px] truncate">{row.parceiro_nome ?? "-"}</td>
+                        <td className="px-3 py-2.5 text-white/80">{row.departamento_nome ?? "-"}</td>
+                        <td className="px-3 py-2.5 text-white/80">{row.forma_pagamento ?? "-"}</td>
+                        <td className="px-3 py-2.5">
+                            <div className="flex items-center justify-end gap-2">
+                                <RequiresPermission permission={PERM.REGRAS_CONCILIACAO_EDITAR}>
+                                    <BotaoEditar onClick={() => fillFromRow(row)}/>
+                                </RequiresPermission>
+                                <RequiresPermission permission={PERM.REGRAS_CONCILIACAO_DELETAR}>
+                                    <BotaoExcluir onClick={() => void askDelete(row)}/>
+                                </RequiresPermission>
+                            </div>
+                        </td>
+                    </tr>
+                ))
+            )}
+            </tbody>
+        </table>
+    );
+
+    const onSubmit = (e: { preventDefault: () => void }) => {
+        e.preventDefault();
+        if (podeSalvar) saveMutation.mutate();
+    };
 
     const extras = (
         <>
@@ -560,18 +512,70 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill, varian
     if (asPage) {
         return (
             <>
-                {card}
+                <div className="bg-[#121417] border border-white/10 rounded-2xl shadow-2xl flex flex-col w-full">
+                    <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 shrink-0">
+                        <h2 className="text-base font-bold text-white">Cadastro de regras</h2>
+                    </div>
+
+                    <form onSubmit={onSubmit} className="flex flex-col flex-1 min-h-0">
+                        <div className="px-6 pt-5 pb-4 shrink-0">{campos}</div>
+
+                        <div
+                            className="flex-1 min-h-0 overflow-y-auto border-t border-white/5 mx-6 mb-4 rounded-xl bg-black/20">
+                            {tabela}
+                        </div>
+
+                        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/5 shrink-0">
+                            <button
+                                type="button"
+                                onClick={() => void handleRequestClose()}
+                                className="px-6 py-2.5 rounded-xl border border-white/10 text-sm font-medium text-white hover:bg-white/5"
+                            >
+                                Limpar
+                            </button>
+                            <RequiresPermission
+                                permission={editItem ? PERM.REGRAS_CONCILIACAO_EDITAR : PERM.REGRAS_CONCILIACAO_CRIAR}>
+                                <button
+                                    type="submit"
+                                    disabled={!podeSalvar}
+                                    className="px-8 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50 min-w-[120px]"
+                                >
+                                    {saveMutation.isPending && <Loader2 className="w-4 h-4 animate-spin"/>}
+                                    Salvar
+                                </button>
+                            </RequiresPermission>
+                        </div>
+                    </form>
+                </div>
                 {extras}
             </>
         );
     }
 
-    return createPortal(
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/75 backdrop-blur-md"/>
-            {card}
+    return (
+        <Modal onClose={() => void handleRequestClose()}>
+            <ModalHeader title="Cadastro Texto Conciliação"
+                         description="Linhas do extrato com esse texto serão classificadas automaticamente."/>
+            <ModalForm onSubmit={onSubmit}>
+                <ModalBody className="space-y-5">
+                    {campos}
+                    <div className="rounded-xl bg-black/20 border border-white/5 overflow-x-auto">
+                        {tabela}
+                    </div>
+                </ModalBody>
+                <ModalFooter hint="Esc fecha">
+                    <button type="button" onClick={() => void handleRequestClose()} className={modalBtnSecondaryCls}>
+                        Cancelar
+                    </button>
+                    <RequiresPermission
+                        permission={editItem ? PERM.REGRAS_CONCILIACAO_EDITAR : PERM.REGRAS_CONCILIACAO_CRIAR}>
+                        <button type="submit" disabled={!podeSalvar} className={modalBtnPrimaryCls}>
+                            {saveMutation.isPending ? <ModalSpinner/> : "Salvar"}
+                        </button>
+                    </RequiresPermission>
+                </ModalFooter>
+            </ModalForm>
             {extras}
-        </div>,
-        document.body,
+        </Modal>
     );
 }

@@ -11,8 +11,17 @@ import {useToast} from "@/hooks/use-toast";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
 import {fetchApi, fetchApiData} from "@/lib/api-config";
-import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
-import {ViewportOverlay} from "@/components/shared/viewport-overlay";
+import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
+import {
+    Modal,
+    ModalBody,
+    ModalFooter,
+    ModalForm,
+    ModalHeader,
+    modalBtnPrimaryCls,
+    modalBtnSecondaryCls,
+    modalGridCls,
+} from "@/components/ui/modal-responsivo";
 import {
     CampoBusca,
     FiltrosAtivos,
@@ -101,107 +110,117 @@ function FormModal({
         onClose();
     }
 
-    useEscapeClose(isOpen && !ConfirmDialogProps.open, () => {
-        void handleRequestClose();
-    });
-
     if (!isOpen) return null;
 
     return (
-        <ViewportOverlay>
-            <div className="bg-[#1a1c23] border border-white/10 rounded-2xl w-full max-w-md p-6 shadow-2xl">
-                <h2 className="text-lg font-bold text-white mb-4">
-                    {initialData?.id
-                        ? 'Editar Categoria'
-                        : lockedCategoria
-                            ? 'Nova Subcategoria'
-                            : 'Nova Categoria'}
-                </h2>
+        <Modal
+            onClose={() => void handleRequestClose()}
+            // Ao adicionar subcategoria (tipo e categoria travados), o foco vai direto para a subcategoria.
+            initialFocus={lockedCategoria
+                ? (content) => content.querySelector<HTMLElement>("#plano-conta-subcategoria")
+                : "first-field"}
+        >
+            <ModalHeader
+                title={initialData?.id
+                    ? 'Editar Categoria'
+                    : lockedCategoria
+                        ? 'Nova Subcategoria'
+                        : 'Nova Categoria'}
+            />
 
-                <form
-                    onSubmit={handleSubmit((values) => onSubmit({id: initialData?.id, ...values}))}
-                    className="space-y-4"
-                    noValidate
-                >
-                    {/* Tipo */}
-                    <div>
-                        <label className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
-                            Tipo
-                            {lockedTipo && <Lock className="w-3 h-3 text-red-400"/>}
-                        </label>
-                        <select
-                            {...register("tipo")}
-                            disabled={lockedTipo}
-                            className={`mt-1 w-full border rounded-lg p-2.5 outline-none focus:border-primary/50 transition-colors ${
-                                lockedTipo
-                                    ? 'bg-white/5 border-red-400/30 text-white/70 cursor-not-allowed'
-                                    : 'bg-black/20 border-white/10 text-white'
-                            }`}
-                        >
-                            <option value="receita" className="bg-[#1a1c23] text-white">Receita</option>
-                            <option value="custo" className="bg-[#1a1c23] text-white">Custo</option>
-                            <option value="despesa" className="bg-[#1a1c23] text-white">Despesa</option>
-                        </select>
-                        {lockedTipo && (
-                            <p className="text-xs text-red-400/80 mt-1">Tipo travado pelo grupo selecionado</p>
-                        )}
-                        {errors.tipo && (
-                            <p className="text-xs text-destructive mt-1">{errors.tipo.message}</p>
-                        )}
-                    </div>
-
-                    {/* Categoria */}
-                    <div>
-                        <label className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
-                            Grupo Principal (Categoria)
-                            {lockedCategoria && <Lock className="w-3 h-3 text-red-400"/>}
-                        </label>
-                        <input
-                            type="text"
-                            {...register("categoria")}
-                            readOnly={lockedCategoria}
-                            className={`mt-1 w-full border rounded-lg p-2.5 outline-none focus:border-primary/50 transition-colors ${
-                                lockedCategoria
-                                    ? 'bg-white/5 border-red-400/30 text-white/70 cursor-not-allowed'
-                                    : errors.categoria
-                                        ? 'bg-black/20 border-destructive/60 text-white'
+            <ModalForm
+                onSubmit={handleSubmit((values) => onSubmit({id: initialData?.id, ...values}))}
+                noValidate
+            >
+                <ModalBody>
+                    <div className={modalGridCls}>
+                        {/* Tipo */}
+                        <div>
+                            <label htmlFor="plano-conta-tipo"
+                                   className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                                Tipo
+                                {lockedTipo && <Lock aria-hidden="true" className="w-3 h-3 text-red-400"/>}
+                            </label>
+                            <select
+                                id="plano-conta-tipo"
+                                {...register("tipo")}
+                                disabled={lockedTipo}
+                                aria-invalid={!!errors.tipo}
+                                aria-describedby={lockedTipo ? "plano-conta-tipo-travado" : undefined}
+                                className={`mt-1 w-full border rounded-lg p-2.5 outline-none focus:border-primary/50 transition-colors ${
+                                    lockedTipo
+                                        ? 'bg-white/5 border-red-400/30 text-white/70 cursor-not-allowed'
                                         : 'bg-black/20 border-white/10 text-white'
-                            }`}
-                            placeholder="Ex: Despesas Administrativas"
-                        />
-                        {lockedCategoria && (
-                            <p className="text-xs text-red-400/80 mt-1">Categoria travada - você está adicionando uma
-                                subcategoria</p>
-                        )}
-                        {errors.categoria && (
-                            <p className="text-xs text-destructive mt-1">{errors.categoria.message}</p>
-                        )}
-                    </div>
+                                }`}
+                            >
+                                <option value="receita" className="bg-[#1a1c23] text-white">Receita</option>
+                                <option value="custo" className="bg-[#1a1c23] text-white">Custo</option>
+                                <option value="despesa" className="bg-[#1a1c23] text-white">Despesa</option>
+                            </select>
+                            {lockedTipo && (
+                                <p id="plano-conta-tipo-travado" className="text-xs text-red-400/80 mt-1">Tipo travado pelo grupo selecionado</p>
+                            )}
+                            {errors.tipo && (
+                                <p className="text-xs text-destructive mt-1">{errors.tipo.message}</p>
+                            )}
+                        </div>
 
-                    {/* Subcategoria */}
-                    <div>
-                        <label className="text-sm font-medium text-muted-foreground">Subcategoria (Opcional)</label>
-                        <input
-                            type="text"
-                            {...register("subcategoria")}
-                            className="mt-1 w-full bg-black/20 border border-white/10 rounded-lg p-2.5 text-white outline-none focus:border-primary/50"
-                            placeholder="Ex: Aluguel"
-                            autoFocus={lockedCategoria}
-                        />
-                    </div>
+                        {/* Categoria */}
+                        <div>
+                            <label htmlFor="plano-conta-categoria"
+                                   className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                                Grupo Principal (Categoria)
+                                {lockedCategoria && <Lock aria-hidden="true" className="w-3 h-3 text-red-400"/>}
+                            </label>
+                            <input
+                                id="plano-conta-categoria"
+                                type="text"
+                                {...register("categoria")}
+                                readOnly={lockedCategoria}
+                                aria-invalid={!!errors.categoria}
+                                aria-describedby={lockedCategoria ? "plano-conta-categoria-travada" : undefined}
+                                className={`mt-1 w-full border rounded-lg p-2.5 outline-none focus:border-primary/50 transition-colors ${
+                                    lockedCategoria
+                                        ? 'bg-white/5 border-red-400/30 text-white/70 cursor-not-allowed'
+                                        : errors.categoria
+                                            ? 'bg-black/20 border-destructive/60 text-white'
+                                            : 'bg-black/20 border-white/10 text-white'
+                                }`}
+                                placeholder="Ex: Despesas Administrativas"
+                            />
+                            {lockedCategoria && (
+                                <p id="plano-conta-categoria-travada" className="text-xs text-red-400/80 mt-1">Categoria travada - você está adicionando uma
+                                    subcategoria</p>
+                            )}
+                            {errors.categoria && (
+                                <p className="text-xs text-destructive mt-1">{errors.categoria.message}</p>
+                            )}
+                        </div>
 
-                    <div className="flex gap-3 pt-4">
-                        <button type="button" onClick={() => void handleRequestClose()}
-                                className="flex-1 py-2.5 rounded-xl border border-white/10 text-white hover:bg-white/5 transition-colors">Cancelar
-                        </button>
-                        <button type="submit"
-                                className="flex-1 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-medium transition-colors">Salvar
-                        </button>
+                        {/* Subcategoria */}
+                        <div>
+                            <label htmlFor="plano-conta-subcategoria" className="text-sm font-medium text-muted-foreground">Subcategoria (Opcional)</label>
+                            <input
+                                id="plano-conta-subcategoria"
+                                type="text"
+                                {...register("subcategoria")}
+                                className="mt-1 w-full bg-black/20 border border-white/10 rounded-lg p-2.5 text-white outline-none focus:border-primary/50"
+                                placeholder="Ex: Aluguel"
+                            />
+                        </div>
                     </div>
-                </form>
-            </div>
+                </ModalBody>
+                <ModalFooter hint="Esc fecha">
+                    <button type="button" onClick={() => void handleRequestClose()} className={modalBtnSecondaryCls}>
+                        Cancelar
+                    </button>
+                    <button type="submit" className={modalBtnPrimaryCls}>
+                        Salvar
+                    </button>
+                </ModalFooter>
+            </ModalForm>
             <ConfirmDialog {...ConfirmDialogProps} />
-        </ViewportOverlay>
+        </Modal>
     );
 }
 
