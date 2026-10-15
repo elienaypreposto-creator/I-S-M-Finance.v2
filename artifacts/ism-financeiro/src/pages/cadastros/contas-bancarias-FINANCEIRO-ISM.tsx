@@ -1394,12 +1394,12 @@ export default function ContasBancarias() {
                                         <td className="px-5 py-4 text-right">
                                             {showSaldos ? (
                                                 <span
-                                                    className={cn("font-bold", classeSaldo(toCents(conta.saldo_atual) / 100))}>
+                                                    className={cn("font-bold whitespace-nowrap", classeSaldo(toCents(conta.saldo_atual) / 100))}>
                                 {formatCurrency(toCents(conta.saldo_atual) / 100)}
                             </span>
                                             ) : (
-                                                <span className="font-bold text-muted-foreground"
-                                                      aria-label="Saldo oculto">
+                                                <span className="font-bold text-muted-foreground">
+                                <span className="sr-only">Saldo oculto</span>
                                 <span aria-hidden="true">R$ ••••••</span>
                             </span>
                                             )}
