@@ -220,9 +220,7 @@ const permissoesGranulares = [
             {nome: "Edição de Usuários", codigo: "admin:usuarios:editar"},
             {nome: "Exclusão de Usuários", codigo: "admin:usuarios:deletar"},
             {nome: "Conceder permissões a utilizadores", codigo: "admin:permissoes:conceder"},
-            {nome: "Consulta de Empresas", codigo: "admin:empresas:listar"},
-            {nome: "Cadastro de Empresas", codigo: "admin:empresas:criar"},
-            {nome: "Edição de Empresas e vínculos", codigo: "admin:empresas:editar"},
+            {nome: "Edição dos dados da própria empresa", codigo: "admin:empresas:editar"},
             {nome: "Cadastro de Token de API", codigo: "admin:tokens-api:criar"},
             {nome: "Consulta de Tokens de API", codigo: "admin:tokens-api:listar"},
             {nome: "Exclusão de Token de API", codigo: "admin:tokens-api:deletar"},
@@ -793,9 +791,10 @@ const DEFINICOES_FILTRO_USUARIOS: DefinicaoFiltro[] = [
 export default function Usuarios() {
     const {toast} = useToast();
     const queryClient = useQueryClient();
-    const {hasPermission} = useAuth();
+    const {hasPermission, user} = useAuth();
     const canConcederPermissoes = hasPermission(PERM.ADMIN_PERMISSOES_CONCEDER);
-    const canGerirVinculos = hasPermission(PERM.ADMIN_EMPRESAS_LISTAR) || hasPermission(PERM.ADMIN_EMPRESAS_EDITAR);
+    // Vínculos usuário↔empresa são operação do ISM: rotas exigem superadmin (ISMF-16).
+    const canGerirVinculos = user?.superadmin === true;
     const [vinculosUsuario, setVinculosUsuario] = useState<UsuarioRow | null>(null);
     const [showUserModal, setShowUserModal] = useState(false);
     const [editingUsuario, setEditingUsuario] = useState<UsuarioRow | null>(null);

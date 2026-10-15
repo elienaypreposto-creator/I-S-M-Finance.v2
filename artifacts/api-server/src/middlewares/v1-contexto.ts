@@ -30,6 +30,9 @@ export function popularContexto(
     // Identidade do token para a auditoria (logs_auditoria.token_api_id).
     req.tokenApiId = tokenRow.id;
 
+    // Nenhum usuário herdado: o token não é identidade de pessoa.
+    req.user = undefined;
+
     // req.user NÃO é preenchido: tokens de API não são usuários. Antes o id do
     // token ia em req.user.id e a auditoria atribuía a chamada ao usuário real
     // com o mesmo id. Sem req.user, usuario_id fica NULL e o tenant vem de

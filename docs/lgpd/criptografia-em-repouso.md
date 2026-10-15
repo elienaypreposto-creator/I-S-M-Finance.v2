@@ -6,6 +6,8 @@
 
 Para abrir: `openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in ficheiro.sql.enc -out ficheiro.sql`.
 
+O backup diário (`scripts/backup-db.sh`) grava `pg_dump -Fc` cifrado com chave pública (a privada fica fora da VM) ou com a mesma senha. Ver `docs/backup.md`.
+
 ## Volume do Postgres
 
 O dado do banco fica num ficheiro LUKS2 por ambiente, `/var/lib/ism/<ambiente>/pgdata.img` (ex.: `ism-tst`, `ism-hml`), aberto por `scripts/lgpd-volume-luks.sh` antes do `docker compose`. O contentor recebe o diretório já montado (`PGDATA_MOUNT`). O `cryptsetup status` tem de mostrar `type: LUKS`. Essa saída fica em `/var/lib/ism/<ambiente>/evidencia-disco.txt` na máquina de deploy.

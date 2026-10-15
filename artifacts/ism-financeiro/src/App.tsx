@@ -44,13 +44,16 @@ function PrivateRoute({
                           component: Component,
                           path,
                           permission,
+                          superadminOnly,
                       }: {
     component: any;
     path: string;
     permission?: string;
+    /** Operação do ISM (ex.: cadastro de empresas): só `user.superadmin`. */
+    superadminOnly?: boolean;
 }) {
     const token = authStorage.getToken();
-    const {hasPermission, loading} = useAuth();
+    const {hasPermission, loading, user} = useAuth();
 
     // No F5 o access token (só em memória) ainda não voltou do refresh: espera a sessão
     // antes de mandar para o login, senão a URL (e os filtros nela) se perde.
@@ -70,8 +73,9 @@ function PrivateRoute({
         );
     }
 
-    if (permission) {
-        if (!hasPermission(permission)) {
+    if (permission || superadminOnly) {
+        const permitido = superadminOnly ? user?.superadmin === true : hasPermission(permission!);
+        if (!permitido) {
             return (
                 <Route path={path}>
                     {() => (
@@ -134,7 +138,8 @@ function Router() {
             <PrivateRoute path="/admin/usuarios" component={Usuarios}/>
             <PrivateRoute path="/configuracoes/filiais" component={Filiais}/>
             <PrivateRoute path="/configuracoes/tokens-api" component={TokensApi}/>
-            <PrivateRoute path="/admin/empresas" component={AdminEmpresas} permission={PERM.ADMIN_EMPRESAS_LISTAR}/>
+            {/* Superadmin vê todas; admin com admin:empresas:editar vê só a empresa da sessão. */}
+            <PrivateRoute path="/admin/empresas" component={AdminEmpresas} permission={PERM.ADMIN_EMPRESAS_EDITAR}/>
 
             <Route component={NotFound}/>
         </Switch>

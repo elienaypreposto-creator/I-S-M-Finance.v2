@@ -1,4 +1,4 @@
-import {pgTable, serial, text, boolean, date, timestamp, integer} from "drizzle-orm/pg-core";
+import {pgTable, serial, text, boolean, date, timestamp, integer, index} from "drizzle-orm/pg-core";
 import {createInsertSchema} from "drizzle-zod";
 import {z} from "zod/v4";
 import {empresasTable} from "./empresas";
@@ -52,7 +52,9 @@ export const tokensApiTable = pgTable("tokens_api", {
     ativo: boolean("ativo").default(true).notNull(),
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => [
+    index("tokens_api_empresa_id_idx").on(table.empresa_id),
+]);
 
 export const insertTokenApiSchema = createInsertSchema(tokensApiTable, {
     escopos: z.array(z.string()).min(1, "Informe ao menos um escopo."),

@@ -11,8 +11,7 @@ import {performance} from "node:perf_hooks";
 import {fileURLToPath} from "node:url";
 import pg from "pg";
 import {pgUrlPassword, pgUrlUser, replacePgUser, resolveDbUrls} from "./db-urls";
-
-(process.env as Record<string, string>).NODE_TLS_REJECT_UNAUTHORIZED = "0";
+import {pgTlsConfig} from "./db-ssl";
 
 function loadOptionalEnvFiles(): void {
     const here = path.dirname(fileURLToPath(import.meta.url));
@@ -54,11 +53,6 @@ promoteSmokeUrlsFromBootstrap();
 
 const {appUrl, ownerUrl} = resolveDbUrls();
 
-const ssl =
-    process.env.DB_REQUIRE_SSL === "true" || appUrl.includes("supabase.co") || ownerUrl.includes("supabase.co")
-        ? {rejectUnauthorized: false}
-        : undefined;
-
 const LIST_90D =
     "SELECT count(*)::text AS count FROM lancamentos WHERE vencimento >= CURRENT_DATE - INTERVAL '90 days'";
 const LATENCY_SAMPLES = 21;
@@ -66,7 +60,7 @@ const LATENCY_SAMPLES = 21;
 type RoleProbe = { current_user: string; rolsuper: boolean };
 
 async function asApp(work: (c: pg.Client) => Promise<void>): Promise<void> {
-    const client = new pg.Client({connectionString: appUrl, ssl});
+    const client = new pg.Client(pgTlsConfig(appUrl));
     await client.connect();
     try {
         const {rows} = await client.query<RoleProbe>(
@@ -87,7 +81,7 @@ async function asApp(work: (c: pg.Client) => Promise<void>): Promise<void> {
 }
 
 async function asOwner<T>(work: (c: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({connectionString: ownerUrl, ssl});
+    const client = new pg.Client(pgTlsConfig(ownerUrl));
     await client.connect();
     try {
         return await work(client);

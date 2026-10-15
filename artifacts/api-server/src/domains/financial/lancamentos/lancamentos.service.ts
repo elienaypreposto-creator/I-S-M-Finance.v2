@@ -12,7 +12,6 @@ import {AppError} from "../../../utils/app-error";
 import {tenantWhere, withEmpresaId} from "../../../lib/tenant-scope";
 
 import {assertRefsDaEmpresa} from "../../../lib/tenant-refs-guard";
-import type {CreateLancamentoBody, ListLancamentosQuery, UpdateLancamentoBody} from "./schemas";
 import {
     LIMITE_EXPORT_LANCAMENTOS,
     type CreateLancamentoBody,

@@ -664,7 +664,9 @@ O projeto está configurado para deploy na **Vercel**:
 
 ### 11.1. Deploy na VM (Docker Compose)
 
-Os ambientes de teste (`ism-tst`, branch `develop`) e homologação (`ism-hml`, branch `master`) rodam via `docker-compose.yml` numa VM compartilhada. O deploy é feito pelo GitHub Actions (`.github/workflows/main.yml`), que grava o `.env` de cada ambiente a partir dos secrets `ENV_FILE_TST` e `ENV_FILE_HML`.
+Os ambientes de teste (`ism-tst`, branch `develop`) e homologação (`ism-hml`, branch `master`) rodam via `docker-compose.yml` numa VM compartilhada. O deploy é feito pelo GitHub Actions (`.github/workflows/main.yml`), que grava o `.env` de cada ambiente a partir de secrets e variables do repositório com prefixo `TST_` / `HML_` (ex.: `HML_DB_PASSWORD`, `TST_JWT_SECRET`). `JWT_SECRET` e `JWT_ENCRYPT_SECRET` têm de ser distintos entre si e entre ambientes; o deploy e a API recusam valores iguais dentro do mesmo ambiente.
+
+Variables (`vars`): `<AMB>_PORT`, `_WEB_PORT`, `_API_PORT`, `_DB_PORT`, `_FRONTEND_URL`, `_SMTP_HOST`, `_SMTP_PORT`, `_SMTP_USER`. Secrets: `<AMB>_DB_PASSWORD`, `_ISM_APP_PASSWORD`, `_ISM_ADMIN_PASSWORD`, `_ISM_OWNER_PASSWORD`, `_JWT_SECRET`, `_JWT_ENCRYPT_SECRET`, `_SMTP_PASS`, `_LUKS_PASSPHRASE` e `REDIS_PASSWORD` (sem prefixo). O passo "Validar variáveis do ambiente" do `main.yml` falha se faltar alguma obrigatória; não há mais `.env` inteiro guardado em secret.
 
 **Variáveis obrigatórias no `.env` usadas pelo compose:**
 
@@ -693,6 +695,18 @@ Pela linha de comando, o equivalente é:
 ssh -N -L 5435:127.0.0.1:5435 ubuntu@<ip-da-vm>
 # depois conecte em localhost:5435
 ```
+
+### 11.2. Esteira de testes
+
+`.github/workflows/ci.yml` roda em todo PR e antes de cada deploy (`main.yml` só faz deploy se a esteira passar), em três jobs: **Testes unitários** (item 1), **Isolamento entre empresas** (suíte `test/isolation`, `pnpm --filter @workspace/api-server run test:isolation`) e **Banco e e2e** (itens 2 a 5). Localmente, a bateria inteira roda com `pnpm test:all` (sobe um Postgres descartável no Docker, ou usa `TEST_PG_URL`):
+
+1. typecheck (libs, API e front) e testes unitários (API e front);
+2. migrations em banco vazio, duas vezes (idempotência);
+3. `schema:drift`: compara o schema Drizzle com o banco migrado — schema alterado sem migration reprova;
+4. `rls:smoke`, suíte de isolamento entre empresas (toda rota autenticada, sem vazamento entre tenants) e `seed:teste` (duas empresas e um usuário de teste);
+5. API compilada + `artifacts/api-server/test/e2e/fluxo-conciliacao.mjs` (fluxo conciliação → lançamentos, isolamento entre empresas e carga curta).
+
+Cenários do e2e ainda não entregues ficam em `PENDENTES` no próprio arquivo: rodam e aparecem como TODO, sem reprovar.
 
 ---
 
@@ -766,6 +780,13 @@ Inventário versionado: `docs/lgpd-inventario.md`.
 | Cifra do backup e do volume | `docs/lgpd/criptografia-em-repouso.md` |
 
 Prazos que o job aplica: `PRAZO_EXTRATO_ANOS` e `PRAZO_AUDITORIA_MESES` em `artifacts/api-server/src/domains/lgpd/lgpd-prazos.ts`, os mesmos números do inventário.
+
+## 16. Operação da VM
+
+| Peça | Ficheiro |
+|------|----------|
+| Backup diário, restore e teste de restore | `docs/backup.md` |
+| Firewall, SSH e fail2ban (runbook com rollback) | `docs/runbook-endurecimento-vm.md` |
 
 
 

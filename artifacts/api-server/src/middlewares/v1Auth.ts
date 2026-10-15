@@ -4,6 +4,8 @@ import {eq} from "drizzle-orm";
 import {withBypassRls, type TenantDb} from "@workspace/db";
 import {tokensApiTable} from "@workspace/db/schema";
 import {errorResponse} from "../utils/response";
+import {hashConfere, tokenExpirado} from "../lib/api-token-identity";
+import {popularContexto} from "./v1-contexto";
 
 // Formato novo: ism_v1_<id>.<secret>
 const TOKEN_REGEX = /^ism_v1_(\d+)\.([A-Za-z0-9_-]+)$/;
@@ -22,30 +24,6 @@ const getBearerToken = (authHeader?: string) => {
 
     return token;
 };
-
-function popularContexto(
-    req: Request,
-    tokenRow: {
-        id: number;
-        empresa_id: number;
-        escopos: string[] | null;
-    },
-) {
-    req.tenant = {
-        empresaId: tokenRow.empresa_id,
-    };
-
-    req.apiToken = {
-        id: tokenRow.id,
-        escopos: tokenRow.escopos ?? [],
-    };
-
-    // Identidade do token para a auditoria (logs_auditoria.token_api_id).
-    req.tokenApiId = tokenRow.id;
-
-    // req.user NÃO é preenchido: o id do token não pode ser confundido com o id
-    // de um usuário real na auditoria. usuario_id fica NULL; o tenant vem de req.tenant.
-}
 
 function agendarAtualizacaoUso(req: Request, tokenId: number) {
     const ip = req.ip ?? req.socket?.remoteAddress ?? null;
@@ -83,8 +61,6 @@ export const v1AuthMiddleware = async (
                 "Token Bearer da API v1 ausente ou inválido.",
             );
         }
-
-        const hoje = new Date().toISOString().split("T")[0];
 
         /**
          * ============================================================
@@ -144,10 +120,7 @@ export const v1AuthMiddleware = async (
                 );
             }
 
-            if (
-                tokenRow.data_expiracao &&
-                tokenRow.data_expiracao < hoje
-            ) {
+            if (tokenExpirado(tokenRow.data_expiracao)) {
                 return errorResponse(
                     res,
                     401,
@@ -156,21 +129,7 @@ export const v1AuthMiddleware = async (
                 );
             }
 
-            const secretHash = crypto
-                .createHash("sha256")
-                .update(secret)
-                .digest();
-
-            const storedHash = Buffer.from(
-                tokenRow.token_hash,
-                "hex",
-            );
-
-            const valido =
-                secretHash.length === storedHash.length &&
-                crypto.timingSafeEqual(secretHash, storedHash);
-
-            if (!valido) {
+            if (!hashConfere(secret, tokenRow.token_hash)) {
                 return errorResponse(
                     res,
                     401,
@@ -250,10 +209,7 @@ export const v1AuthMiddleware = async (
                 );
             }
 
-            if (
-                tokenRow.data_expiracao &&
-                tokenRow.data_expiracao < hoje
-            ) {
+            if (tokenExpirado(tokenRow.data_expiracao)) {
                 return errorResponse(
                     res,
                     401,

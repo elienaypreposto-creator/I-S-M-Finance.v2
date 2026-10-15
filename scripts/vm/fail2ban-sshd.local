@@ -1,0 +1,12 @@
+# /etc/fail2ban/jail.d/ism-sshd.local
+[sshd]
+enabled  = true
+port     = ssh
+backend  = systemd
+maxretry = 5
+findtime = 10m
+bantime  = 1h
+bantime.increment = true
+bantime.maxtime   = 1w
+# Rede interna da VCN e loopback nunca são banidas. Acrescente o IP fixo do escritório, se houver.
+ignoreip = 127.0.0.1/8 ::1 10.0.0.0/24

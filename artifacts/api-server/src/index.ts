@@ -1,10 +1,15 @@
-// @ts-ignore
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-
 import dotenv from "dotenv";
 import path from "path";
 
 dotenv.config({path: path.resolve(process.cwd(), "../../.env")});
+
+// Validação TLS fica ligada no processo inteiro (SMTP, HIBP, Postgres). CA própria: ver db-ssl.ts.
+if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0") {
+    if (process.env.NODE_ENV === "production") {
+        throw new Error("[boot] NODE_TLS_REJECT_UNAUTHORIZED=0 desliga a validação TLS - remova do ambiente.");
+    }
+    console.warn("[boot] NODE_TLS_REJECT_UNAUTHORIZED=0 - validação TLS desligada (só aceitável em dev).");
+}
 
 import {assertRlsRoles, syncAdminPermissionsOnBoot} from "@workspace/db";
 import app from "./app";
@@ -12,6 +17,9 @@ import {startPromoverAtrasadosJob} from "./jobs/promover-atrasados";
 import {startArquivarAuditoriaJob} from "./jobs/arquivar-auditoria";
 import {startRetencaoLgpdJob} from "./jobs/retencao-lgpd";
 import {assertDiscoCifrado} from "./domains/lgpd/lgpd-disco";
+import {assertSegredosJwt} from "./services/token.service";
+
+assertSegredosJwt(process.env);
 
 const port = process.env.PORT || 5000;
 

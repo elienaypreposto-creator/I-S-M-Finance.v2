@@ -1,7 +1,7 @@
 import {createHash} from "crypto";
 import {Router} from "express";
 import {z} from "zod";
-import multer from "multer";
+import {pareceOfx, uploadExtratoOfx} from "../lib/upload-limits";
 import {and, asc, count, desc, eq, gte, ilike, inArray, isNull, lt, lte, notInArray, or, sql, type SQL} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {
@@ -45,7 +45,8 @@ import {requireTenant, tenantScope, tenantWhere, withEmpresaId} from "../lib/ten
 type DbLike = Pick<typeof db, "select" | "insert" | "update" | "delete">;
 
 const router = Router();
-const upload = multer({storage: multer.memoryStorage()});
+// Limites de tamanho/quantidade/tipo do OFX: ver lib/upload-limits.ts (ISMF-8).
+const upload = uploadExtratoOfx;
 
 /**
  * Erro com status/code HTTP explícitos - usado para abortar uma transaction
@@ -901,7 +902,7 @@ async function parseExtratoUpload(req: {
         return {error: {status: 400, code: "VALIDATION_ERROR", message: "Campo obrigatório: arquivo OFX."}};
     }
     const ext = req.file.originalname.split(".").pop()?.toLowerCase() ?? "";
-    if (ext !== "ofx") {
+    if (ext !== "ofx" || !pareceOfx(req.file.buffer)) {
         return {
             error: {
                 status: 400,

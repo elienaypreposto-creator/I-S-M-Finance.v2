@@ -3,11 +3,17 @@ import { ZodError } from "zod";
 import { MulterError } from "multer";
 import { AppError } from "../utils/app-error";
 import {clientErrorDetails, logInternalError, requestIdFrom} from "../utils/safe-error";
+import { OFX_MAX_MB } from "../lib/upload-limits";
 
 /** Mensagens amigáveis por código de erro do multer (limits/fileFilter). */
 const MULTER_ERROR_MESSAGES: Partial<Record<MulterError["code"], string>> = {
-  LIMIT_FILE_SIZE: "Arquivo excede o tamanho máximo permitido (10 MB).",
+  LIMIT_FILE_SIZE: `Arquivo excede o tamanho máximo permitido (${OFX_MAX_MB} MB).`,
   LIMIT_UNEXPECTED_FILE: "Arquivo não suportado ou campo de upload inesperado.",
+  LIMIT_FILE_COUNT: "Envie apenas um arquivo por vez.",
+  LIMIT_PART_COUNT: "Requisição de upload com partes demais.",
+  LIMIT_FIELD_COUNT: "Requisição de upload com campos demais.",
+  LIMIT_FIELD_VALUE: "Campo do formulário excede o tamanho permitido.",
+  LIMIT_FIELD_KEY: "Nome de campo do formulário longo demais.",
 };
 
 /** Erro lançado por body-parser (express.json/urlencoded) ao estourar `limit`. */
