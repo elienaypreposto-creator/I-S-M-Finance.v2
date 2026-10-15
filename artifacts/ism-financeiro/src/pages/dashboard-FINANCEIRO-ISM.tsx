@@ -37,6 +37,8 @@ import {
 } from "recharts";
 import { formatCurrency, cn } from "@/lib/utils";
 import { fetchApiData } from "@/lib/api-config";
+import { SaldoGeralCard } from "@/components/dashboard/saldo-geral-card";
+import {hojeIsoLocal} from "@/lib/datas";
 
 const PIE_COLORS = ["#6366F1", "#F59E0B", "#E74C3C", "#22C55E", "#3B82F6", "#EC4899"];
 
@@ -277,7 +279,7 @@ async function exportarXLSX(dashboardData: DashboardExportData) {
     throw new Error("Nenhum dado disponível para exportação ainda. Aguarde o carregamento do dashboard.");
   }
 
-  const date = new Date().toISOString().slice(0, 10);
+  const date = hojeIsoLocal();
   XLSX.writeFile(wb, `dashboard-ISM-${date}.xlsx`);
 }
 
@@ -438,7 +440,7 @@ async function exportarPDF(dashboardData: DashboardExportData) {
     doc.text(`ISM Finance · ${dataHoje} · Pág. ${i}/${pageCount}`, W / 2, 292, { align: "center" });
   }
 
-  doc.save(`dashboard-ISM-${new Date().toISOString().slice(0, 10)}.pdf`);
+  doc.save(`dashboard-ISM-${hojeIsoLocal()}.pdf`);
 }
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -721,7 +723,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
         {kpisLoading ? (
           Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="glass-panel rounded-2xl p-5 animate-pulse">
@@ -760,6 +762,7 @@ export default function Dashboard() {
             />
           </>
         )}
+        <SaldoGeralCard />
       </div>
 
       <div className="glass-panel rounded-2xl p-5">

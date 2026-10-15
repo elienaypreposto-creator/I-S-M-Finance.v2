@@ -63,17 +63,54 @@ export const dadosPagamentoSchema = z.array(dadosPagamentoItemSchema);
 export type DadosPagamentoItem = z.infer<typeof dadosPagamentoItemSchema>;
 export type DadosPagamento = z.infer<typeof dadosPagamentoSchema>;
 
-export const listLancamentosQuerySchema = z.object({
-    page: z.coerce.number().int().positive().default(1),
-    limit: z.coerce.number().int().positive().max(200).default(20),
+/** `status=pendente,atrasado` → ["pendente", "atrasado"]; cada valor validado no enum. */
+const statusCsvSchema = z
+    .string()
+    .trim()
+    .min(1)
+    .transform((s) => Array.from(new Set(s.split(",").map((v) => v.trim()).filter(Boolean))))
+    .pipe(z.array(lancamentoStatusEnum).min(1));
+
+const idFiltro = z.coerce.number().int().positive().optional();
+const valorFiltro = z.coerce.number().finite().min(0).optional();
+
+/** Filtros comuns à listagem paginada e ao export. */
+const filtrosLancamentosSchema = z.object({
     tipo: z.enum(["CP", "CR"]).optional(),
-    status: lancamentoStatusEnum.optional(),
-    conta_id: z.coerce.number().int().positive().optional(),
-    parceiro_id: z.coerce.number().int().positive().optional(),
+    status: statusCsvSchema.optional(),
+    conta_id: idFiltro,
+    parceiro_id: idFiltro,
+    plano_conta_id: idFiltro,
+    departamento_id: idFiltro,
+    centro_custo_id: idFiltro,
+    valor_min: valorFiltro,
+    valor_max: valorFiltro,
     data_inicio: z.string().trim().min(1).optional(),
     data_fim: z.string().trim().min(1).optional(),
-    search: z.string().trim().min(1).optional(),
+    search: z.string().trim().min(1).max(120).optional(),
 });
+
+function faixaDeValorValida(q: { valor_min?: number; valor_max?: number }, ctx: z.RefinementCtx) {
+    if (q.valor_min !== undefined && q.valor_max !== undefined && q.valor_min > q.valor_max) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["valor_max"],
+            message: "valor_min não pode ser maior que valor_max.",
+        });
+    }
+}
+
+export const listLancamentosQuerySchema = filtrosLancamentosSchema
+    .extend({
+        page: z.coerce.number().int().positive().default(1),
+        limit: z.coerce.number().int().positive().max(200).default(20),
+    })
+    .superRefine(faixaDeValorValida);
+
+/** Teto do export: o arquivo traz no máximo isso e avisa quando o filtro tem mais. */
+export const LIMITE_EXPORT_LANCAMENTOS = 10_000;
+
+export const exportLancamentosQuerySchema = filtrosLancamentosSchema.superRefine(faixaDeValorValida);
 
 export const lancamentoIdParamSchema = z.object({
     id: z.coerce.number().int().positive(),
@@ -122,5 +159,6 @@ export const createLancamentoBodySchema = lancamentoBaseSchema;
 export const updateLancamentoBodySchema = lancamentoBaseSchema.partial();
 
 export type ListLancamentosQuery = z.infer<typeof listLancamentosQuerySchema>;
+export type FiltrosLancamentos = z.infer<typeof exportLancamentosQuerySchema>;
 export type CreateLancamentoBody = z.infer<typeof createLancamentoBodySchema>;
 export type UpdateLancamentoBody = z.infer<typeof updateLancamentoBodySchema>;

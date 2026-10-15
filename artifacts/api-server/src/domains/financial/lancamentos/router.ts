@@ -12,6 +12,7 @@ import {
     type CreateLancamentoBody,
     type UpdateLancamentoBody,
     createLancamentoBodySchema,
+    exportLancamentosQuerySchema,
     lancamentoIdParamSchema,
     listLancamentosQuerySchema,
     updateLancamentoBodySchema,
@@ -24,6 +25,16 @@ router.get(
     asyncHandler(async (req, res) => {
         const query = listLancamentosQuerySchema.parse(req.query);
         const result = await lancamentosService.list(requireTenant(req).empresaId, query);
+        return successResponse(res, result.items, result.meta);
+    }),
+);
+
+// Antes de "/lancamentos/:id". Mesmos filtros da listagem, sem paginação (teto de 10 mil linhas).
+router.get(
+    "/lancamentos/export",
+    asyncHandler(async (req, res) => {
+        const filtros = exportLancamentosQuerySchema.parse(req.query);
+        const result = await lancamentosService.exportar(requireTenant(req).empresaId, filtros);
         return successResponse(res, result.items, result.meta);
     }),
 );

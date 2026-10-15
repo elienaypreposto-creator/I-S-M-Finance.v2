@@ -47,6 +47,7 @@ import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
 import {useEscapeClose} from "@/hooks/use-escape-close";
+import {hojeIsoLocal} from "@/lib/datas";
 import {
     Empty,
     EmptyHeader,
@@ -55,6 +56,13 @@ import {
     EmptyDescription,
     EmptyContent,
 } from "@/components/ui/empty";
+import {
+    CampoBusca,
+    FiltrosAtivos,
+    FiltrosPopover,
+    useFiltrosNaUrl,
+    type DefinicaoFiltro,
+} from "@/components/shared/filtros";
 
 const tiposParceiroOptions = [
     "Cliente",
@@ -667,10 +675,14 @@ function ContaBancariaGroup({index, control, register, setValue, remove, errors}
     );
 }
 
-export function NovoParceiroModal({onClose, initialData, onSaved}: {
+export function NovoParceiroModal({onClose, initialData, onSaved, container}: {
     onClose: () => void;
     initialData?: ParceiroRow | null;
     onSaved?: () => void;
+    /** Onde montar o portal (padrão: body). Dentro de um Dialog Radix precisa
+     *  ficar no conteúdo dele, senão o foco preso e o bloqueio de cliques do
+     *  Radix impedem o uso deste modal. */
+    container?: Element | null;
 }) {
     const queryClient = useQueryClient();
     const {toast} = useToast();
@@ -1002,26 +1014,48 @@ export function NovoParceiroModal({onClose, initialData, onSaved}: {
                 </div>
             </div>
         </>,
-        document.body,
+        container ?? document.body,
     );
 }
 
-// Hook simples para "atrasar" a atualização de um valor (usado na busca da
-// listagem, para não disparar uma requisição a cada tecla digitada).
-function useDebouncedValue<T>(value: T, delayMs: number): T {
-    const [debounced, setDebounced] = useState(value);
-    useEffect(() => {
-        const timer = setTimeout(() => setDebounced(value), delayMs);
-        return () => clearTimeout(timer);
-    }, [value, delayMs]);
-    return debounced;
-}
+const DEFINICOES_FILTRO_PARCEIROS: DefinicaoFiltro[] = [
+    {
+        chave: "status",
+        rotulo: "Status",
+        tipo: "select",
+        placeholder: "Todos",
+        opcoes: [
+            {valor: "ativo", rotulo: "Ativo"},
+            {valor: "inativo", rotulo: "Inativo"},
+        ],
+    },
+    {
+        chave: "tipo",
+        rotulo: "Tipo de parceiro",
+        tipo: "select",
+        placeholder: "Todos",
+        opcoes: tiposParceiroOptions.map((t) => ({valor: t, rotulo: t})),
+    },
+    {
+        chave: "tipo_pessoa",
+        rotulo: "Pessoa",
+        tipo: "select",
+        placeholder: "PF e PJ",
+        opcoes: [
+            {valor: "PF", rotulo: "Pessoa física (PF)"},
+            {valor: "PJ", rotulo: "Pessoa jurídica (PJ)"},
+        ],
+    },
+];
 
 export default function Parceiros() {
     const queryClient = useQueryClient();
     const {toast} = useToast();
-    const [search, setSearch] = useState("");
-    const debouncedSearch = useDebouncedValue(search, 400);
+    // Busca e filtros na URL; todos aplicados na API (GET /parceiros).
+    const filtros = useFiltrosNaUrl(DEFINICOES_FILTRO_PARCEIROS);
+    const search = filtros.ler("q");
+    const debouncedSearch = search;
+    const paramsFiltro = new URLSearchParams(filtros.valores).toString();
     const [showModal, setShowModal] = useState(false);
     const [editingParceiro, setEditingParceiro] = useState<ParceiroRow | null>(null);
     const {confirm, ConfirmDialogProps} = useConfirm();
@@ -1034,10 +1068,12 @@ export default function Parceiros() {
     const deptNomeById = useMemo(() => new Map(departamentos.map((d) => [d.id, d.nome])), [departamentos]);
 
     const {data: parceirosLista = [], isLoading} = useQuery({
-        queryKey: tenantQueryKey("parceiros", debouncedSearch),
+        queryKey: tenantQueryKey("parceiros", debouncedSearch, paramsFiltro),
         queryFn: () => {
             const q = debouncedSearch.trim();
-            const qs = new URLSearchParams({limit: "200", page: "1"});
+            const qs = new URLSearchParams(paramsFiltro);
+            qs.set("limit", "200");
+            qs.set("page", "1");
             if (q) qs.set("search", q);
             return fetchApiData<ParceiroRow[]>(`/parceiros?${qs.toString()}`);
         },
@@ -1151,7 +1187,7 @@ export default function Parceiros() {
             status_fmt: resolveStatus(p) === "ativo" ? "Ativo" : "Inativo",
         })) as Record<string, unknown>[];
 
-        exportToExcel(`Parceiros_${new Date().toISOString().split("T")[0]}`, rows, EXPORT_COLUMNS_PARCEIROS);
+        exportToExcel(`Parceiros_${hojeIsoLocal()}`, rows, EXPORT_COLUMNS_PARCEIROS);
     }
 
     return (
@@ -1193,22 +1229,32 @@ export default function Parceiros() {
             />
 
             <div className="glass-panel rounded-2xl overflow-hidden">
-                <div className="p-4 border-b border-white/5 flex items-center gap-3 bg-black/10">
-                    <div
-                        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-black/20 border border-white/5 focus-within:border-primary/50 transition-all w-80">
-                        <Search className="w-4 h-4 text-muted-foreground shrink-0"/>
-                        <input
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
-                            type="text"
-                            placeholder="Buscar por nome ou CPF/CNPJ..."
-                            className="bg-transparent border-none outline-none text-sm w-full placeholder:text-muted-foreground text-white"
+                <div className="p-4 border-b border-white/5 flex flex-wrap items-center justify-between gap-3 bg-black/10">
+                    <div className="flex items-center gap-3">
+                        <FiltrosPopover
+                            definicoes={DEFINICOES_FILTRO_PARCEIROS}
+                            valores={filtros.valores}
+                            contagem={filtros.contagem}
+                            onAplicar={filtros.aplicar}
                         />
+                        <span className="text-xs text-muted-foreground">
+                            {isLoading ? "…" : `${parceirosLista.length} cadastros`}
+                        </span>
                     </div>
-                    <span className="text-xs text-muted-foreground ml-auto">
-            {isLoading ? "…" : `${parceirosLista.length} cadastros`}
-          </span>
+                    <CampoBusca
+                        valor={search}
+                        onBuscar={(termo) => filtros.atualizar({q: termo || null})}
+                        placeholder="Buscar por nome ou CPF/CNPJ..."
+                        rotulo="Buscar clientes e fornecedores por nome ou CPF/CNPJ"
+                    />
                 </div>
+
+                <FiltrosAtivos
+                    chips={filtros.chips}
+                    onRemover={filtros.remover}
+                    onLimparTodos={filtros.limpar}
+                    anuncio={isLoading ? "" : `${parceirosLista.length} ${parceirosLista.length === 1 ? "cadastro encontrado" : "cadastros encontrados"}`}
+                />
 
                 {isLoading && <TableSkeleton rows={6} columns={7}/>}
 
@@ -1219,15 +1265,17 @@ export default function Parceiros() {
                                 <Search className="text-muted-foreground/40"/>
                             </EmptyMedia>
                             <EmptyTitle className="text-white">
-                                {search ? "Nenhum resultado encontrado" : "Nenhum parceiro cadastrado"}
+                                {search || filtros.contagem > 0 ? "Nenhum resultado encontrado" : "Nenhum parceiro cadastrado"}
                             </EmptyTitle>
                             <EmptyDescription>
-                                {search
-                                    ? `Não encontramos cadastros para "${search}". Tente outro termo.`
+                                {search || filtros.contagem > 0
+                                    ? search
+                                        ? `Não encontramos cadastros para "${search}" com os filtros aplicados. Tente outro termo.`
+                                        : "Nenhum cadastro com os filtros aplicados."
                                     : "Cadastre clientes, fornecedores e parceiros para usar nos lançamentos."}
                             </EmptyDescription>
                         </EmptyHeader>
-                        {!search && (
+                        {!search && filtros.contagem === 0 && (
                             <EmptyContent>
                                 <button
                                     type="button"

@@ -1,5 +1,5 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
-import {useState} from "react";
+import {useMemo, useState} from "react";
 import {useForm} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {z} from "zod";
@@ -22,6 +22,7 @@ import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
 import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
 import {ViewportOverlay} from "@/components/shared/viewport-overlay";
+import {CampoBusca, contemBusca, useParametrosUrl} from "@/components/shared/filtros";
 import {
     Empty,
     EmptyHeader,
@@ -180,6 +181,17 @@ export default function Filiais() {
         queryKey: tenantQueryKey("filiais"),
         queryFn: () => fetchApiData<FilialRow[]>("/filiais"),
     });
+
+    // ── Busca por nome (?q=) filtrada no navegador ─────────────────────────────
+    const {ler, atualizar} = useParametrosUrl();
+    const busca = ler("q");
+    const filiaisFiltradas = useMemo(
+        () => filiais.filter((f) => contemBusca(busca, f.nome)),
+        [filiais, busca],
+    );
+    const anuncio = isLoading || !busca
+        ? ""
+        : `${filiaisFiltradas.length} ${filiaisFiltradas.length === 1 ? "filial encontrada" : "filiais encontradas"}`;
 
     // ── Criar ────────────────────────────────────────────────────────────────────
     const createMutation = useMutation({
@@ -355,7 +367,29 @@ export default function Filiais() {
                         </div>
                     ) : (
                         <div className="space-y-3 sm:space-y-4">
-                            {filiais.map((filial) => (
+                            {/* Barra padrão: busca à direita */}
+                            <div className="glass-panel rounded-2xl border border-white/5 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+                                <p className="text-xs text-muted-foreground">
+                                    {busca
+                                        ? `${filiaisFiltradas.length} de ${filiais.length} ${filiais.length === 1 ? "filial" : "filiais"}`
+                                        : `${filiais.length} ${filiais.length === 1 ? "filial" : "filiais"}`}
+                                </p>
+                                <CampoBusca
+                                    valor={busca}
+                                    onBuscar={(termo) => atualizar({q: termo || null})}
+                                    placeholder="Buscar por nome…"
+                                    rotulo="Buscar filiais por nome"
+                                />
+                            </div>
+                            <p className="sr-only" aria-live="polite" aria-atomic="true">{anuncio}</p>
+
+                            {filiaisFiltradas.length === 0 && (
+                                <div className="glass-panel rounded-2xl border border-white/5 p-8 text-center text-sm text-muted-foreground">
+                                    Nenhuma filial encontrada para a busca “{busca}”.
+                                </div>
+                            )}
+
+                            {filiaisFiltradas.map((filial) => (
                                 <div
                                     key={filial.id}
                                     className="glass-panel rounded-2xl p-4 sm:p-5 hover:border-white/20 border border-white/5 transition-all group"

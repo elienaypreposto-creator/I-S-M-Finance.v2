@@ -22,7 +22,7 @@ import {Router} from "express";
 import {z} from "zod";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
-import {and, count, eq, ilike, ne} from "drizzle-orm";
+import {and, count, eq, ilike, ne, or} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {
     empresasTable,
@@ -46,6 +46,7 @@ import {
     validatePasswordPolicy,
 } from "../utils/password-policy";
 import {errorResponse, successResponse} from "../utils/response";
+import {parseCsvPermitido} from "../utils/filtro-csv";
 import {withPermission} from "../middlewares/withPermission";
 import {withSuperadmin} from "../middlewares/withSuperadmin";
 import {validateBody} from "../middlewares/validate";
@@ -158,12 +159,17 @@ router.get(
                 typeof req.query.search === "string" &&
                 req.query.search.trim()
             ) {
-                conditions.push(
-                    ilike(
-                        usuariosTable.nome,
-                        `%${req.query.search.trim()}%`,
-                    ),
-                );
+                const termo = `%${req.query.search.trim().replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+                conditions.push(or(ilike(usuariosTable.nome, termo), ilike(usuariosTable.email, termo))!);
+            }
+
+            // status=ativo|bloqueado (vários em CSV = sem restrição).
+            const status = parseCsvPermitido(req.query.status, ["ativo", "bloqueado"] as const);
+            if (status === null) {
+                return errorResponse(res, 400, "VALIDATION_ERROR", "status inválido. Use ativo ou bloqueado.");
+            }
+            if (status && status.length === 1) {
+                conditions.push(eq(usuariosTable.bloqueado, status[0] === "bloqueado"));
             }
 
             const vinculoAtual = and(

@@ -1,11 +1,30 @@
 import { eq } from "drizzle-orm";
 import { db } from "@workspace/db";
-import { departamentosTable, lancamentosTable, parceirosTable } from "@workspace/db/schema";
+import { centrosCustosTable, departamentosTable, lancamentosTable, parceirosTable } from "@workspace/db/schema";
 import { AppError } from "../../../utils/app-error";
 import { tenantScope, tenantWhere, withEmpresaId } from "../../../lib/tenant-scope";
-import type { CreateDepartamentoBody, UpdateDepartamentoBody } from "./schemas";
+import type { CreateDepartamentoBody, ListCentrosCustosQuery, UpdateDepartamentoBody } from "./schemas";
 
 export const departamentosService = {
+  /** Centros de custo da empresa (opcionalmente de um departamento), por nome. */
+  async listCentrosCustos(empresaId: number, query: ListCentrosCustosQuery) {
+    return db
+      .select({
+        id: centrosCustosTable.id,
+        nome: centrosCustosTable.nome,
+        departamento_id: centrosCustosTable.departamento_id,
+      })
+      .from(centrosCustosTable)
+      .where(
+        tenantWhere(
+          centrosCustosTable,
+          empresaId,
+          query.departamento_id ? eq(centrosCustosTable.departamento_id, query.departamento_id) : undefined,
+        ),
+      )
+      .orderBy(centrosCustosTable.nome);
+  },
+
   async list(empresaId: number) {
     return db
       .select()

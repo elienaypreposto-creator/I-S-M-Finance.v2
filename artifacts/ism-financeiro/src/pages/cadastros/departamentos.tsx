@@ -1,5 +1,5 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { PageHeader } from "@/components/shared/page-header";
@@ -14,6 +14,7 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { useConfirm } from "@/hooks/use-confirm";
 import { DISCARD_PROMPT, useEscapeClose } from "@/hooks/use-escape-close";
 import { ViewportOverlay } from "@/components/shared/viewport-overlay";
+import { CampoBusca, contemBusca, useParametrosUrl } from "@/components/shared/filtros";
 import {
   Empty,
   EmptyHeader,
@@ -211,6 +212,17 @@ export default function Departamentos() {
     },
   });
 
+  // ── Busca por nome na URL (?q=), aplicada no navegador ──
+  const { ler, atualizar } = useParametrosUrl();
+  const busca = ler("q");
+  const departamentosFiltrados = useMemo(
+    () => departamentos.filter((d) => contemBusca(busca, d.nome)),
+    [departamentos, busca],
+  );
+  const anuncio = isLoading || !busca
+    ? ""
+    : `${departamentosFiltrados.length} ${departamentosFiltrados.length === 1 ? "departamento encontrado" : "departamentos encontrados"}`;
+
   const toggle = (id: number) =>
     setExpanded((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
@@ -295,6 +307,19 @@ export default function Departamentos() {
         ))}
       </div>
 
+      {/* Busca à direita (sem painel de filtros) */}
+      {!isLoading && departamentos.length > 0 && (
+        <div className="glass-panel rounded-2xl px-4 py-2.5 flex flex-wrap items-center justify-end gap-3 bg-black/10">
+          <CampoBusca
+            valor={busca}
+            onBuscar={(termo) => atualizar({ q: termo || null })}
+            placeholder="Buscar por nome…"
+            rotulo="Buscar departamentos por nome"
+          />
+        </div>
+      )}
+      <p className="sr-only" aria-live="polite" aria-atomic="true">{anuncio}</p>
+
       {/* Loading - skeleton de cards */}
       {isLoading && <CardsSkeleton cards={4} />}
 
@@ -324,10 +349,27 @@ export default function Departamentos() {
         </div>
       )}
 
+      {/* Busca sem resultado */}
+      {!isLoading && departamentos.length > 0 && departamentosFiltrados.length === 0 && (
+        <div className="glass-panel rounded-2xl border border-white/5">
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <Building2 className="text-muted-foreground/40" />
+              </EmptyMedia>
+              <EmptyTitle className="text-white">Nenhum resultado para a busca.</EmptyTitle>
+              <EmptyDescription>
+                Nenhum departamento com nome contendo &ldquo;{busca}&rdquo;.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </div>
+      )}
+
       {/* Lista */}
-      {!isLoading && departamentos.length > 0 && (
+      {!isLoading && departamentosFiltrados.length > 0 && (
         <div className="space-y-3">
-          {departamentos.map((dept) => {
+          {departamentosFiltrados.map((dept) => {
             const cor = getColor(dept.id);
             const isExpanded = expanded.includes(dept.id);
 

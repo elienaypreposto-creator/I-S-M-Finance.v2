@@ -13,6 +13,7 @@ import {and, desc, eq, gte, lt, lte, sql} from "drizzle-orm";
 import {validateBody} from "../middlewares/validate";
 import {errorResponse, successResponse} from "../utils/response";
 import {requireTenant, tenantScope, tenantWhere, withEmpresaId} from "../lib/tenant-scope";
+import {hojeIsoLocal, somarDiasIso} from "../utils/date-civil";
 
 const router = Router();
 
@@ -74,15 +75,13 @@ router.get("/cards", async (req, res) => {
             if (!isNaN(rid)) conditions.push(eq(kanbanCardsTable.responsavel_id, rid));
         }
         if (prazo) {
-            const hoje = new Date().toISOString().split("T")[0];
+            const hoje = hojeIsoLocal();
             if (prazo === "atrasado") {
                 conditions.push(lt(kanbanCardsTable.prazo, hoje));
             } else if (prazo === "hoje") {
                 conditions.push(eq(kanbanCardsTable.prazo, hoje));
             } else if (prazo === "proximos") {
-                const proximaSemana = new Date();
-                proximaSemana.setDate(proximaSemana.getDate() + 7);
-                conditions.push(and(gte(kanbanCardsTable.prazo, hoje), lte(kanbanCardsTable.prazo, proximaSemana.toISOString().split("T")[0])));
+                conditions.push(and(gte(kanbanCardsTable.prazo, hoje), lte(kanbanCardsTable.prazo, somarDiasIso(hoje, 7))));
             }
         }
 

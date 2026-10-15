@@ -52,4 +52,17 @@ Thumbs.db
 backups/
 *~
 .env
+<<<<<<< HEAD
 *.envsaida.txt
+=======
+*.env
+# Roteiros e imagens locais ficam de fora. LGPD entra no git: o card exige o inventário neste path.
+/docs/*
+!/docs/lgpd-inventario.md
+!/docs/lgpd/
+!/docs/lgpd/**
+# Runbooks versionados (backup e endurecimento da VM).
+!/docs/backup.md
+!/docs/runbook-*.md
+/.cursor/
+>>>>>>> cd64afd599a82eb3901f91a64867a3df42259a9d

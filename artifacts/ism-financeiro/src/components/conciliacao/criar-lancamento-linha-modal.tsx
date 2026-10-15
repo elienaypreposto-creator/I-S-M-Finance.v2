@@ -4,6 +4,7 @@ import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
 import {formatCurrency} from "@/lib/utils";
+import {hojeIsoLocal} from "@/lib/datas";
 import {Loader2, X, Plus} from "lucide-react";
 import {invalidateRelated} from "@/App";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
@@ -42,7 +43,7 @@ export function CriarLancamentoLinhaModal({open, onClose, onSuccess, extratoId, 
 
     const tipo = linha.tipoMovimento === "credito" ? "CR" : "CP";
 
-    const [vencimento, setVencimento] = useState(linha.dataMovimento ?? new Date().toISOString().slice(0, 10));
+    const [vencimento, setVencimento] = useState(linha.dataMovimento ?? hojeIsoLocal());
     const [descricao, setDescricao] = useState(linha.descricao ?? "");
     const [parceiroId, setParceiroId] = useState<string>("");
     const [planoContaId, setPlanoContaId] = useState<string>("");
@@ -52,7 +53,7 @@ export function CriarLancamentoLinhaModal({open, onClose, onSuccess, extratoId, 
 
     useEffect(() => {
         if (!open) return;
-        setVencimento(linha.dataMovimento ?? new Date().toISOString().slice(0, 10));
+        setVencimento(linha.dataMovimento ?? hojeIsoLocal());
         setDescricao(linha.descricao ?? "");
         setParceiroId("");
         setPlanoContaId("");
@@ -126,7 +127,7 @@ export function CriarLancamentoLinhaModal({open, onClose, onSuccess, extratoId, 
     });
 
     async function handleRequestClose() {
-        const vencimentoInicial = linha.dataMovimento ?? new Date().toISOString().slice(0, 10);
+        const vencimentoInicial = linha.dataMovimento ?? hojeIsoLocal();
         const dirty =
             vencimento !== vencimentoInicial ||
             descricao !== (linha.descricao ?? "") ||

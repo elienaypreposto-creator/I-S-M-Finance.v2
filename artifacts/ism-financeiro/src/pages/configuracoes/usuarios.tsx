@@ -18,7 +18,14 @@ import {
     KeyRound,
     Building2,
 } from "lucide-react";
-import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
+import {keepPreviousData, useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
+import {
+    CampoBusca,
+    FiltrosAtivos,
+    FiltrosPopover,
+    useFiltrosNaUrl,
+    type DefinicaoFiltro,
+} from "@/components/shared/filtros";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
 import {PERM} from "@/lib/permissoes";
@@ -770,6 +777,19 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
 }
 
 // ─── Página Principal ──────────────────────────────────────────────────────────
+const DEFINICOES_FILTRO_USUARIOS: DefinicaoFiltro[] = [
+    {
+        chave: "status",
+        rotulo: "Status",
+        tipo: "select",
+        placeholder: "Todos",
+        opcoes: [
+            {valor: "ativo", rotulo: "Ativo"},
+            {valor: "bloqueado", rotulo: "Bloqueado"},
+        ],
+    },
+];
+
 export default function Usuarios() {
     const {toast} = useToast();
     const queryClient = useQueryClient();
@@ -799,9 +819,16 @@ export default function Usuarios() {
         setEditingUsuario(null);
     };
 
+    // Busca (nome ou e-mail) e status na URL; aplicados na API (GET /usuarios).
+    const filtros = useFiltrosNaUrl(DEFINICOES_FILTRO_USUARIOS);
+    const busca = filtros.ler("q");
+    const paramsFiltro = new URLSearchParams({...filtros.valores, ...(busca ? {search: busca} : {})}).toString();
+    const filtrando = Boolean(busca) || filtros.contagem > 0;
+
     const {data: usuarios = [], isLoading, isError, error} = useQuery<UsuarioRow[]>({
-        queryKey: tenantQueryKey("usuarios"),
-        queryFn: () => fetchApiData<UsuarioRow[]>("/usuarios?limit=100"),
+        queryKey: tenantQueryKey("usuarios", paramsFiltro),
+        queryFn: () => fetchApiData<UsuarioRow[]>(`/usuarios?limit=100${paramsFiltro ? `&${paramsFiltro}` : ""}`),
+        placeholderData: keepPreviousData,
     });
 
     const createMutation = useMutation({
@@ -956,6 +983,27 @@ export default function Usuarios() {
 
             {tab === "usuarios" && (
                 <>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <FiltrosPopover
+                            definicoes={DEFINICOES_FILTRO_USUARIOS}
+                            valores={filtros.valores}
+                            contagem={filtros.contagem}
+                            onAplicar={filtros.aplicar}
+                        />
+                        <CampoBusca
+                            valor={busca}
+                            onBuscar={(termo) => filtros.atualizar({q: termo || null})}
+                            placeholder="Buscar por nome ou e-mail…"
+                            rotulo="Buscar usuários por nome ou e-mail"
+                        />
+                    </div>
+                    <FiltrosAtivos
+                        chips={filtros.chips}
+                        onRemover={filtros.remover}
+                        onLimparTodos={filtros.limpar}
+                        anuncio={isLoading ? "" : `${usuarios.length} ${usuarios.length === 1 ? "usuário encontrado" : "usuários encontrados"}`}
+                        className="px-0 py-0 border-b-0"
+                    />
                     {isLoading && <TableSkeleton rows={5} columns={5}/>}
 
                     {isError && !isLoading && (
@@ -990,12 +1038,16 @@ export default function Usuarios() {
                                             <EmptyMedia variant="icon">
                                                 <UserCircle className="text-muted-foreground/40"/>
                                             </EmptyMedia>
-                                            <EmptyTitle className="text-white">Nenhum usuário cadastrado</EmptyTitle>
+                                            <EmptyTitle className="text-white">
+                                                {filtrando ? "Nenhum usuário encontrado" : "Nenhum usuário cadastrado"}
+                                            </EmptyTitle>
                                             <EmptyDescription>
-                                                Crie o primeiro usuário para liberar acesso ao sistema.
+                                                {filtrando
+                                                    ? "Nenhum usuário corresponde à busca e aos filtros aplicados."
+                                                    : "Crie o primeiro usuário para liberar acesso ao sistema."}
                                             </EmptyDescription>
                                         </EmptyHeader>
-                                        <EmptyContent>
+                                        <EmptyContent hidden={filtrando}>
                                             <button
                                                 type="button"
                                                 onClick={openCreate}

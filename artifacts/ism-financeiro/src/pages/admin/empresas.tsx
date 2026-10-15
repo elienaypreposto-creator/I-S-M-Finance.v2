@@ -1,4 +1,4 @@
-import {useState} from "react";
+import {useMemo, useState} from "react";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 import {Building2, Loader2, Plus, Power} from "lucide-react";
 import {PageHeader} from "@/components/shared/page-header";
@@ -9,6 +9,7 @@ import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {useAuth} from "@/hooks/use-auth";
 import {PERM} from "@/lib/permissoes";
 import {ViewportOverlay} from "@/components/shared/viewport-overlay";
+import {CampoBusca, contemBusca, useParametrosUrl} from "@/components/shared/filtros";
 
 type EmpresaRow = {
     id: number;
@@ -37,6 +38,17 @@ export default function AdminEmpresas() {
         queryFn: () => fetchApiData<EmpresaRow[]>("/empresas"),
         enabled: hasPermission(PERM.ADMIN_EMPRESAS_LISTAR),
     });
+
+    // Busca por nome (?q=) filtrada no navegador: nome fantasia ou razão social.
+    const {ler, atualizar} = useParametrosUrl();
+    const busca = ler("q");
+    const empresasFiltradas = useMemo(
+        () => empresas.filter((e) => contemBusca(busca, e.nome_fantasia, e.razao_social)),
+        [empresas, busca],
+    );
+    const anuncio = isLoading || !busca
+        ? ""
+        : `${empresasFiltradas.length} ${empresasFiltradas.length === 1 ? "empresa encontrada" : "empresas encontradas"}`;
 
     const createMutation = useMutation({
         mutationFn: () =>
@@ -101,6 +113,22 @@ export default function AdminEmpresas() {
                 <TableSkeleton rows={4} columns={5}/>
             ) : (
                 <div className="glass-panel rounded-2xl overflow-hidden">
+                    {/* Barra padrão: resumo à esquerda, busca à direita */}
+                    <div className="px-4 py-2.5 border-b border-white/5 flex flex-wrap items-center justify-between gap-3 bg-black/10">
+                        <p className="text-xs text-muted-foreground">
+                            {busca
+                                ? `${empresasFiltradas.length} de ${empresas.length} ${empresas.length === 1 ? "empresa" : "empresas"}`
+                                : `${empresas.length} ${empresas.length === 1 ? "empresa" : "empresas"}`}
+                        </p>
+                        <CampoBusca
+                            valor={busca}
+                            onBuscar={(termo) => atualizar({q: termo || null})}
+                            placeholder="Buscar por nome…"
+                            rotulo="Buscar empresas por nome"
+                        />
+                    </div>
+                    <p className="sr-only" aria-live="polite" aria-atomic="true">{anuncio}</p>
+                    <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead>
                             <tr className="text-left text-[10px] uppercase tracking-widest text-muted-foreground border-b border-white/5">
@@ -112,7 +140,16 @@ export default function AdminEmpresas() {
                             </tr>
                         </thead>
                         <tbody>
-                            {empresas.map((e) => (
+                            {empresasFiltradas.length === 0 && (
+                                <tr>
+                                    <td colSpan={5} className="px-5 py-8 text-center text-sm text-muted-foreground">
+                                        {busca
+                                            ? <>Nenhuma empresa encontrada para a busca “{busca}”.</>
+                                            : "Nenhuma empresa cadastrada."}
+                                    </td>
+                                </tr>
+                            )}
+                            {empresasFiltradas.map((e) => (
                                 <tr key={e.id} className="border-b border-white/5 last:border-0">
                                     <td className="px-5 py-4">
                                         <div className="flex items-center gap-3">
@@ -153,6 +190,7 @@ export default function AdminEmpresas() {
                             ))}
                         </tbody>
                     </table>
+                    </div>
                 </div>
             )}
 

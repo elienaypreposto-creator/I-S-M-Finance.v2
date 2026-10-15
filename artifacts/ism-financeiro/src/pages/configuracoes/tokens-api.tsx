@@ -1,5 +1,5 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -26,6 +26,7 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { useConfirm } from "@/hooks/use-confirm";
 import { DISCARD_PROMPT, useEscapeClose } from "@/hooks/use-escape-close";
 import { ViewportOverlay } from "@/components/shared/viewport-overlay";
+import { CampoBusca, contemBusca, useParametrosUrl } from "@/components/shared/filtros";
 import {
   Empty,
   EmptyHeader,
@@ -265,6 +266,17 @@ export default function TokensApi() {
 
   const ativos = tokens.filter((t) => t.ativo).length;
 
+  // ── Busca por nome (?q=) filtrada no navegador ─────────────────────────────
+  const { ler, atualizar } = useParametrosUrl();
+  const busca = ler("q");
+  const tokensFiltrados = useMemo(
+    () => tokens.filter((t) => contemBusca(busca, t.nome)),
+    [tokens, busca],
+  );
+  const anuncio = isLoading || !busca
+    ? ""
+    : `${tokensFiltrados.length} ${tokensFiltrados.length === 1 ? "token encontrado" : "tokens encontrados"}`;
+
   return (
     <div className="space-y-4 sm:space-y-6">
       {/* Dialog de confirmação de exclusão */}
@@ -335,13 +347,34 @@ export default function TokensApi() {
           {/* Lista */}
           {!isLoading && !isError && (
             <div className="glass-panel rounded-2xl overflow-hidden">
-              <div className="p-4 border-b border-white/5 flex items-center justify-between">
+              {/* Barra padrão: resumo à esquerda, busca à direita */}
+              <div className="px-4 py-2.5 border-b border-white/5 flex flex-wrap items-center justify-between gap-3 bg-black/10">
                 <p className="text-sm text-muted-foreground">
+                  {busca && (
+                    <>
+                      <span className="font-semibold text-white">{tokensFiltrados.length}</span> de{" "}
+                    </>
+                  )}
                   <span className="font-semibold text-white">{tokens.length}</span> token
                   {tokens.length !== 1 ? "s" : ""} ·{" "}
                   <span className="text-success">{ativos} ativo{ativos !== 1 ? "s" : ""}</span>
                 </p>
+                {tokens.length > 0 && (
+                  <CampoBusca
+                    valor={busca}
+                    onBuscar={(termo) => atualizar({ q: termo || null })}
+                    placeholder="Buscar por nome…"
+                    rotulo="Buscar tokens por nome"
+                  />
+                )}
               </div>
+              <p className="sr-only" aria-live="polite" aria-atomic="true">{anuncio}</p>
+
+              {tokens.length > 0 && tokensFiltrados.length === 0 && (
+                <div className="p-8 text-center text-sm text-muted-foreground">
+                  Nenhum token encontrado para a busca “{busca}”.
+                </div>
+              )}
 
               {tokens.length === 0 ? (
                 <Empty>
@@ -367,7 +400,7 @@ export default function TokensApi() {
                 </Empty>
               ) : (
                 <div className="divide-y divide-white/5">
-                  {tokens.map((t) => (
+                  {tokensFiltrados.map((t) => (
                     <div key={t.id} className="p-4 sm:p-5 hover:bg-white/5 transition-colors group">
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex-1 min-w-0">

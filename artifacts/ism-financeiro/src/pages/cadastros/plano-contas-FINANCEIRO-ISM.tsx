@@ -1,5 +1,5 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
-import {useState, useRef, useEffect} from "react";
+import {useState, useRef, useEffect, useMemo} from "react";
 import {useForm} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {z} from "zod";
@@ -13,6 +13,29 @@ import {useConfirm} from "@/hooks/use-confirm";
 import {fetchApi, fetchApiData} from "@/lib/api-config";
 import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
 import {ViewportOverlay} from "@/components/shared/viewport-overlay";
+import {
+    CampoBusca,
+    FiltrosAtivos,
+    FiltrosPopover,
+    casaMulti,
+    contemBusca,
+    useFiltrosNaUrl,
+    type DefinicaoFiltro,
+} from "@/components/shared/filtros";
+
+// Filtros da tela (ISMF-33): valores reais do campo `tipo` do plano de contas.
+const DEFINICOES_FILTROS: DefinicaoFiltro[] = [
+    {
+        chave: "tipo",
+        rotulo: "Tipo",
+        tipo: "multi",
+        opcoes: [
+            {valor: "receita", rotulo: "Receita"},
+            {valor: "custo", rotulo: "Custo"},
+            {valor: "despesa", rotulo: "Despesa"},
+        ],
+    },
+];
 
 type PlanoConta = {
     id: number;
@@ -352,9 +375,27 @@ export default function PlanoContas() {
         });
     };
 
-    const receitas = contas.filter(c => c.tipo === 'receita');
-    const custos = contas.filter(c => c.tipo === 'custo');
-    const despesas = contas.filter(c => c.tipo === 'despesa');
+    // ── Filtros na URL (?tipo=receita,custo&q=) aplicados no navegador ──
+    const filtros = useFiltrosNaUrl(DEFINICOES_FILTROS);
+    const busca = filtros.ler("q");
+    const filtroTipo = filtros.valores.tipo;
+    const tipoVisivel = (tipo: TipoPlano) => casaMulti(filtroTipo, tipo);
+
+    const contasFiltradas = useMemo(
+        () => contas.filter((c) => contemBusca(busca, c.categoria, c.subcategoria)),
+        [contas, busca],
+    );
+
+    const receitas = contasFiltradas.filter(c => c.tipo === 'receita');
+    const custos = contasFiltradas.filter(c => c.tipo === 'custo');
+    const despesas = contasFiltradas.filter(c => c.tipo === 'despesa');
+
+    const totalVisivel = contasFiltradas.filter((c) => casaMulti(filtroTipo, c.tipo)).length;
+    const temFiltroOuBusca = filtros.contagem > 0 || Boolean(busca);
+    const nenhumTipoVisivel = !(['receita', 'custo', 'despesa'] as TipoPlano[]).some(tipoVisivel);
+    const anuncio = isLoading
+        ? ''
+        : `${totalVisivel} ${totalVisivel === 1 ? 'item do plano de contas encontrado' : 'itens do plano de contas encontrados'}`;
 
     const isCatAberta = (tipo: string, categoria: string) =>
         catsAbertas[`${tipo}:${normalizeText(categoria)}`] !== false;
@@ -416,8 +457,9 @@ export default function PlanoContas() {
                     {isLoading ? (
                         <div className="text-sm text-muted-foreground animate-pulse p-2">Carregando...</div>
                     ) : groupedEntries.length === 0 ? (
-                        <div className="text-sm text-muted-foreground p-4 text-center">Nenhuma categoria
-                            cadastrada</div>
+                        <div className="text-sm text-muted-foreground p-4 text-center">
+                            {busca ? 'Nenhum resultado para os filtros aplicados.' : 'Nenhuma categoria cadastrada'}
+                        </div>
                     ) : (
                         groupedEntries.map(([categoria, subcontas]) => {
                             const catAberta = isCatAberta(tipoDef, categoria);
@@ -506,8 +548,41 @@ export default function PlanoContas() {
                 }
             />
 
+            {/* Barra de filtros: painel à esquerda, busca à direita */}
+            <div className="glass-panel rounded-2xl overflow-hidden">
+                <div className="px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 bg-black/10">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <FiltrosPopover
+                            definicoes={DEFINICOES_FILTROS}
+                            valores={filtros.valores}
+                            contagem={filtros.contagem}
+                            onAplicar={filtros.aplicar}
+                        />
+                    </div>
+                    <CampoBusca
+                        valor={busca}
+                        onBuscar={(termo) => filtros.atualizar({q: termo || null})}
+                        placeholder="Buscar por categoria ou subcategoria…"
+                        rotulo="Buscar no plano de contas por categoria ou subcategoria"
+                    />
+                </div>
+                <FiltrosAtivos
+                    chips={filtros.chips}
+                    onRemover={filtros.remover}
+                    onLimparTodos={filtros.limpar}
+                    anuncio={anuncio}
+                    className="border-b-0 border-t"
+                />
+            </div>
+
+            {nenhumTipoVisivel && temFiltroOuBusca && (
+                <div className="glass-panel rounded-2xl p-6 text-center text-sm text-muted-foreground">
+                    Nenhum resultado para os filtros aplicados.
+                </div>
+            )}
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {renderSection('Receitas (+)', '1.0', {
+                {tipoVisivel('receita') && renderSection('Receitas (+)', '1.0', {
                     border: 'border-teal-500/20',
                     bg: 'bg-teal-500/20',
                     borderHeader: 'border-teal-500/30',
@@ -516,7 +591,7 @@ export default function PlanoContas() {
                     textBadge: 'text-teal-300'
                 }, receitas, 'receita')}
 
-                {renderSection('Custos (-)', '2.0', {
+                {tipoVisivel('custo') && renderSection('Custos (-)', '2.0', {
                     border: 'border-blue-500/20',
                     bg: 'bg-blue-500/20',
                     borderHeader: 'border-blue-500/30',
@@ -525,7 +600,7 @@ export default function PlanoContas() {
                     textBadge: 'text-blue-300'
                 }, custos, 'custo')}
 
-                {renderSection('Despesas (-)', '3.0', {
+                {tipoVisivel('despesa') && renderSection('Despesas (-)', '3.0', {
                     border: 'border-orange-500/20',
                     bg: 'bg-orange-500/20',
                     borderHeader: 'border-orange-500/30',
