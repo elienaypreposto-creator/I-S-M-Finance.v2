@@ -1,6 +1,7 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
-import {useMemo, useState} from "react";
+import {useMemo} from "react";
 import {PageHeader} from "@/components/shared/page-header";
+import {FOCO_VISIVEL, useParametrosUrl} from "@/components/shared/filtros";
 import {
     Download,
     FileText,
@@ -10,7 +11,7 @@ import {
     Loader2,
     AlertCircle,
 } from "lucide-react";
-import {formatCurrency} from "@/lib/utils";
+import {cn, formatCurrency} from "@/lib/utils";
 import {useQuery} from "@tanstack/react-query";
 import {fetchApiData} from "@/lib/api-config";
 import {exportToExcel, exportToPDF, fmtBRL} from "@/lib/export";
@@ -62,7 +63,14 @@ const CustomTooltip = ({active, payload, label}: any) => {
 };
 
 export default function MetasRelatorio() {
-    const [ano, setAno] = useState(CURRENT_YEAR);
+    // Ano na URL (?ano=2026) para sobreviver ao F5 e ao compartilhar o link.
+    const {ler, atualizar} = useParametrosUrl();
+    const anoUrl = ler("ano");
+    const ano = /^\d{4}$/.test(anoUrl) ? Number(anoUrl) : CURRENT_YEAR;
+    const anosOpcoes = useMemo(
+        () => (YEARS.includes(ano) ? YEARS : [...YEARS, ano].sort((a, b) => b - a)),
+        [ano],
+    );
 
     const {data: metas = [], isLoading, isError} = useQuery<MetaItem[]>({
         queryKey: tenantQueryKey("relatorio-metas", ano),
@@ -169,17 +177,6 @@ export default function MetasRelatorio() {
                 description={`Previsto × Realizado via data_quitação — ${ano}`}
                 actions={
                     <div className="flex gap-3">
-                        <select
-                            value={ano}
-                            onChange={(e) => setAno(Number(e.target.value))}
-                            className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white outline-none cursor-pointer"
-                        >
-                            {YEARS.map((y) => (
-                                <option key={y} value={y} className="bg-card text-white">
-                                    {y}
-                                </option>
-                            ))}
-                        </select>
                         <button
                             type="button"
                             onClick={() =>
@@ -205,6 +202,28 @@ export default function MetasRelatorio() {
                     </div>
                 }
             />
+
+            {/* Barra padrão: período (ano) à esquerda */}
+            <div className="glass-panel rounded-2xl border border-white/5 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                    <label htmlFor="metas-ano" className="text-xs text-muted-foreground whitespace-nowrap">Ano</label>
+                    <select
+                        id="metas-ano"
+                        value={ano}
+                        onChange={(e) => atualizar({ano: e.target.value})}
+                        className={cn(
+                            "bg-black/20 border border-white/10 rounded-xl px-3 py-1.5 text-xs font-semibold text-white cursor-pointer hover:bg-white/5 hover:border-white/20 transition-colors",
+                            FOCO_VISIVEL,
+                        )}
+                    >
+                        {anosOpcoes.map((y) => (
+                            <option key={y} value={y} className="bg-card text-white">
+                                {y}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+            </div>
 
             {isLoading && (
                 <div className="flex items-center justify-center h-48 gap-3 text-muted-foreground">

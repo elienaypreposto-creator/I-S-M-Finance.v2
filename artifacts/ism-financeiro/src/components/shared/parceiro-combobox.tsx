@@ -1,6 +1,7 @@
 import {useState} from "react";
 import {Edit2, Plus, Search} from "lucide-react";
 import {Popover, PopoverContent, PopoverTrigger} from "@/components/ui/popover";
+import {cn} from "@/lib/utils";
 import type {ParceiroRow} from "@/pages/cadastros/parceiros";
 
 type ParceiroComboboxProps = {
@@ -12,6 +13,8 @@ type ParceiroComboboxProps = {
     onEdit: (p: ParceiroRow) => void;
     onCreateNew: () => void;
     isLoading?: boolean;
+    /** Classes extras do botão (ex.: tamanhos em `em` no modal de lançamento). */
+    className?: string;
 };
 
 export function ParceiroCombobox({
@@ -23,6 +26,7 @@ export function ParceiroCombobox({
                                      onEdit,
                                      onCreateNew,
                                      isLoading = false,
+                                     className,
                                  }: ParceiroComboboxProps) {
     const [open, setOpen] = useState(false);
 
@@ -43,7 +47,7 @@ export function ParceiroCombobox({
             <PopoverTrigger asChild>
                 <button
                     type="button"
-                    className="w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-left flex items-center justify-between hover:border-white/20 transition-all"
+                    className={cn("w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-left flex items-center justify-between hover:border-white/20 transition-all", className)}
                 >
                     {selected ? (
                         <span className="text-white flex items-center gap-2 min-w-0">

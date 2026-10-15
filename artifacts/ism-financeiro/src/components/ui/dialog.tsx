@@ -128,10 +128,13 @@ AlertDialogCancel.displayName = AlertDialogPrimitive.Cancel.displayName
 const Dialog = DialogPrimitive.Root
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
+    /** Classes extras do fundo escurecido (ex.: z-index acima de outro modal). */
+    overlayClassName?: string
+  }
+>(({ className, overlayClassName, ...props }, ref) => (
   <DialogPrimitive.Portal>
-    <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/80" />
+    <DialogPrimitive.Overlay className={cn("fixed inset-0 z-50 bg-black/80", overlayClassName)} />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
@@ -144,9 +147,14 @@ const DialogContent = React.forwardRef<
 ))
 DialogContent.displayName = DialogPrimitive.Content.displayName
 
+const DialogTitle = DialogPrimitive.Title
+const DialogDescription = DialogPrimitive.Description
+
 export {
   Dialog,
   DialogContent,
+  DialogTitle,
+  DialogDescription,
   AlertDialog,
   AlertDialogPortal,
   AlertDialogOverlay,

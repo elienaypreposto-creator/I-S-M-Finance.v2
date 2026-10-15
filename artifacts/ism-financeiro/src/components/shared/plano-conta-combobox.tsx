@@ -1,6 +1,7 @@
 import {useMemo, useState} from "react";
 import {Search} from "lucide-react";
 import {Popover, PopoverContent, PopoverTrigger} from "@/components/ui/popover";
+import {cn} from "@/lib/utils";
 
 export type PlanoContaOption = {
     id: number;
@@ -55,6 +56,8 @@ type PlanoContaComboboxProps = {
     onChange: (v: string) => void;
     planoContas: PlanoContaOption[];
     error?: string;
+    /** Classes extras do botão (ex.: tamanhos em `em` no modal de lançamento). */
+    className?: string;
 };
 
 export function PlanoContaCombobox({
@@ -62,6 +65,7 @@ export function PlanoContaCombobox({
                                        onChange,
                                        planoContas,
                                        error,
+                                       className,
                                    }: PlanoContaComboboxProps) {
     const [open, setOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState("");
@@ -91,9 +95,11 @@ export function PlanoContaCombobox({
                 <PopoverTrigger asChild>
                     <button
                         type="button"
-                        className={`w-full bg-[#1a1c23] border rounded-xl px-4 py-2.5 text-sm text-left flex items-center justify-between hover:border-white/20 transition-all ${
-                            error ? "border-red-500/60" : "border-white/10"
-                        }`}
+                        className={cn(
+                            "w-full bg-[#1a1c23] border rounded-xl px-4 py-2.5 text-sm text-left flex items-center justify-between hover:border-white/20 transition-all",
+                            error ? "border-red-500/60" : "border-white/10",
+                            className,
+                        )}
                     >
                         <span className={selected ? "text-white truncate" : "text-muted-foreground/40"}>
                             {selected
@@ -169,7 +175,7 @@ export function PlanoContaCombobox({
                     </div>
                 </PopoverContent>
             </Popover>
-            {error && <p className="text-[10px] text-destructive mt-1 font-medium">{error}</p>}
+            {error && <p className="text-[0.75em] text-destructive mt-1 font-medium">{error}</p>}
         </div>
     );
 }

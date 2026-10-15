@@ -12,11 +12,19 @@ import {
 import {useDroppable} from "@dnd-kit/core";
 import {SortableContext, verticalListSortingStrategy, useSortable} from "@dnd-kit/sortable";
 import {CSS} from "@dnd-kit/utilities";
-import {Plus, Search, Loader2} from "lucide-react";
+import {Plus, Loader2} from "lucide-react";
+import {useAuth} from "@/hooks/use-auth";
+import {
+    CampoBusca,
+    contemBusca,
+    FiltrosAtivos,
+    FiltrosPopover,
+    useFiltrosNaUrl,
+    type DefinicaoFiltro,
+} from "@/components/shared/filtros";
 import {BotaoEditar, BotaoExcluir} from "@/components/shared/botoes-acao";
 import {cn} from "@/lib/utils";
 import {Button} from "@/components/ui/button";
-import {Input} from "@/components/ui/input";
 import {TaskCard} from "@/components/tasks/task-card";
 import {TaskModal} from "@/components/tasks/task-modal";
 import {SectionErrorFallback} from "@/components/error-boundary";
@@ -64,13 +72,21 @@ const COLUMNS = [
 // Prefixo para ids de coluna no DnD - evita colisão com ids numéricos de cards
 const COL_PREFIX = "col::";
 
-const QUICK_FILTERS = [
-    {id: "todas", label: "Todas"},
-    {id: "urgente", label: "Urgente"},
-    {id: "alta", label: "Alta"},
-    {id: "minha_equipe", label: "Minha Equipe"},
-    {id: "vencendo_hoje", label: "Vencendo Hoje"},
+// Filtros que a API de cards aceita (GET /kanban/cards?prioridade=&responsavel_id=&prazo=).
+const PRIORIDADE_OPCOES = [
+    {valor: "urgente", rotulo: "Urgente"},
+    {valor: "alta", rotulo: "Alta"},
+    {valor: "media", rotulo: "Média"},
+    {valor: "baixa", rotulo: "Baixa"},
 ];
+
+const PRAZO_OPCOES = [
+    {valor: "atrasado", rotulo: "Atrasado"},
+    {valor: "hoje", rotulo: "Vencendo hoje"},
+    {valor: "proximos", rotulo: "Próximos 7 dias"},
+];
+
+type UsuarioKanban = { id: number; nome: string };
 
 // Campos aceitos pelo backend no PATCH - qualquer campo extra causa 400
 const PATCH_FIELDS = [
@@ -223,14 +239,35 @@ export default function Kanban() {
     const [selectedCard, setSelectedCard] = useState<Card | null>(null);
     const [modalColuna, setModalColuna] = useState("solicitado");
     const [activeId, setActiveId] = useState<number | null>(null);
-    const [search, setSearch] = useState("");
-    const [activeFilter, setActiveFilter] = useState("todas");
+    const {user} = useAuth();
+
+    const {data: usuarios = []} = useQuery({
+        queryKey: tenantQueryKey("kanban-usuarios-filtro"),
+        queryFn: () => fetchApiData<UsuarioKanban[]>("/kanban/usuarios"),
+        staleTime: 60_000,
+    });
+
+    const definicoes: DefinicaoFiltro[] = useMemo(() => {
+        // "Minha Equipe" = tarefas atribuídas ao usuário logado (não há cadastro de equipe).
+        const eu = user ? [{valor: String(user.id), rotulo: `Minha equipe (eu, ${user.nome})`}] : [];
+        const outros = usuarios
+            .filter((u) => u.id !== user?.id)
+            .map((u) => ({valor: String(u.id), rotulo: u.nome}));
+        return [
+            {chave: "prioridade", rotulo: "Prioridade", tipo: "select", placeholder: "Todas", opcoes: PRIORIDADE_OPCOES},
+            {chave: "responsavel_id", rotulo: "Responsável", tipo: "select", placeholder: "Todos", opcoes: [...eu, ...outros]},
+            {chave: "prazo", rotulo: "Prazo", tipo: "select", placeholder: "Qualquer prazo", opcoes: PRAZO_OPCOES},
+        ];
+    }, [usuarios, user]);
+    const filtros = useFiltrosNaUrl(definicoes);
+    const search = filtros.ler("q");
+    const paramsCards = new URLSearchParams(filtros.valores).toString();
 
     const queryClient = useQueryClient();
 
     const {data: cardsData, isLoading, isError, error, refetch} = useQuery<Card[]>({
-        queryKey: tenantQueryKey("kanban-cards"),
-        queryFn: () => fetchApiData<Card[]>("/kanban/cards"),
+        queryKey: tenantQueryKey("kanban-cards", paramsCards),
+        queryFn: () => fetchApiData<Card[]>(`/kanban/cards${paramsCards ? `?${paramsCards}` : ""}`),
     });
 
     // ── Criar ─────────────────────────────────────────────────────────────────
@@ -336,28 +373,11 @@ export default function Kanban() {
 
     // ── Filtros ───────────────────────────────────────────────────────────────
     const filteredCards = useMemo(() => {
-        let result = cardsData ?? [];
-        if (search) {
-            const q = search.toLowerCase();
-            result = result.filter(c =>
-                c.titulo.toLowerCase().includes(q) || c.descricao?.toLowerCase().includes(q)
-            );
-        }
-        switch (activeFilter) {
-            case "urgente":
-                result = result.filter(c => c.prioridade === "urgente");
-                break;
-            case "alta":
-                result = result.filter(c => c.prioridade === "alta");
-                break;
-            case "vencendo_hoje": {
-                const hoje = new Date().toISOString().split("T")[0];
-                result = result.filter(c => c.prazo === hoje);
-                break;
-            }
-        }
-        return result;
-    }, [cardsData, search, activeFilter]);
+        // Prioridade, responsável e prazo já vêm filtrados da API; a busca é local.
+        const result = cardsData ?? [];
+        if (!search) return result;
+        return result.filter(c => contemBusca(search, c.titulo, c.descricao));
+    }, [cardsData, search]);
 
     // ── Drag ──────────────────────────────────────────────────────────────────
     const handleDragStart = ({active}: DragStartEvent) => setActiveId(active.id as number);
@@ -454,35 +474,29 @@ export default function Kanban() {
                 </Button>
             </div>
 
-            <div className="mb-4 px-1">
-                <div className="flex items-center gap-4 flex-wrap">
-                    <div className="relative flex-1 min-w-[200px] max-w-md">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500"/>
-                        <Input
-                            type="text"
-                            placeholder="Buscar tarefas..."
-                            value={search}
-                            onChange={e => setSearch(e.target.value)}
-                            className="pl-10 bg-[#1A1A1A] border-white/10 text-white placeholder:text-gray-500"
-                        />
-                    </div>
-                    <div className="flex gap-2 flex-wrap">
-                        {QUICK_FILTERS.map(f => (
-                            <button
-                                key={f.id}
-                                onClick={() => setActiveFilter(f.id)}
-                                className={cn(
-                                    "px-4 py-2 rounded-lg text-sm font-medium transition-all",
-                                    activeFilter === f.id
-                                        ? "bg-blue-600 text-white"
-                                        : "bg-[#1A1A1A] border border-white/10 text-gray-400 hover:text-white hover:border-white/30"
-                                )}
-                            >
-                                {f.label}
-                            </button>
-                        ))}
-                    </div>
+            <div className="mb-4 px-1 flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <FiltrosPopover
+                        definicoes={definicoes}
+                        valores={filtros.valores}
+                        contagem={filtros.contagem}
+                        onAplicar={filtros.aplicar}
+                    />
+                    <CampoBusca
+                        valor={search}
+                        onBuscar={(termo) => filtros.atualizar({q: termo || null})}
+                        placeholder="Buscar tarefas…"
+                        rotulo="Buscar tarefas pelo título ou descrição"
+                        atrasoMs={250}
+                    />
                 </div>
+                <FiltrosAtivos
+                    chips={filtros.chips}
+                    onRemover={filtros.remover}
+                    onLimparTodos={filtros.limpar}
+                    anuncio={isLoading ? "" : `${filteredCards.length} ${filteredCards.length === 1 ? "tarefa encontrada" : "tarefas encontradas"}`}
+                    className="px-0 border-b-0"
+                />
             </div>
 
             {isLoading ? (

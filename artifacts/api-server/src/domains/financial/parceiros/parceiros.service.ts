@@ -1,19 +1,19 @@
-import {count, eq, ilike, not, sql} from "drizzle-orm";
+import {count, eq, not, sql} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {lancamentosTable, parceirosTable, usuariosTable} from "@workspace/db/schema";
 import {AppError} from "../../../utils/app-error";
 import {tenantWhere, withEmpresaId} from "../../../lib/tenant-scope";
 import type {CreateParceiroBody, ListParceirosQuery, UpdateParceiroBody} from "./schemas";
+import {montarWhereParceiros} from "./parceiros.filtros";
 
 export const parceirosService = {
     async list(empresaId: number, query: ListParceirosQuery) {
-        const {page, limit, search, excluir_com_usuario} = query;
+        const {page, limit, excluir_com_usuario} = query;
         const offset = (page - 1) * limit;
 
-        const where = tenantWhere(
-            parceirosTable,
+        const where = montarWhereParceiros(
             empresaId,
-            search ? ilike(parceirosTable.nome, `%${search}%`) : undefined,
+            query,
             // Exclui parceiros que já estão vinculados a um usuário
             // WHERE nome NOT IN (SELECT nome FROM usuarios)
             excluir_com_usuario

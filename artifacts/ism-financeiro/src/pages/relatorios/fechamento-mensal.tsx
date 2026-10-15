@@ -1,5 +1,5 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
-import { useState } from "react";
+import { useMemo } from "react";
 import { PageHeader } from "@/components/shared/page-header";
 import {
   Download,
@@ -12,7 +12,8 @@ import {
   ArrowUpCircle,
   ArrowDownCircle,
 } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
+import { FOCO_VISIVEL, useParametrosUrl } from "@/components/shared/filtros";
 import { useQuery } from "@tanstack/react-query";
 import { fetchApiData } from "@/lib/api-config";
 import { exportToExcel, exportToPDF, fmtBRL } from "@/lib/export";
@@ -24,6 +25,23 @@ const MESES = [
 ];
 const CURRENT_YEAR = new Date().getFullYear();
 const YEARS = Array.from({ length: 8 }, (_, i) => CURRENT_YEAR + 2 - i);
+
+/** Seletores de período no mesmo visual do botão Filtros (barra padrão ISMF-33). */
+const SELETOR_PERIODO = cn(
+  "bg-black/20 border border-white/10 rounded-xl px-3 py-1.5 text-xs font-semibold text-white cursor-pointer hover:bg-white/5 hover:border-white/20 transition-colors",
+  FOCO_VISIVEL,
+);
+
+/** Mês da URL (1–12); inválido ou ausente cai no mês atual. */
+function lerMes(valor: string): number {
+  const n = Number.parseInt(valor, 10);
+  return n >= 1 && n <= 12 ? n : new Date().getMonth() + 1;
+}
+
+/** Ano da URL (4 dígitos); inválido ou ausente cai no ano atual. */
+function lerAno(valor: string): number {
+  return /^\d{4}$/.test(valor) ? Number(valor) : CURRENT_YEAR;
+}
 
 // ─── Tipos ─────────────────────────────────────────────────────────────────────
 type FechamentoData = {
@@ -68,8 +86,16 @@ function KpiCard({
 
 // ─── Página ────────────────────────────────────────────────────────────────────
 export default function FechamentoMensal() {
-  const [mes, setMes] = useState(new Date().getMonth() + 1);
-  const [ano, setAno] = useState(CURRENT_YEAR);
+  // Período na URL (?mes=10&ano=2026) para sobreviver ao F5 e ao compartilhar o link.
+  const { ler, atualizar } = useParametrosUrl();
+  const mes = lerMes(ler("mes"));
+  const ano = lerAno(ler("ano"));
+  const anosOpcoes = useMemo(
+    () => (YEARS.includes(ano) ? YEARS : [...YEARS, ano].sort((a, b) => b - a)),
+    [ano],
+  );
+  const mudarPeriodo = (novoMes: number, novoAno: number) =>
+    atualizar({ mes: String(novoMes), ano: String(novoAno) });
 
   const { data, isLoading, isError } = useQuery<FechamentoData>({
     queryKey: tenantQueryKey("fechamento-mensal", mes, ano),
@@ -135,28 +161,6 @@ export default function FechamentoMensal() {
         description="Consolidação financeira do período selecionado"
         actions={
           <div className="flex gap-3">
-            <select
-              value={mes}
-              onChange={(e) => setMes(Number(e.target.value))}
-              className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white outline-none cursor-pointer"
-            >
-              {MESES.map((m, i) => (
-                <option key={i} value={i + 1} className="bg-card text-white">
-                  {m}
-                </option>
-              ))}
-            </select>
-            <select
-              value={ano}
-              onChange={(e) => setAno(Number(e.target.value))}
-              className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white outline-none cursor-pointer"
-            >
-              {YEARS.map((y) => (
-                <option key={y} value={y} className="bg-card text-white">
-                  {y}
-                </option>
-              ))}
-            </select>
             <button
               type="button"
               onClick={handleExportPDF}
@@ -178,6 +182,38 @@ export default function FechamentoMensal() {
           </div>
         }
       />
+
+      {/* Barra padrão: período à esquerda */}
+      <div className="glass-panel rounded-2xl border border-white/5 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Período do fechamento">
+          <label htmlFor="fechamento-mes" className="sr-only">Mês</label>
+          <select
+            id="fechamento-mes"
+            value={mes}
+            onChange={(e) => mudarPeriodo(Number(e.target.value), ano)}
+            className={SELETOR_PERIODO}
+          >
+            {MESES.map((m, i) => (
+              <option key={i} value={i + 1} className="bg-card text-white">
+                {m}
+              </option>
+            ))}
+          </select>
+          <label htmlFor="fechamento-ano" className="sr-only">Ano</label>
+          <select
+            id="fechamento-ano"
+            value={ano}
+            onChange={(e) => mudarPeriodo(mes, Number(e.target.value))}
+            className={SELETOR_PERIODO}
+          >
+            {anosOpcoes.map((y) => (
+              <option key={y} value={y} className="bg-card text-white">
+                {y}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
 
       {/* ── Loading ── */}
       {isLoading && (
@@ -335,7 +371,7 @@ export default function FechamentoMensal() {
               <AlertCircle className="w-4 h-4 shrink-0" />
               <p className="text-xs">
                 Histórico de múltiplos meses estará disponível em versão futura. Use
-                os seletores acima para navegar entre períodos.
+                o seletor de período acima para navegar entre meses.
               </p>
             </div>
           </div>

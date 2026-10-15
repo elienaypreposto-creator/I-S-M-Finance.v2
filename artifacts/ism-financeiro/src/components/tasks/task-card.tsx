@@ -4,6 +4,7 @@ import {
   Clock, MessageSquare, Paperclip, Calendar, CheckSquare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { parseDataCivil } from "@/lib/datas";
 
 const COLORS = { cards: "#262626" };
 
@@ -58,7 +59,7 @@ function getDepartamentoBadge(depto: string) {
 
 function DateIndicator({ prazo }: { prazo: string | null }) {
   if (!prazo) return null;
-  const data     = new Date(prazo);
+  const data     = parseDataCivil(prazo) ?? new Date(prazo);
   const hoje     = new Date();
   const atrasado = isPast(data) && !isToday(data);
   const diasDiff = differenceInDays(data, hoje);

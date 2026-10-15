@@ -1,6 +1,7 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
 import { Fragment, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { FOCO_VISIVEL, useParametrosUrl } from "@/components/shared/filtros";
 import { PageHeader } from "@/components/shared/page-header";
 import { Download, Loader2, AlertCircle, ChevronDown, ChevronRight } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
@@ -63,7 +64,11 @@ function somaTotalSecaoCents(linhas: FluxoLinhaApi[]): number {
 
 export default function FluxoCaixa() {
   const currentYear = new Date().getFullYear();
-  const [ano, setAno] = useState(currentYear);
+  // Ano na URL (?ano=2026) para sobreviver ao F5 e ao compartilhar o link.
+  const { ler, atualizar } = useParametrosUrl();
+  const anoUrl = ler("ano");
+  const ano = /^\d{4}$/.test(anoUrl) ? Number(anoUrl) : currentYear;
+  const setAno = (v: number) => atualizar({ ano: String(v) });
   const mesesPt = useMemo(() => mesesPtLong(), []);
 
   const [aberto, setAberto] = useState<Record<string, boolean>>({});
@@ -98,8 +103,10 @@ export default function FluxoCaixa() {
   const anosOpcoes = useMemo(() => {
     const out: number[] = [];
     for (let y = currentYear + 1; y >= currentYear - 8; y--) out.push(y);
-    return out;
-  }, [currentYear]);
+    // Ano vindo da URL fora da faixa padrão continua selecionável.
+    if (!out.includes(ano)) out.push(ano);
+    return out.sort((a, b) => b - a);
+  }, [currentYear, ano]);
 
   const cellTone = (vCents: number, opts?: { mutedZero?: boolean }) => {
     if (vCents === 0 && opts?.mutedZero) return "text-muted-foreground/35";
@@ -115,21 +122,6 @@ export default function FluxoCaixa() {
         description="Entradas e saídas por categoria (data de quitação, lançamentos recebidos/pagos)."
         actions={
           <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground whitespace-nowrap">Ano</span>
-              <Select value={String(ano)} onValueChange={(v) => setAno(Number(v))}>
-                <SelectTrigger className="w-[120px] h-9 bg-white/5 border-white/10 text-sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {anosOpcoes.map((y) => (
-                    <SelectItem key={y} value={String(y)}>
-                      {y}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
             <button
               type="button"
               className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all opacity-60 cursor-not-allowed"
@@ -140,6 +132,27 @@ export default function FluxoCaixa() {
           </div>
         }
       />
+
+      {/* Barra padrão: período (ano) à esquerda */}
+      <div className="glass-panel rounded-2xl border border-white/5 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span id="fluxo-ano-rotulo" className="text-xs text-muted-foreground whitespace-nowrap">Ano</span>
+          <Select value={String(ano)} onValueChange={(v) => setAno(Number(v))}>
+            <SelectTrigger
+              aria-labelledby="fluxo-ano-rotulo"
+              className={cn("w-[110px] h-8 rounded-xl bg-black/20 border-white/10 text-xs font-semibold hover:bg-white/5 hover:border-white/20", FOCO_VISIVEL)}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {anosOpcoes.map((y) => (
+                <SelectItem key={y} value={String(y)}>
+                  {y}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
 
       {isLoading ? (
         <div className="glass-panel rounded-2xl border border-white/10 p-16 flex flex-col items-center gap-3 text-muted-foreground">
