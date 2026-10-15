@@ -38,6 +38,7 @@ import {
 import { formatCurrency, cn } from "@/lib/utils";
 import { fetchApiData } from "@/lib/api-config";
 import { SaldoGeralCard } from "@/components/dashboard/saldo-geral-card";
+import {hojeIsoLocal} from "@/lib/datas";
 
 const PIE_COLORS = ["#6366F1", "#F59E0B", "#E74C3C", "#22C55E", "#3B82F6", "#EC4899"];
 
@@ -278,7 +279,7 @@ async function exportarXLSX(dashboardData: DashboardExportData) {
     throw new Error("Nenhum dado disponível para exportação ainda. Aguarde o carregamento do dashboard.");
   }
 
-  const date = new Date().toISOString().slice(0, 10);
+  const date = hojeIsoLocal();
   XLSX.writeFile(wb, `dashboard-ISM-${date}.xlsx`);
 }
 
@@ -439,7 +440,7 @@ async function exportarPDF(dashboardData: DashboardExportData) {
     doc.text(`ISM Finance · ${dataHoje} · Pág. ${i}/${pageCount}`, W / 2, 292, { align: "center" });
   }
 
-  doc.save(`dashboard-ISM-${new Date().toISOString().slice(0, 10)}.pdf`);
+  doc.save(`dashboard-ISM-${hojeIsoLocal()}.pdf`);
 }
 
 function hexToRgb(hex: string): [number, number, number] {

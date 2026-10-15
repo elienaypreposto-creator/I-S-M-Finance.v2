@@ -26,6 +26,7 @@ import {useConfirm} from "@/hooks/use-confirm";
 import {invalidateRelated} from "@/App";
 import {RequiresPermission} from "@/components/auth/requires-permission";
 import {PERM} from "@/lib/permissoes";
+import {hojeIsoLocal} from "@/lib/datas";
 
 type Lancamento = {
     id: number;
@@ -371,7 +372,7 @@ export default function Lancamentos() {
                 riscos_fmt: (l.riscos ?? []).map((r) => getRiscoStyle(r).label).join(", ") || "-",
             })) as Record<string, unknown>[];
             const suffix = activeTab !== "todos" ? `_${activeTab.toUpperCase()}` : "";
-            exportToExcel(`Lancamentos${suffix}_${new Date().toISOString().split("T")[0]}`, rows, EXPORT_COLUMNS_LANC);
+            exportToExcel(`Lancamentos${suffix}_${hojeIsoLocal()}`, rows, EXPORT_COLUMNS_LANC);
             if (meta?.truncado) {
                 toast({
                     title: "Exportação parcial",

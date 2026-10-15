@@ -47,6 +47,7 @@ import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
 import {useEscapeClose} from "@/hooks/use-escape-close";
+import {hojeIsoLocal} from "@/lib/datas";
 import {
     Empty,
     EmptyHeader,
@@ -1186,7 +1187,7 @@ export default function Parceiros() {
             status_fmt: resolveStatus(p) === "ativo" ? "Ativo" : "Inativo",
         })) as Record<string, unknown>[];
 
-        exportToExcel(`Parceiros_${new Date().toISOString().split("T")[0]}`, rows, EXPORT_COLUMNS_PARCEIROS);
+        exportToExcel(`Parceiros_${hojeIsoLocal()}`, rows, EXPORT_COLUMNS_PARCEIROS);
     }
 
     return (

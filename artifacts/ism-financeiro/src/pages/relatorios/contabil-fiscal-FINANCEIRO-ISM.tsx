@@ -2,7 +2,7 @@ import {useState} from "react";
 import {PageHeader} from "@/components/shared/page-header";
 import {Download, FileText, Filter} from "lucide-react";
 import {formatCurrency} from "@/lib/utils";
-import {parseDataCivil} from "@/lib/datas";
+import {hojeIsoLocal, parseDataCivil} from "@/lib/datas";
 import {DateRangePicker} from "@/components/shared/date-range-picker";
 import {format, startOfYear, endOfYear} from "date-fns";
 
@@ -292,7 +292,7 @@ async function exportarPDF(
             },
         });
 
-        doc.save(`Extrato_Contabil_${new Date().toISOString().split("T")[0]}.pdf`);
+        doc.save(`Extrato_Contabil_${hojeIsoLocal()}.pdf`);
     } catch (err) {
         console.warn("jsPDF nao encontrado, usando window.print():", err);
         window.print();
