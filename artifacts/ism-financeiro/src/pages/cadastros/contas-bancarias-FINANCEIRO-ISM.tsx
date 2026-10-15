@@ -16,7 +16,6 @@ import {
     PiggyBank,
     PackageOpen,
     CheckCircle2,
-    Search,
     ChevronsLeft,
     ChevronLeft,
     ChevronRight,
@@ -44,6 +43,18 @@ import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
 import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
 import {ViewportOverlay} from "@/components/shared/viewport-overlay";
+import {
+    CampoBusca,
+    FiltrosAtivos,
+    FiltrosPopover,
+    FOCO_VISIVEL,
+    casaMulti,
+    contemBusca,
+    patchDosValores,
+    useFiltrosNaUrl,
+    type DefinicaoFiltro,
+    type OpcaoFiltro,
+} from "@/components/shared/filtros";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 type ContaBancaria = {
@@ -81,14 +92,6 @@ function maskConta(value: string): string {
     const digits = value.replace(/\D/g, "").slice(0, 8);
     if (digits.length <= 1) return digits;
     return `${digits.slice(0, -1)}-${digits.slice(-1)}`;
-}
-
-function normalizeSearch(value: string): string {
-    return value
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toLowerCase()
-        .trim();
 }
 
 // Data máxima permitida (hoje), formatada dd/mm/aaaa
@@ -219,6 +222,21 @@ const BANCOS_BR = [
 ] as const;
 
 const ITEMS_PER_PAGE = 8;
+
+// ─── Filtros da listagem (ISMF-33) ────────────────────────────────────────────
+// A tela trata como ativa só a conta com status "ativo"; qualquer outro status
+// (hoje "bloqueado") é exibido como inativa/bloqueada.
+const STATUS_OPCOES: OpcaoFiltro[] = [
+    {valor: "ativo", rotulo: "Ativa"},
+    {valor: "bloqueado", rotulo: "Bloqueada (inativa)"},
+];
+
+const statusDoFiltro = (status: string) => (status === "ativo" ? "ativo" : "bloqueado");
+
+/** Valor do filtro de banco para contas sem banco vinculado (ex.: Conta Movimento). */
+const SEM_BANCO = "sem-banco";
+
+const collatorBancos = new Intl.Collator("pt-BR", {sensitivity: "base"});
 
 function hexParaHsl(hex: string): [number, number, number] {
     const r = parseInt(hex.slice(1, 3), 16) / 255;
@@ -1107,13 +1125,54 @@ export default function ContasBancarias() {
     const [showSaldos, setShowSaldos] = useState(true);
     const [showModal, setShowModal] = useState(false);
     const [editingConta, setEditingConta] = useState<ContaBancaria | null>(null);
-    const [search, setSearch] = useState("");
-    const [currentPage, setCurrentPage] = useState(1);
 
     const {data: contas = [], isLoading} = useQuery<ContaBancaria[]>({
         queryKey: tenantQueryKey("contas-bancarias"),
         queryFn: () => fetchApiData<ContaBancaria[]>("/contas-bancarias"),
     });
+
+    // ── Filtros (estado na URL: ?status=&tipo=&banco=&q=&pagina=) ──
+    const definicoes: DefinicaoFiltro[] = useMemo(() => {
+        const tiposCarregados = Array.from(new Set(contas.map((c) => c.tipo).filter(Boolean)));
+        const ordemTipos = ACCOUNT_TYPES.map((t) => t.value as string);
+        tiposCarregados.sort((a, b) => {
+            const ia = ordemTipos.indexOf(a);
+            const ib = ordemTipos.indexOf(b);
+            return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || collatorBancos.compare(a, b);
+        });
+        const bancosCarregados = Array.from(
+            new Set(contas.map((c) => c.banco?.trim() ?? "").filter(Boolean)),
+        ).sort(collatorBancos.compare);
+        const temSemBanco = contas.some((c) => !c.banco?.trim());
+        return [
+            {chave: "status", rotulo: "Status", tipo: "multi", opcoes: STATUS_OPCOES},
+            {
+                chave: "tipo",
+                rotulo: "Tipo de conta",
+                tipo: "multi",
+                opcoes: tiposCarregados.map((t) => ({
+                    valor: t,
+                    rotulo: ACCOUNT_TYPES.find((a) => a.value === t)?.label ?? t,
+                })),
+            },
+            {
+                chave: "banco",
+                rotulo: "Banco",
+                tipo: "select",
+                placeholder: "Todos os bancos",
+                opcoes: [
+                    ...bancosCarregados.map((b) => ({valor: b, rotulo: b})),
+                    ...(temSemBanco ? [{valor: SEM_BANCO, rotulo: "Sem banco vinculado"}] : []),
+                ],
+            },
+        ];
+    }, [contas]);
+
+    const filtros = useFiltrosNaUrl(definicoes);
+    const busca = filtros.ler("q");
+    const temFiltroOuBusca = filtros.contagem > 0 || Boolean(busca);
+
+    const limparFiltrosEBusca = () => filtros.atualizar({...patchDosValores(definicoes, {}), q: null});
 
     const blockMutation = useMutation({
         mutationFn: ({id, status}: { id: number; status: string }) =>
@@ -1180,26 +1239,33 @@ export default function ContasBancarias() {
         if (ok) deleteMutation.mutate(conta.id);
     };
 
-    // ── Filtro por nome (busca) ──
-    const filteredContas = useMemo(() => {
-        const term = normalizeSearch(search);
-        if (!term) return contas;
-        return contas.filter((c) => normalizeSearch(c.nome).includes(term));
-    }, [contas, search]);
+    // ── Filtros + busca por nome (no navegador) ──
+    const {status: filtroStatus, tipo: filtroTipo, banco: filtroBanco} = filtros.valores;
+    const filteredContas = useMemo(
+        () =>
+            contas.filter((c) => {
+                if (!casaMulti(filtroStatus, statusDoFiltro(c.status))) return false;
+                if (!casaMulti(filtroTipo, c.tipo)) return false;
+                if (filtroBanco) {
+                    const banco = c.banco?.trim() ?? "";
+                    if (filtroBanco === SEM_BANCO ? banco !== "" : banco !== filtroBanco) return false;
+                }
+                return contemBusca(busca, c.nome);
+            }),
+        [contas, filtroStatus, filtroTipo, filtroBanco, busca],
+    );
 
-    // ── Paginação ──
+    const anuncio = isLoading
+        ? ""
+        : `${filteredContas.length} ${filteredContas.length === 1 ? "conta encontrada" : "contas encontradas"}`;
+
+    // ── Paginação (página na URL; qualquer mudança de filtro/busca volta à 1) ──
     const totalPages = Math.max(
         1,
         Math.ceil(filteredContas.length / ITEMS_PER_PAGE),
     );
-
-    useEffect(() => {
-        setCurrentPage(1);
-    }, [search]);
-
-    useEffect(() => {
-        if (currentPage > totalPages) setCurrentPage(totalPages);
-    }, [currentPage, totalPages]);
+    const currentPage = Math.min(filtros.pagina, totalPages);
+    const setCurrentPage = filtros.irParaPagina;
 
     const paginatedContas = useMemo(() => {
         const start = (currentPage - 1) * ITEMS_PER_PAGE;
@@ -1263,30 +1329,50 @@ export default function ContasBancarias() {
                 }
             />
 
-            {/* Busca */}
-            <div className="glass-panel rounded-2xl p-4">
-                <div className="relative max-w-sm">
-                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"/>
-                    <input
-                        type="text"
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        placeholder="Pesquisar por nome"
-                        className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white outline-none focus:border-primary/50 transition-colors"
-                    />
-                </div>
-            </div>
-
             {/* Listagem em tabela */}
             <div className="glass-panel rounded-2xl overflow-hidden">
+                {/* Barra de filtros: painel à esquerda, busca à direita */}
+                <div className="px-4 py-2.5 border-b border-white/5 flex flex-wrap items-center justify-between gap-3 bg-black/10">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <FiltrosPopover
+                            definicoes={definicoes}
+                            valores={filtros.valores}
+                            contagem={filtros.contagem}
+                            onAplicar={filtros.aplicar}
+                        />
+                    </div>
+                    <CampoBusca
+                        valor={busca}
+                        onBuscar={(termo) => filtros.atualizar({q: termo || null})}
+                        placeholder="Buscar por nome…"
+                        rotulo="Buscar contas bancárias por nome"
+                    />
+                </div>
+
+                <FiltrosAtivos
+                    chips={filtros.chips}
+                    onRemover={filtros.remover}
+                    onLimparTodos={filtros.limpar}
+                    anuncio={anuncio}
+                />
+
                 {filteredContas.length === 0 ? (
                     <div className="py-16 text-center border-dashed border-2 border-white/10 rounded-2xl">
-                        <Landmark className="w-12 h-12 text-muted-foreground/30 mx-auto mb-4"/>
+                        <Landmark className="w-12 h-12 text-muted-foreground/30 mx-auto mb-4" aria-hidden="true"/>
                         <p className="text-muted-foreground text-sm font-medium">
                             {contas.length === 0
                                 ? "Nenhuma conta cadastrada ainda."
-                                : "Nenhuma conta encontrada para essa busca."}
+                                : "Nenhum resultado para os filtros aplicados."}
                         </p>
+                        {contas.length > 0 && temFiltroOuBusca && (
+                            <button
+                                type="button"
+                                onClick={limparFiltrosEBusca}
+                                className={cn("text-primary text-sm font-bold hover:underline mt-2 rounded px-1", FOCO_VISIVEL)}
+                            >
+                                Limpar filtros e busca
+                            </button>
+                        )}
                         {contas.length === 0 && (
                             <button
                                 type="button"
@@ -1464,19 +1550,21 @@ export default function ContasBancarias() {
                                 type="button"
                                 disabled={currentPage === 1}
                                 onClick={() => setCurrentPage(1)}
-                                className="p-1.5 rounded-lg text-muted-foreground hover:bg-white/5 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                                className={cn("p-1.5 rounded-lg text-muted-foreground hover:bg-white/5 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-colors", FOCO_VISIVEL)}
                                 title="Primeiro"
+                                aria-label="Primeira página"
                             >
-                                <ChevronsLeft className="w-4 h-4"/>
+                                <ChevronsLeft className="w-4 h-4" aria-hidden="true"/>
                             </button>
                             <button
                                 type="button"
                                 disabled={currentPage === 1}
-                                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                                className="p-1.5 rounded-lg text-muted-foreground hover:bg-white/5 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                                onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                                className={cn("p-1.5 rounded-lg text-muted-foreground hover:bg-white/5 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-colors", FOCO_VISIVEL)}
                                 title="Anterior"
+                                aria-label="Página anterior"
                             >
-                                <ChevronLeft className="w-4 h-4"/>
+                                <ChevronLeft className="w-4 h-4" aria-hidden="true"/>
                             </button>
                             <span className="text-xs text-muted-foreground px-2 whitespace-nowrap">
                 Página {currentPage} de {totalPages}
@@ -1484,22 +1572,22 @@ export default function ContasBancarias() {
                             <button
                                 type="button"
                                 disabled={currentPage === totalPages}
-                                onClick={() =>
-                                    setCurrentPage((p) => Math.min(totalPages, p + 1))
-                                }
-                                className="p-1.5 rounded-lg text-muted-foreground hover:bg-white/5 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                                onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                                className={cn("p-1.5 rounded-lg text-muted-foreground hover:bg-white/5 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-colors", FOCO_VISIVEL)}
                                 title="Próxima"
+                                aria-label="Próxima página"
                             >
-                                <ChevronRight className="w-4 h-4"/>
+                                <ChevronRight className="w-4 h-4" aria-hidden="true"/>
                             </button>
                             <button
                                 type="button"
                                 disabled={currentPage === totalPages}
                                 onClick={() => setCurrentPage(totalPages)}
-                                className="p-1.5 rounded-lg text-muted-foreground hover:bg-white/5 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                                className={cn("p-1.5 rounded-lg text-muted-foreground hover:bg-white/5 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-colors", FOCO_VISIVEL)}
                                 title="Última"
+                                aria-label="Última página"
                             >
-                                <ChevronsRight className="w-4 h-4"/>
+                                <ChevronsRight className="w-4 h-4" aria-hidden="true"/>
                             </button>
                         </div>
                     </div>

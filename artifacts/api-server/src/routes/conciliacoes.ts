@@ -34,6 +34,7 @@ import {
 import {hashLinhaExtrato} from "../utils/extrato-hash";
 import {encontrarRegraParaLinha, type RegraParaMatch} from "../utils/regras-match";
 import {hojeIsoLocal} from "../utils/date-civil";
+import {parseCsvPermitido} from "../utils/filtro-csv";
 import {contasBancariasService} from "../domains/financial/contas-bancarias/contas-bancarias.service";
 import {regrasConciliacaoService} from "../domains/financial/regras-conciliacao/regras-conciliacao.service";
 import {promoverLancamentosAtrasados} from "../jobs/promover-atrasados";
@@ -431,6 +432,8 @@ const atualizarResumoConciliacao = async (
         .where(tenantWhere(extratosTable, empresaId, eq(extratosTable.id, extratoId)));
 };
 
+const STATUS_EXTRATO = ["pendente", "parcial", "conciliado", "cancelado"] as const;
+
 router.get("/conciliacoes", withPermission(PERM.CONCILIACAO_ACESSAR), async (req, res) => {
     try {
         const {empresaId} = requireTenant(req);
@@ -439,13 +442,18 @@ router.get("/conciliacoes", withPermission(PERM.CONCILIACAO_ACESSAR), async (req
         const offset = (page - 1) * limit;
 
         const conditions = [];
-        if (req.query.status) {
-            conditions.push(
-                eq(
-                    extratosTable.status,
-                    req.query.status as "pendente" | "parcial" | "conciliado" | "cancelado",
-                ),
+        // Aceita vários status em CSV (ex.: "pendente,parcial" = tudo que ainda não foi conciliado).
+        const status = parseCsvPermitido(req.query.status, STATUS_EXTRATO);
+        if (status === null) {
+            return errorResponse(
+                res,
+                400,
+                "VALIDATION_ERROR",
+                `status inválido. Use um ou mais de: ${STATUS_EXTRATO.join(", ")}.`,
             );
+        }
+        if (status) {
+            conditions.push(inArray(extratosTable.status, status));
         }
         if (req.query.conta_id) {
             conditions.push(eq(conciliacoesTable.conta_id, parseInt(req.query.conta_id as string)));

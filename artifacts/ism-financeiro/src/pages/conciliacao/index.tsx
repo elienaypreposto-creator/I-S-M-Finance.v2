@@ -1,5 +1,5 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
-import {useState, type MouseEvent} from "react";
+import {useMemo, useState, type MouseEvent} from "react";
 import {useLocation} from "wouter";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 import {PageHeader} from "@/components/shared/page-header";
@@ -22,6 +22,13 @@ import {
     ChevronRight,
 } from "lucide-react";
 import {BotaoExcluir} from "@/components/shared/botoes-acao";
+import {
+    FiltrosAtivos,
+    FiltrosPopover,
+    useFiltrosNaUrl,
+    separarMulti,
+    type DefinicaoFiltro,
+} from "@/components/shared/filtros";
 
 export type ConciliacaoListItem = {
     conciliacao_id: number;
@@ -109,6 +116,18 @@ function formatAgenciaConta(row: ConciliacaoListItem): string {
     return `Agência:${agencia} | Conta:${conta}`;
 }
 
+/** "Pendente" na tela inclui o estado intermediário "parcial" (ver statusLabel). */
+const STATUS_FILTRO = [
+    {valor: "pendente", rotulo: "Pendente"},
+    {valor: "conciliado", rotulo: "Conciliado"},
+];
+
+function statusFiltroParaApi(valor: string): string {
+    return separarMulti(valor)
+        .flatMap((s) => (s === "pendente" ? ["pendente", "parcial"] : [s]))
+        .join(",");
+}
+
 export default function ConciliacaoList() {
     const [, setLocation] = useLocation();
     const queryClient = useQueryClient();
@@ -117,12 +136,7 @@ export default function ConciliacaoList() {
     const {confirm, ConfirmDialogProps} = useConfirm();
     const canDelete = hasPermission(PERM.CONCILIACAO_IMPORTAR);
 
-    const [page, setPage] = useState(1);
     const [importOpen, setImportOpen] = useState(false);
-    /** "" = sem filtro de período (histórico completo, mais recente primeiro). */
-    const [dataInicio, setDataInicio] = useState("");
-    const [dataFim, setDataFim] = useState("");
-    const [contaId, setContaId] = useState<string>("");
     const limit = 15;
 
     const {data: contas} = useQuery({
@@ -130,8 +144,27 @@ export default function ConciliacaoList() {
         queryFn: () => fetchApiData<ContaFiltro[]>("/contas-bancarias"),
     });
 
+    const definicoes: DefinicaoFiltro[] = useMemo(() => [
+        {chave: "status", rotulo: "Status", tipo: "multi", opcoes: STATUS_FILTRO},
+        {
+            chave: "conta_id",
+            rotulo: "Conta bancária",
+            tipo: "select",
+            placeholder: "Todas as contas",
+            opcoes: (contas ?? []).map((c) => ({valor: String(c.id), rotulo: c.nome})),
+        },
+    ], [contas]);
+    const filtros = useFiltrosNaUrl(definicoes);
+    const {ler, atualizar, pagina: page, irParaPagina} = filtros;
+    const setPage = (updater: (p: number) => number) => irParaPagina(updater(page));
+    /** "" = sem filtro de período (histórico completo, mais recente primeiro). */
+    const dataInicio = ler("data_inicio");
+    const dataFim = ler("data_fim");
+    const contaId = filtros.valores.conta_id ?? "";
+    const statusApi = statusFiltroParaApi(filtros.valores.status ?? "");
+
     const {data, isLoading, isError, refetch} = useQuery({
-        queryKey: tenantQueryKey("conciliacoes", page, limit, dataInicio, dataFim, contaId),
+        queryKey: tenantQueryKey("conciliacoes", page, limit, dataInicio, dataFim, contaId, statusApi),
         queryFn: async () => {
             const params = new URLSearchParams();
             params.set("page", String(page));
@@ -139,6 +172,7 @@ export default function ConciliacaoList() {
             if (dataInicio) params.set("data_inicio", dataInicio);
             if (dataFim) params.set("data_fim", dataFim);
             if (contaId) params.set("conta_id", contaId);
+            if (statusApi) params.set("status", statusApi);
             const envelope = await fetchApi<ApiEnvelope<ConciliacaoListItem[]>>(
                 `/conciliacoes?${params.toString()}`,
             );
@@ -221,35 +255,18 @@ export default function ConciliacaoList() {
                 className="glass-panel rounded-2xl flex flex-col overflow-hidden flex-1 min-h-0 border border-white/10">
                 <div
                     className="px-4 py-3 border-b border-white/5 flex flex-wrap items-center gap-3 bg-black/20">
-                    {/* mesmo componente usado em Lançamentos */}
+                    {/* Período e Filtros à esquerda (padrão das telas) */}
                     <div className="flex flex-wrap items-center gap-2">
-                        <label className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                            Conta
-                            <select
-                                value={contaId}
-                                onChange={(e) => {
-                                    setContaId(e.target.value);
-                                    setPage(1);
-                                }}
-                                className="ml-1.5 bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-xs text-white min-w-[160px]"
-                            >
-                                <option value="">Todas</option>
-                                {(contas ?? []).map((c) => (
-                                    <option key={c.id} value={String(c.id)}>
-                                        {c.nome}
-                                    </option>
-                                ))}
-                            </select>
-                        </label>
-
                         <DateRangePicker
                             startDate={dataInicio}
                             endDate={dataFim}
-                            onChange={(start, end) => {
-                                setDataInicio(start);
-                                setDataFim(end);
-                                setPage(1);
-                            }}
+                            onChange={(start, end) => atualizar({data_inicio: start || null, data_fim: end || null})}
+                        />
+                        <FiltrosPopover
+                            definicoes={definicoes}
+                            valores={filtros.valores}
+                            contagem={filtros.contagem}
+                            onAplicar={filtros.aplicar}
                         />
                     </div>
 
@@ -258,6 +275,13 @@ export default function ConciliacaoList() {
                         <span>{total.toLocaleString("pt-BR")} extrato(s) no filtro</span>
                     </div>
                 </div>
+
+                <FiltrosAtivos
+                    chips={filtros.chips}
+                    onRemover={filtros.remover}
+                    onLimparTodos={filtros.limpar}
+                    anuncio={isLoading ? "" : `${total.toLocaleString("pt-BR")} extrato(s) encontrado(s)`}
+                />
 
                 <div className="overflow-x-auto flex-1 min-h-0">
                     <table className="w-full text-left text-xs">
@@ -301,7 +325,7 @@ export default function ConciliacaoList() {
                         ) : items.length === 0 ? (
                             <tr>
                                 <td colSpan={9} className="py-16 text-center text-muted-foreground text-xs">
-                                    Nenhum extrato encontrado. Ajuste o mês/conta ou importe um OFX.
+                                    Nenhum extrato encontrado. Ajuste o período/filtros ou importe um OFX.
                                 </td>
                             </tr>
                         ) : (

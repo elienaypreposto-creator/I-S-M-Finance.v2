@@ -2,7 +2,7 @@ import {tenantQueryKey} from "@/lib/tenant-query";
 import {Fragment, useEffect, useMemo, useRef, useState} from "react";
 import {PageHeader} from "@/components/shared/page-header";
 import {Download, Target, TrendingUp, TrendingDown, Loader2, ChevronDown, ChevronRight} from "lucide-react";
-import {formatCurrency} from "@/lib/utils";
+import {cn, formatCurrency} from "@/lib/utils";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
@@ -14,6 +14,15 @@ import {
 import {invalidateRelated} from "@/App";
 import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription} from "@/components/ui/empty";
+import {
+    FiltrosAtivos,
+    FiltrosPopover,
+    FOCO_VISIVEL,
+    separarMulti,
+    useFiltrosNaUrl,
+    type DefinicaoFiltro,
+    type OpcaoFiltro,
+} from "@/components/shared/filtros";
 
 // ─── Tipos 
 type PlanoConta = {
@@ -42,6 +51,23 @@ type ActiveCell = {
 const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 const CURRENT_YEAR = new Date().getFullYear();
 const YEARS = Array.from({length: 7}, (_, i) => CURRENT_YEAR + 3 - i);
+const TODOS_MESES = Array.from({length: 12}, (_, i) => i + 1);
+
+// ─── Filtros (ISMF-33) — estado na URL: ?ano=2026&plano_conta_id=12&mes=1,2,3
+const MESES_EXTENSO = [
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+];
+const OPCOES_MES: OpcaoFiltro[] = MESES_EXTENSO.map((rotulo, i) => ({valor: String(i + 1), rotulo}));
+const TIPO_ROTULO_CURTO: Record<string, string> = {receita: "Receitas", custo: "Custos", despesa: "Despesas"};
+const collator = new Intl.Collator("pt-BR", {sensitivity: "base"});
+
+/** Ano vindo da URL (?ano=2026); ausente ou inválido → ano corrente. */
+function anoDaUrl(valor: string): number {
+    if (!/^\d{4}$/.test(valor)) return CURRENT_YEAR;
+    const n = Number(valor);
+    return n >= 2000 && n <= 2100 ? n : CURRENT_YEAR;
+}
 
 const TIPO_CONFIG: Record<string, { label: string; color: string; bg: string; border: string }> = {
     receita: {
@@ -210,14 +236,8 @@ export default function Metas() {
     const queryClient = useQueryClient();
     const {toast} = useToast();
 
-    const [ano, setAno] = useState(CURRENT_YEAR);
     const [activeCell, setActiveCell] = useState<ActiveCell | null>(null);
     const [collapsedTipos, setCollapsedTipos] = useState<Set<string>>(new Set());
-
-    // Reset active cell when year changes
-    useEffect(() => {
-        setActiveCell(null);
-    }, [ano]);
 
     // ── Queries ────────────────────────────────────────────────────────────────
     const {data: planoContas = [], isLoading: loadingPC} = useQuery<PlanoConta[]>({
@@ -225,6 +245,50 @@ export default function Metas() {
         queryFn: () => fetchApiData<PlanoConta[]>("/plano-contas"),
         staleTime: 5 * 60 * 1000,
     });
+
+    // ── Filtros e ano na URL ───────────────────────────────────────────────────
+    const definicoes: DefinicaoFiltro[] = useMemo(() => [
+        {
+            chave: "plano_conta_id",
+            rotulo: "Plano de contas",
+            tipo: "combobox",
+            placeholder: "Todas as categorias",
+            // Mesmas linhas da planilha: só planos ativos, na ordem tipo → categoria → subcategoria.
+            opcoes: planoContas
+                .filter((p) => p.ativo && TIPO_ORDER.includes(p.tipo))
+                .sort((a, b) =>
+                    TIPO_ORDER.indexOf(a.tipo) - TIPO_ORDER.indexOf(b.tipo)
+                    || collator.compare(a.categoria, b.categoria)
+                    || collator.compare(a.subcategoria ?? "", b.subcategoria ?? ""))
+                .map((p) => ({
+                    valor: String(p.id),
+                    rotulo: p.subcategoria ? `${p.categoria} / ${p.subcategoria}` : p.categoria,
+                    grupo: `${TIPO_ROTULO_CURTO[p.tipo] ?? p.tipo} · ${p.categoria}`,
+                })),
+        },
+        {chave: "mes", rotulo: "Mês", tipo: "multi", opcoes: OPCOES_MES},
+    ], [planoContas]);
+
+    const filtros = useFiltrosNaUrl(definicoes);
+    const ano = anoDaUrl(filtros.ler("ano"));
+    const anosOpcoes = YEARS.includes(ano) ? YEARS : [...YEARS, ano].sort((a, b) => b - a);
+    const setAno = (novo: number) => filtros.atualizar({ano: String(novo)});
+
+    const filtroPlano = filtros.valores.plano_conta_id ?? "";
+    const filtroMes = filtros.valores.mes;
+    const mesesVisiveis = useMemo(() => {
+        const escolhidos = separarMulti(filtroMes)
+            .map(Number)
+            .filter((m) => Number.isInteger(m) && m >= 1 && m <= 12)
+            .sort((a, b) => a - b);
+        return escolhidos.length > 0 ? escolhidos : TODOS_MESES;
+    }, [filtroMes]);
+    const totalColunas = mesesVisiveis.length + 2;
+
+    // Reset active cell when year changes
+    useEffect(() => {
+        setActiveCell(null);
+    }, [ano]);
 
     const {data: metas = [], isLoading: loadingMetas} = useQuery<MetaRow[]>({
         queryKey: tenantQueryKey("metas", ano),
@@ -315,6 +379,29 @@ export default function Metas() {
         return result;
     }, [planoContas]);
 
+    // ── Planilha filtrada pelo plano de contas (no navegador) ─────────────────
+    const groupedVisivel = useMemo(() => {
+        if (!filtroPlano) return grouped;
+        const result = new Map<string, Map<string, PlanoConta[]>>();
+        for (const [tipo, catMap] of grouped) {
+            const novo = new Map<string, PlanoConta[]>();
+            for (const [categoria, items] of catMap) {
+                const filtrados = items.filter((pc) => String(pc.id) === filtroPlano);
+                if (filtrados.length > 0) novo.set(categoria, filtrados);
+            }
+            result.set(tipo, novo);
+        }
+        return result;
+    }, [grouped, filtroPlano]);
+
+    const linhasVisiveis = useMemo(() => {
+        let n = 0;
+        for (const catMap of groupedVisivel.values()) {
+            for (const items of catMap.values()) n += items.length;
+        }
+        return n;
+    }, [groupedVisivel]);
+
     // ── Stats ──────────────────────────────────────────────────────────────────
     const stats = useMemo(() => {
         const byTipo: Record<string, number> = {receita: 0, custo: 0, despesa: 0};
@@ -376,6 +463,10 @@ export default function Metas() {
 
     const isLoading = loadingPC || loadingMetas;
     const canExport = !isLoading && metas.length > 0;
+    const anuncio = isLoading
+        ? ""
+        : `${linhasVisiveis} ${linhasVisiveis === 1 ? "categoria exibida" : "categorias exibidas"} em ${ano}`
+        + (mesesVisiveis.length < 12 ? `, ${mesesVisiveis.length} ${mesesVisiveis.length === 1 ? "mês" : "meses"}` : "");
 
     return (
         <div className="space-y-6">
@@ -384,17 +475,6 @@ export default function Metas() {
                 description="Planeamento orçamentário por categoria — clique numa célula para editar"
                 actions={
                     <div className="flex gap-3">
-                        <select
-                            value={ano}
-                            onChange={(e) => setAno(Number(e.target.value))}
-                            className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white outline-none cursor-pointer"
-                        >
-                            {YEARS.map((y) => (
-                                <option key={y} value={y} className="bg-card text-white">
-                                    {y}
-                                </option>
-                            ))}
-                        </select>
                         <button
                             type="button"
                             onClick={() => exportarCSV(ano, grouped, metasMap, stats)}
@@ -413,6 +493,41 @@ export default function Metas() {
                     </div>
                 }
             />
+
+            {/* ── Barra: ano + filtros (grupo da esquerda) ── */}
+            <div className="glass-panel rounded-2xl overflow-hidden">
+                <div className="px-4 py-2.5 flex flex-wrap items-center gap-2 bg-black/10">
+                    <label htmlFor="metas-ano" className="sr-only">Ano das metas</label>
+                    <select
+                        id="metas-ano"
+                        value={ano}
+                        onChange={(e) => setAno(Number(e.target.value))}
+                        className={cn(
+                            "bg-black/20 border border-white/10 rounded-xl px-3 py-1.5 text-xs font-semibold text-white cursor-pointer hover:bg-white/5 hover:border-white/20 [&>option]:bg-card",
+                            FOCO_VISIVEL,
+                        )}
+                    >
+                        {anosOpcoes.map((y) => (
+                            <option key={y} value={y} className="bg-card text-white">
+                                {y}
+                            </option>
+                        ))}
+                    </select>
+                    <FiltrosPopover
+                        definicoes={definicoes}
+                        valores={filtros.valores}
+                        contagem={filtros.contagem}
+                        onAplicar={filtros.aplicar}
+                    />
+                </div>
+                <FiltrosAtivos
+                    chips={filtros.chips}
+                    onRemover={filtros.remover}
+                    onLimparTodos={filtros.limpar}
+                    anuncio={anuncio}
+                    className="border-b-0 border-t"
+                />
+            </div>
 
             {/* ── KPI Cards ── */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -483,6 +598,18 @@ export default function Metas() {
                             </EmptyDescription>
                         </EmptyHeader>
                     </Empty>
+                ) : linhasVisiveis === 0 ? (
+                    <Empty>
+                        <EmptyHeader>
+                            <EmptyMedia variant="icon">
+                                <Target className="text-muted-foreground/40"/>
+                            </EmptyMedia>
+                            <EmptyTitle className="text-white">Nenhum resultado para os filtros aplicados.</EmptyTitle>
+                            <EmptyDescription>
+                                Ajuste ou limpe os filtros para ver as metas do plano de contas.
+                            </EmptyDescription>
+                        </EmptyHeader>
+                    </Empty>
                 ) : (
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm border-collapse">
@@ -491,12 +618,14 @@ export default function Metas() {
                                 <th className="px-4 py-3 text-left font-medium text-muted-foreground sticky left-0 bg-card/95 backdrop-blur-sm min-w-[200px] z-10">
                                     Categoria / Subcategoria
                                 </th>
-                                {MESES.map((mes) => (
+                                {mesesVisiveis.map((mes) => (
                                     <th
                                         key={mes}
                                         className="px-2 py-3 text-right font-medium text-muted-foreground min-w-[90px] text-xs"
                                     >
-                                        {mes}
+                                        <abbr title={MESES_EXTENSO[mes - 1]} className="no-underline">
+                                            {MESES[mes - 1]}
+                                        </abbr>
                                     </th>
                                 ))}
                                 <th className="px-4 py-3 text-right font-semibold text-white min-w-[110px] text-xs">
@@ -506,7 +635,7 @@ export default function Metas() {
                             </thead>
                             <tbody>
                             {TIPO_ORDER.map((tipo) => {
-                                const catMap = grouped.get(tipo);
+                                const catMap = groupedVisivel.get(tipo);
                                 if (!catMap || catMap.size === 0) return null;
                                 const cfg = TIPO_CONFIG[tipo] ?? TIPO_CONFIG.despesa;
                                 const isCollapsed = collapsedTipos.has(tipo);
@@ -520,7 +649,7 @@ export default function Metas() {
                                         >
                                             <td
                                                 className={`px-4 py-2.5 font-bold ${cfg.color} sticky left-0 bg-inherit z-10`}
-                                                colSpan={14}
+                                                colSpan={totalColunas}
                                             >
                                                 <div className="flex items-center gap-2">
                                                     {isCollapsed ? (
@@ -540,7 +669,7 @@ export default function Metas() {
                                                     <tr className="bg-white/[0.03] border-b border-white/5">
                                                         <td
                                                             className="px-4 py-2 text-xs font-semibold text-white/70 uppercase tracking-wide sticky left-0 bg-card/90 z-10 pl-8"
-                                                            colSpan={14}
+                                                            colSpan={totalColunas}
                                                         >
                                                             {categoria}
                                                         </td>
@@ -559,7 +688,7 @@ export default function Metas() {
                                       {pc.subcategoria ?? pc.categoria}
                                     </span>
                                                                 </td>
-                                                                {Array.from({length: 12}, (_, i) => i + 1).map((mes) => (
+                                                                {mesesVisiveis.map((mes) => (
                                                                     <td key={mes} className="px-2 py-2">
                                                                         <MetaCell
                                                                             plano_conta_id={pc.id}
