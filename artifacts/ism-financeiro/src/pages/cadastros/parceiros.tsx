@@ -667,10 +667,14 @@ function ContaBancariaGroup({index, control, register, setValue, remove, errors}
     );
 }
 
-export function NovoParceiroModal({onClose, initialData, onSaved}: {
+export function NovoParceiroModal({onClose, initialData, onSaved, container}: {
     onClose: () => void;
     initialData?: ParceiroRow | null;
     onSaved?: () => void;
+    /** Onde montar o portal (padrão: body). Dentro de um Dialog Radix precisa
+     *  ficar no conteúdo dele, senão o foco preso e o bloqueio de cliques do
+     *  Radix impedem o uso deste modal. */
+    container?: Element | null;
 }) {
     const queryClient = useQueryClient();
     const {toast} = useToast();
@@ -1002,7 +1006,7 @@ export function NovoParceiroModal({onClose, initialData, onSaved}: {
                 </div>
             </div>
         </>,
-        document.body,
+        container ?? document.body,
     );
 }
 
