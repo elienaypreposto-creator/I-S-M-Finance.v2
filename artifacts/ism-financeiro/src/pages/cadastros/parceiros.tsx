@@ -1,6 +1,5 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
 import {useEffect, useMemo, useRef, useState} from "react";
-import {createPortal} from "react-dom";
 import {
     useForm,
     useWatch,
@@ -46,7 +45,7 @@ import {
 import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
-import {useEscapeClose} from "@/hooks/use-escape-close";
+import {Modal, ModalBody, ModalFooter, ModalForm, ModalHeader, ModalSpinner, modalBtnPrimaryCls, modalBtnSecondaryCls, modalGridCls} from "@/components/ui/modal-responsivo";
 import {hojeIsoLocal} from "@/lib/datas";
 import {
     Empty,
@@ -248,30 +247,6 @@ function parceiroFormToApiBody(values: ParceiroFormValues, statusAtual?: { ativo
     };
 }
 
-function ConfirmacaoCancelModal({onConfirm, onDismiss}: { onConfirm: () => void; onDismiss: () => void }) {
-    useEscapeClose(true, onDismiss, 90);
-    return (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[90] flex items-center justify-center p-4">
-            <div className="bg-card border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl p-6 text-center">
-                <AlertTriangle className="w-10 h-10 text-warning mx-auto mb-3"/>
-                <h3 className="font-bold text-white text-lg mb-1">Cancelar cadastro?</h3>
-                <p className="text-sm text-muted-foreground mb-5">As informações preenchidas serão perdidas. Deseja
-                    realmente cancelar?</p>
-                <div className="flex gap-3">
-                    <button type="button" onClick={onDismiss}
-                            className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">
-                        Não, continuar
-                    </button>
-                    <button type="button" onClick={onConfirm}
-                            className="flex-1 py-2.5 bg-destructive hover:bg-destructive/90 text-white rounded-xl text-sm font-medium">
-                        Sim, cancelar
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-}
-
 const defaultParceiroForm: ParceiroFormValues = {
     tipoPessoa: "PJ",
     nomeRazao: "",
@@ -344,7 +319,7 @@ function PixKeyRow({contaIndex, pixIndex, control, setValue, remove, canRemove, 
                     )}
                 />
                 {errs?.tipo_chave?.message && (
-                    <p className="text-[11px] text-destructive mt-1">{errs.tipo_chave.message}</p>
+                    <p className="text-xs text-destructive mt-1">{errs.tipo_chave.message}</p>
                 )}
             </td>
             <td className="px-3 py-2 align-top">
@@ -364,7 +339,7 @@ function PixKeyRow({contaIndex, pixIndex, control, setValue, remove, canRemove, 
                     )}
                 />
                 {errs?.chave?.message && (
-                    <p className="text-[11px] text-destructive mt-1">{errs.chave.message}</p>
+                    <p className="text-xs text-destructive mt-1">{errs.chave.message}</p>
                 )}
             </td>
             <td className="px-2 py-2 align-top text-right w-[40px]">
@@ -412,7 +387,7 @@ function TedContaRow({contaIndex, tedIndex, control, register, remove, canRemove
                     )}
                 />
                 {errs?.banco_codigo?.message && (
-                    <p className="text-[11px] text-destructive mt-1">{errs.banco_codigo.message}</p>
+                    <p className="text-xs text-destructive mt-1">{errs.banco_codigo.message}</p>
                 )}
             </td>
             <td className="px-3 py-2 align-top">
@@ -422,7 +397,7 @@ function TedContaRow({contaIndex, tedIndex, control, register, remove, canRemove
                     placeholder="Ex: Santander"
                 />
                 {errs?.banco_nome?.message && (
-                    <p className="text-[11px] text-destructive mt-1">{errs.banco_nome.message}</p>
+                    <p className="text-xs text-destructive mt-1">{errs.banco_nome.message}</p>
                 )}
             </td>
             <td className="px-3 py-2 align-top w-[110px]">
@@ -442,7 +417,7 @@ function TedContaRow({contaIndex, tedIndex, control, register, remove, canRemove
                     )}
                 />
                 {errs?.agencia?.message && (
-                    <p className="text-[11px] text-destructive mt-1">{errs.agencia.message}</p>
+                    <p className="text-xs text-destructive mt-1">{errs.agencia.message}</p>
                 )}
             </td>
             <td className="px-3 py-2 align-top w-[130px]">
@@ -462,7 +437,7 @@ function TedContaRow({contaIndex, tedIndex, control, register, remove, canRemove
                     )}
                 />
                 {errs?.conta?.message && (
-                    <p className="text-[11px] text-destructive mt-1">{errs.conta.message}</p>
+                    <p className="text-xs text-destructive mt-1">{errs.conta.message}</p>
                 )}
             </td>
             <td className="px-2 py-2 align-top text-right w-[40px]">
@@ -575,7 +550,7 @@ function ContaBancariaGroup({index, control, register, setValue, remove, errors}
                     })}
                 </div>
                 {errs?.formasPagamento?.message && (
-                    <p className="text-[11px] text-destructive mt-1">{errs.formasPagamento.message}</p>
+                    <p className="text-xs text-destructive mt-1">{errs.formasPagamento.message}</p>
                 )}
             </div>
 
@@ -587,7 +562,7 @@ function ContaBancariaGroup({index, control, register, setValue, remove, errors}
                         <button
                             type="button"
                             onClick={() => appendPix({tipo_chave: "cnpj", chave: ""})}
-                            className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold"
+                            className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-semibold"
                         >
                             <Plus className="w-3 h-3"/> Adicionar Chave
                         </button>
@@ -596,10 +571,10 @@ function ContaBancariaGroup({index, control, register, setValue, remove, errors}
                         <table className="w-full text-left text-sm">
                             <thead className="bg-black/20">
                             <tr>
-                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Tipo
+                                <th className="px-3 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Tipo
                                     de Chave
                                 </th>
-                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Chave</th>
+                                <th className="px-3 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Chave</th>
                                 <th className="px-2 py-2 w-[40px]"/>
                             </tr>
                             </thead>
@@ -630,7 +605,7 @@ function ContaBancariaGroup({index, control, register, setValue, remove, errors}
                         <button
                             type="button"
                             onClick={() => appendTed({banco_codigo: "", banco_nome: "", agencia: "", conta: ""})}
-                            className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold"
+                            className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-semibold"
                         >
                             <Plus className="w-3 h-3"/> Adicionar Conta TED
                         </button>
@@ -639,12 +614,12 @@ function ContaBancariaGroup({index, control, register, setValue, remove, errors}
                         <table className="w-full text-left text-sm">
                             <thead className="bg-black/20">
                             <tr>
-                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Cód.</th>
-                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Nome
+                                <th className="px-3 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Cód.</th>
+                                <th className="px-3 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Nome
                                     do Banco
                                 </th>
-                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Agência</th>
-                                <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Conta</th>
+                                <th className="px-3 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Agência</th>
+                                <th className="px-3 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Conta</th>
                                 <th className="px-2 py-2 w-[40px]"/>
                             </tr>
                             </thead>
@@ -668,21 +643,19 @@ function ContaBancariaGroup({index, control, register, setValue, remove, errors}
             )}
 
             {formasPagamento.length === 0 && (
-                <p className="text-[11px] text-muted-foreground">Selecione ao menos uma forma de pagamento para esta
+                <p className="text-xs text-muted-foreground">Selecione ao menos uma forma de pagamento para esta
                     conta.</p>
             )}
         </div>
     );
 }
 
-export function NovoParceiroModal({onClose, initialData, onSaved, container}: {
+export function NovoParceiroModal({onClose, initialData, onSaved, returnFocusTo}: {
     onClose: () => void;
     initialData?: ParceiroRow | null;
     onSaved?: () => void;
-    /** Onde montar o portal (padrão: body). Dentro de um Dialog Radix precisa
-     *  ficar no conteúdo dele, senão o foco preso e o bloqueio de cliques do
-     *  Radix impedem o uso deste modal. */
-    container?: Element | null;
+    /** Para onde devolver o foco ao fechar (padrão: quem abriu o modal). */
+    returnFocusTo?: () => HTMLElement | null | undefined;
 }) {
     const queryClient = useQueryClient();
     const {toast} = useToast();
@@ -780,241 +753,223 @@ export function NovoParceiroModal({onClose, initialData, onSaved, container}: {
         else onClose();
     };
 
-    useEscapeClose(!showConfirmCancel, handleCancel, 80);
-
     const fieldCls = (hasError?: boolean) =>
         `w-full bg-white/5 border rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors ${
             hasError ? "border-destructive/60 focus:border-destructive" : "border-white/10"
         }`;
+    const labelCls = "text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block";
 
-    // Portal no body + z-[80]: precisa ficar acima do Novo Lançamento (z-[65])
-    // e do Vincular (z-[60]) na conciliação; o confirm de cancelar usa z-[90].
-    return createPortal(
-        <>
-            {showConfirmCancel && (
-                <ConfirmacaoCancelModal
-                    onConfirm={() => {
-                        reset(defaultParceiroForm);
-                        onClose();
-                    }}
-                    onDismiss={() => setShowConfirmCancel(false)}
-                />
-            )}
-            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[80] flex items-center justify-center p-4">
-                <div
-                    className="bg-card border border-white/10 rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
-                    <div
-                        className="flex items-center justify-between p-6 border-b border-white/5 sticky top-0 bg-card z-10">
-                        <h2 className="text-lg font-bold text-white">
-                            {isEdit ? "Editar Cadastro" : "Novo Cadastro"} - Clientes/Fornecedores
-                        </h2>
-                        <button type="button" onClick={handleCancel} className="p-1.5 hover:bg-white/5 rounded-lg">
-                            <X className="w-5 h-5"/>
-                        </button>
-                    </div>
+    return (
+        <Modal onClose={handleCancel} returnFocusTo={returnFocusTo}>
+            <ModalHeader title={`${isEdit ? "Editar Cadastro" : "Novo Cadastro"} - Clientes/Fornecedores`}/>
 
-                    <form onSubmit={handleSubmit((v) => saveMutation.mutate(v))} noValidate className="flex flex-col">
-                        <div className="p-6 space-y-5">
-
-                            {/* Tipo de Pessoa */}
-                            <div>
-                                <label
-                                    className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">Tipo
-                                    de Pessoa *</label>
-                                <Controller
-                                    name="tipoPessoa"
-                                    control={control}
-                                    render={({field}) => (
-                                        <div className="flex gap-2">
-                                            {(["PF", "PJ"] as const).map((t) => (
-                                                <button key={t} type="button"
-                                                        onClick={() => {
-                                                            field.onChange(t);
-                                                            setValue("documento", "", {shouldDirty: true});
-                                                        }}
-                                                        className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all border ${
-                                                            field.value === t ? "bg-primary text-white border-primary" : "bg-white/5 text-muted-foreground border-white/10 hover:border-white/20"
-                                                        }`}>
-                                                    {t === "PF" ? "Pessoa Física (PF)" : "Pessoa Jurídica (PJ)"}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    )}
-                                />
-                            </div>
-
-                            {/* Nome + Documento */}
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label
-                                        className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                                        {tipoPessoa === "PF" ? "Nome Completo *" : "Razão Social / Nome Fantasia *"}
-                                    </label>
-                                    <input {...register("nomeRazao")} className={fieldCls(!!errors.nomeRazao)}
-                                           placeholder={tipoPessoa === "PF" ? "Ex: João da Silva" : "Ex: Tech Solutions S.A."}/>
-                                    {errors.nomeRazao &&
-                                        <p className="text-[11px] text-destructive mt-1">{errors.nomeRazao.message}</p>}
-                                </div>
-                                <div>
-                                    <label
-                                        className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                                        {tipoPessoa === "PF" ? "CPF *" : "CNPJ *"}
-                                    </label>
-                                    <Controller name="documento" control={control} render={({field}) => (
-                                        <input value={field.value}
-                                               onChange={(e) => field.onChange(mascararDocumento(e.target.value, tipoPessoa as "PF" | "PJ"))}
-                                               onBlur={field.onBlur}
-                                               className={fieldCls(!!errors.documento)}
-                                               placeholder={tipoPessoa === "PF" ? "000.000.000-00" : "00.000.000/0000-00"}/>
-                                    )}/>
-                                    {errors.documento &&
-                                        <p className="text-[11px] text-destructive mt-1">{errors.documento.message}</p>}
-                                </div>
-                            </div>
-
-                            {/* Nome Fantasia - apenas para PJ */}
-                            {tipoPessoa === "PJ" && (
-                                <div>
-                                    <label
-                                        className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                                        Nome Fantasia
-                                    </label>
-                                    <input
-                                        {...register("nomeFantasia")}
-                                        className={fieldCls(!!errors.nomeFantasia)}
-                                        placeholder="Ex: Soluções Tech"
-                                    />
-                                    {errors.nomeFantasia && (
-                                        <p className="text-[11px] text-destructive mt-1">{errors.nomeFantasia.message}</p>
-                                    )}
-                                </div>
-                            )}
-
-                            {/* E-mail + Telefone */}
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label
-                                        className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">E-mail</label>
-                                    <input {...register("email")} type="email" className={fieldCls(!!errors.email)}
-                                           placeholder="email@exemplo.com.br"/>
-                                    {errors.email &&
-                                        <p className="text-[11px] text-destructive mt-1">{errors.email.message}</p>}
-                                </div>
-                                <div>
-                                    <label
-                                        className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Telefone</label>
-                                    <Controller name="telefone" control={control} render={({field}) => (
-                                        <input value={field.value}
-                                               onChange={(e) => field.onChange(mascararTelefone(e.target.value))}
-                                               onBlur={field.onBlur}
-                                               className={fieldCls(!!errors.telefone)} placeholder="(11) 99999-0000"/>
-                                    )}/>
-                                    {errors.telefone &&
-                                        <p className="text-[11px] text-destructive mt-1">{errors.telefone.message}</p>}
-                                </div>
-                            </div>
-
-                            {/* Departamento */}
-                            <div>
-                                <label
-                                    className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">Lotação
-                                    / Departamento</label>
-                                <select {...register("departamento_id")}
-                                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors [&>option]:bg-[#1A1A24] [&>option]:text-white">
-                                    <option value="">Selecione...</option>
-                                    {departamentos.map((d) => <option key={d.id}
-                                                                      value={String(d.id)}>{d.nome}</option>)}
-                                </select>
-                            </div>
-
-                            {/* Tipos de Parceiro */}
-                            <div>
-                                <label
-                                    className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">Tipo
-                                    de Parceiro *</label>
-                                <div className="grid grid-cols-2 gap-2">
-                                    {tiposParceiroOptions.map((t) => {
-                                        const style = getTipoStyle(t);
-                                        const checked = tiposParceiro.includes(t);
-                                        return (
-                                            <label key={t}
-                                                   className={`flex items-center gap-2 cursor-pointer p-3 rounded-xl border transition-all ${
-                                                       checked ? `${style.bg} ${style.border} border` : "border-white/10 hover:border-primary/40 hover:bg-primary/5"
-                                                   }`}>
-                                                <input type="checkbox" checked={checked}
-                                                       onChange={() => {
-                                                           const next = checked ? tiposParceiro.filter((x) => x !== t) : [...tiposParceiro, t];
-                                                           setValue("tiposParceiro", next, {
-                                                               shouldValidate: true,
-                                                               shouldDirty: true,
-                                                               shouldTouch: true
-                                                           });
-                                                       }}
-                                                       className="accent-primary w-4 h-4"/>
-                                                <span
-                                                    className={`text-sm font-medium ${checked ? style.text : "text-white"}`}>{t}</span>
-                                            </label>
-                                        );
-                                    })}
-                                </div>
-                                {errors.tiposParceiro &&
-                                    <p className="text-[11px] text-destructive mt-1">{errors.tiposParceiro.message}</p>}
-                            </div>
-
-                            {/* ── Dados Bancários ──────────────────────────────────────── */}
-                            <div>
-                                <div className="flex items-center justify-between mb-3">
-                                    <label
-                                        className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
-                                        <Landmark className="w-3.5 h-3.5"/> Dados Bancários
-                                    </label>
-                                    <button
-                                        type="button"
-                                        onClick={() => append({...defaultContaBancaria})}
-                                        className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-semibold transition-colors"
-                                    >
-                                        <Plus className="w-3.5 h-3.5"/> Adicionar Conta
-                                    </button>
-                                </div>
-
-                                {fields.length === 0 ? (
-                                    <div className="border border-dashed border-white/10 rounded-xl p-5 text-center">
-                                        <Landmark className="w-6 h-6 text-muted-foreground/40 mx-auto mb-2"/>
-                                        <p className="text-xs text-muted-foreground">Nenhuma conta cadastrada. Clique em
-                                            "Adicionar Conta" para incluir PIX e/ou TED.</p>
-                                    </div>
-                                ) : (
-                                    <div className="space-y-3">
-                                        {fields.map((field, index) => (
-                                            <ContaBancariaGroup
-                                                key={field.id}
-                                                index={index}
-                                                control={control}
-                                                register={register}
-                                                setValue={setValue}
-                                                remove={remove}
-                                                errors={errors}
-                                            />
+            <ModalForm onSubmit={handleSubmit((v) => saveMutation.mutate(v))} noValidate>
+                <ModalBody>
+                    <div className={modalGridCls}>
+                        {/* Tipo de Pessoa */}
+                        <div role="group" aria-labelledby="parceiro-tipo-pessoa-label">
+                            <span id="parceiro-tipo-pessoa-label" className={labelCls}>Tipo de Pessoa *</span>
+                            <Controller
+                                name="tipoPessoa"
+                                control={control}
+                                render={({field}) => (
+                                    <div className="flex gap-2">
+                                        {(["PF", "PJ"] as const).map((t) => (
+                                            <button key={t} type="button"
+                                                    aria-pressed={field.value === t}
+                                                    onClick={() => {
+                                                        field.onChange(t);
+                                                        setValue("documento", "", {shouldDirty: true});
+                                                    }}
+                                                    className={`flex-1 py-3 rounded-xl text-sm font-medium transition-all border ${
+                                                        field.value === t ? "bg-primary text-white border-primary" : "bg-white/5 text-muted-foreground border-white/10 hover:border-white/20"
+                                                    }`}>
+                                                {t === "PF" ? "Pessoa Física (PF)" : "Pessoa Jurídica (PJ)"}
+                                            </button>
                                         ))}
                                     </div>
                                 )}
-                            </div>
+                            />
                         </div>
 
-                        <div className="flex gap-3 p-6 pt-0 sticky bottom-0 bg-card border-t border-white/5">
-                            <button type="button" onClick={handleCancel}
-                                    className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium">Cancelar
-                            </button>
-                            <button type="submit" disabled={saveMutation.isPending}
-                                    className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium shadow-lg shadow-primary/25 disabled:opacity-50">
-                                {saveMutation.isPending ? "Salvando…" : isEdit ? "Salvar Alterações" : "Salvar Cadastro"}
-                            </button>
+                        {/* Nome / Razão social */}
+                        <div>
+                            <label htmlFor="parceiro-nome" className={labelCls}>
+                                {tipoPessoa === "PF" ? "Nome Completo *" : "Razão Social / Nome Fantasia *"}
+                            </label>
+                            <input id="parceiro-nome" {...register("nomeRazao")} className={fieldCls(!!errors.nomeRazao)}
+                                   aria-invalid={!!errors.nomeRazao}
+                                   placeholder={tipoPessoa === "PF" ? "Ex: João da Silva" : "Ex: Tech Solutions S.A."}/>
+                            {errors.nomeRazao &&
+                                <p className="text-xs text-destructive mt-1">{errors.nomeRazao.message}</p>}
                         </div>
-                    </form>
-                </div>
-            </div>
-        </>,
-        container ?? document.body,
+
+                        {/* Documento */}
+                        <div>
+                            <label htmlFor="parceiro-documento" className={labelCls}>
+                                {tipoPessoa === "PF" ? "CPF *" : "CNPJ *"}
+                            </label>
+                            <Controller name="documento" control={control} render={({field}) => (
+                                <input id="parceiro-documento" value={field.value}
+                                       onChange={(e) => field.onChange(mascararDocumento(e.target.value, tipoPessoa as "PF" | "PJ"))}
+                                       onBlur={field.onBlur}
+                                       aria-invalid={!!errors.documento}
+                                       className={fieldCls(!!errors.documento)}
+                                       placeholder={tipoPessoa === "PF" ? "000.000.000-00" : "00.000.000/0000-00"}/>
+                            )}/>
+                            {errors.documento &&
+                                <p className="text-xs text-destructive mt-1">{errors.documento.message}</p>}
+                        </div>
+
+                        {/* Nome Fantasia - apenas para PJ */}
+                        {tipoPessoa === "PJ" && (
+                            <div>
+                                <label htmlFor="parceiro-fantasia" className={labelCls}>Nome Fantasia</label>
+                                <input
+                                    id="parceiro-fantasia"
+                                    {...register("nomeFantasia")}
+                                    className={fieldCls(!!errors.nomeFantasia)}
+                                    placeholder="Ex: Soluções Tech"
+                                />
+                                {errors.nomeFantasia && (
+                                    <p className="text-xs text-destructive mt-1">{errors.nomeFantasia.message}</p>
+                                )}
+                            </div>
+                        )}
+
+                        {/* E-mail */}
+                        <div>
+                            <label htmlFor="parceiro-email" className={labelCls}>E-mail</label>
+                            <input id="parceiro-email" {...register("email")} type="email" className={fieldCls(!!errors.email)}
+                                   aria-invalid={!!errors.email}
+                                   placeholder="email@exemplo.com.br"/>
+                            {errors.email &&
+                                <p className="text-xs text-destructive mt-1">{errors.email.message}</p>}
+                        </div>
+
+                        {/* Telefone */}
+                        <div>
+                            <label htmlFor="parceiro-telefone" className={labelCls}>Telefone</label>
+                            <Controller name="telefone" control={control} render={({field}) => (
+                                <input id="parceiro-telefone" value={field.value}
+                                       onChange={(e) => field.onChange(mascararTelefone(e.target.value))}
+                                       onBlur={field.onBlur}
+                                       aria-invalid={!!errors.telefone}
+                                       className={fieldCls(!!errors.telefone)} placeholder="(11) 99999-0000"/>
+                            )}/>
+                            {errors.telefone &&
+                                <p className="text-xs text-destructive mt-1">{errors.telefone.message}</p>}
+                        </div>
+
+                        {/* Departamento */}
+                        <div>
+                            <label htmlFor="parceiro-departamento" className={labelCls}>Lotação / Departamento</label>
+                            <select id="parceiro-departamento" {...register("departamento_id")}
+                                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors [&>option]:bg-[#1A1A24] [&>option]:text-white">
+                                <option value="">Selecione...</option>
+                                {departamentos.map((d) => <option key={d.id}
+                                                                  value={String(d.id)}>{d.nome}</option>)}
+                            </select>
+                        </div>
+
+                        {/* Tipos de Parceiro */}
+                        <div className="col-span-full" role="group" aria-labelledby="parceiro-tipos-label">
+                            <span id="parceiro-tipos-label" className={labelCls}>Tipo de Parceiro *</span>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
+                                {tiposParceiroOptions.map((t) => {
+                                    const style = getTipoStyle(t);
+                                    const checked = tiposParceiro.includes(t);
+                                    return (
+                                        <label key={t}
+                                               className={`flex items-center gap-2 cursor-pointer p-3 rounded-xl border transition-all ${
+                                                   checked ? `${style.bg} ${style.border} border` : "border-white/10 hover:border-primary/40 hover:bg-primary/5"
+                                               }`}>
+                                            <input type="checkbox" checked={checked}
+                                                   onChange={() => {
+                                                       const next = checked ? tiposParceiro.filter((x) => x !== t) : [...tiposParceiro, t];
+                                                       setValue("tiposParceiro", next, {
+                                                           shouldValidate: true,
+                                                           shouldDirty: true,
+                                                           shouldTouch: true
+                                                       });
+                                                   }}
+                                                   className="accent-primary w-4 h-4"/>
+                                            <span
+                                                className={`text-sm font-medium ${checked ? style.text : "text-white"}`}>{t}</span>
+                                        </label>
+                                    );
+                                })}
+                            </div>
+                            {errors.tiposParceiro &&
+                                <p className="text-xs text-destructive mt-1">{errors.tiposParceiro.message}</p>}
+                        </div>
+
+                        {/* ── Dados Bancários ──────────────────────────────────────── */}
+                        <div className="col-span-full">
+                            <div className="flex items-center justify-between mb-3">
+                                <span
+                                    className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                                    <Landmark aria-hidden="true" className="w-3.5 h-3.5"/> Dados Bancários
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={() => append({...defaultContaBancaria})}
+                                    className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-semibold transition-colors"
+                                >
+                                    <Plus aria-hidden="true" className="w-3.5 h-3.5"/> Adicionar Conta
+                                </button>
+                            </div>
+
+                            {fields.length === 0 ? (
+                                <div className="border border-dashed border-white/10 rounded-xl p-5 text-center">
+                                    <Landmark aria-hidden="true" className="w-6 h-6 text-muted-foreground/40 mx-auto mb-2"/>
+                                    <p className="text-xs text-muted-foreground">Nenhuma conta cadastrada. Clique em
+                                        "Adicionar Conta" para incluir PIX e/ou TED.</p>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 items-start">
+                                    {fields.map((field, index) => (
+                                        <ContaBancariaGroup
+                                            key={field.id}
+                                            index={index}
+                                            control={control}
+                                            register={register}
+                                            setValue={setValue}
+                                            remove={remove}
+                                            errors={errors}
+                                        />
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </ModalBody>
+
+                <ModalFooter hint="* Campos obrigatórios · Esc fecha">
+                    <button type="button" onClick={handleCancel} className={modalBtnSecondaryCls}>Cancelar</button>
+                    <button type="submit" disabled={saveMutation.isPending} className={modalBtnPrimaryCls}>
+                        {saveMutation.isPending ? <ModalSpinner/> : isEdit ? "Salvar Alterações" : "Salvar Cadastro"}
+                    </button>
+                </ModalFooter>
+            </ModalForm>
+
+            {/* Confirmação curta (AlertDialog compacto, acima do modal). */}
+            <ConfirmDialog
+                open={showConfirmCancel}
+                title="Cancelar cadastro?"
+                description="As informações preenchidas serão perdidas. Deseja realmente cancelar?"
+                confirmLabel="Sim, cancelar"
+                cancelLabel="Não, continuar"
+                variant="destructive"
+                icon={AlertTriangle}
+                onCancel={() => setShowConfirmCancel(false)}
+                onConfirm={() => {
+                    setShowConfirmCancel(false);
+                    reset(defaultParceiroForm);
+                    onClose();
+                }}
+            />
+        </Modal>
     );
 }
 
