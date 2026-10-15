@@ -9,6 +9,7 @@
 import * as XLSX from "xlsx";
 import {jsPDF} from "jspdf";
 import autoTable from "jspdf-autotable";
+import {formatarData} from "./datas";
 
 // ─── Tipos públicos ─────────────────────────────────────────────────────────
 
@@ -221,8 +222,5 @@ export function fmtCents(cents: unknown): string {
 }
 
 export function fmtDate(value: unknown): string {
-    if (!value) return "—";
-    const d = new Date(String(value));
-    if (isNaN(d.getTime())) return String(value);
-    return d.toLocaleDateString("pt-BR");
+    return formatarData(value, "—");
 }

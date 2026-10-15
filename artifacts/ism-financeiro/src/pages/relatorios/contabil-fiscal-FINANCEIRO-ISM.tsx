@@ -2,6 +2,7 @@ import {useState} from "react";
 import {PageHeader} from "@/components/shared/page-header";
 import {Download, FileText, Filter} from "lucide-react";
 import {formatCurrency} from "@/lib/utils";
+import {parseDataCivil} from "@/lib/datas";
 import {DateRangePicker} from "@/components/shared/date-range-picker";
 import {format, startOfYear, endOfYear} from "date-fns";
 
@@ -305,8 +306,9 @@ export default function ContabilFiscal() {
     const [tipoFiltro, setTipoFiltro] = useState<"todos" | "cr" | "cp">("todos");
     const [dateStart, setDateStart] = useState(format(startOfYear(new Date()), "yyyy-MM-dd"));
     const [dateEnd, setDateEnd] = useState(format(endOfYear(new Date()), "yyyy-MM-dd"));
-    const mesFiltro = new Date(dateStart).getMonth();
-    const anoFiltro = new Date(dateStart).getFullYear();
+    const inicioFiltro = parseDataCivil(dateStart) ?? new Date();
+    const mesFiltro = inicioFiltro.getMonth();
+    const anoFiltro = inicioFiltro.getFullYear();
 
     const filtrados = lancamentos.filter((l) => tipoFiltro === "todos" || l.tipo === tipoFiltro);
 

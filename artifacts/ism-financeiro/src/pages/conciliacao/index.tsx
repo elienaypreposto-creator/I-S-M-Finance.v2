@@ -4,7 +4,7 @@ import {useLocation} from "wouter";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 import {PageHeader} from "@/components/shared/page-header";
 import {ApiEnvelope, fetchApi, fetchApiData} from "@/lib/api-config";
-import {cn} from "@/lib/utils";
+import {cn, formatDate} from "@/lib/utils";
 import {ImportExtratoModal} from "@/components/conciliacao/import-extrato-modal";
 import {DateRangePicker} from "@/components/shared/date-range-picker";
 import {RequiresPermission} from "@/components/auth/requires-permission";
@@ -54,17 +54,9 @@ function num(v: number | null | undefined) {
     return Number(v ?? 0);
 }
 
-/** DD/MM/YYYY */
+/** DD/MM/YYYY (período do extrato é data civil: não passa por fuso). */
 function formatDatePt(dateString: string | null | undefined): string {
-    if (!dateString) return "-";
-    const date = new Date(dateString);
-    if (Number.isNaN(date.getTime())) return "-";
-    return new Intl.DateTimeFormat("pt-BR", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        timeZone: "America/Sao_Paulo",
-    }).format(date);
+    return formatDate(dateString);
 }
 
 /** DD/MM/YYYY HH:mm */

@@ -15,6 +15,7 @@ import {CSS} from "@dnd-kit/utilities";
 import {Plus, Search, Loader2} from "lucide-react";
 import {BotaoEditar, BotaoExcluir} from "@/components/shared/botoes-acao";
 import {cn} from "@/lib/utils";
+import {hojeIsoLocal} from "@/lib/datas";
 import {Button} from "@/components/ui/button";
 import {Input} from "@/components/ui/input";
 import {TaskCard} from "@/components/tasks/task-card";
@@ -351,7 +352,7 @@ export default function Kanban() {
                 result = result.filter(c => c.prioridade === "alta");
                 break;
             case "vencendo_hoje": {
-                const hoje = new Date().toISOString().split("T")[0];
+                const hoje = hojeIsoLocal();
                 result = result.filter(c => c.prazo === hoje);
                 break;
             }

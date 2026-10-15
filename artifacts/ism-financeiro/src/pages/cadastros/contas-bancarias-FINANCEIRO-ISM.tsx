@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import {formatCurrency, cn} from "@/lib/utils";
 import {classeSaldo} from "@/lib/saldo";
+import {hojeIsoLocal} from "@/lib/datas";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
@@ -92,7 +93,7 @@ function normalizeSearch(value: string): string {
 
 // Data máxima permitida (hoje), formatada dd/mm/aaaa
 function getTodayIso(): string {
-    return new Date().toISOString().split("T")[0];
+    return hojeIsoLocal();
 }
 
 function formatDateBr(iso: string): string {
@@ -692,7 +693,7 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                 conta: values.conta?.trim() || null,
                 tipo: values.tipo,
                 saldo_inicial: saldoApi,
-                data_inicio: values.data_inicio || new Date().toISOString().split("T")[0],
+                data_inicio: values.data_inicio || hojeIsoLocal(),
                 cor: values.cor,
                 ...(isEdit && initialData ? {status: initialData.status} : {}),
             };
