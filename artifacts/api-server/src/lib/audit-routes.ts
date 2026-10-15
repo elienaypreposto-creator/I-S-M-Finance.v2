@@ -8,6 +8,7 @@ export const AUDIT_SENSITIVE_GET_PREFIXES = [
     "/usuarios",
     "/auditoria",
     "/tokens-api",
+    "/v1",
 ] as const;
 
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);

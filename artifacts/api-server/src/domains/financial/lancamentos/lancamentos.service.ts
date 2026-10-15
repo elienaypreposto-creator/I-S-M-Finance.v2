@@ -10,6 +10,7 @@ import {
 } from "@workspace/db/schema";
 import {AppError} from "../../../utils/app-error";
 import {tenantWhere, withEmpresaId} from "../../../lib/tenant-scope";
+import {assertRefsDaEmpresa} from "../../../lib/tenant-refs-guard";
 import type {CreateLancamentoBody, ListLancamentosQuery, UpdateLancamentoBody} from "./schemas";
 import {statusAbertoPorVencimento} from "../../../utils/conciliacao-vincular";
 import {hojeIsoLocal} from "../../../utils/date-civil";
@@ -133,6 +134,13 @@ export const lancamentosService = {
     },
 
     async create(empresaId: number, payload: CreateLancamentoBody) {
+        await assertRefsDaEmpresa(empresaId, {
+            conta_id: payload.conta_id,
+            parceiro_id: payload.parceiro_id,
+            plano_conta_id: payload.plano_conta_id,
+            departamento_id: payload.departamento_id,
+            centro_custo_id: payload.centro_custo_id,
+        });
         const autoFill = await resolveDepartamentoCentroByParceiro(empresaId, payload.parceiro_id);
         const departamentoFinal = payload.departamento_id ?? autoFill.departamento_id;
         const centroCustoFinal = payload.centro_custo_id ?? autoFill.centro_custo_id;
@@ -196,6 +204,13 @@ export const lancamentosService = {
     },
 
     async update(empresaId: number, id: number, payload: UpdateLancamentoBody) {
+        await assertRefsDaEmpresa(empresaId, {
+            conta_id: payload.conta_id,
+            parceiro_id: payload.parceiro_id,
+            plano_conta_id: payload.plano_conta_id,
+            departamento_id: payload.departamento_id,
+            centro_custo_id: payload.centro_custo_id,
+        });
         const autoFill = await resolveDepartamentoCentroByParceiro(empresaId, payload.parceiro_id);
         const departamentoFinal = payload.departamento_id ?? autoFill.departamento_id;
         const centroCustoFinal = payload.centro_custo_id ?? autoFill.centro_custo_id;

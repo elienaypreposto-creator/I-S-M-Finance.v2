@@ -1,0 +1,77 @@
+name: CI
+
+# Barreira de merge: este workflow roda em todo PR. Para que ele realmente BLOQUEIE o merge,
+# marque "Isolamento entre empresas" e "Testes unitários" como checks obrigatórios em
+# Settings > Branches > regra de proteção de develop/master (isso não dá para fazer por código).
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  testes-unitarios:
+    name: Testes unitários
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter @workspace/api-server...
+      - name: Testes do api-server
+        working-directory: artifacts/api-server
+        env:
+          JWT_SECRET: ci-jwt-secret-com-pelo-menos-32-caracteres
+        run: pnpm test
+
+  isolamento:
+    name: Isolamento entre empresas
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ism_user
+          POSTGRES_PASSWORD: ci_bootstrap_pw
+          POSTGRES_DB: ismfinance
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ism_user -d ismfinance"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      # Bootstrap (superuser) só para o migrate; a API e os testes ligam como ism_app / ism_admin / ism_owner.
+      DATABASE_MIGRATE_URL: postgresql://ism_user:ci_bootstrap_pw@127.0.0.1:5432/ismfinance
+      ISM_APP_PASSWORD: ci_app_pw
+      ISM_ADMIN_PASSWORD: ci_admin_pw
+      ISM_OWNER_PASSWORD: ci_owner_pw
+      DATABASE_URL: postgresql://ism_app:ci_app_pw@127.0.0.1:5432/ismfinance
+      JWT_SECRET: ci-jwt-secret-com-pelo-menos-32-caracteres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter @workspace/api-server...
+
+      - name: Aplicar migrations (cria roles ism_app / ism_admin / ism_owner)
+        run: pnpm --filter @workspace/db run db:migrate
+
+      - name: Suíte de isolamento (falha se qualquer rota autenticada vazar dados entre empresas)
+        run: pnpm --filter @workspace/api-server run test:isolation

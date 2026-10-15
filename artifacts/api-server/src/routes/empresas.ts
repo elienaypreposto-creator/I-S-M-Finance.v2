@@ -4,6 +4,7 @@ import {and, desc, eq, ne} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {empresasTable} from "@workspace/db/schema";
 import {withPermission} from "../middlewares/withPermission";
+import {requireTenant} from "../lib/tenant-scope";
 import {withSuperadmin} from "../middlewares/withSuperadmin";
 import {PERM} from "../constants/permissoes";
 import {validateBody} from "../middlewares/validate";
@@ -111,6 +112,13 @@ router.patch("/empresas/:id", withPermission(PERM.ADMIN_EMPRESAS_EDITAR), valida
         const id = parseInt(String(req.params.id), 10);
         if (!Number.isInteger(id) || id <= 0) {
             return errorResponse(res, 400, "VALIDATION_ERROR", "ID inválido.");
+        }
+
+        // Sem este guard, qualquer usuário com admin:empresas:editar alterava OUTRA empresa:
+        // `empresas` não tem RLS e o UPDATE filtrava só por id. GET/POST /empresas já são
+        // superadmin-only; aqui o admin comum só edita a empresa da própria sessão.
+        if (!req.user?.superadmin && id !== requireTenant(req).empresaId) {
+            return errorResponse(res, 404, "NOT_FOUND", "Empresa não encontrada.");
         }
 
         const body = req.body as UpdateEmpresaBody;

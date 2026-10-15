@@ -5,16 +5,6 @@ import {withBypassRls, type TenantDb} from "@workspace/db";
 import {tokensApiTable} from "@workspace/db/schema";
 import {errorResponse} from "../utils/response";
 
-// Extensão de tipos do Express.
-declare global {
-    namespace Express {
-        interface Request {
-            tenant?: {empresaId: number};
-            apiToken?: {id: number; escopos: string[]};
-        }
-    }
-}
-
 // Formato novo: ism_v1_<id>.<secret>
 const TOKEN_REGEX = /^ism_v1_(\d+)\.([A-Za-z0-9_-]+)$/;
 
@@ -50,14 +40,11 @@ function popularContexto(
         escopos: tokenRow.escopos ?? [],
     };
 
-    // Mantido por compatibilidade com o auditLogger.
-    req.user = {
-        id: tokenRow.id,
-        email: "api-v1@token",
-        permissions: ["*"],
-        empresaId: tokenRow.empresa_id,
-        superadmin: false,
-    };
+    // Identidade do token para a auditoria (logs_auditoria.token_api_id).
+    req.tokenApiId = tokenRow.id;
+
+    // req.user NÃO é preenchido: o id do token não pode ser confundido com o id
+    // de um usuário real na auditoria. usuario_id fica NULL; o tenant vem de req.tenant.
 }
 
 function agendarAtualizacaoUso(req: Request, tokenId: number) {
@@ -216,6 +203,7 @@ export const v1AuthMiddleware = async (
                     .select({
                         id: tokensApiTable.id,
                         empresa_id: tokensApiTable.empresa_id,
+                        token_hash: tokensApiTable.token_hash,
                         escopos: tokensApiTable.escopos,
                         ativo: tokensApiTable.ativo,
                         data_expiracao: tokensApiTable.data_expiracao,
@@ -226,6 +214,22 @@ export const v1AuthMiddleware = async (
             );
 
             if (!tokenRow || !tokenRow.ativo) {
+                return errorResponse(
+                    res,
+                    401,
+                    "UNAUTHORIZED",
+                    "Token da API v1 inválido ou inativo.",
+                );
+            }
+
+            // Confirmação em tempo constante do hash devolvido pelo banco
+            // (o lookup por índice não é tempo-constante).
+            const calculado = Buffer.from(tokenHash, "hex");
+            const armazenado = Buffer.from(tokenRow.token_hash, "hex");
+            if (
+                calculado.length !== armazenado.length ||
+                !crypto.timingSafeEqual(calculado, armazenado)
+            ) {
                 return errorResponse(
                     res,
                     401,

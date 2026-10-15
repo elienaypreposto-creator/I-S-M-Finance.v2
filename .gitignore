@@ -52,4 +52,4 @@ Thumbs.db
 backups/
 *~
 .env
-*.env
+*.envsaida.txt
