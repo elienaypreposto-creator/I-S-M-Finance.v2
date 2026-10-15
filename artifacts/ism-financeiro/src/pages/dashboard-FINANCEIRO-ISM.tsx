@@ -37,6 +37,7 @@ import {
 } from "recharts";
 import { formatCurrency, cn } from "@/lib/utils";
 import { fetchApiData } from "@/lib/api-config";
+import { SaldoGeralCard } from "@/components/dashboard/saldo-geral-card";
 
 const PIE_COLORS = ["#6366F1", "#F59E0B", "#E74C3C", "#22C55E", "#3B82F6", "#EC4899"];
 
@@ -721,7 +722,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
         {kpisLoading ? (
           Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="glass-panel rounded-2xl p-5 animate-pulse">
@@ -760,6 +761,7 @@ export default function Dashboard() {
             />
           </>
         )}
+        <SaldoGeralCard />
       </div>
 
       <div className="glass-panel rounded-2xl p-5">
