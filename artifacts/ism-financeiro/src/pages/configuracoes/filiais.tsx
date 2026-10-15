@@ -8,8 +8,6 @@ import {BotaoEditar, BotaoExcluir} from "@/components/shared/botoes-acao";
 import {
     Plus,
     Building,
-    X,
-    Loader2,
     AlertCircle,
     Info,
     CheckCircle,
@@ -20,8 +18,18 @@ import {fetchApiData} from "@/lib/api-config";
 import {CardsSkeleton} from "@/components/shared/table-skeleton";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
-import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
-import {ViewportOverlay} from "@/components/shared/viewport-overlay";
+import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
+import {
+    Modal,
+    ModalBody,
+    ModalFooter,
+    ModalForm,
+    ModalHeader,
+    ModalSpinner,
+    modalBtnPrimaryCls,
+    modalBtnSecondaryCls,
+    modalGridCls,
+} from "@/components/ui/modal-responsivo";
 import {CampoBusca, contemBusca, useParametrosUrl} from "@/components/shared/filtros";
 import {
     Empty,
@@ -84,36 +92,22 @@ function FilialModal({onClose, initialData, isPending, onSave}: FilialModalProps
         onClose();
     }
 
-    useEscapeClose(!ConfirmDialogProps.open, () => {
-        void handleRequestClose();
-    });
-
     return (
-        <ViewportOverlay>
-            <div className="bg-card border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl">
-                <div className="flex items-center justify-between p-6 border-b border-white/5">
-                    <h2 className="text-lg font-bold text-white">
-                        {isEdit ? "Editar Filial" : "Nova Filial"}
-                    </h2>
-                    <button
-                        type="button"
-                        onClick={() => void handleRequestClose()}
-                        className="p-1.5 hover:bg-white/5 rounded-lg transition-colors"
-                    >
-                        <X className="w-5 h-5"/>
-                    </button>
-                </div>
-
-                <form onSubmit={handleSubmit(onSave)}>
-                    <div className="p-6 space-y-4">
+        <Modal onClose={() => void handleRequestClose()}>
+            <ModalHeader title={isEdit ? "Editar Filial" : "Nova Filial"}/>
+            <ModalForm onSubmit={handleSubmit(onSave)}>
+                <ModalBody>
+                    <div className={modalGridCls}>
                         <div>
                             <label
+                                htmlFor="filial-nome"
                                 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
                                 Nome da Filial <span className="text-destructive">*</span>
                             </label>
                             <input
+                                id="filial-nome"
                                 {...register("nome")}
-                                autoFocus
+                                aria-invalid={!!errors.nome}
                                 className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
                                 placeholder="Ex: Filial Curitiba"
                             />
@@ -122,36 +116,26 @@ function FilialModal({onClose, initialData, isPending, onSave}: FilialModalProps
                             )}
                         </div>
 
-                        <div className="flex items-start gap-2 bg-primary/5 border border-primary/20 rounded-xl p-3">
-                            <Info className="w-4 h-4 text-primary shrink-0 mt-0.5"/>
+                        <div className="col-span-full flex items-start gap-2 bg-primary/5 border border-primary/20 rounded-xl p-3">
+                            <Info aria-hidden="true" className="w-4 h-4 text-primary shrink-0 mt-0.5"/>
                             <p className="text-xs text-muted-foreground leading-relaxed">
                                 Campos de CNPJ, endereço e contacto serão adicionados na{" "}
                                 <strong className="text-white">Fase 7 - Ampliação de Schema</strong>.
                             </p>
                         </div>
                     </div>
-
-                    <div className="flex gap-3 px-6 pb-6">
-                        <button
-                            type="button"
-                            onClick={() => void handleRequestClose()}
-                            className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium transition-colors"
-                        >
-                            Cancelar
-                        </button>
-                        <button
-                            type="submit"
-                            disabled={isPending}
-                            className="flex-1 py-2.5 bg-primary hover:bg-primary/90 disabled:opacity-60 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-2 transition-colors"
-                        >
-                            {isPending && <Loader2 className="w-4 h-4 animate-spin"/>}
-                            {isEdit ? "Salvar" : "Criar Filial"}
-                        </button>
-                    </div>
-                </form>
-            </div>
+                </ModalBody>
+                <ModalFooter hint="* Campos obrigatórios · Esc fecha">
+                    <button type="button" onClick={() => void handleRequestClose()} className={modalBtnSecondaryCls}>
+                        Cancelar
+                    </button>
+                    <button type="submit" disabled={isPending} className={modalBtnPrimaryCls}>
+                        {isPending ? <ModalSpinner/> : isEdit ? "Salvar" : "Criar Filial"}
+                    </button>
+                </ModalFooter>
+            </ModalForm>
             <ConfirmDialog {...ConfirmDialogProps} />
-        </ViewportOverlay>
+        </Modal>
     );
 }
 

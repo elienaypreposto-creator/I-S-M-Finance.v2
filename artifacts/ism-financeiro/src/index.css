@@ -69,7 +69,12 @@
   --space-lg:  clamp(1rem,    2vw,    1.5rem);
   --space-xl:  clamp(1.5rem,  3vw,    2.5rem);
   --space-2xl: clamp(2rem,    5vw,    4rem);
+}
 
+/* Tamanhos de texto fora do `@theme inline`: assim as classes text-* usam
+   var(--text-*) e o modal responsivo (.modal-escala) pode reescalá-las. Fora
+   do modal o valor é o mesmo de antes. */
+@theme {
   --text-xs:   clamp(0.625rem, 1vw,  0.75rem);
   --text-sm:   clamp(0.75rem,  1.5vw, 0.875rem);
   --text-base: clamp(0.875rem, 2vw,   1rem);
@@ -78,6 +83,32 @@
   --text-2xl:  clamp(1.25rem,  4vw,   1.5rem);
   --text-3xl:  clamp(1.5rem,   5vw,   2rem);
   --text-4xl:  clamp(1.75rem,  6vw,   2.5rem);
+}
+
+/* ISMF-39 - escala proporcional dos modais (components/ui/modal-responsivo).
+   Espaçamentos (p-*, gap-*, w-*...) e textos (text-*) dentro do modal passam a
+   ser múltiplos do tamanho base dele, clamp(14px, 0.45vw + 8px, 18px), como as
+   medidas em `em`, sem acumular entre elementos aninhados. text-xs = 0,75 do
+   base: nunca abaixo de 10,5px. */
+.modal-escala {
+  --modal-fs: clamp(14px, calc(0.45vw + 8px), 18px);
+  --spacing: calc(var(--modal-fs) * 0.25);
+  --text-xs: calc(var(--modal-fs) * 0.75);
+  --text-sm: calc(var(--modal-fs) * 0.875);
+  --text-base: var(--modal-fs);
+  --text-lg: calc(var(--modal-fs) * 1.125);
+  --text-xl: calc(var(--modal-fs) * 1.25);
+  --text-2xl: calc(var(--modal-fs) * 1.5);
+  --text-3xl: calc(var(--modal-fs) * 1.875);
+  --text-4xl: calc(var(--modal-fs) * 2.25);
+}
+
+/* Foco visível em todo campo/botão de modal (muitos usam só a cor da borda,
+   com outline-none). Quem já desenha um anel (focus-visible:ring-*) fica com
+   o dele. Fora de @layer para vencer o outline-none dos utilitários. */
+.modal-escala :is(input, select, textarea, button, a[href], [tabindex]:not([tabindex="-1"])):not([class*="focus-visible:ring"]):focus-visible {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 2px;
 }
 
 /*Forced Dark Mode Theme*/

@@ -13,7 +13,8 @@ import {
 import {zodResolver} from "@hookform/resolvers/zod";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
-import {Popover, PopoverContent, PopoverPortalContainer, PopoverTrigger} from "@/components/ui/popover";
+import {Popover, PopoverContent, PopoverTrigger} from "@/components/ui/popover";
+import {Modal, ModalBody, ModalFooter, ModalForm, ModalHeader, ModalSpinner, modalBtnPrimaryCls, modalBtnSecondaryCls} from "@/components/ui/modal-responsivo";
 import {Calendar as CalendarPicker} from "@/components/ui/calendar";
 import {format as formatBtn, parseISO} from "date-fns";
 import {ptBR} from "date-fns/locale";
@@ -22,10 +23,6 @@ import {TIPOS_DOCUMENTO_LANCAMENTO} from "@/lib/lancamento-documento";
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from "@/components/ui/select";
 import {fetchApiData} from "@/lib/api-config";
 import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogTitle,
     AlertDialog,
     AlertDialogOverlay,
     AlertDialogPortal,
@@ -450,16 +447,8 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
 
     type ParceiroSubModal = { mode: "create" } | { mode: "edit"; data: ParceiroRow };
     const [parceiroSubModal, setParceiroSubModal] = useState<ParceiroSubModal | null>(null);
-    const [subModalHost, setSubModalHost] = useState<HTMLDivElement | null>(null);
-    // Popovers (calendário, competência, parceiro, plano de contas) montados
-    // dentro do Dialog: fora dele o Radix bloqueia a rolagem com a roda do mouse.
-    const [popoverHost, setPopoverHost] = useState<HTMLDivElement | null>(null);
     const formRef = useRef<HTMLFormElement>(null);
     const bodyRef = useRef<HTMLDivElement>(null);
-    // Quem abriu o modal (botão "Novo Lançamento", "Novo" da conciliação...).
-    // O Dialog do Radix só devolve o foco a um DialogTrigger, que aqui não
-    // existe (o modal é montado pelo pai): devolvemos manualmente ao fechar.
-    const returnFocusRef = useRef<HTMLElement | null>(null);
 
     // Só é edição de um lançamento já existente quando `editItem` foi passado
     // (criação nova e criação via prefill de conciliação NÃO mostram
@@ -564,37 +553,9 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
         }
     }
 
-    // Esc, foco preso e devolução do foco ficam com o Dialog do Radix. A
-    // exceção é o cadastro de parceiro (modal próprio, com useEscapeClose):
-    // enquanto ele está aberto, o Esc não pode chegar ao Radix (que escuta em
-    // document, na captura, e fecharia o lançamento). Interceptamos em window
-    // na captura e reenviamos o Esc só para os ouvintes de window - que é onde
-    // o useEscapeClose do parceiro (e da confirmação dele) escuta.
-    useEffect(() => {
-        if (!parceiroSubModal) return;
-        const onKeyDownCapture = (e: KeyboardEvent) => {
-            if (e.key !== "Escape" || !e.isTrusted) return;
-            e.stopPropagation();
-            window.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", cancelable: true}));
-        };
-        window.addEventListener("keydown", onKeyDownCapture, true);
-        return () => window.removeEventListener("keydown", onKeyDownCapture, true);
-    }, [parceiroSubModal]);
-
-    // Foco do cadastro de parceiro: entra nele ao abrir (o formulário de trás
-    // fica inert) e volta para o campo Cliente/Fornecedor ao fechar.
-    const parceiroAberto = !!parceiroSubModal && !!subModalHost;
-    const parceiroAbertoRef = useRef(false);
-    useEffect(() => {
-        if (parceiroAberto) {
-            subModalHost
-                ?.querySelector<HTMLElement>("form button:not([disabled]), form input:not([disabled]), button:not([disabled])")
-                ?.focus();
-        } else if (parceiroAbertoRef.current) {
-            bodyRef.current?.querySelector<HTMLElement>("[aria-labelledby=lancamento-parceiro-label] button")?.focus();
-        }
-        parceiroAbertoRef.current = parceiroAberto;
-    }, [parceiroAberto, subModalHost]);
+    // Esc, foco preso e devolução do foco ficam com o Modal (Dialog do Radix).
+    // O cadastro de parceiro é outro Modal aninhado: enquanto aberto, o Esc e
+    // o Tab ficam só nele, e ao fechar o foco volta ao campo Cliente/Fornecedor.
 
     // Reset ao abrir / mudar item (usa dados da lista - sem pagamentos ainda,
     // ou dados de pré-preenchimento vindos da Conciliação)
@@ -752,27 +713,6 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     // Não vale com a confirmação de cancelamento ou o cadastro de parceiro
     // abertos por cima (os eventos deles também passam por aqui no React).
     function handleContentKeyDown(e: ReactKeyboardEvent<HTMLDivElement>) {
-        // Com o cadastro de parceiro aberto, o Tab circula só dentro dele (o
-        // laço do Radix iria para o formulário de trás, que está inert).
-        if (e.key === "Tab" && parceiroSubModal && subModalHost) {
-            const focaveis = Array.from(
-                subModalHost.querySelectorAll<HTMLElement>(
-                    "button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex=\"-1\"])",
-                ),
-            ).filter((el) => el.getClientRects().length > 0);
-            const primeiro = focaveis[0];
-            const ultimo = focaveis[focaveis.length - 1];
-            if (primeiro && ultimo) {
-                if (!e.shiftKey && document.activeElement === ultimo) {
-                    e.preventDefault();
-                    primeiro.focus();
-                } else if (e.shiftKey && document.activeElement === primeiro) {
-                    e.preventDefault();
-                    ultimo.focus();
-                }
-            }
-            return;
-        }
         if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey)) return;
         if (showCancelConfirm || parceiroSubModal || mutation.isPending) return;
         e.preventDefault();
@@ -785,88 +725,29 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     });
 
     return (
-        <Dialog open onOpenChange={(open) => {
-            if (!open) handleRequestClose();
-        }}>
-            <DialogContent
-                overlayClassName="z-[65] bg-black/70 backdrop-blur-md data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none"
-                className={cn(
-                    // Centralizado por inset + margin auto (sem translate): o
-                    // cadastro de parceiro é montado aqui dentro com
-                    // position: fixed, e um transform viraria a referência dele.
-                    // overflow-clip (e não hidden): o contêiner não pode rolar
-                    // nem por scrollIntoView/foco - só o corpo rola.
-                    "inset-0 m-auto h-fit translate-none z-[65]",
-                    "w-[95vw] max-w-none max-h-[96dvh] md:max-h-[94dvh] p-0 gap-0 flex flex-col overflow-clip",
-                    "bg-[#121417] border border-white/10 rounded-[1.1em] sm:rounded-[1.1em] shadow-2xl text-white",
-                    "text-[clamp(14px,calc(0.45vw+8px),18px)]",
-                    "duration-200 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 motion-reduce:animate-none",
-                )}
-                onOpenAutoFocus={(e) => {
-                    // Roda antes de o foco entrar no modal: guarda quem o abriu.
-                    if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) {
-                        returnFocusRef.current = document.activeElement;
-                    }
-                    // Foco inicial no primeiro campo (e não no botão Fechar).
-                    e.preventDefault();
-                    bodyRef.current
-                        ?.querySelector<HTMLElement>("button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])")
-                        ?.focus();
-                }}
-                // Clique fora não fecha (evita perder o que foi digitado),
-                // como no modal anterior.
-                onInteractOutside={(e) => e.preventDefault()}
-                onCloseAutoFocus={(e) => {
-                    const el = returnFocusRef.current;
-                    if (el?.isConnected) {
-                        e.preventDefault();
-                        el.focus();
-                    }
-                }}
-                onKeyDown={handleContentKeyDown}
-            >
-                <PopoverPortalContainer value={popoverHost}>
-                    {/* Header (fixo) */}
-                    <div inert={!!parceiroSubModal}
-                         className="shrink-0 flex items-center justify-between gap-[1em] px-[1.6em] py-[1.2em] border-b border-white/[0.06]">
-                        <div className="min-w-0">
-                            <DialogTitle className="text-[1.25em] font-black text-white uppercase tracking-tight leading-tight">
-                                {editItem ? "Editar Lançamento" : "Novo Lançamento"}
-                            </DialogTitle>
-                            <DialogDescription className="text-[0.85em] text-muted-foreground mt-[0.2em]">
-                                Preencha os dados financeiros detalhados
-                            </DialogDescription>
+        // Clique fora não fecha (evita perder o que foi digitado): padrão do Modal.
+        <Modal onClose={handleRequestClose} onKeyDown={handleContentKeyDown}>
+                {/* Header (fixo) */}
+                <ModalHeader title={editItem ? "Editar Lançamento" : "Novo Lançamento"}
+                             description="Preencha os dados financeiros detalhados">
+                    {/* Valor Atual - fixo durante toda a edição (Bruto - Desconto + Juros).
+                        Fica fora do cabeçalho no celular. */}
+                    {isEditing && (
+                        <div className="hidden md:block text-right">
+                            <p className="text-[0.75em] font-bold text-muted-foreground uppercase tracking-[0.08em]">
+                                Valor Atual
+                            </p>
+                            <p className="text-[1.35em] font-black text-primary leading-tight tabular-nums">
+                                {valorAtualFmt}
+                            </p>
                         </div>
-                        <div className="flex items-center gap-[1em] shrink-0">
-                            {/* Valor Atual - fixo durante toda a edição (Bruto - Desconto + Juros).
-                                Fica fora do cabeçalho no celular. */}
-                            {isEditing && (
-                                <div className="hidden md:block text-right">
-                                    <p className="text-[0.75em] font-bold text-muted-foreground uppercase tracking-[0.08em]">
-                                        Valor Atual
-                                    </p>
-                                    <p className="text-[1.35em] font-black text-primary leading-tight tabular-nums">
-                                        {valorAtualFmt}
-                                    </p>
-                                </div>
-                            )}
-                            <button type="button" onClick={handleRequestClose} aria-label="Fechar"
-                                    className={cn(
-                                        "group inline-flex items-center justify-center w-[44px] h-[44px] md:w-[2.4em] md:h-[2.4em] rounded-[0.7em] border border-white/[0.08] text-muted-foreground hover:bg-white/5 hover:text-white transition-colors",
-                                        focusRingCls,
-                                    )}>
-                                <X aria-hidden="true"
-                                   className="w-[1.15em] h-[1.15em] transition-transform group-hover:rotate-90 motion-reduce:transition-none motion-reduce:group-hover:rotate-0"/>
-                            </button>
-                        </div>
-                    </div>
+                    )}
+                </ModalHeader>
 
-                    <form ref={formRef} onSubmit={handleSubmit(onSubmit)} inert={!!parceiroSubModal}
-                          className="flex-1 min-h-0 flex flex-col">
+                    <ModalForm ref={formRef} onSubmit={handleSubmit(onSubmit)}>
 
                         {/* Corpo: o único trecho que rola */}
-                        <div ref={bodyRef}
-                             className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-[1.6em] py-[1.4em]">
+                        <ModalBody ref={bodyRef}>
                             <div
                                 className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-[1.05fr_1fr_1fr] gap-x-[1.8em] gap-y-[1.4em]">
 
@@ -1585,49 +1466,22 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                     )}
                                 </div>
                             </div>
-                        </div>
+                        </ModalBody>
 
                         {/* Rodapé (fixo): no celular, os botões dividem a largura */}
-                        <div
-                            className="shrink-0 flex flex-col-reverse md:flex-row md:items-center md:justify-between gap-[0.8em] px-[1.6em] py-[1em] border-t border-white/[0.06]">
-                            <p className="hidden md:block text-[0.8em] text-muted-foreground">
-                                * Campos obrigatórios · Esc fecha · {IS_MAC ? "⌘" : "Ctrl"}+Enter conclui
-                            </p>
-                            <div className="grid grid-cols-2 gap-[0.6em] md:flex md:justify-end">
-                                <button type="button" onClick={handleRequestClose}
-                                        className={cn(
-                                            "inline-flex items-center justify-center min-h-[44px] md:min-h-0 px-[1.4em] py-[0.75em] rounded-[0.7em] border border-white/10 text-white hover:bg-white/5 text-[0.93em] font-bold transition-colors",
-                                            focusRingCls,
-                                        )}>
-                                    Cancelar
-                                </button>
-                                <button
-                                    type="submit"
-                                    disabled={mutation.isPending}
-                                    aria-keyshortcuts="Control+Enter Meta+Enter"
-                                    className={cn(
-                                        "inline-flex items-center justify-center gap-[0.5em] min-h-[44px] md:min-h-0 px-[1.6em] py-[0.75em] rounded-[0.7em] bg-primary hover:bg-primary/90 text-white text-[0.93em] font-black shadow-xl shadow-primary/25 transition-colors disabled:opacity-50",
-                                        focusRingCls,
-                                    )}>
-                                    {mutation.isPending ? (
-                                        <>
-                                            <Loader2 aria-hidden="true"
-                                                     className="w-[1.2em] h-[1.2em] animate-spin motion-reduce:animate-none"/>
-                                            <span className="sr-only">Salvando...</span>
-                                        </>
-                                    ) : editItem ? "Salvar Alterações" : "Concluir Lançamento"}
-                                </button>
-                            </div>
-                        </div>
-                    </form>
-                </PopoverPortalContainer>
-
-                <div ref={setPopoverHost}/>
-
-                {/* Ponto de montagem do cadastro de parceiro: fica DENTRO do
-                    Dialog para continuar clicável e focável (o Radix bloqueia
-                    cliques e foco fora do conteúdo). */}
-                <div ref={setSubModalHost}/>
+                        <ModalFooter hint={<>* Campos obrigatórios · Esc fecha · {IS_MAC ? "⌘" : "Ctrl"}+Enter conclui</>}>
+                            <button type="button" onClick={handleRequestClose} className={modalBtnSecondaryCls}>
+                                Cancelar
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={mutation.isPending}
+                                aria-keyshortcuts="Control+Enter Meta+Enter"
+                                className={modalBtnPrimaryCls}>
+                                {mutation.isPending ? <ModalSpinner/> : editItem ? "Salvar Alterações" : "Concluir Lançamento"}
+                            </button>
+                        </ModalFooter>
+                    </ModalForm>
 
                 {/* Confirmação de cancelamento - só aparece se o formulário tiver alterações não salvas */}
                 <ConfirmDialog
@@ -1644,19 +1498,18 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                     }}
                 />
 
-                {/* Sub-modal de parceiro: z-[80] dentro do conteúdo do Dialog. */}
-                {parceiroSubModal && subModalHost && (
+                {/* Cadastro de parceiro: Modal aninhado (foco, Tab e Esc ficam nele). */}
+                {parceiroSubModal && (
                     <NovoParceiroModal
                         key={parceiroSubModal.mode === "edit" ? parceiroSubModal.data.id : "new-parceiro"}
                         initialData={parceiroSubModal.mode === "edit" ? parceiroSubModal.data : null}
-                        container={subModalHost}
+                        returnFocusTo={() => bodyRef.current?.querySelector<HTMLElement>("[aria-labelledby=lancamento-parceiro-label] button")}
                         onClose={() => setParceiroSubModal(null)}
                         onSaved={() => {
                             void queryClient.invalidateQueries({queryKey: tenantQueryKey("parceiros-modal")});
                         }}
                     />
                 )}
-            </DialogContent>
-        </Dialog>
+        </Modal>
     );
 }

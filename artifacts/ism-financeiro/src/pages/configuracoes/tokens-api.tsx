@@ -1,5 +1,5 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -9,10 +9,8 @@ import {
   Copy,
   CheckCircle,
   Clock,
-  X,
   Code,
   Key,
-  Loader2,
   AlertCircle,
   ShieldOff,
   Shield,
@@ -24,8 +22,19 @@ import { fetchApiData } from "@/lib/api-config";
 import { TableSkeleton } from "@/components/shared/table-skeleton";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { useConfirm } from "@/hooks/use-confirm";
-import { DISCARD_PROMPT, useEscapeClose } from "@/hooks/use-escape-close";
-import { ViewportOverlay } from "@/components/shared/viewport-overlay";
+import { DISCARD_PROMPT } from "@/hooks/use-escape-close";
+import {
+  Modal,
+  ModalBody,
+  ModalFooter,
+  ModalForm,
+  ModalHeader,
+  ModalSpinner,
+  focarPrimeiro,
+  modalBtnPrimaryCls,
+  modalBtnSecondaryCls,
+  modalGridCls,
+} from "@/components/ui/modal-responsivo";
 import { CampoBusca, contemBusca, useParametrosUrl } from "@/components/shared/filtros";
 import {
   Empty,
@@ -119,10 +128,6 @@ function NovoTokenModal({ onClose }: { onClose: () => void }) {
     onClose();
   }
 
-  useEscapeClose(!ConfirmDialogProps.open, () => {
-    void handleRequestClose();
-  });
-
   const copyToken = async () => {
     if (!createdToken) return;
     await navigator.clipboard.writeText(createdToken.token);
@@ -130,28 +135,29 @@ function NovoTokenModal({ onClose }: { onClose: () => void }) {
     setTimeout(() => setCopied(false), 2500);
   };
 
-  return (
-    <ViewportOverlay className="p-3 sm:p-4">
-      <div className="bg-card border border-white/10 rounded-2xl w-full max-w-md shadow-2xl">
-        <div className="flex items-center justify-between p-4 sm:p-6 border-b border-white/5">
-          <h2 className="text-base sm:text-lg font-bold text-white">
-            {createdToken ? "Token Gerado" : "Gerar Novo Token"}
-          </h2>
-          <button type="button" onClick={() => void handleRequestClose()} className="p-1.5 hover:bg-white/5 rounded-lg">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+  // Ao trocar para a etapa "token gerado" o formulário some: leva o foco ao botão Copiar.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (createdToken) focarPrimeiro(bodyRef.current);
+  }, [createdToken]);
 
-        {!createdToken ? (
-          <form onSubmit={handleSubmit((v) => createMutation.mutate(v))}>
-            <div className="p-4 sm:p-6 space-y-4">
+  return (
+    <Modal onClose={() => void handleRequestClose()}>
+      <ModalHeader title={createdToken ? "Token Gerado" : "Gerar Novo Token"} />
+
+      {!createdToken ? (
+        <ModalForm onSubmit={handleSubmit((v) => createMutation.mutate(v))}>
+          <ModalBody>
+            <div className={modalGridCls}>
               <div>
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                <label htmlFor="token-nome" className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
                   Nome do Token <span className="text-destructive">*</span>
                 </label>
                 <input
+                  id="token-nome"
                   {...register("nome")}
-                  autoFocus
+                  aria-invalid={!!errors.nome}
+                  aria-describedby="token-nome-aviso"
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
                   placeholder="Ex: Power BI Produção"
                 />
@@ -159,60 +165,54 @@ function NovoTokenModal({ onClose }: { onClose: () => void }) {
                   <p className="text-xs text-destructive mt-1">{errors.nome.message}</p>
                 )}
               </div>
-              <p className="text-xs text-muted-foreground">
+              <p id="token-nome-aviso" className="col-span-full text-xs text-muted-foreground">
                 O token será gerado no servidor e exibido uma única vez. Guarde-o em local seguro.
               </p>
             </div>
-            <div className="flex gap-3 p-4 sm:p-6 pt-0">
+          </ModalBody>
+          <ModalFooter hint="* Campos obrigatórios · Esc fecha">
+            <button type="button" onClick={() => void handleRequestClose()} className={modalBtnSecondaryCls}>
+              Cancelar
+            </button>
+            <button type="submit" disabled={createMutation.isPending} className={modalBtnPrimaryCls}>
+              {createMutation.isPending ? <ModalSpinner label="Gerando..." /> : "Gerar Token"}
+            </button>
+          </ModalFooter>
+        </ModalForm>
+      ) : (
+        <>
+          <ModalBody ref={bodyRef}>
+            <div className="max-w-2xl mx-auto space-y-4">
+              <div className="text-center py-2">
+                <CheckCircle aria-hidden="true" className="w-10 h-10 text-success mx-auto mb-2" />
+                <p className="font-bold text-white">Token "{createdToken.nome}" criado!</p>
+                <p className="text-xs text-destructive mt-1 font-semibold">
+                  ⚠ Copie agora - não será exibido novamente.
+                </p>
+              </div>
+              <div className="bg-black/40 rounded-xl p-4 font-mono text-xs text-success break-all border border-success/20 select-all leading-relaxed">
+                {createdToken.token}
+              </div>
               <button
                 type="button"
-                onClick={() => void handleRequestClose()}
-                className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium"
+                onClick={copyToken}
+                className="w-full flex items-center justify-center gap-2 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-sm text-white transition-colors border border-white/10"
               >
-                Cancelar
+                {copied ? <CheckCircle aria-hidden="true" className="w-4 h-4 text-success" /> : <Copy aria-hidden="true" className="w-4 h-4" />}
+                {copied ? "Copiado!" : "Copiar Token"}
               </button>
-              <button
-                type="submit"
-                disabled={createMutation.isPending}
-                className="flex-1 py-2.5 bg-primary hover:bg-primary/90 disabled:opacity-60 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-2"
-              >
-                {createMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-                Gerar Token
-              </button>
+              <p className="sr-only" aria-live="polite">{copied ? "Token copiado." : ""}</p>
             </div>
-          </form>
-        ) : (
-          <div className="p-4 sm:p-6 space-y-4">
-            <div className="text-center py-2">
-              <CheckCircle className="w-10 h-10 text-success mx-auto mb-2" />
-              <p className="font-bold text-white">Token "{createdToken.nome}" criado!</p>
-              <p className="text-xs text-destructive mt-1 font-semibold">
-                ⚠ Copie agora - não será exibido novamente.
-              </p>
-            </div>
-            <div className="bg-black/40 rounded-xl p-4 font-mono text-xs text-success break-all border border-success/20 select-all leading-relaxed">
-              {createdToken.token}
-            </div>
-            <button
-              type="button"
-              onClick={copyToken}
-              className="w-full flex items-center justify-center gap-2 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-sm text-white transition-colors border border-white/10"
-            >
-              {copied ? <CheckCircle className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
-              {copied ? "Copiado!" : "Copiar Token"}
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="w-full py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium"
-            >
+          </ModalBody>
+          <ModalFooter hint="Esc fecha">
+            <button type="button" onClick={onClose} className={modalBtnPrimaryCls}>
               Concluído
             </button>
-          </div>
-        )}
-      </div>
+          </ModalFooter>
+        </>
+      )}
       <ConfirmDialog {...ConfirmDialogProps} />
-    </ViewportOverlay>
+    </Modal>
   );
 }
 
