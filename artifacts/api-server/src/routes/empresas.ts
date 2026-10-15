@@ -5,13 +5,16 @@ import {db} from "@workspace/db";
 import {empresasTable} from "@workspace/db/schema";
 import {requireTenant} from "../lib/tenant-scope";
 import {withSuperadmin} from "../middlewares/withSuperadmin";
+import {withPermission} from "../middlewares/withPermission";
+import {PERM} from "../constants/permissoes";
 import {validateBody} from "../middlewares/validate";
 import {errorResponse, successResponse} from "../utils/response";
 
 /**
- * Cadastro de empresas (tenants) é operação do ISM, não de uma empresa:
- * listar todas, criar e editar exigem `superadmin` (ISMF-16). Não existe
- * permissão concedível que libere estas rotas.
+ * Cadastro de empresas (tenants), ISMF-16:
+ * - listar todas e criar: operação do ISM, só `superadmin` (withSuperadmin);
+ * - editar: superadmin edita qualquer uma; quem tem `admin:empresas:editar` edita
+ *   só a empresa da sessão, e só os dados cadastrais (razão social, fantasia, CNPJ).
  */
 const router = Router();
 
@@ -74,6 +77,18 @@ router.get("/empresas", withSuperadmin, async (req, res) => {
     }
 });
 
+/** Empresa da sessão, para o admin editar os próprios dados sem listar as outras. */
+router.get("/empresas/atual", withPermission(PERM.ADMIN_EMPRESAS_EDITAR), async (req, res) => {
+    try {
+        const {empresaId} = requireTenant(req);
+        const [item] = await db.select().from(empresasTable).where(eq(empresasTable.id, empresaId)).limit(1);
+        if (!item) return errorResponse(res, 404, "NOT_FOUND", "Empresa não encontrada.");
+        return successResponse(res, item);
+    } catch (e) {
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao carregar a empresa.", e);
+    }
+});
+
 router.post("/empresas", withSuperadmin, validateBody(createEmpresaBodySchema), async (req, res) => {
     try {
         const body = req.body as CreateEmpresaBody;
@@ -110,7 +125,7 @@ router.post("/empresas", withSuperadmin, validateBody(createEmpresaBodySchema), 
     }
 });
 
-router.patch("/empresas/:id", withSuperadmin, validateBody(updateEmpresaBodySchema), async (req, res) => {
+router.patch("/empresas/:id", withPermission(PERM.ADMIN_EMPRESAS_EDITAR), validateBody(updateEmpresaBodySchema), async (req, res) => {
     try {
         const id = parseInt(String(req.params.id), 10);
         if (!Number.isInteger(id) || id <= 0) {
@@ -125,6 +140,14 @@ router.patch("/empresas/:id", withSuperadmin, validateBody(updateEmpresaBodySche
         }
 
         const body = req.body as UpdateEmpresaBody;
+
+        // Ativar/desativar, slug e aceite do DPA seguem com o ISM (superadmin).
+        if (!req.user?.superadmin) {
+            const restritos = (["ativa", "slug", "dpa_representante"] as const).filter((k) => body[k] !== undefined);
+            if (restritos.length > 0) {
+                return errorResponse(res, 403, "FORBIDDEN", `Somente o superadmin altera: ${restritos.join(", ")}.`);
+            }
+        }
         const patch: {
             updated_at: Date;
             razao_social?: string;

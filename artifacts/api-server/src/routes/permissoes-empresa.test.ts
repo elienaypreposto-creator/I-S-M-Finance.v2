@@ -8,7 +8,8 @@
  *     para a 2, `withPermission(X)` → 403.
  *  3. Admin da empresa 1 editando permissões de usuário da empresa 2 → 404.
  *  4. Não-superadmin chamando `POST /empresas` → 403 (e as demais rotas de
- *     operação do ISM).
+ *     operação do ISM). Com `admin:empresas:editar`, o admin edita só a empresa
+ *     da sessão (dados cadastrais); outra empresa → 404; sem a permissão → 403.
  *
  * As rotas reais (empresas.ts, usuarios.ts) correm contra um Postgres em
  * memória (PGlite): o `db` de @workspace/db é um proxy que usa a transação
@@ -220,10 +221,16 @@ describe("ISMF-16 cenário 1: não existe permissão '*'", () => {
     it("o catálogo concedível não tem '*', curinga nem as permissões de operação do ISM", () => {
         for (const codigo of PERMISSOES_ADMIN) {
             assert.ok(!codigo.includes("*"), `catálogo não pode ter curinga: ${codigo}`);
-            assert.ok(!codigo.startsWith("admin:empresas:"), `operação do ISM não é concedível: ${codigo}`);
+            assert.ok(
+                !(["admin:empresas:listar", "admin:empresas:criar"] as string[]).includes(codigo),
+                `operação do ISM não é concedível: ${codigo}`,
+            );
         }
         assert.equal(codigoPermissaoCatalogoSchema.safeParse("*").success, false);
         assert.equal(codigoPermissaoCatalogoSchema.safeParse("admin:empresas:criar").success, false);
+        assert.equal(codigoPermissaoCatalogoSchema.safeParse("admin:empresas:listar").success, false);
+        // Editar a própria empresa é concedível (ISMF-16, decisão de produto).
+        assert.equal(codigoPermissaoCatalogoSchema.safeParse("admin:empresas:editar").success, true);
     });
 
     it("PUT /usuarios/:id/permissoes recusa '*' (400) mesmo vindo de superadmin, sem gravar nada", async () => {
@@ -311,7 +318,7 @@ describe("ISMF-16 cenário 3: admin de uma empresa não alcança usuário de out
 describe("ISMF-16 cenário 4: operação do ISM exige superadmin", () => {
     const novaEmpresa = {razao_social: "Empresa Tres Ltda", dpa_representante: "Rep Tres"};
 
-    it("não-superadmin chamando POST /empresas → 403, mesmo com todo o catálogo no token", async () => {
+    it("não-superadmin não lista nem cria (403), mesmo com todo o catálogo no token", async () => {
         const admin1 = await tokenDe(20, 1);
         const turbinado: TestUser = {
             ...admin1,
@@ -323,12 +330,47 @@ describe("ISMF-16 cenário 4: operação do ISM exige superadmin", () => {
             assert.equal(r.status, 403);
             assert.equal(r.json.errors[0].code, "FORBIDDEN");
             assert.equal((await chamar("GET", "/empresas", user)).status, 403);
-            assert.equal((await chamar("PATCH", "/empresas/2", user, {ativa: false})).status, 403);
         }
+        // Mesmo com a permissão de editar, outra empresa não existe para ele.
+        assert.equal((await chamar("PATCH", "/empresas/2", turbinado, {razao_social: "Invadida"})).status, 404);
+        assert.equal((await chamar("PATCH", "/empresas/2", admin1, {ativa: false})).status, 403);
         const {rows} = await pg.query<{n: number}>("SELECT count(*)::int AS n FROM empresas");
         assert.equal(rows[0]?.n, 2);
         const {rows: ativa} = await pg.query<{ativa: boolean}>("SELECT ativa FROM empresas WHERE id = 2");
         assert.equal(ativa[0]?.ativa, true);
+    });
+
+    it("admin sem admin:empresas:editar não edita nem a própria (403)", async () => {
+        const admin1 = await tokenDe(20, 1);
+        assert.ok(!admin1.permissions.includes("admin:empresas:editar"));
+        assert.equal((await chamar("PATCH", "/empresas/1", admin1, {razao_social: "Nova Razao"})).status, 403);
+        assert.equal((await chamar("GET", "/empresas/atual", admin1)).status, 403);
+    });
+
+    it("admin com admin:empresas:editar edita os dados da própria empresa (200), não a outra (404)", async () => {
+        await pg.exec("INSERT INTO usuario_permissoes (usuario_id, empresa_id, codigo_permissao) VALUES (20, 1, 'admin:empresas:editar')");
+        const admin1 = await tokenDe(20, 1);
+        assert.ok(admin1.permissions.includes("admin:empresas:editar"));
+
+        const atual = await chamar("GET", "/empresas/atual", admin1);
+        assert.equal(atual.status, 200);
+        assert.equal(atual.json.data.id, 1);
+
+        const ok = await chamar("PATCH", "/empresas/1", admin1, {razao_social: "Empresa Um Renomeada", nome_fantasia: "Um"});
+        assert.equal(ok.status, 200);
+        assert.equal(ok.json.data.razao_social, "Empresa Um Renomeada");
+
+        const outra = await chamar("PATCH", "/empresas/2", admin1, {razao_social: "Invadida"});
+        assert.equal(outra.status, 404);
+        const {rows} = await pg.query<{razao_social: string}>("SELECT razao_social FROM empresas WHERE id = 2");
+        assert.equal(rows[0]?.razao_social, "Empresa Dois Ltda");
+
+        // Ativação, slug e DPA seguem com o ISM.
+        for (const body of [{ativa: false}, {slug: "outro"}, {dpa_representante: "Fulano"}]) {
+            assert.equal((await chamar("PATCH", "/empresas/1", admin1, body)).status, 403);
+        }
+        const {rows: um} = await pg.query<{ativa: boolean; slug: string}>("SELECT ativa, slug FROM empresas WHERE id = 1");
+        assert.deepEqual(um[0], {ativa: true, slug: "um"});
     });
 
     it("sem autenticação → 401", async () => {
@@ -349,5 +391,10 @@ describe("ISMF-16 cenário 4: operação do ISM exige superadmin", () => {
         const patch = await chamar("PATCH", `/empresas/${criada.json.data.id}`, superadmin, {ativa: false});
         assert.equal(patch.status, 200);
         assert.equal(patch.json.data.ativa, false);
+
+        // Superadmin edita qualquer empresa, não só a da sessão (sessão na 1, edita a 2).
+        const outra = await chamar("PATCH", "/empresas/2", superadmin, {razao_social: "Dois Editada", slug: "dois-novo"});
+        assert.equal(outra.status, 200);
+        assert.equal(outra.json.data.razao_social, "Dois Editada");
     });
 });

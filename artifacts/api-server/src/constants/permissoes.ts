@@ -33,6 +33,8 @@ export const PERM = {
     REGRAS_CONCILIACAO_EDITAR: "financeiro:regras-conciliacao:editar",
     REGRAS_CONCILIACAO_DELETAR: "financeiro:regras-conciliacao:deletar",
     ADMIN_PERMISSOES_CONCEDER: "admin:permissoes:conceder",
+    /** Edita os dados cadastrais da empresa da sessão (não lista nem cria outras). */
+    ADMIN_EMPRESAS_EDITAR: "admin:empresas:editar",
     ADMIN_USUARIOS_LISTAR: "admin:usuarios:listar",
     ADMIN_USUARIOS_CRIAR: "admin:usuarios:criar",
     ADMIN_USUARIOS_EDITAR: "admin:usuarios:editar",

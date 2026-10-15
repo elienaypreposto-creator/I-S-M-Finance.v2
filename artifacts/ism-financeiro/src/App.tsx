@@ -138,7 +138,8 @@ function Router() {
             <PrivateRoute path="/admin/usuarios" component={Usuarios}/>
             <PrivateRoute path="/configuracoes/filiais" component={Filiais}/>
             <PrivateRoute path="/configuracoes/tokens-api" component={TokensApi}/>
-            <PrivateRoute path="/admin/empresas" component={AdminEmpresas} superadminOnly/>
+            {/* Superadmin vê todas; admin com admin:empresas:editar vê só a empresa da sessão. */}
+            <PrivateRoute path="/admin/empresas" component={AdminEmpresas} permission={PERM.ADMIN_EMPRESAS_EDITAR}/>
 
             <Route component={NotFound}/>
         </Switch>

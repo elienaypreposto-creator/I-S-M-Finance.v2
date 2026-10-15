@@ -1,12 +1,13 @@
-import {useMemo, useState} from "react";
+import {useEffect, useMemo, useState} from "react";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
-import {Building2, Loader2, Plus, Power} from "lucide-react";
+import {Building2, Loader2, Plus, Power, Save} from "lucide-react";
 import {PageHeader} from "@/components/shared/page-header";
 import {fetchApiData} from "@/lib/api-config";
 import {tenantQueryKey, nomeEmpresa} from "@/lib/tenant-query";
 import {useToast} from "@/hooks/use-toast";
 import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {useAuth} from "@/hooks/use-auth";
+import {PERM} from "@/lib/permissoes";
 import {ViewportOverlay} from "@/components/shared/viewport-overlay";
 import {CampoBusca, contemBusca, useParametrosUrl} from "@/components/shared/filtros";
 
@@ -20,10 +21,100 @@ type EmpresaRow = {
     created_at: string;
 };
 
+const inputCls =
+    "w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 disabled:opacity-60";
+
+/**
+ * Admin com admin:empresas:editar: só a empresa da sessão, só dados cadastrais (ISMF-16).
+ * Ativar/desativar, slug e DPA seguem com o superadmin (a API recusa).
+ */
+function MinhaEmpresa() {
+    const {toast} = useToast();
+    const queryClient = useQueryClient();
+    const {data: empresa, isLoading} = useQuery({
+        queryKey: tenantQueryKey("empresa-atual"),
+        queryFn: () => fetchApiData<EmpresaRow>("/empresas/atual"),
+    });
+    const [razao, setRazao] = useState("");
+    const [fantasia, setFantasia] = useState("");
+    const [cnpj, setCnpj] = useState("");
+
+    useEffect(() => {
+        if (!empresa) return;
+        setRazao(empresa.razao_social);
+        setFantasia(empresa.nome_fantasia ?? "");
+        setCnpj(empresa.cnpj ?? "");
+    }, [empresa]);
+
+    const salvar = useMutation({
+        mutationFn: () =>
+            fetchApiData<EmpresaRow>(`/empresas/${empresa!.id}`, {
+                method: "PATCH",
+                body: JSON.stringify({
+                    razao_social: razao.trim(),
+                    nome_fantasia: fantasia.trim() || null,
+                    cnpj: cnpj.trim() || null,
+                }),
+            }),
+        onSuccess: () => {
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("empresa-atual")});
+            toast({title: "Dados da empresa salvos."});
+        },
+        onError: (err: Error) => toast({title: "Erro ao salvar", description: err.message, variant: "destructive"}),
+    });
+
+    return (
+        <div className="space-y-6">
+            <PageHeader title="Minha empresa" description="Dados cadastrais da empresa em uso nesta sessão"/>
+            {isLoading || !empresa ? (
+                <TableSkeleton rows={3} columns={2}/>
+            ) : (
+                <form
+                    className="glass-panel rounded-2xl p-6 space-y-4 max-w-xl"
+                    onSubmit={(e) => {
+                        e.preventDefault();
+                        salvar.mutate();
+                    }}
+                >
+                    <label className="block space-y-1">
+                        <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Razão social</span>
+                        <input value={razao} onChange={(e) => setRazao(e.target.value)} className={inputCls}/>
+                    </label>
+                    <label className="block space-y-1">
+                        <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Nome fantasia</span>
+                        <input value={fantasia} onChange={(e) => setFantasia(e.target.value)} className={inputCls}/>
+                    </label>
+                    <label className="block space-y-1">
+                        <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">CNPJ</span>
+                        <input value={cnpj} onChange={(e) => setCnpj(e.target.value)} className={inputCls}/>
+                    </label>
+                    <p className="text-xs text-muted-foreground">
+                        Identificador: <span className="font-mono">{empresa.slug}</span> · {empresa.ativa ? "Ativa" : "Inativa"}.
+                        Ativação e aceite do DPA são feitos pelo ISM.
+                    </p>
+                    <button
+                        type="submit"
+                        disabled={razao.trim().length < 2 || salvar.isPending}
+                        className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm bg-primary text-white disabled:opacity-50"
+                    >
+                        {salvar.isPending ? <Loader2 className="w-4 h-4 animate-spin"/> : <Save className="w-4 h-4"/>}
+                        Salvar
+                    </button>
+                </form>
+            )}
+        </div>
+    );
+}
+
 export default function AdminEmpresas() {
-    const {user} = useAuth();
-    // Cadastro de empresas é operação do ISM: só superadmin (ISMF-16).
+    const {user, hasPermission} = useAuth();
+    // Listar todas e criar: operação do ISM, só superadmin (ISMF-16).
     const isSuperadmin = user?.superadmin === true;
+    if (!isSuperadmin && hasPermission(PERM.ADMIN_EMPRESAS_EDITAR)) return <MinhaEmpresa/>;
+    return <TodasEmpresas isSuperadmin={isSuperadmin}/>;
+}
+
+function TodasEmpresas({isSuperadmin}: {isSuperadmin: boolean}) {
     const canCriar = isSuperadmin;
     const canEditar = isSuperadmin;
     const {toast} = useToast();

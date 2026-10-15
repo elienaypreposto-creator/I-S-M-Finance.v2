@@ -220,6 +220,7 @@ const permissoesGranulares = [
             {nome: "Edição de Usuários", codigo: "admin:usuarios:editar"},
             {nome: "Exclusão de Usuários", codigo: "admin:usuarios:deletar"},
             {nome: "Conceder permissões a utilizadores", codigo: "admin:permissoes:conceder"},
+            {nome: "Edição dos dados da própria empresa", codigo: "admin:empresas:editar"},
             {nome: "Cadastro de Token de API", codigo: "admin:tokens-api:criar"},
             {nome: "Consulta de Tokens de API", codigo: "admin:tokens-api:listar"},
             {nome: "Exclusão de Token de API", codigo: "admin:tokens-api:deletar"},
