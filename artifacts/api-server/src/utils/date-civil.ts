@@ -15,3 +15,10 @@ export function hojeIsoLocal(now: Date = new Date()): string {
         day: "2-digit",
     }).format(now);
 }
+
+/** Soma N dias a um dia civil YYYY-MM-DD (aritmética ao meio-dia UTC, sem fuso do processo). */
+export function somarDiasIso(iso: string, dias: number): string {
+    const d = new Date(`${iso}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + dias);
+    return d.toISOString().slice(0, 10);
+}
