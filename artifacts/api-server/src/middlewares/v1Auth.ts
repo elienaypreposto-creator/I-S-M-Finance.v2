@@ -4,17 +4,8 @@ import {eq} from "drizzle-orm";
 import {withBypassRls, type TenantDb} from "@workspace/db";
 import {tokensApiTable} from "@workspace/db/schema";
 import {errorResponse} from "../utils/response";
-import {aplicarIdentidadeToken, hashConfere, tokenExpirado} from "../lib/api-token-identity";
-
-// Extensão de tipos do Express.
-declare global {
-    namespace Express {
-        interface Request {
-            tenant?: {empresaId: number};
-            apiToken?: {id: number; escopos: string[]};
-        }
-    }
-}
+import {hashConfere, tokenExpirado} from "../lib/api-token-identity";
+import {popularContexto} from "./v1-contexto";
 
 // Formato novo: ism_v1_<id>.<secret>
 const TOKEN_REGEX = /^ism_v1_(\d+)\.([A-Za-z0-9_-]+)$/;
@@ -147,7 +138,7 @@ export const v1AuthMiddleware = async (
                 );
             }
 
-            aplicarIdentidadeToken(req, tokenRow);
+            popularContexto(req, tokenRow);
             agendarAtualizacaoUso(req, tokenRow.id);
 
             return next();
@@ -181,9 +172,23 @@ export const v1AuthMiddleware = async (
                     .limit(1),
             );
 
-            // A busca é pelo hash (unique/indexado), então o tempo não depende do
-            // segredo; ainda assim confirma em tempo constante (defesa em profundidade).
-            if (!tokenRow || !tokenRow.ativo || !hashConfere(rawToken, tokenRow.token_hash)) {
+            if (!tokenRow || !tokenRow.ativo) {
+                return errorResponse(
+                    res,
+                    401,
+                    "UNAUTHORIZED",
+                    "Token da API v1 inválido ou inativo.",
+                );
+            }
+
+            // Confirmação em tempo constante do hash devolvido pelo banco
+            // (o lookup por índice não é tempo-constante).
+            const calculado = Buffer.from(tokenHash, "hex");
+            const armazenado = Buffer.from(tokenRow.token_hash, "hex");
+            if (
+                calculado.length !== armazenado.length ||
+                !crypto.timingSafeEqual(calculado, armazenado)
+            ) {
                 return errorResponse(
                     res,
                     401,
@@ -213,7 +218,7 @@ export const v1AuthMiddleware = async (
                 );
             }
 
-            aplicarIdentidadeToken(req, tokenRow);
+            popularContexto(req, tokenRow);
             agendarAtualizacaoUso(req, tokenRow.id);
 
             return next();

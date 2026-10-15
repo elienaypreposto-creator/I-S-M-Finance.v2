@@ -62,3 +62,5 @@ backups/
 !/docs/backup.md
 !/docs/runbook-*.md
 /.cursor/
+# Saídas locais de scripts (vinha colado como *.envsaida.txt no develop).
+saida.txt

@@ -698,12 +698,12 @@ ssh -N -L 5435:127.0.0.1:5435 ubuntu@<ip-da-vm>
 
 ### 11.2. Esteira de testes
 
-`.github/workflows/ci.yml` roda em todo PR para `develop`/`master` e antes de cada deploy (`main.yml` só faz deploy se a esteira passar). Localmente, a mesma bateria roda com `pnpm test:all` (sobe um Postgres descartável no Docker):
+`.github/workflows/ci.yml` roda em todo PR e antes de cada deploy (`main.yml` só faz deploy se a esteira passar), em três jobs: **Testes unitários** (item 1), **Isolamento entre empresas** (suíte `test/isolation`, `pnpm --filter @workspace/api-server run test:isolation`) e **Banco e e2e** (itens 2 a 5). Localmente, a bateria inteira roda com `pnpm test:all` (sobe um Postgres descartável no Docker, ou usa `TEST_PG_URL`):
 
 1. typecheck (libs, API e front) e testes unitários (API e front);
 2. migrations em banco vazio, duas vezes (idempotência);
 3. `schema:drift`: compara o schema Drizzle com o banco migrado — schema alterado sem migration reprova;
-4. `rls:smoke` e `seed:teste` (duas empresas e um usuário de teste);
+4. `rls:smoke`, suíte de isolamento entre empresas (toda rota autenticada, sem vazamento entre tenants) e `seed:teste` (duas empresas e um usuário de teste);
 5. API compilada + `artifacts/api-server/test/e2e/fluxo-conciliacao.mjs` (fluxo conciliação → lançamentos, isolamento entre empresas e carga curta).
 
 Cenários do e2e ainda não entregues ficam em `PENDENTES` no próprio arquivo: rodam e aparecem como TODO, sem reprovar.

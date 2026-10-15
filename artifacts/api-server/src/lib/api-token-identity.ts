@@ -1,8 +1,8 @@
 /**
  * Identidade de chamadas da API v1 (token por empresa).
  *
- * Token de API NÃO é usuário: req.user fica vazio e a chamada é identificada
- * por req.tokenApiId. Assim a auditoria grava token_api_id e nunca atribui a
+ * Token de API NÃO é usuário: v1-contexto.popularContexto não preenche req.user e a
+ * chamada é identificada por req.tokenApiId. Assim a auditoria grava token_api_id e nunca atribui a
  * chamada ao usuário cujo id coincide com o id do token.
  *
  * Módulo puro (sem banco) para ser testável isoladamente.
@@ -10,27 +10,6 @@
 
 import crypto from "crypto";
 import {hojeIsoLocal} from "../utils/date-civil";
-
-export type TokenApiContexto = {
-    id: number;
-    empresa_id: number;
-    escopos: string[] | null;
-};
-
-type RequestComToken = {
-    tenant?: {empresaId: number};
-    apiToken?: {id: number; escopos: string[]};
-    tokenApiId?: number;
-    user?: unknown;
-};
-
-/** Popula tenant/escopos/token na request e garante que não há identidade de usuário. */
-export function aplicarIdentidadeToken(req: RequestComToken, tokenRow: TokenApiContexto): void {
-    req.tenant = {empresaId: tokenRow.empresa_id};
-    req.apiToken = {id: tokenRow.id, escopos: tokenRow.escopos ?? []};
-    req.tokenApiId = tokenRow.id;
-    req.user = undefined;
-}
 
 type RequestAuditavel = {
     user?: {id?: number};

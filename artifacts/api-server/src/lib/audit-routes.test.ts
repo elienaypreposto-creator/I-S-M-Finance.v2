@@ -20,6 +20,13 @@ describe("shouldAuditRequest", () => {
         assert.equal(shouldAuditRequest("GET", "/api/relatorios/dre/export"), true);
     });
 
+    it("audita todas as chamadas da API v1 (só tem GET)", () => {
+        assert.equal(shouldAuditRequest("GET", "/api/v1/bancos"), true);
+        assert.equal(shouldAuditRequest("GET", "/api/v1/contasPagar?pagina=1"), true);
+        assert.equal(shouldAuditRequest("GET", "/v1/pessoas"), true);
+        assert.equal(shouldAuditRequest("GET", "/api/v1x/outra"), false);
+    });
+
     it("não audita GET de listagem comum", () => {
         assert.equal(shouldAuditRequest("GET", "/api/lancamentos"), false);
         assert.equal(shouldAuditRequest("GET", "/api/healthz"), false);

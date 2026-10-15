@@ -862,9 +862,13 @@ router.put(
 router.post(
     "/conciliacoes/jobs/promover-atrasados",
     withPermission(PERM.CONCILIACAO_CONFIGURAR),
-    async (_req, res) => {
+    async (req, res) => {
         try {
-            const result = await promoverLancamentosAtrasados();
+            // Superadmin pode promover todas as empresas; os demais, só a da própria sessão.
+            const result = await promoverLancamentosAtrasados(
+                undefined,
+                req.user?.superadmin ? undefined : requireTenant(req).empresaId,
+            );
             return successResponse(res, result);
         } catch (e) {
             return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao promover atrasados.", e);

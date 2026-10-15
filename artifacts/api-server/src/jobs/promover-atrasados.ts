@@ -1,4 +1,4 @@
-import {eq, lt} from "drizzle-orm";
+import {and, eq, lt} from "drizzle-orm";
 import {db, withTenantTx} from "@workspace/db";
 import {empresasTable, lancamentosTable} from "@workspace/db/schema";
 import {tenantWhere} from "../lib/tenant-scope";
@@ -7,14 +7,26 @@ import {hojeIsoLocal} from "../utils/date-civil";
 /**
  * Promove pendentes com vencimento anterior a hoje para atrasado.
  * "hoje" é o dia civil America/Sao_Paulo, não o fuso do host.
+ *
+ * `apenasEmpresaId`: restringe a uma empresa. O job periódico não passa nada (todas as
+ * empresas ativas); o gatilho HTTP passa a empresa da sessão, para que um usuário de uma
+ * empresa não altere dados nem descubra contagens das demais.
  */
-export async function promoverLancamentosAtrasados(hojeIso?: string): Promise<{ atualizados: number }> {
+export async function promoverLancamentosAtrasados(
+    hojeIso?: string,
+    apenasEmpresaId?: number,
+): Promise<{ atualizados: number }> {
     const hoje = hojeIso ?? hojeIsoLocal();
 
     const empresas = await db
         .select({id: empresasTable.id})
         .from(empresasTable)
-        .where(eq(empresasTable.ativa, true));
+        .where(
+            and(
+                eq(empresasTable.ativa, true),
+                apenasEmpresaId !== undefined ? eq(empresasTable.id, apenasEmpresaId) : undefined,
+            ),
+        );
 
     let atualizados = 0;
     for (const empresa of empresas) {

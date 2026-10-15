@@ -3,13 +3,13 @@
  * Esteira de testes completa — a mesma bateria local e no CI.
  *
  *   1. typecheck, testes unitários da API e do front
- *   2. banco: migrations (2x), drift do schema, RLS, seed de teste
+ *   2. banco: migrations (2x), drift do schema, RLS, isolamento entre empresas, seed de teste
  *   3. API compilada + e2e do fluxo conciliação → lançamentos
  *
  * Banco: usa TEST_PG_URL (superusuário) se definido; senão sobe um
  * Postgres 16 descartável em Docker e remove ao final.
  *
- * Uso: pnpm test:all [--sem-unitarios] [--sem-banco]
+ * Uso: pnpm test:all [--sem-unitarios] [--sem-banco] [--sem-isolamento]
  */
 import {spawn, spawnSync} from "node:child_process";
 import {randomBytes} from "node:crypto";
@@ -120,6 +120,13 @@ async function main() {
             if (migrou) {
                 etapa("Drift do schema", `${PNPM} --filter @workspace/db run schema:drift`, envBanco);
                 etapa("RLS (smoke)", `${PNPM} --filter @workspace/db run rls:smoke`, envBanco);
+                if (!args.has("--sem-isolamento")) {
+                    etapa("Isolamento entre empresas", `${PNPM} --filter @workspace/api-server run test:isolation`, {
+                        ...envBanco,
+                        JWT_SECRET: segredo() + segredo(),
+                        JWT_ENCRYPT_SECRET: segredo() + segredo(),
+                    });
+                }
             }
             const saidaSeed = migrou
                 ? etapa("Seed de teste", `${PNPM} --filter @workspace/db run seed:teste`, {...envBanco, ...envE2e}, {capturar: true})

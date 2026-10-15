@@ -1,24 +1,16 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import {describe, it} from "node:test";
-import {aplicarIdentidadeToken, hashConfere, identidadeAuditoria, tokenExpirado} from "./api-token-identity";
+import {hashConfere, identidadeAuditoria, tokenExpirado} from "./api-token-identity";
+import {popularContexto} from "../middlewares/v1-contexto";
 import {shouldAuditRequest} from "./audit-routes";
 
 const sha = (v: string) => crypto.createHash("sha256").update(v).digest("hex");
 
 describe("identidade de token da API v1", () => {
-    it("popula tenant, escopos e tokenApiId sem criar identidade de usuário", () => {
-        const req: Record<string, unknown> = {};
-        aplicarIdentidadeToken(req, {id: 7, empresa_id: 3, escopos: ["v1:bancos:ler"]});
-        assert.deepEqual(req.tenant, {empresaId: 3});
-        assert.deepEqual(req.apiToken, {id: 7, escopos: ["v1:bancos:ler"]});
-        assert.equal(req.tokenApiId, 7);
-        assert.equal(req.user, undefined);
-    });
-
     it("descarta req.user pré-existente (token não herda usuário)", () => {
         const req: Record<string, unknown> = {user: {id: 7, email: "x@y", empresaId: 3}};
-        aplicarIdentidadeToken(req, {id: 7, empresa_id: 3, escopos: null});
+        popularContexto(req as never, {id: 7, empresa_id: 3, escopos: null});
         assert.equal(req.user, undefined);
         assert.deepEqual(req.apiToken, {id: 7, escopos: []});
     });
@@ -28,7 +20,7 @@ describe("identidade de token da API v1", () => {
             method: "GET",
             originalUrl: "/api/v1/contasPagar?limit=10",
         };
-        aplicarIdentidadeToken(req, {id: 1, empresa_id: 1, escopos: ["v1:lancamentos:ler"]});
+        popularContexto(req as never, {id: 1, empresa_id: 1, escopos: ["v1:lancamentos:ler"]});
         assert.equal(shouldAuditRequest(req.method, req.originalUrl), true);
         // id do token = 1 coincide com um usuário real (admin id 1): não pode virar usuario_id.
         assert.deepEqual(identidadeAuditoria(req), {usuario_id: null, token_api_id: 1});
