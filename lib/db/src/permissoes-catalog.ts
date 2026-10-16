@@ -97,6 +97,11 @@ export const PERMISSOES_ADMIN = [
     "admin:transferencias:editar",
     "admin:transferencias:deletar",
 
+    "kanban:tarefas:listar",
+    "kanban:tarefas:criar",
+    "kanban:tarefas:editar",
+    "kanban:tarefas:excluir",
+
     "relatorios:dre",
     "relatorios:fluxo-caixa-diario",
     "relatorios:fluxo-caixa-mensal",

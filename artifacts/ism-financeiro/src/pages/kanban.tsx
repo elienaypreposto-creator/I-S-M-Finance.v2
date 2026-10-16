@@ -14,6 +14,7 @@ import {SortableContext, verticalListSortingStrategy, useSortable} from "@dnd-ki
 import {CSS} from "@dnd-kit/utilities";
 import {Plus, Loader2} from "lucide-react";
 import {useAuth} from "@/hooks/use-auth";
+import {PERM} from "@/lib/permissoes";
 import {
     CampoBusca,
     contemBusca,
@@ -113,12 +114,16 @@ function SortableCard({
                           onEdit,
                           onDelete,
                           isDragging,
+                          canEditar,
+                          canExcluir,
                       }: {
     card: Card;
     onView: (card: Card) => void;
     onEdit: (card: Card) => void;
     onDelete: (card: Card) => void;
     isDragging: boolean;
+    canEditar: boolean;
+    canExcluir: boolean;
 }) {
     const {attributes, listeners, setNodeRef, transform, transition} = useSortable({id: card.id});
     const style = {transform: CSS.Transform.toString(transform), transition};
@@ -140,20 +145,26 @@ function SortableCard({
                 onClick={undefined}
                 isDragging={isDragging}
                 menuSlot={
+                    (canEditar || canExcluir) ? (
                     <div data-card-menu className="flex items-center gap-2" onPointerDown={e => e.stopPropagation()}>
+                        {canEditar && (
                         <BotaoEditar
                             onClick={e => {
                                 e.stopPropagation();
                                 onEdit(card);
                             }}
                         />
+                        )}
+                        {canExcluir && (
                         <BotaoExcluir
                             onClick={e => {
                                 e.stopPropagation();
                                 onDelete(card);
                             }}
                         />
+                        )}
                     </div>
+                    ) : null
                 }
             />
         </div>
@@ -178,7 +189,7 @@ function DroppableColumn({id, children}: { id: string; children: React.ReactNode
 
 // ─── KanbanColumn ─────────────────────────────────────────────────────────────
 function KanbanColumn({
-                          column, cards, onAddCard, onView, onEdit, onDelete, activeId,
+                          column, cards, onAddCard, onView, onEdit, onDelete, activeId, canCriar, canEditar, canExcluir,
                       }: {
     column: typeof COLUMNS[0];
     cards: Card[];
@@ -187,6 +198,9 @@ function KanbanColumn({
     onEdit: (card: Card) => void;
     onDelete: (card: Card) => void;
     activeId: number | null;
+    canCriar: boolean;
+    canEditar: boolean;
+    canExcluir: boolean;
 }) {
     return (
         <div
@@ -199,12 +213,14 @@ function KanbanColumn({
                     <h3 className="font-semibold text-sm text-white">{column.title}</h3>
                     <span className="bg-white/10 text-white text-xs py-0.5 px-2 rounded-full">{cards.length}</span>
                 </div>
+                {canCriar && (
                 <button
                     onClick={() => onAddCard(column.id)}
                     className="text-gray-400 hover:text-white p-1 rounded hover:bg-white/10 transition-colors"
                 >
                     <Plus className="w-4 h-4"/>
                 </button>
+                )}
             </div>
 
             <DroppableColumn id={column.id}>
@@ -217,6 +233,8 @@ function KanbanColumn({
                             onEdit={onEdit}
                             onDelete={onDelete}
                             isDragging={activeId === card.id}
+                            canEditar={canEditar}
+                            canExcluir={canExcluir}
                         />
                     ))}
                 </SortableContext>
@@ -239,7 +257,10 @@ export default function Kanban() {
     const [selectedCard, setSelectedCard] = useState<Card | null>(null);
     const [modalColuna, setModalColuna] = useState("solicitado");
     const [activeId, setActiveId] = useState<number | null>(null);
-    const {user} = useAuth();
+    const {user, hasPermission} = useAuth();
+    const canCriar = hasPermission(PERM.KANBAN_CRIAR);
+    const canEditar = hasPermission(PERM.KANBAN_EDITAR);
+    const canExcluir = hasPermission(PERM.KANBAN_EXCLUIR);
 
     const {data: usuarios = []} = useQuery({
         queryKey: tenantQueryKey("kanban-usuarios-filtro"),
@@ -384,7 +405,7 @@ export default function Kanban() {
 
     const handleDragEnd = ({active, over}: DragEndEvent) => {
         setActiveId(null);
-        if (!over) return;
+        if (!canEditar || !over) return;
 
         const allCards = cardsData ?? [];
         const draggedCard = allCards.find(c => c.id === active.id);
@@ -439,9 +460,11 @@ export default function Kanban() {
 
     const handleSaveCard = (data: any) => {
         if (modalMode === "edit" && selectedCard) {
+            if (!canEditar) return;
             const payload = sanitizePatch(data);
             updateMutation.mutate({id: selectedCard.id, payload});
         } else {
+            if (!canCriar) return;
             const coluna = data.coluna && data.coluna !== "" ? data.coluna : modalColuna;
             createMutation.mutate({...data, coluna});
         }
@@ -460,6 +483,7 @@ export default function Kanban() {
                     <h1 className="text-xl font-bold text-white">Tarefas</h1>
                     <p className="text-sm text-gray-400">Gerencie suas tarefas e acompanhe o progresso</p>
                 </div>
+                {canCriar && (
                 <Button
                     onClick={() => {
                         setSelectedCard(null);
@@ -472,6 +496,7 @@ export default function Kanban() {
                     <Plus className="w-4 h-4 mr-2"/>
                     Nova Tarefa
                 </Button>
+                )}
             </div>
 
             <div className="mb-4 px-1 flex flex-col gap-2">
@@ -530,6 +555,9 @@ export default function Kanban() {
                                     onEdit={handleEditCard}
                                     onDelete={handleDeleteCard}
                                     activeId={activeId}
+                                    canCriar={canCriar}
+                                    canEditar={canEditar}
+                                    canExcluir={canExcluir}
                                 />
                             ))}
                         </div>
@@ -560,6 +588,7 @@ export default function Kanban() {
                     setSelectedCard(null);
                 }}
                 onSave={handleSaveCard}
+                podeSalvar={modalMode === "edit" ? canEditar : canCriar}
                 initialData={
                     modalMode === "edit" && selectedCard
                         ? {

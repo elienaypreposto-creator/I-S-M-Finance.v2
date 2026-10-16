@@ -40,9 +40,9 @@ import {PERM} from "@/lib/permissoes";
 
 const navItems = [
     {title: "Home", url: "/", icon: Home},
-    {title: "Tarefas", url: "/kanban", icon: Columns},
+    {title: "Tarefas", url: "/kanban", icon: Columns, permission: PERM.KANBAN_LISTAR},
     {title: "Conciliação", url: "/conciliacao", icon: RefreshCw, permission: PERM.CONCILIACAO_ACESSAR},
-    {title: "Lançamentos", url: "/lancamentos", icon: FileText},
+    {title: "Lançamentos", url: "/lancamentos", icon: FileText, permission: PERM.LANCAMENTOS_LISTAR},
 ];
 
 const cadastrosItems: NavItem[] = [

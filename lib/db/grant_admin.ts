@@ -35,7 +35,8 @@ async function grantAdmin() {
         "configuracoes:plano-contas:criar", "configuracoes:plano-contas:editar", "configuracoes:plano-contas:deletar",
         "configuracoes:filiais:criar", "configuracoes:filiais:editar", "configuracoes:filiais:deletar",
         "configuracoes:departamentos:criar", "configuracoes:departamentos:editar", "configuracoes:departamentos:deletar",
-        "configuracoes:contas-bancarias:criar", "configuracoes:contas-bancarias:editar", "configuracoes:contas-bancarias:deletar"
+        "configuracoes:contas-bancarias:criar", "configuracoes:contas-bancarias:editar", "configuracoes:contas-bancarias:deletar",
+        "kanban:tarefas:listar", "kanban:tarefas:criar", "kanban:tarefas:editar", "kanban:tarefas:excluir"
     ];
 
     const permissoesUI = [
@@ -61,7 +62,8 @@ async function grantAdmin() {
         "financeiro:lancamentos:criar", "financeiro:lancamentos:listar", "financeiro:lancamentos:editar", "financeiro:lancamentos:alterar_valor", "financeiro:lancamentos:deletar",
         "admin:usuarios:criar", "admin:usuarios:listar", "admin:usuarios:editar", "admin:usuarios:deletar",
         "admin:permissoes:conceder",
-        "admin:tokens-api:criar", "admin:tokens-api:listar", "admin:tokens-api:deletar"
+        "admin:tokens-api:criar", "admin:tokens-api:listar", "admin:tokens-api:deletar",
+        "kanban:tarefas:listar", "kanban:tarefas:criar", "kanban:tarefas:editar", "kanban:tarefas:excluir"
     ];
 
     const todasPermissoes = [...new Set([...permissoesBackend, ...permissoesUI])];

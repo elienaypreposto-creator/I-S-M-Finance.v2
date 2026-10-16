@@ -242,9 +242,9 @@ async function run(): Promise<void> {
         await applyRolePasswords(client, connectionString);
         await reassignPublicToOwner(client);
         console.log("[db:migrate] Concluído.");
-    } finally {
+  } finally {
         await client.end();
-    }
+  }
 }
 
 run().catch((error: unknown) => {

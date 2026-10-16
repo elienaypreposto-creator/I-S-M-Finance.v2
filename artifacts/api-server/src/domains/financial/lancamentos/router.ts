@@ -22,6 +22,7 @@ const router = Router();
 
 router.get(
     "/lancamentos",
+    withPermission(PERM.LANCAMENTOS_LISTAR),
     asyncHandler(async (req, res) => {
         const query = listLancamentosQuerySchema.parse(req.query);
         const result = await lancamentosService.list(requireTenant(req).empresaId, query);
@@ -32,6 +33,7 @@ router.get(
 // Antes de "/lancamentos/:id". Mesmos filtros da listagem, sem paginação (teto de 10 mil linhas).
 router.get(
     "/lancamentos/export",
+    withPermission(PERM.LANCAMENTOS_LISTAR),
     asyncHandler(async (req, res) => {
         const filtros = exportLancamentosQuerySchema.parse(req.query);
         const result = await lancamentosService.exportar(requireTenant(req).empresaId, filtros);
@@ -51,6 +53,7 @@ router.post(
 
 router.get(
     "/lancamentos/:id",
+    withPermission(PERM.LANCAMENTOS_LISTAR),
     asyncHandler(async (req, res) => {
         const {id} = lancamentoIdParamSchema.parse(req.params);
         const item = await lancamentosService.getById(requireTenant(req).empresaId, id);

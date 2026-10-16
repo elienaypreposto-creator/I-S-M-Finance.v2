@@ -111,8 +111,8 @@ function Router() {
             <Route path="/redefinir-senha" component={RedefinirSenha}/>
             <PrivateRoute path="/" component={Dashboard}/>
 
-            <PrivateRoute path="/kanban" component={Kanban}/>
-            <PrivateRoute path="/lancamentos" component={Lancamentos}/>
+            <PrivateRoute path="/kanban" component={Kanban} permission={PERM.KANBAN_LISTAR}/>
+            <PrivateRoute path="/lancamentos" component={Lancamentos} permission={PERM.LANCAMENTOS_LISTAR}/>
             <PrivateRoute path="/conciliacao" component={ConciliacaoList} permission={PERM.CONCILIACAO_ACESSAR}/>
             <PrivateRoute
                 path="/conciliacao/extrato/:extratoId"
