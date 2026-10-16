@@ -6,7 +6,8 @@ export const departamentoFormSchema = z.object({
 
 export type DepartamentoFormValues = z.infer<typeof departamentoFormSchema>;
 
-export const TIPOS_CONTA = ["Conta Corrente", "Conta Movimento", "Conta Poupança"] as const;
+/** Mesmos valores aceitos pela API (`TIPOS_CONTA_BANCARIA` em api-server/.../contas-bancarias/schemas.ts). */
+export const TIPOS_CONTA = ["Conta Corrente", "Conta Movimento", "Conta Poupança", "Conta Aplicação"] as const;
 export type TipoConta = (typeof TIPOS_CONTA)[number];
 
 /**
@@ -41,7 +42,9 @@ export const contaBancariaFormSchema = z
     })
     .superRefine((data, ctx) => {
         const precisaBanco =
-            data.tipo === "Conta Corrente" || data.tipo === "Conta Poupança";
+            data.tipo === "Conta Corrente" ||
+            data.tipo === "Conta Poupança" ||
+            data.tipo === "Conta Aplicação";
         if (precisaBanco) {
             if (!data.banco?.trim())
                 ctx.addIssue({code: "custom", message: "Informe o banco.", path: ["banco"]});

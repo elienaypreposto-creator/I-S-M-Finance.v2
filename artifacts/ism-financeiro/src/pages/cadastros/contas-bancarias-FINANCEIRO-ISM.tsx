@@ -21,6 +21,7 @@ import {
     ChevronsRight,
     ChevronDown,
     Info,
+    TrendingUp,
 } from "lucide-react";
 import {formatCurrency, cn} from "@/lib/utils";
 import {classeSaldo} from "@/lib/saldo";
@@ -32,6 +33,7 @@ import {
     contaBancariaFormSchema,
     type ContaBancariaFormValues,
     TIPOS_CONTA,
+    type TipoConta,
 } from "@/validations/cadastros.schema";
 import {
     apiValorToValorBr,
@@ -120,14 +122,26 @@ const TIPO_ICONS: Record<string, React.ComponentType<{ className?: string; "aria
     "Conta Corrente": Landmark,
     "Conta Movimento": PackageOpen,
     "Conta Poupança": PiggyBank,
+    "Conta Aplicação": TrendingUp,
 };
 
-// Ordem de exibição no Passo 1 (Corrente -> Poupança -> Movimento)
+// Ordem de exibição no Passo 1 (Corrente -> Poupança -> Movimento -> Aplicação).
+// `satisfies` garante que todo valor existe em TIPOS_CONTA (a fonte canônica).
+const TIPO_ROTULOS: Record<string, string> = {
+    "Conta Movimento": "Conta Movimento (Caixinha)",
+    "Conta Aplicação": "Conta de Aplicação / Investimento",
+};
+
+/** Rótulo do tipo para tela (passo 1, filtro e lista usam esta mesma função). */
+function rotuloDoTipo(tipo: string): string {
+    return TIPO_ROTULOS[tipo] ?? tipo;
+}
+
 const ACCOUNT_TYPES = (
-    ["Conta Corrente", "Conta Poupança", "Conta Movimento"] as const
+    ["Conta Corrente", "Conta Poupança", "Conta Movimento", "Conta Aplicação"] as const satisfies readonly TipoConta[]
 ).map((value) => ({
     value,
-    label: value === "Conta Movimento" ? "Conta Movimento (Caixinha)" : value,
+    label: rotuloDoTipo(value),
     Icon: TIPO_ICONS[value] ?? Landmark,
 }));
 
@@ -801,6 +815,8 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                 return "Ex: Poupança Caixa";
             case "Conta Movimento":
                 return "Ex: Caixa Operacional";
+            case "Conta Aplicação":
+                return "Ex: CDB Itaú 2027";
             default:
                 return "Ex: Itaú PJ Principal";
         }
@@ -845,7 +861,7 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                         onEdit={() => setActiveStep(1)}
                     >
                         <div role="group" aria-labelledby="conta-passo-1-titulo"
-                             className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                             className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
                             {ACCOUNT_TYPES.map(({value, label, Icon}) => {
                                 const selected = tipo === value;
                                 return (
@@ -873,7 +889,7 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                                                     <span className="w-2 h-2 rounded-full bg-primary"/>
                                                 )}
                                             </span>
-                                            <span className="text-sm font-medium truncate">
+                                            <span className="text-sm font-medium leading-tight break-words">
                                                 {label}
                                             </span>
                                         </div>
@@ -908,7 +924,7 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                         onEdit={() => setActiveStep(2)}
                     >
                         {tipo !== TIPO_SEM_BANCO ? (
-                            /* Conta Corrente e Conta Poupança: Banco + Agência + Conta + Nome */
+                            /* Conta Corrente, Poupança e Aplicação: Banco + Agência + Conta + Nome */
                             <div className={modalGridCls}>
                                 <Field id="conta-banco" label="Banco" required error={errors.banco?.message}>
                                     <Controller
@@ -1198,7 +1214,7 @@ export default function ContasBancarias() {
                 tipo: "multi",
                 opcoes: tiposCarregados.map((t) => ({
                     valor: t,
-                    rotulo: ACCOUNT_TYPES.find((a) => a.value === t)?.label ?? t,
+                    rotulo: rotuloDoTipo(t),
                 })),
             },
             {
@@ -1502,7 +1518,7 @@ export default function ContasBancarias() {
                                         {/* Tipo */}
                                         <td className="px-5 py-4">
                         <span className="text-white/80 font-medium">
-                          {conta.tipo}
+                          {rotuloDoTipo(conta.tipo)}
                         </span>
                                         </td>
 

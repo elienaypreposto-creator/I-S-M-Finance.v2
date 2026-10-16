@@ -1,16 +1,20 @@
-import {useMemo, useState, type ReactNode} from "react";
+import {useEffect, useMemo, useRef, useState, type ReactNode} from "react";
 import {useQuery} from "@tanstack/react-query";
 import {Link} from "wouter";
-import {AlertCircle, ChevronDown, Landmark, RotateCw} from "lucide-react";
+import {AlertCircle, ChevronDown, Eye, EyeOff, Landmark, RotateCw} from "lucide-react";
 import {Popover, PopoverContent, PopoverTrigger} from "@/components/ui/popover";
 import {fetchApiData} from "@/lib/api-config";
+import {useAuth} from "@/hooks/use-auth";
+import {useContasOcultas} from "@/hooks/use-contas-ocultas";
 import {tenantQueryKey} from "@/lib/tenant-query";
 import {classeSaldo} from "@/lib/saldo";
 import {
     descricaoConta,
     formatarSaldo,
     resumirSaldoGeral,
+    rotuloContasNoTotal,
     rotuloQuantidadeContas,
+    rotuloTipoConta,
     type ContaComSaldo,
 } from "@/lib/saldo-geral";
 import {cn} from "@/lib/utils";
@@ -56,13 +60,34 @@ function Cabecalho() {
 
 export function SaldoGeralCard() {
     const [aberto, setAberto] = useState(false);
+    const {user} = useAuth();
+    const {ocultas, alternar, mostrarTodas} = useContasOcultas(user?.id, user?.empresa_id);
+    const [anuncio, setAnuncio] = useState("");
+    const alteradoPeloUsuario = useRef(false);
     // Mesma chave e mesma função da tela de Contas Bancárias: o cache é compartilhado.
     const {data, isLoading, isError, refetch, isFetching} = useQuery<ContaComSaldo[]>({
         queryKey: tenantQueryKey("contas-bancarias"),
         queryFn: () => fetchApiData<ContaComSaldo[]>("/contas-bancarias"),
     });
 
-    const resumo = useMemo(() => resumirSaldoGeral(data ?? []), [data]);
+    const resumo = useMemo(() => resumirSaldoGeral(data ?? [], ocultas), [data, ocultas]);
+    const totalCentavos = resumo.totalCentavos;
+
+    // Avisa leitores de tela quando o usuário muda a soma (não a cada carregamento).
+    useEffect(() => {
+        if (!alteradoPeloUsuario.current) return;
+        alteradoPeloUsuario.current = false;
+        setAnuncio(`Saldo geral atualizado: ${formatarSaldo(totalCentavos)}`);
+    }, [totalCentavos]);
+
+    const alternarConta = (id: number) => {
+        alteradoPeloUsuario.current = true;
+        alternar(id);
+    };
+    const mostrarTodasContas = () => {
+        alteradoPeloUsuario.current = true;
+        mostrarTodas();
+    };
 
     if (isLoading) {
         return (
@@ -111,8 +136,15 @@ export function SaldoGeralCard() {
 
     const totalFmt = formatarSaldo(resumo.totalCentavos);
     const corTotal = classeSaldo(resumo.totalCentavos);
+    const naSoma = resumo.contas.length - resumo.ocultas;
+    const todasOcultas = naSoma === 0;
+    const rotuloContas = resumo.ocultas > 0
+        ? rotuloContasNoTotal(naSoma, resumo.contas.length)
+        : rotuloQuantidadeContas(resumo.contas.length);
 
     return (
+        <>
+        <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{anuncio}</p>
         <Popover open={aberto} onOpenChange={setAberto}>
             <PopoverTrigger asChild>
                 <button
@@ -128,7 +160,7 @@ export function SaldoGeralCard() {
                     <Cabecalho/>
                     <p className={cn("text-xl font-bold", corTotal)}>{totalFmt}</p>
                     <p className="text-xs text-muted-foreground mt-1">
-                        {rotuloQuantidadeContas(resumo.contas.length)} ·{" "}
+                        {rotuloContas} ·{" "}
                         <span className="text-primary font-semibold whitespace-nowrap">
                             ver por conta
                             <ChevronDown
@@ -150,40 +182,86 @@ export function SaldoGeralCard() {
                     Saldo por conta
                 </h4>
                 <ul className="max-h-[min(360px,60vh)] overflow-y-auto" aria-label="Contas ativas">
-                    {resumo.contas.map((conta) => (
-                        <li key={conta.id}>
-                            <Link
-                                href={ROTA_CONTAS}
-                                onClick={() => setAberto(false)}
-                                className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs hover:bg-white/5 focus-visible:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                            >
-                                <span
-                                    aria-hidden="true"
-                                    className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 text-[9px] font-extrabold ring-1 ring-inset ring-white/15"
-                                    style={{
-                                        backgroundColor: conta.cor || "#3BA8DC",
-                                        color: corTextoSobre(conta.cor || "#3BA8DC"),
-                                    }}
+                    {resumo.contas.map((conta) => {
+                        const descricao = descricaoConta(conta, {incluirTipoSemBanco: false});
+                        return (
+                            <li key={conta.id} className="flex items-center gap-1 rounded-lg hover:bg-white/5">
+                                <Link
+                                    href={ROTA_CONTAS}
+                                    onClick={() => setAberto(false)}
+                                    className={cn(
+                                        "flex flex-1 min-w-0 items-center gap-2.5 rounded-lg pl-2.5 py-2 text-xs focus-visible:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                                        conta.oculta && "opacity-60",
+                                    )}
                                 >
-                                    {siglaConta(conta)}
-                                </span>
-                                <span className="flex-1 min-w-0">
-                                    <span className="block font-bold text-white truncate">{conta.nome}</span>
-                                    <span className="block text-[10px] text-muted-foreground truncate">
-                                        {descricaoConta(conta)}
+                                    <span
+                                        aria-hidden="true"
+                                        className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 text-[9px] font-extrabold ring-1 ring-inset ring-white/15"
+                                        style={{
+                                            backgroundColor: conta.cor || "#3BA8DC",
+                                            color: corTextoSobre(conta.cor || "#3BA8DC"),
+                                        }}
+                                    >
+                                        {siglaConta(conta)}
                                     </span>
-                                </span>
-                                <span className={cn("font-bold whitespace-nowrap", classeSaldo(conta.saldoCentavos))}>
-                                    {formatarSaldo(conta.saldoCentavos)}
-                                </span>
-                            </Link>
-                        </li>
-                    ))}
+                                    <span className="flex-1 min-w-0">
+                                        <span className="block font-bold text-white truncate">{conta.nome}</span>
+                                        <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                                            {descricao && <span className="truncate">{descricao}</span>}
+                                            <span className="shrink-0 rounded border border-white/15 px-1 py-px text-[9px] font-semibold uppercase tracking-wide">
+                                                {rotuloTipoConta(conta.tipo)}
+                                            </span>
+                                        </span>
+                                    </span>
+                                    <span className="flex flex-col items-end">
+                                        <span
+                                            className={cn(
+                                                "font-bold whitespace-nowrap",
+                                                conta.oculta ? "text-muted-foreground line-through" : classeSaldo(conta.saldoCentavos),
+                                            )}
+                                        >
+                                            {formatarSaldo(conta.saldoCentavos)}
+                                        </span>
+                                        {conta.oculta && (
+                                            <span className="text-[10px] text-muted-foreground">fora da soma</span>
+                                        )}
+                                    </span>
+                                </Link>
+                                <button
+                                    type="button"
+                                    aria-pressed={conta.oculta}
+                                    aria-label={`${conta.oculta ? "Mostrar" : "Ocultar"} conta ${conta.nome} ${conta.oculta ? "no" : "do"} saldo geral`}
+                                    onClick={() => alternarConta(conta.id)}
+                                    className="shrink-0 rounded-md p-2 text-muted-foreground hover:text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                                >
+                                    {conta.oculta
+                                        ? <EyeOff className="w-4 h-4" aria-hidden="true"/>
+                                        : <Eye className="w-4 h-4" aria-hidden="true"/>}
+                                </button>
+                            </li>
+                        );
+                    })}
                 </ul>
                 <div className="mt-1 flex items-center justify-between border-t border-white/10 px-2.5 py-2.5 text-xs font-bold">
                     <span>Saldo geral</span>
                     <span className={corTotal}>{totalFmt}</span>
                 </div>
+                {resumo.ocultas > 0 && (
+                    <div className="flex items-center justify-between gap-2 px-2.5 pb-2 text-[11px] text-muted-foreground">
+                        <span>
+                            {todasOcultas
+                                ? "Nenhuma conta na soma. Mostre uma conta para ver o saldo."
+                                : rotuloContasNoTotal(naSoma, resumo.contas.length)}
+                        </span>
+                        <button
+                            type="button"
+                            onClick={mostrarTodasContas}
+                            className="shrink-0 font-semibold text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded"
+                        >
+                            Mostrar todas
+                        </button>
+                    </div>
+                )}
                 <Link
                     href={ROTA_CONTAS}
                     onClick={() => setAberto(false)}
@@ -193,5 +271,6 @@ export function SaldoGeralCard() {
                 </Link>
             </PopoverContent>
         </Popover>
+        </>
     );
 }
