@@ -14,6 +14,8 @@ import {validateBody} from "../middlewares/validate";
 import {errorResponse, successResponse} from "../utils/response";
 import {requireTenant, tenantScope, tenantWhere, withEmpresaId} from "../lib/tenant-scope";
 import {hojeIsoLocal, somarDiasIso} from "../utils/date-civil";
+import {withPermission} from "../middlewares/withPermission";
+import {PERM} from "../constants/permissoes";
 
 const router = Router();
 
@@ -61,7 +63,7 @@ const patchCardBodySchema = z.object({
 type CreateCardBody = z.infer<typeof createCardBodySchema>;
 type PatchCardBody = z.infer<typeof patchCardBodySchema>;
 
-router.get("/cards", async (req, res) => {
+router.get("/cards", withPermission(PERM.KANBAN_LISTAR), async (req, res) => {
     try {
         const {empresaId} = requireTenant(req);
         const {prioridade, responsavel_id, prazo} = req.query;
@@ -130,6 +132,7 @@ router.get("/cards", async (req, res) => {
 
 router.post(
     "/cards",
+    withPermission(PERM.KANBAN_CRIAR),
     validateBody(createCardBodySchema),
     async (req, res) => {
         try {
@@ -159,6 +162,7 @@ router.post(
 
 router.patch(
     "/cards/:id",
+    withPermission(PERM.KANBAN_EDITAR),
     validateBody(patchCardBodySchema),
     async (req, res) => {
         try {
@@ -205,10 +209,11 @@ router.patch(
     },
 );
 
-router.delete("/cards/:id", async (req, res) => {
+router.delete("/cards/:id", withPermission(PERM.KANBAN_EXCLUIR), async (req, res) => {
         try {
             const {empresaId} = requireTenant(req);
-            const id = parseInt(req.params.id, 10);
+            const idBruto = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+            const id = parseInt(idBruto, 10);
             if (isNaN(id)) {
                 return errorResponse(res, 400, "VALIDATION_ERROR", "ID inválido.");
             }
@@ -237,7 +242,7 @@ router.delete("/cards/:id", async (req, res) => {
     }
 });
 
-router.get("/usuarios", async (req, res) => {
+router.get("/usuarios", withPermission(PERM.KANBAN_LISTAR), async (req, res) => {
     try {
         const {empresaId} = requireTenant(req);
         const data = await db

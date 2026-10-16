@@ -214,6 +214,15 @@ const permissoesGranulares = [
         ],
     },
     {
+        grupo: "Tarefas",
+        itens: [
+            {nome: "Consulta de Tarefas", codigo: "kanban:tarefas:listar"},
+            {nome: "Cadastro de Tarefas", codigo: "kanban:tarefas:criar"},
+            {nome: "Edição de Tarefas", codigo: "kanban:tarefas:editar"},
+            {nome: "Exclusão de Tarefas", codigo: "kanban:tarefas:excluir"},
+        ],
+    },
+    {
         grupo: "Movimentações",
         itens: [
             {nome: "Cadastro de Movimentação Financeira", codigo: "financeiro:lancamentos:criar"},
@@ -241,6 +250,13 @@ const permissoesGranulares = [
 
 const todasPermissoes = permissoesGranulares.flatMap((g) => g.itens.map((i) => i.codigo));
 
+const tarefasKanban = [
+    "kanban:tarefas:listar",
+    "kanban:tarefas:criar",
+    "kanban:tarefas:editar",
+    "kanban:tarefas:excluir",
+];
+
 const perfisBase: Record<string, string[]> = {
     Admin: todasPermissoes,
     Financeiro: [
@@ -256,15 +272,19 @@ const perfisBase: Record<string, string[]> = {
         "configuracoes:contas-bancarias:listar", "financeiro:parceiros:listar", "configuracoes:plano-contas:listar",
         "financeiro:lancamentos:criar", "financeiro:lancamentos:listar", "financeiro:lancamentos:editar",
         "financeiro:metas:criar", "financeiro:metas:listar",
+        ...tarefasKanban,
     ],
     Gestor: [
         "dashboard:ver", "relatorios:dre", "relatorios:fluxo-caixa-mensal", "relatorios:metas",
         "financeiro:contas-pagar:listar", "financeiro:contas-receber:listar",
         "configuracoes:contas-bancarias:listar", "financeiro:parceiros:listar", "configuracoes:plano-contas:listar",
         "financeiro:lancamentos:listar", "financeiro:metas:listar",
+        ...tarefasKanban,
     ],
     Visualizador: [
         "dashboard:ver", "financeiro:contas-pagar:listar", "financeiro:contas-receber:listar", "financeiro:metas:listar",
+        "financeiro:lancamentos:listar",
+        ...tarefasKanban,
     ],
 };
 

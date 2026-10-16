@@ -97,6 +97,8 @@ interface TaskModalProps {
     defaultColuna?: string;
     /** "create" (padrão) ou "edit" */
     mode?: "create" | "edit";
+    /** Esconde o botão de gravar quando a ação não é permitida. */
+    podeSalvar?: boolean;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -121,6 +123,7 @@ export function TaskModal({
                               initialData,
                               defaultColuna = "solicitado",
                               mode = "create",
+                              podeSalvar = true,
                           }: TaskModalProps) {
 
     // Estado do formulário - inicializado de forma lazy para evitar re-render desnecessário
@@ -560,12 +563,14 @@ export function TaskModal({
 
             <ModalFooter hint="Esc fecha">
                 <button type="button" onClick={() => void handleRequestClose()} className={modalBtnSecondaryCls}>
-                    Cancelar
+                    {podeSalvar ? "Cancelar" : "Fechar"}
                 </button>
+                {podeSalvar && (
                 <button type="button" onClick={handleSubmit} disabled={!titulo.trim()} className={modalBtnPrimaryCls}>
                     <Send aria-hidden="true" className="w-4 h-4"/>
                     {submitLabel}
                 </button>
+                )}
             </ModalFooter>
             <ConfirmDialog {...ConfirmDialogProps} />
         </Modal>
