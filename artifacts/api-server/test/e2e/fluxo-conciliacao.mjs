@@ -108,7 +108,7 @@ const ctx = {token: null};
 async function criarConta(sufixo) {
     const r = await api("POST", "/contas-bancarias", {
         token: ctx.token,
-        body: {tipo: "corrente", nome: `E2E-${RUN} ${sufixo}`, data_inicio: diaIso(-90), saldo_inicial: 0},
+        body: {tipo: "Conta Corrente", nome: `E2E-${RUN} ${sufixo}`, data_inicio: diaIso(-90), saldo_inicial: 0},
     });
     assert.equal(r.status, 201, `criar conta: ${JSON.stringify(r.json)}`);
     return r.data.id;

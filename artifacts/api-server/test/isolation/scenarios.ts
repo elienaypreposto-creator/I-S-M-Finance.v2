@@ -36,7 +36,7 @@ const PARAMS: Record<string, (alvo: EmpresaFx) => string> = {
 
 /** Corpos de escrita. Sempre tentam forçar `empresa_id` da empresa-alvo. */
 const BODIES: Record<string, (alvo: EmpresaFx) => unknown> = {
-    "POST /contas-bancarias": (b) => ({tipo: "corrente", nome: "HACK", data_inicio: "2026-01-01", empresa_id: b.id}),
+    "POST /contas-bancarias": (b) => ({tipo: "Conta Corrente", nome: "HACK", data_inicio: "2026-01-01", empresa_id: b.id}),
     "PUT /contas-bancarias/:id": (b) => ({nome: "HACK", empresa_id: b.id}),
     "POST /lancamentos": (b) => ({
         tipo: "CP",
