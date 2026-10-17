@@ -2,6 +2,7 @@
   "name": "workspace",
   "version": "0.0.0",
   "license": "MIT",
+  "packageManager": "pnpm@12.11.2",
   "scripts": {
     "dev": "concurrently -c \"cyan,magenta\" -n \"api,web\" \"pnpm run dev:api\" \"pnpm run dev:web\"",
     "dev:api": "cd artifacts/api-server && pnpm run dev",
