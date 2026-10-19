@@ -18,6 +18,7 @@ import {
     type ContaComSaldo,
 } from "@/lib/saldo-geral";
 import {cn} from "@/lib/utils";
+import {useSaldosVisiveis} from "@/components/conta/saldos-visiveis";
 
 const ROTA_CONTAS = "/cadastros/contas-bancarias";
 
@@ -60,6 +61,7 @@ function Cabecalho() {
 
 export function SaldoGeralCard() {
     const [aberto, setAberto] = useState(false);
+    const saldos = useSaldosVisiveis();
     const {user} = useAuth();
     const {ocultas, alternar, mostrarTodas} = useContasOcultas(user?.id, user?.empresa_id);
     const [anuncio, setAnuncio] = useState("");
@@ -77,8 +79,10 @@ export function SaldoGeralCard() {
     useEffect(() => {
         if (!alteradoPeloUsuario.current) return;
         alteradoPeloUsuario.current = false;
-        setAnuncio(`Saldo geral atualizado: ${formatarSaldo(totalCentavos)}`);
-    }, [totalCentavos]);
+        setAnuncio(saldos.visivel
+            ? `Saldo geral atualizado: ${formatarSaldo(totalCentavos)}`
+            : "Saldo geral oculto");
+    }, [totalCentavos, saldos.visivel]);
 
     const alternarConta = (id: number) => {
         alteradoPeloUsuario.current = true;
@@ -134,8 +138,8 @@ export function SaldoGeralCard() {
         );
     }
 
-    const totalFmt = formatarSaldo(resumo.totalCentavos);
-    const corTotal = classeSaldo(resumo.totalCentavos);
+    const totalFmt = saldos.texto(formatarSaldo(resumo.totalCentavos));
+    const corTotal = saldos.visivel ? classeSaldo(resumo.totalCentavos) : "text-muted-foreground";
     const naSoma = resumo.contas.length - resumo.ocultas;
     const todasOcultas = naSoma === 0;
     const rotuloContas = resumo.ocultas > 0
@@ -149,7 +153,7 @@ export function SaldoGeralCard() {
             <PopoverTrigger asChild>
                 <button
                     type="button"
-                    aria-label={`Saldo geral ${totalFmt}. Ver saldo por conta`}
+                    aria-label={saldos.visivel ? `Saldo geral ${totalFmt}. Ver saldo por conta` : "Saldo geral oculto. Ver saldo por conta"}
                     className={cn(
                         "glass-panel rounded-2xl p-5 text-left w-full transition-colors hover:border-primary/50",
                         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background",
@@ -217,10 +221,13 @@ export function SaldoGeralCard() {
                                         <span
                                             className={cn(
                                                 "font-bold whitespace-nowrap",
-                                                conta.oculta ? "text-muted-foreground line-through" : classeSaldo(conta.saldoCentavos),
+                                                !saldos.visivel || conta.oculta
+                                                    ? "text-muted-foreground"
+                                                    : classeSaldo(conta.saldoCentavos),
+                                                conta.oculta && "line-through",
                                             )}
                                         >
-                                            {formatarSaldo(conta.saldoCentavos)}
+                                            {saldos.texto(formatarSaldo(conta.saldoCentavos))}
                                         </span>
                                         {conta.oculta && (
                                             <span className="text-[10px] text-muted-foreground">fora da soma</span>

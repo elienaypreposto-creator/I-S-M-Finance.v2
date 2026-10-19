@@ -28,6 +28,9 @@ import {clientIp} from "../lib/client-ip";
 const SENSITIVE_KEYS = new Set([
     "senha",
     "senha_hash",
+    "senha_atual",
+    "senha_nova",
+    "confirmacao",
     "novaSenha",
     "password",
     "currentPassword",
@@ -80,8 +83,8 @@ function buildDetalhes(req: Request): Record<string, unknown> {
         !Array.isArray(body)
             ? {...(body as Record<string, unknown>)}
             : body !== undefined
-              ? {body}
-              : {};
+                ? {body}
+                : {};
 
     if (req.auditAntes !== undefined) {
         return {

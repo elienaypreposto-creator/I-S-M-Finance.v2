@@ -24,6 +24,8 @@ import {refreshTokensTable, usuariosTable} from "@workspace/db/schema";
 import {sendPasswordResetEmail} from "../services/email.service";
 import {revokeAllTokensForUser} from "../services/session.service";
 import {denylistUser} from "../services/denylist.service";
+import {sessoes, type MetaSessao} from "../services/sessoes.service";
+import {clientIp} from "../lib/client-ip";
 import {assertVinculoAtivo, listEmpresasAtivasDoUsuario} from "../services/tenant.service";
 import {invalidateTenantCache} from "../middlewares/tenant";
 import {withAuth} from "../middlewares/auth";
@@ -61,7 +63,7 @@ const DUMMY_PASSWORD_HASH = bcrypt.hashSync("dummy-password-for-timing", BCRYPT_
 
 function attachTenantForAudit(
     req: Request,
-    usuario: {id: number; email: string; superadmin: boolean},
+    usuario: { id: number; email: string; superadmin: boolean },
     empresaId: number,
 ): void {
     req.tenant = {empresaId};
@@ -74,34 +76,54 @@ function attachTenantForAudit(
     };
 }
 
+function metaSessao(req: Request): MetaSessao {
+    const ua = req.headers["user-agent"];
+    return {
+        userAgent: Array.isArray(ua) ? (ua[0] ?? null) : (ua ?? null),
+        ip: clientIp(req),
+    };
+}
+
 async function emitSession(
-    usuario: {id: number; nome: string; email: string; superadmin: boolean},
+    usuario: { id: number; nome: string; email: string; superadmin: boolean },
     empresaId: number,
+    meta: MetaSessao,
+    sidExistente?: string,
 ) {
     await assertVinculoAtivo(usuario.id, empresaId);
     const permissions = await fetchPermissions(usuario.id, empresaId, usuario.superadmin);
-    const [accessToken, {token: refreshToken, tokenHash, expiresAt}] = await Promise.all([
-        signAccessToken({
-            sub: String(usuario.id),
-            email: usuario.email,
-            permissions,
-            empresa_id: empresaId,
-            superadmin: usuario.superadmin,
-        }),
-        signRefreshToken({sub: String(usuario.id), email: usuario.email, empresa_id: empresaId}),
-    ]);
+    const refresh = await signRefreshToken({sub: String(usuario.id), email: usuario.email, empresa_id: empresaId});
+    const sid = sidExistente
+        ?? await sessoes.abrir({usuarioId: usuario.id, tokenHash: refresh.tokenHash, meta});
+    if (sidExistente) {
+        await sessoes.girar(sidExistente, refresh.tokenHash, meta);
+    }
+    const accessToken = await signAccessToken({
+        sub: String(usuario.id),
+        email: usuario.email,
+        permissions,
+        empresa_id: empresaId,
+        superadmin: usuario.superadmin,
+        sid,
+    });
 
     await db.insert(refreshTokensTable).values({
         usuario_id: usuario.id,
-        token_hash: tokenHash,
-        expires_at: expiresAt,
+        token_hash: refresh.tokenHash,
+        expires_at: refresh.expiresAt,
         revogado: false,
     });
 
     return {
         accessToken,
-        refreshToken,
-        user: {id: usuario.id, nome: usuario.nome, email: usuario.email, empresa_id: empresaId, superadmin: usuario.superadmin},
+        refreshToken: refresh.token,
+        user: {
+            id: usuario.id,
+            nome: usuario.nome,
+            email: usuario.email,
+            empresa_id: empresaId,
+            superadmin: usuario.superadmin
+        },
         permissoes: permissions,
         empresa_id: empresaId,
     };
@@ -109,7 +131,7 @@ async function emitSession(
 
 /**
  * Envia a sessão: refresh token vai no cookie httpOnly; o body leva só o access token
- * (e, durante a transição, o refresh também — AUTH_LEGACY_REFRESH_BODY=true).
+ * (e, durante a transição, o refresh também - AUTH_LEGACY_REFRESH_BODY=true).
  */
 function sendSession(
     res: Response,
@@ -247,6 +269,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
         const session = await emitSession(
             {id: usuario.id, nome: usuario.nome, email: usuario.email, superadmin: usuario.superadmin},
             empresas[0].id,
+            metaSessao(req),
         );
         attachTenantForAudit(req, usuario, empresas[0].id);
 
@@ -303,6 +326,7 @@ router.post("/auth/refresh", csrfGuard, async (req, res) => {
         if (registro.revogado) {
             await revokeAllTokensForUser(registro.usuario_id);
             await denylistUser(registro.usuario_id);
+            await sessoes.encerrarTodas(registro.usuario_id);
             console.warn(
                 `[SECURITY] Token reuse detectado - usuario_id=${registro.usuario_id}. Família revogada.`,
             );
@@ -332,6 +356,7 @@ router.post("/auth/refresh", csrfGuard, async (req, res) => {
         if (!usuario || usuario.bloqueado) {
             await revokeAllTokensForUser(usuarioId);
             await denylistUser(usuarioId);
+            await sessoes.encerrarTodas(usuarioId);
             return reject("UNAUTHORIZED", "Utilizador inválido ou bloqueado.");
         }
 
@@ -340,6 +365,7 @@ router.post("/auth/refresh", csrfGuard, async (req, res) => {
         } catch {
             await revokeAllTokensForUser(usuarioId);
             await denylistUser(usuarioId);
+            await sessoes.encerrarTodas(usuarioId);
             return reject("UNAUTHORIZED", "Vínculo com a empresa inativo. Faça login novamente.");
         }
 
@@ -360,36 +386,41 @@ router.post("/auth/refresh", csrfGuard, async (req, res) => {
 
         // Re-consulta permissões para propagar alterações feitas após o último login
         const permissions = await fetchPermissions(usuario.id, rtPayload.empresa_id, usuario.superadmin);
-
-        const [newAccessToken, {token: newRefreshToken, tokenHash: newHash, expiresAt}] =
-            await Promise.all([
-                signAccessToken({
-                    sub: String(usuario.id),
-                    email: usuario.email,
-                    permissions,
-                    empresa_id: rtPayload.empresa_id,
-                    superadmin: usuario.superadmin,
-                }),
-                signRefreshToken({
-                    sub: String(usuario.id),
-                    email: usuario.email,
-                    empresa_id: rtPayload.empresa_id,
-                }),
-            ]);
+        const meta = metaSessao(req);
+        const sidAnterior = await sessoes.idPorHash(tokenHash);
+        if (sidAnterior && await sessoes.revogada(sidAnterior)) {
+            return reject("SESSION_REVOKED", "Sessão revogada. Faça login novamente.");
+        }
+        const refreshNovo = await signRefreshToken({
+            sub: String(usuario.id),
+            email: usuario.email,
+            empresa_id: rtPayload.empresa_id,
+        });
+        const sid = sidAnterior
+            ?? await sessoes.abrir({usuarioId: usuario.id, tokenHash: refreshNovo.tokenHash, meta});
+        if (sidAnterior) await sessoes.girar(sidAnterior, refreshNovo.tokenHash, meta);
+        const newAccessToken = await signAccessToken({
+            sub: String(usuario.id),
+            email: usuario.email,
+            permissions,
+            empresa_id: rtPayload.empresa_id,
+            superadmin: usuario.superadmin,
+            sid,
+        });
 
         await db.insert(refreshTokensTable).values({
             usuario_id: usuario.id,
-            token_hash: newHash,
-            expires_at: expiresAt,
+            token_hash: refreshNovo.tokenHash,
+            expires_at: refreshNovo.expiresAt,
             revogado: false,
         });
 
-        setRefreshCookie(res, newRefreshToken);
+        setRefreshCookie(res, refreshNovo.token);
 
         return successResponse(
             res,
             LEGACY_REFRESH_BODY
-                ? {accessToken: newAccessToken, refreshToken: newRefreshToken}
+                ? {accessToken: newAccessToken, refreshToken: refreshNovo.token}
                 : {accessToken: newAccessToken},
             SESSION_META,
         );
@@ -433,7 +464,7 @@ router.post("/auth/select-empresa", loginLimiter, async (req, res) => {
             return errorResponse(res, 401, "UNAUTHORIZED", "Utilizador inválido ou bloqueado.");
         }
 
-        const session = await emitSession(usuario, empresaId);
+        const session = await emitSession(usuario, empresaId, metaSessao(req));
         attachTenantForAudit(req, usuario, empresaId);
         return sendSession(res, session, SESSION_META);
     } catch (error: unknown) {
@@ -475,6 +506,7 @@ router.post("/auth/switch-empresa", csrfGuard, withAuth, async (req, res) => {
         // continua intacta em vez de o utilizador ficar sem refresh token.
         await assertVinculoAtivo(usuario.id, empresaId);
 
+        const sidAtual = rawRefresh ? await sessoes.idPorHash(hashToken(rawRefresh)) : req.user?.sid;
         if (rawRefresh) {
             await db
                 .update(refreshTokensTable)
@@ -487,10 +519,11 @@ router.post("/auth/switch-empresa", csrfGuard, withAuth, async (req, res) => {
                 );
         } else {
             await revokeAllTokensForUser(usuario.id);
+            await sessoes.encerrarTodas(usuario.id);
         }
 
         invalidateTenantCache(usuario.id);
-        const session = await emitSession(usuario, empresaId);
+        const session = await emitSession(usuario, empresaId, metaSessao(req), sidAtual ?? undefined);
         attachTenantForAudit(req, usuario, empresaId);
         return sendSession(res, session, SESSION_META);
     } catch (error: unknown) {
@@ -506,10 +539,12 @@ router.post("/auth/logout", csrfGuard, async (req, res) => {
     try {
         const rawToken = readRefreshToken(req); // cookie (ou body, durante a transição)
         if (rawToken) {
+            const hash = hashToken(rawToken);
+            await sessoes.encerrarPorHash(hash);
             await db
                 .update(refreshTokensTable)
                 .set({revogado: true})
-                .where(eq(refreshTokensTable.token_hash, hashToken(rawToken)));
+                .where(eq(refreshTokensTable.token_hash, hash));
         }
         clearRefreshCookie(res);
         return successResponse(res, null, {message: "Logout realizado com sucesso."});

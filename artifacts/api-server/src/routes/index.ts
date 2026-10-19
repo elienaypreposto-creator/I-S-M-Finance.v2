@@ -2,13 +2,13 @@
  * Router principal da API.
  *
  * Ordem de montagem:
- * 1. /healthz              — sem autenticação
- * 2. /auth/*               — sem autenticação (login, refresh, logout)
- *    └─ /auth/me           — requer withAuth (declarado dentro do router de auth)
- *    └─ /auth/switch-empresa — requer withAuth
- * 3. /v1/*                 — autenticação por API Token (v1AuthMiddleware)
- * 4. withAuth              — TODAS as rotas abaixo exigem JWT válido
- * 5. withTenant + withTenantTxMiddleware — transação da request com
+ * 1. /healthz              - sem autenticação
+ * 2. /auth/*               - sem autenticação (login, refresh, logout)
+ *    └─ /auth/me           - requer withAuth (declarado dentro do router de auth)
+ *    └─ /auth/switch-empresa - requer withAuth
+ * 3. /v1/*                 - autenticação por API Token (v1AuthMiddleware)
+ * 4. withAuth              - TODAS as rotas abaixo exigem JWT válido
+ * 5. withTenant + withTenantTxMiddleware - transação da request com
  *    SET LOCAL app.empresa_id (contexto da RLS).
  *    ├─ auditoria
  *    ├─ reports
@@ -27,6 +27,7 @@ import financialDomainRouter from "../domains/financial/router";
 import reconciliationDomainRouter from "../domains/reconciliation/router";
 import reportsDomainRouter from "../domains/reports/router";
 import auditoriaRouter from "./auditoria";
+import meRouter from "./me";
 
 const router: IRouter = Router();
 
@@ -43,6 +44,8 @@ router.use(withAuth);
 router.use(withTenant);
 
 router.use(withTenantTxMiddleware);
+
+router.use(meRouter);
 
 router.use(auditoriaRouter);
 

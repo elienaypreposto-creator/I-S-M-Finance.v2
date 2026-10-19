@@ -15,7 +15,8 @@ export function SenhaForca({senha, email, nome}: { senha: string } & SenhaContex
     const n = NIVEIS[nivel];
 
     return (
-        <div className="mt-2 space-y-2">
+        <div className="mt-2 space-y-2" aria-live="polite">
+            <span className="sr-only">Força da senha: {n.texto || "vazia"}</span>
             <div className="flex items-center gap-2">
                 <div className="flex flex-1 gap-1">
                     {[1, 2, 3].map((i) => (
@@ -32,7 +33,8 @@ export function SenhaForca({senha, email, nome}: { senha: string } & SenhaContex
                             key={r.id}
                             className={`flex items-center gap-1.5 text-xs ${r.ok ? "text-emerald-400" : "text-muted-foreground"}`}
                         >
-                            <CheckCircle className={`w-3.5 h-3.5 flex-shrink-0 ${r.ok ? "text-emerald-400" : "text-white/20"}`}/>
+                            <CheckCircle
+                                className={`w-3.5 h-3.5 flex-shrink-0 ${r.ok ? "text-emerald-400" : "text-white/20"}`}/>
                             {r.label}
                         </li>
                     ))}

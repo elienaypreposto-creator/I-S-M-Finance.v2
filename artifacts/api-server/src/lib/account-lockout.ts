@@ -4,7 +4,7 @@
  * Regra:
  * - 5 falhas para o mesmo e-mail em 15 min -> e-mail bloqueado por 15 min.
  * - Enquanto bloqueado, o login responde o MESMO 401 INVALID_CREDENTIALS, sem
- *   consultar senha — e a tentativa não é contada (o atacante não prolonga o
+ *   consultar senha - e a tentativa não é contada (o atacante não prolonga o
  *   bloqueio batendo nele).
  * - Login correto zera falhas/bloqueio; reset de senha também libera.
  *
@@ -42,13 +42,37 @@ export const LOCKOUT_PADRAO: LockoutConfig = {
 /** Primitivas de armazenamento (Redis em produção, memória nos testes). */
 export interface LockoutStore {
     /** Soma uma falha; ao atingir o máximo, cria o bloqueio e zera o contador. */
-    falha(chave: string, ip: string, cfg: LockoutConfig): Promise<{falhas: number; bloqueouAgora: boolean}>;
+    falha(chave: string, ip: string, cfg: LockoutConfig): Promise<{ falhas: number; bloqueouAgora: boolean }>;
+
     /** ms restantes de bloqueio (0 = livre). */
     bloqueioRestanteMs(chave: string): Promise<number>;
+
     /** IP já logou com sucesso nesta conta e não falhou na janela atual. */
     ipConfiavel(chave: string, ip: string): Promise<boolean>;
+
     sucesso(chave: string, ip: string, cfg: LockoutConfig): Promise<void>;
+
     limpar(chave: string): Promise<void>;
+}
+
+export async function lerFalhasRecentes(email: string): Promise<{ total: number; ips: string[] } | null> {
+    try {
+        const r = getRedis();
+        if (!r) return null;
+        const chave = chaveConta(email);
+        const [contador, ips] = await Promise.all([
+            r.get(k("falhas", chave)),
+            r.smembers(k("ipfalha", chave)),
+        ]);
+        const total = contador ? parseInt(contador, 10) : 0;
+        const lista = Array.isArray(ips) ? ips.filter((ip) => typeof ip === "string" && ip.length > 0) : [];
+        const n = Number.isFinite(total) && total > 0 ? total : lista.length;
+        if (n <= 0 && lista.length === 0) return null;
+        return {total: n, ips: lista};
+    } catch (err) {
+        alertRedis("ler tentativas de login", err);
+        return null;
+    }
 }
 
 export function chaveConta(email: string): string {
@@ -123,9 +147,9 @@ export function redisLockoutStore(): LockoutStore {
 
 /** Store em memória com relógio injetável (testes). */
 export function memoryLockoutStore(agora: () => number = Date.now): LockoutStore {
-    const falhas = new Map<string, {n: number; expira: number}>();
+    const falhas = new Map<string, { n: number; expira: number }>();
     const bloq = new Map<string, number>();
-    const ipFalha = new Map<string, {ips: Set<string>; expira: number}>();
+    const ipFalha = new Map<string, { ips: Set<string>; expira: number }>();
     const ipOk = new Map<string, Set<string>>();
     const vivo = (exp: number | undefined) => exp !== undefined && exp > agora();
     return {
@@ -180,8 +204,11 @@ export interface EventoBloqueio {
 export interface AccountLockout {
     /** true = responder 401 sem verificar a senha. */
     bloqueado(email: string, ip: string): Promise<boolean>;
+
     registrarFalha(email: string, ip: string): Promise<void>;
+
     registrarSucesso(email: string, ip: string): Promise<void>;
+
     /** Libera a conta (ex.: após redefinir a senha). */
     liberar(email: string): Promise<void>;
 }

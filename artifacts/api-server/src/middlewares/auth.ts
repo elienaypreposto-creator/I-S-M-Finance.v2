@@ -17,14 +17,17 @@ import type {NextFunction, Request, Response} from "express";
 import type {AccessTokenPayload} from "../services/token.service";
 import {verifyAccessToken} from "../services/token.service";
 import {getUserRevokedAt} from "../services/denylist.service";
+import {sessoes} from "../services/sessoes.service";
 
 export type AuthUser = {
     id: number;
     email: string;
     permissions: string[];
     empresaId: number;
-    /** NOVO — Card 2 (Permissões). Ver AccessTokenPayload.superadmin. */
+    /** NOVO - Card 2 (Permissões). Ver AccessTokenPayload.superadmin. */
     superadmin: boolean;
+    /** Sessão Redis (ISMF-44). Ausente em tokens emitidos antes desta versão. */
+    sid?: string;
 };
 
 declare global {
@@ -80,12 +83,21 @@ export const withAuth = async (req: Request, res: Response, next: NextFunction) 
         }
     }
 
+    if (payload.sid && await sessoes.revogada(payload.sid)) {
+        return jsonError(res, 401, "SESSION_REVOKED", "Sessão revogada. Faça login novamente.");
+    }
+
+    if (payload.sid) {
+        void sessoes.tocar(payload.sid);
+    }
+
     req.user = {
         id,
         email: payload.email,
         permissions: payload.permissions,
         empresaId,
         superadmin: payload.superadmin,
+        sid: payload.sid,
     };
     return next();
 };
