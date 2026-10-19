@@ -223,8 +223,6 @@ type PlanoItem = { categoria: string; valor: number; percentual: number };
 
 export type InadimplenciaTab = "vencidos" | "proximos_vencer";
 
-// ─── Export helpers ───────────────────────────────────────────────────────────
-
 function fmtBRL(v: number): string {
     return v.toLocaleString("pt-BR", {style: "currency", currency: "BRL"});
 }
@@ -247,7 +245,6 @@ async function exportarXLSX(dashboardData: DashboardExportData) {
 
     const wb = XLSX.utils.book_new();
 
-    // Sheet 1 – KPIs
     if (dashboardData.kpis) {
         const kpiRows: (string | number)[][] = [
             ["Indicador", "Valor"],
@@ -269,7 +266,6 @@ async function exportarXLSX(dashboardData: DashboardExportData) {
         XLSX.utils.book_append_sheet(wb, wsKpi, "KPIs");
     }
 
-    // Sheet 2 – Fluxo de Caixa
     if (dashboardData.fluxoCaixa?.length) {
         const rows: (string | number)[][] = [
             ["Mês", "Entradas", "Saídas"],
@@ -282,7 +278,6 @@ async function exportarXLSX(dashboardData: DashboardExportData) {
         XLSX.utils.book_append_sheet(wb, ws, "Fluxo de Caixa");
     }
 
-    // Sheet 3 – Projeção 30 dias
     if (dashboardData.projecaoDias?.length) {
         const rows: (string | number)[][] = [
             ["Data", "Saldo Acumulado", "A Receber", "A Pagar"],
@@ -296,7 +291,6 @@ async function exportarXLSX(dashboardData: DashboardExportData) {
         XLSX.utils.book_append_sheet(wb, ws, "Projeção 30 dias");
     }
 
-    // Sheet 4 – Alertas de risco
     if (dashboardData.alertasRisco?.length) {
         const rows: (string | number)[][] = [
             ["Nome / Fornecedor", "Dias em Atraso", "Valor", "Riscos"],
@@ -313,7 +307,6 @@ async function exportarXLSX(dashboardData: DashboardExportData) {
         XLSX.utils.book_append_sheet(wb, ws, "Alertas de Risco");
     }
 
-    // Sheet 5 – Receitas por categoria
     if (dashboardData.entradasPlano?.length) {
         const rows: (string | number)[][] = [
             ["Categoria", "Valor", "%"],
@@ -326,7 +319,6 @@ async function exportarXLSX(dashboardData: DashboardExportData) {
         XLSX.utils.book_append_sheet(wb, ws, "Receitas por Categoria");
     }
 
-    // Sheet 6 – Despesas por categoria
     if (dashboardData.saidasPlano?.length) {
         const rows: (string | number)[][] = [
             ["Categoria", "Valor", "%"],
@@ -371,7 +363,6 @@ async function exportarPDF(dashboardData: DashboardExportData) {
 
     const dataHoje = new Date().toLocaleDateString("pt-BR");
 
-    // ── Cabeçalho ──
     doc.setFillColor(18, 20, 23);
     doc.rect(0, 0, W, 28, "F");
     doc.setTextColor(255, 255, 255);
@@ -416,7 +407,6 @@ async function exportarPDF(dashboardData: DashboardExportData) {
         y += 6;
     }
 
-    // ── KPIs ──
     secTitle("Indicadores Financeiros");
     if (dashboardData.kpis) {
         row2("A Receber (Mês Atual)", fmtBRL(dashboardData.kpis.contasReceberAberto));
@@ -432,7 +422,6 @@ async function exportarPDF(dashboardData: DashboardExportData) {
     }
     y += 4;
 
-    // ── Fluxo de Caixa ──
     if (dashboardData.fluxoCaixa?.length) {
         secTitle(`Fluxo de Caixa - ${new Date().getFullYear()}`);
         const colW = (W - margin * 2) / 3;
@@ -460,7 +449,6 @@ async function exportarPDF(dashboardData: DashboardExportData) {
         y += 3;
     }
 
-    // ── Alertas de Risco ──
     if (dashboardData.alertasRisco?.length) {
         secTitle("Alertas de Inadimplência (CP)");
         for (const a of dashboardData.alertasRisco.slice(0, 20)) {
@@ -487,7 +475,6 @@ async function exportarPDF(dashboardData: DashboardExportData) {
         y += 2;
     }
 
-    // ── Receitas & Despesas por categoria ──
     const planoPairs: Array<[string, PlanoItem[], string]> = [
         ["Receitas por Categoria", dashboardData.entradasPlano ?? [], "#27AE60"],
         ["Despesas por Categoria", dashboardData.saidasPlano ?? [], "#E74C3C"],
@@ -512,7 +499,6 @@ async function exportarPDF(dashboardData: DashboardExportData) {
         y += 3;
     }
 
-    // ── Rodapé última página ──
     const pageCount = doc.getNumberOfPages();
     for (let i = 1; i <= pageCount; i++) {
         doc.setPage(i);
@@ -540,8 +526,6 @@ type DashboardExportData = {
     entradasPlano?: PlanoItem[];
     saidasPlano?: PlanoItem[];
 };
-
-// ─── Export Dropdown ──────────────────────────────────────────────────────────
 
 function ExportDropdown({
                             getData,
@@ -649,8 +633,6 @@ function ExportDropdown({
     );
 }
 
-// ─── ContasPanel ──────────────────────────────────────────────────────────────
-
 function ContasPanel({
                          tipo,
                          title,
@@ -728,8 +710,6 @@ function ContasPanel({
     );
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
-
 export default function Dashboard() {
     const saldos = useSaldosVisiveis();
     const dinheiro = (valor: number) => saldos.texto(formatCurrency(valor));
@@ -792,11 +772,8 @@ export default function Dashboard() {
         [projecao, saldos.visivel],
     );
 
-    // Considerado "carregando" para fins de exportação enquanto os blocos
-    // principais do relatório (KPIs, fluxo de caixa, alertas) ainda não chegaram.
     const exportIsLoading = kpisLoading || fluxoLoading || alertasLoading;
 
-    // Snapshot de todos os dados em memória para exportação
     const getExportData = (): DashboardExportData => ({
         kpis,
         projecao,

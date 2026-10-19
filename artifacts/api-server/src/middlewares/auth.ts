@@ -24,9 +24,9 @@ export type AuthUser = {
     email: string;
     permissions: string[];
     empresaId: number;
-    /** NOVO - Card 2 (Permissões). Ver AccessTokenPayload.superadmin. */
+    /** Acesso irrestrito a todas as empresas. */
     superadmin: boolean;
-    /** Sessão Redis (ISMF-44). Ausente em tokens emitidos antes desta versão. */
+    /** Ausente nos tokens emitidos antes deste campo. */
     sid?: string;
 };
 

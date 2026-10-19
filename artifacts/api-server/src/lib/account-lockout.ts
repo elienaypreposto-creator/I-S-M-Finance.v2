@@ -1,23 +1,8 @@
 /**
- * Bloqueio temporário de conta por tentativas de login falhas (ISMF-7).
- *
- * Regra:
- * - 5 falhas para o mesmo e-mail em 15 min -> e-mail bloqueado por 15 min.
- * - Enquanto bloqueado, o login responde o MESMO 401 INVALID_CREDENTIALS, sem
- *   consultar senha - e a tentativa não é contada (o atacante não prolonga o
- *   bloqueio batendo nele).
- * - Login correto zera falhas/bloqueio; reset de senha também libera.
- *
- * Sem enumeração: conta falhas por e-mail digitado, exista ou não o usuário,
- * e a resposta de bloqueio é idêntica à de senha errada.
- *
- * Sem travar a vítima indefinidamente: o IP de onde o usuário já logou com
- * sucesso (30 dias) não é barrado pelo bloqueio causado por OUTROS IPs. Quem
- * errou a senha a partir desse IP continua bloqueado normalmente. Esse IP
- * segue limitado pelo loginLimiter (IP + e-mail) e pelo globalLimiter.
- *
- * Estado no Redis (chaves com hash do e-mail, nada em claro). Fail-open, como o
- * rate limit: Redis fora do ar não impede login (alerta via alertRedis).
+ * Bloqueio temporário por tentativas de login.
+ * A resposta é a mesma de senha incorreta, exista ou não a conta, e a tentativa durante o bloqueio não é contada.
+ * Um IP que já autenticou nesta conta não herda o bloqueio causado por outros IPs.
+ * Redis indisponível não impede o login.
  */
 
 import crypto from "node:crypto";

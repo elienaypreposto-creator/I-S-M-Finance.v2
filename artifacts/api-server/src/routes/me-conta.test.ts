@@ -1,6 +1,3 @@
-/**
- * Perfil, senha e sessões da própria conta.
- */
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
 import bcrypt from "bcryptjs";

@@ -73,17 +73,9 @@ export interface AccessTokenPayload {
     email: string;
     permissions: string[];
     empresa_id: number;
-    /**
-     * NOVO - Card 2 (Permissões). Único bit que concede acesso irrestrito a
-     * TODAS as empresas. Substitui o antigo padrão de permissão curinga
-     * `"*"` em permissions[] - ver withPermission.ts e withSuperadmin.ts.
-     */
+    /** Acesso irrestrito a todas as empresas. Não é um item de `permissions`. */
     superadmin: boolean;
-    /**
-     * Identificador da sessão no Redis. Tokens antigos não têm `sid`:
-     * continuam válidos até o TTL; a revogação por dispositivo só vale para
-     * sessões emitidas depois desta versão.
-     */
+    /** Ausente nos tokens emitidos antes deste campo. Eles seguem válidos até o TTL. */
     sid?: string;
     /**
      * Instante de emissão (epoch, segundos). Preenchido apenas por

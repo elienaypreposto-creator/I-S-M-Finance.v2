@@ -1,10 +1,10 @@
 /**
  * Conta do próprio usuário.
  *
- * GET   /me
- * PATCH /me                 nome, telefone, cargo
- * POST  /me/senha           política ISMF-27; derruba as outras sessões
- * GET   /me/sessoes
+ * GET    /me
+ * PATCH  /me          nome, telefone, cargo
+ * POST   /me/senha    derruba as outras sessões
+ * GET    /me/sessoes
  * DELETE /me/sessoes/:id
  * DELETE /me/sessoes?outras=true
  */

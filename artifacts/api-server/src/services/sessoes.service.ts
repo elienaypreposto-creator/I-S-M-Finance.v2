@@ -1,14 +1,7 @@
 /**
- * Sessões do usuário no Redis.
- *
- * O refresh token continua no Postgres. Aqui fica o que a tela precisa
- * (dispositivo, IP, início, último uso) e a revogação de UM dispositivo:
- * `sess:v1:rev:<sid>` faz o access token daquela sessão cair na próxima
- * request, sem derrubar as outras (a denylist por usuário derrubaria todas).
- *
- * Fail-open: Redis fora do ar não impede login. A lista fica vazia e a
- * revogação por dispositivo espera o Redis voltar; o refresh daquele
- * dispositivo ainda é revogado no Postgres quando a operação pede.
+ * Metadados de sessão no Redis. O refresh token permanece no Postgres.
+ * Revogar um dispositivo não usa a denylist do usuário: ela invalidaria todas as sessões.
+ * Redis indisponível não impede o login.
  */
 
 import crypto from "node:crypto";
@@ -197,7 +190,6 @@ export function redisArmazem(): ArmazemSessoes {
     };
 }
 
-/** Store em memória para testes. Relógio injetável. */
 export function memoriaArmazem(agora: () => number = Date.now): ArmazemSessoes {
     const sessoes = new Map<string, { reg: SessaoRegistro; expira: number }>();
     const porUsuario = new Map<number, Set<string>>();
@@ -264,7 +256,7 @@ export function mascararIp(ip: string | null): string {
     return "-";
 }
 
-/** "Windows · Chrome 129" a partir do user-agent. Sem geo (não temos esse dado). */
+/** Rótulo só do user-agent. Não há base geográfica para cidade. */
 export function rotuloDispositivo(ua: string | null): string {
     if (!ua || !ua.trim()) return "Dispositivo desconhecido";
     const os = /Windows NT/i.test(ua)
