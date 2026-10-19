@@ -73,12 +73,10 @@ export interface AccessTokenPayload {
     email: string;
     permissions: string[];
     empresa_id: number;
-    /**
-     * NOVO — Card 2 (Permissões). Único bit que concede acesso irrestrito a
-     * TODAS as empresas. Substitui o antigo padrão de permissão curinga
-     * `"*"` em permissions[] — ver withPermission.ts e withSuperadmin.ts.
-     */
+    /** Acesso irrestrito a todas as empresas. Não é um item de `permissions`. */
     superadmin: boolean;
+    /** Ausente nos tokens emitidos antes deste campo. Eles seguem válidos até o TTL. */
+    sid?: string;
     /**
      * Instante de emissão (epoch, segundos). Preenchido apenas por
      * `verifyAccessToken`; ignorado em `signAccessToken` (o `setIssuedAt()` define o valor).
@@ -98,6 +96,7 @@ export const signAccessToken = async (payload: AccessTokenPayload): Promise<stri
         permissions: payload.permissions,
         empresa_id: payload.empresa_id,
         superadmin: payload.superadmin,
+        ...(payload.sid ? {sid: payload.sid} : {}),
     })
         .setProtectedHeader({alg: "dir", enc: "A256GCM"})
         .setIssuedAt()
@@ -119,6 +118,7 @@ export const verifyAccessToken = async (token: string): Promise<AccessTokenPaylo
     const empresaRaw = payload.empresa_id as unknown;
     const empresa_id = typeof empresaRaw === "number" ? empresaRaw : Number(empresaRaw);
     const superadmin = payload.superadmin === true;
+    const sid = typeof payload.sid === "string" && payload.sid.length > 0 ? payload.sid : undefined;
     const iat = typeof payload.iat === "number" ? payload.iat : undefined;
 
     if (!sub || !email) throw new Error("Payload do token inválido: sub ou email ausente.");
@@ -130,7 +130,7 @@ export const verifyAccessToken = async (token: string): Promise<AccessTokenPaylo
         ? (permissions as unknown[]).filter((p): p is string => typeof p === "string")
         : [];
 
-    return {sub, email, permissions: safePermissions, empresa_id, superadmin, iat};
+    return {sub, email, permissions: safePermissions, empresa_id, superadmin, sid, iat};
 };
 
 /** Payload mínimo do Refresh Token JWS -> sem permissões por design. */

@@ -24,6 +24,7 @@ import {
     TrendingUp,
 } from "lucide-react";
 import {formatCurrency, cn} from "@/lib/utils";
+import {useSaldosVisiveis} from "@/components/conta/saldos-visiveis";
 import {classeSaldo} from "@/lib/saldo";
 import {hojeIsoLocal} from "@/lib/datas";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
@@ -118,7 +119,10 @@ function formatDateBr(iso: string): string {
 }
 
 // ─── Tipos de conta disponíveis (derivados do schema canônico) ────────────────
-const TIPO_ICONS: Record<string, React.ComponentType<{ className?: string; "aria-hidden"?: React.AriaAttributes["aria-hidden"] }>> = {
+const TIPO_ICONS: Record<string, React.ComponentType<{
+    className?: string;
+    "aria-hidden"?: React.AriaAttributes["aria-hidden"]
+}>> = {
     "Conta Corrente": Landmark,
     "Conta Movimento": PackageOpen,
     "Conta Poupança": PiggyBank,
@@ -504,7 +508,8 @@ function Field({
 }) {
     return (
         <div>
-            <label htmlFor={id} className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+            <label htmlFor={id}
+                   className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
                 {label}
                 {required && <span className="text-destructive ml-0.5">*</span>}
             </label>
@@ -1184,7 +1189,7 @@ export default function ContasBancarias() {
     const queryClient = useQueryClient();
     const {toast} = useToast();
     const {confirm, ConfirmDialogProps} = useConfirm();
-    const [showSaldos, setShowSaldos] = useState(true);
+    const saldos = useSaldosVisiveis();
     const [showModal, setShowModal] = useState(false);
     const [editingConta, setEditingConta] = useState<ContaBancaria | null>(null);
 
@@ -1370,15 +1375,15 @@ export default function ContasBancarias() {
                     <div className="flex gap-3">
                         <button
                             type="button"
-                            onClick={() => setShowSaldos((v) => !v)}
+                            onClick={() => saldos.alternar()}
                             className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all"
                         >
-                            {showSaldos ? (
+                            {saldos.visivel ? (
                                 <EyeOff className="w-4 h-4"/>
                             ) : (
                                 <Eye className="w-4 h-4"/>
                             )}
-                            {showSaldos ? "Ocultar" : "Mostrar"} Saldos
+                            {saldos.visivel ? "Ocultar" : "Mostrar"} Saldos
                         </button>
                         <button
                             type="button"
@@ -1394,7 +1399,8 @@ export default function ContasBancarias() {
             {/* Listagem em tabela */}
             <div className="glass-panel rounded-2xl overflow-hidden">
                 {/* Barra de filtros: painel à esquerda, busca à direita */}
-                <div className="px-4 py-2.5 border-b border-white/5 flex flex-wrap items-center justify-between gap-3 bg-black/10">
+                <div
+                    className="px-4 py-2.5 border-b border-white/5 flex flex-wrap items-center justify-between gap-3 bg-black/10">
                     <div className="flex flex-wrap items-center gap-2">
                         <FiltrosPopover
                             definicoes={definicoes}
@@ -1541,7 +1547,7 @@ export default function ContasBancarias() {
 
                                         {/* Saldo Atual */}
                                         <td className="px-5 py-4 text-right">
-                                            {showSaldos ? (
+                                            {saldos.visivel ? (
                                                 <span
                                                     className={cn("font-bold whitespace-nowrap", classeSaldo(toCents(conta.saldo_atual) / 100))}>
                                 {formatCurrency(toCents(conta.saldo_atual) / 100)}

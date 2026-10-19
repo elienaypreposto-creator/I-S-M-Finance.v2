@@ -1,23 +1,8 @@
 /**
- * Bloqueio temporário de conta por tentativas de login falhas (ISMF-7).
- *
- * Regra:
- * - 5 falhas para o mesmo e-mail em 15 min -> e-mail bloqueado por 15 min.
- * - Enquanto bloqueado, o login responde o MESMO 401 INVALID_CREDENTIALS, sem
- *   consultar senha — e a tentativa não é contada (o atacante não prolonga o
- *   bloqueio batendo nele).
- * - Login correto zera falhas/bloqueio; reset de senha também libera.
- *
- * Sem enumeração: conta falhas por e-mail digitado, exista ou não o usuário,
- * e a resposta de bloqueio é idêntica à de senha errada.
- *
- * Sem travar a vítima indefinidamente: o IP de onde o usuário já logou com
- * sucesso (30 dias) não é barrado pelo bloqueio causado por OUTROS IPs. Quem
- * errou a senha a partir desse IP continua bloqueado normalmente. Esse IP
- * segue limitado pelo loginLimiter (IP + e-mail) e pelo globalLimiter.
- *
- * Estado no Redis (chaves com hash do e-mail, nada em claro). Fail-open, como o
- * rate limit: Redis fora do ar não impede login (alerta via alertRedis).
+ * Bloqueio temporário por tentativas de login.
+ * A resposta é a mesma de senha incorreta, exista ou não a conta, e a tentativa durante o bloqueio não é contada.
+ * Um IP que já autenticou nesta conta não herda o bloqueio causado por outros IPs.
+ * Redis indisponível não impede o login.
  */
 
 import crypto from "node:crypto";
@@ -42,13 +27,37 @@ export const LOCKOUT_PADRAO: LockoutConfig = {
 /** Primitivas de armazenamento (Redis em produção, memória nos testes). */
 export interface LockoutStore {
     /** Soma uma falha; ao atingir o máximo, cria o bloqueio e zera o contador. */
-    falha(chave: string, ip: string, cfg: LockoutConfig): Promise<{falhas: number; bloqueouAgora: boolean}>;
+    falha(chave: string, ip: string, cfg: LockoutConfig): Promise<{ falhas: number; bloqueouAgora: boolean }>;
+
     /** ms restantes de bloqueio (0 = livre). */
     bloqueioRestanteMs(chave: string): Promise<number>;
+
     /** IP já logou com sucesso nesta conta e não falhou na janela atual. */
     ipConfiavel(chave: string, ip: string): Promise<boolean>;
+
     sucesso(chave: string, ip: string, cfg: LockoutConfig): Promise<void>;
+
     limpar(chave: string): Promise<void>;
+}
+
+export async function lerFalhasRecentes(email: string): Promise<{ total: number; ips: string[] } | null> {
+    try {
+        const r = getRedis();
+        if (!r) return null;
+        const chave = chaveConta(email);
+        const [contador, ips] = await Promise.all([
+            r.get(k("falhas", chave)),
+            r.smembers(k("ipfalha", chave)),
+        ]);
+        const total = contador ? parseInt(contador, 10) : 0;
+        const lista = Array.isArray(ips) ? ips.filter((ip) => typeof ip === "string" && ip.length > 0) : [];
+        const n = Number.isFinite(total) && total > 0 ? total : lista.length;
+        if (n <= 0 && lista.length === 0) return null;
+        return {total: n, ips: lista};
+    } catch (err) {
+        alertRedis("ler tentativas de login", err);
+        return null;
+    }
 }
 
 export function chaveConta(email: string): string {
@@ -123,9 +132,9 @@ export function redisLockoutStore(): LockoutStore {
 
 /** Store em memória com relógio injetável (testes). */
 export function memoryLockoutStore(agora: () => number = Date.now): LockoutStore {
-    const falhas = new Map<string, {n: number; expira: number}>();
+    const falhas = new Map<string, { n: number; expira: number }>();
     const bloq = new Map<string, number>();
-    const ipFalha = new Map<string, {ips: Set<string>; expira: number}>();
+    const ipFalha = new Map<string, { ips: Set<string>; expira: number }>();
     const ipOk = new Map<string, Set<string>>();
     const vivo = (exp: number | undefined) => exp !== undefined && exp > agora();
     return {
@@ -180,8 +189,11 @@ export interface EventoBloqueio {
 export interface AccountLockout {
     /** true = responder 401 sem verificar a senha. */
     bloqueado(email: string, ip: string): Promise<boolean>;
+
     registrarFalha(email: string, ip: string): Promise<void>;
+
     registrarSucesso(email: string, ip: string): Promise<void>;
+
     /** Libera a conta (ex.: após redefinir a senha). */
     liberar(email: string): Promise<void>;
 }
