@@ -23,6 +23,7 @@ const PARAMS: Record<string, (alvo: EmpresaFx) => string> = {
     "tokens-api:id": (e) => String(e.ids.tokenApi),
     "transferencias:grupo_id": (e) => e.ids.transferenciaGrupo,
     "usuarios:id": (e) => String(e.usuarioId),
+    "me:id": (e) => `sessao-${e.id}`,
     "usuarios:empresaId": (e) => String(e.id),
     "empresas:id": (e) => String(e.id),
     "admin:id": (e) => String(e.id),
