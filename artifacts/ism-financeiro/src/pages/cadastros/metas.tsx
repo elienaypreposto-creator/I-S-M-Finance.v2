@@ -2,7 +2,7 @@ import {tenantQueryKey} from "@/lib/tenant-query";
 import {Fragment, useEffect, useMemo, useRef, useState} from "react";
 import {PageHeader} from "@/components/shared/page-header";
 import {Download, Target, TrendingUp, TrendingDown, Loader2, ChevronDown, ChevronRight} from "lucide-react";
-import {useDinheiro} from "@/components/conta/saldos-visiveis";
+import {useDinheiro, useSaldosVisiveis} from "@/components/conta/saldos-visiveis";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
@@ -180,6 +180,7 @@ function MetaCell({
                       onSave,
                       onCancel,
                   }: MetaCellProps) {
+    const saldos = useSaldosVisiveis();
     const inputRef = useRef<HTMLInputElement>(null);
     const isActive =
         activeCell?.plano_conta_id === plano_conta_id && activeCell?.mes === mes;
@@ -223,10 +224,10 @@ function MetaCell({
                 })
             }
             className={`w-full text-right text-xs rounded px-1 py-0.5 transition-colors hover:bg-white/10 font-mono ${
-                hasValue ? "text-white" : "text-muted-foreground/30"
+                hasValue && saldos.visivel ? "text-white" : "text-muted-foreground/30"
             }`}
         >
-            {hasValue ? compactBrl(currentValue) : "—"}
+            {hasValue ? saldos.texto(compactBrl(currentValue)) : "—"}
         </button>
     );
 }
