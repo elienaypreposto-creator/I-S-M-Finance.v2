@@ -5,7 +5,8 @@ import {zodResolver} from "@hookform/resolvers/zod";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
-import {formatCurrency, formatDate, cn} from "@/lib/utils";
+import {formatDate, cn} from "@/lib/utils";
+import {useDinheiro} from "@/components/conta/saldos-visiveis";
 import {Checkbox} from "@/components/ui/checkbox";
 import {
     buildVincularFormSchema,
@@ -17,6 +18,7 @@ import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
 import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
 import {Modal, ModalFooter, ModalHeader, ModalSpinner, modalBtnPrimaryCls, modalBtnSecondaryCls} from "@/components/ui/modal-responsivo";
+import {SelectCampo} from "@/components/ui/select-campo";
 import {Loader2, Link2, AlertCircle, CheckCircle2, Pencil, Search} from "lucide-react";
 import {useAuth} from "@/hooks/use-auth";
 import {PERM} from "@/lib/permissoes";
@@ -148,6 +150,7 @@ function VincularFormBody({
 }) {
     const {toast} = useToast();
   const queryClient = useQueryClient();
+    const dinheiro = useDinheiro();
     const {hasPermission} = useAuth();
     const canVincular = hasPermission(PERM.CONCILIACAO_VINCULAR);
     const canEditarLancamento = hasPermission(PERM.LANCAMENTOS_EDITAR);
@@ -542,10 +545,10 @@ function VincularFormBody({
                                                     )}
                                                     {/* Valor de face e restante (já comprometido noutras conciliações). */}
                                                     <p className="text-sm font-bold text-primary mt-0.5">
-                                                        {formatCurrency(Number(l.valor))}
+                                                        {dinheiro(Number(l.valor))}
                                                         {quitadoAnteriorCents > 0 && (
                                                             <span className="text-xs font-semibold text-amber-300/90">
-                                                                {" "}| Restante: {formatCurrency(
+                                                                {" "}| Restante: {dinheiro(
                                                                     toMoney(Math.max(0, Math.round(Math.abs(Number(l.valor)) * 100) - quitadoAnteriorCents)),
                                                                 )}
                                                             </span>
@@ -554,7 +557,7 @@ function VincularFormBody({
                                                     {/* Quitação anterior visível: juros/multa pode superar o valor de face. */}
                                                     {quitadoAnteriorCents > 0 && (
                                                         <p className="text-xs text-amber-300/90 mt-0.5">
-                                                            Já quitado: {formatCurrency(toMoney(quitadoAnteriorCents))}
+                                                            Já quitado: {dinheiro(toMoney(quitadoAnteriorCents))}
                                                         </p>
                                                     )}
                                                     {canEditarLancamento && (
@@ -642,7 +645,7 @@ function VincularFormBody({
                     <div className="rounded-lg bg-white/5 px-2 py-2">
                         <p className={labelCls}>Referência</p>
                         <p className="text-sm font-bold text-white tabular-nums">
-                            {formatCurrency(toMoney(extratoCents))}
+                            {dinheiro(toMoney(extratoCents))}
                         </p>
                     </div>
                     <div className="rounded-lg bg-white/5 px-2 py-2">
@@ -652,13 +655,13 @@ function VincularFormBody({
                     <div className="rounded-lg bg-white/5 px-2 py-2">
                         <p className={labelCls}>Total lanç.</p>
                         <p className="text-sm font-bold text-white tabular-nums">
-                            {formatCurrency(toMoney(somaBasesCents))}
+                            {dinheiro(toMoney(somaBasesCents))}
                         </p>
                     </div>
                     <div className="rounded-lg bg-white/5 px-2 py-2">
                         <p className={labelCls}>Juros/Multa</p>
                         <p className="text-sm font-bold text-amber-200/90 tabular-nums">
-                            {formatCurrency(toMoney(somaJurosCents))}
+                            {dinheiro(toMoney(somaJurosCents))}
                         </p>
                     </div>
                     {/* Positivo = falta; negativo = excedente; zero = fecha. */}
@@ -687,7 +690,7 @@ function VincularFormBody({
                             )}>
                             {selectedItens.length === 0 || restanteCents === null
                                 ? "-"
-                                : formatCurrency(toMoney(Math.abs(restanteCents)))}
+                                : dinheiro(toMoney(Math.abs(restanteCents)))}
                         </p>
                     </div>
                 </div>
@@ -707,7 +710,7 @@ function VincularFormBody({
                 ) : showResidual ? (
                     <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2 space-y-2">
                         <p className="text-sm font-semibold text-red-200 text-center">
-                            Falta {formatCurrency(toMoney(Math.abs(restanteCents ?? 0)))} para
+                            Falta {dinheiro(toMoney(Math.abs(restanteCents ?? 0)))} para
                             fechar com o extrato
                         </p>
                         <Controller
@@ -726,7 +729,7 @@ function VincularFormBody({
                                         </span>
                                         <p className="text-xs text-muted-foreground mt-0.5 leading-snug">
                                             Cria lançamento pendente de{" "}
-                                            {formatCurrency(toMoney(Math.abs(restanteCents ?? 0)))}{" "}
+                                            {dinheiro(toMoney(Math.abs(restanteCents ?? 0)))}{" "}
                                             (pagamento parcial), com vencimento da origem - não
                                             editável.
                                         </p>
@@ -747,31 +750,20 @@ function VincularFormBody({
                                     name="residuo_lancamento_id"
                                     control={control}
                                     render={({field}) => (
-                                        <select
-                                            className={cn(inputCls, "mt-1")}
-                                            value={field.value ?? ""}
-                                            onChange={(e) =>
-                                                field.onChange(
-                                                    e.target.value ? Number(e.target.value) : null,
-                                                )
-                                            }>
-                                            <option value="">
-                                                Selecione o lançamento de origem…
-                                            </option>
-                                            {selectedItens.map((i) => {
-                                                const l = lancamentos.find(
-                                                    (x) => x.id === i.lancamento_id,
-                                                );
-                                                return (
-                                                    <option
-                                                        key={i.lancamento_id}
-                                                        value={i.lancamento_id}>
-                                                        #{i.lancamento_id} · {l?.descricao ?? "-"} ·{" "}
-                                                        {formatCurrency(Number(l?.valor ?? 0))}
-                                                    </option>
-                                                );
+                                        <SelectCampo
+                                            value={field.value == null ? "" : String(field.value)}
+                                            permitirVazio
+                                            placeholder="Selecione o lançamento de origem…"
+                                            className="mt-1"
+                                            onChange={(value) => field.onChange(value ? Number(value) : null)}
+                                            opcoes={selectedItens.map((i) => {
+                                                const l = lancamentos.find((x) => x.id === i.lancamento_id);
+                                                return {
+                                                    value: String(i.lancamento_id),
+                                                    label: `#${i.lancamento_id} · ${l?.descricao ?? "-"} · ${dinheiro(Number(l?.valor ?? 0))}`,
+                                                };
                                             })}
-                                        </select>
+                                        />
                                     )}
                                 />
                                 {errors.residuo_lancamento_id?.message && (
@@ -792,7 +784,7 @@ function VincularFormBody({
                         <p className="text-sm font-semibold text-amber-200 text-center">
                             {somaJurosCents > 0 && restanteCents === 0
                                 ? "Excedente alocado em Juros/Multa - valores batem"
-                                : `Falta ${formatCurrency(toMoney(restanteCents ?? 0))} para cobrir o extrato - você pode vincular agora e completar depois`}
+                                : `Falta ${dinheiro(toMoney(restanteCents ?? 0))} para cobrir o extrato - você pode vincular agora e completar depois`}
                         </p>
                         {selectedItens.length === 1 && restanteCents !== 0 && (
                             <label className="flex items-start gap-3 cursor-pointer group">
@@ -899,6 +891,7 @@ export function VincularModal({
                               }: VincularModalProps) {
     const queryClient = useQueryClient();
     const {toast} = useToast();
+    const dinheiro = useDinheiro();
 
     const [diasJanela, setDiasJanela] = useState(DIAS_JANELA_INICIAL);
     // Só aplica busca/valor/vencimento ao clicar em Buscar (não a cada tecla).
@@ -1047,7 +1040,7 @@ export function VincularModal({
                         </div>
                     }
                     title="Vincular lançamentos"
-                    description={`Linha #${linhaId} · Valor extrato ${formatCurrency(Number(valorExtratoAbs))}`}
+                    description={`Linha #${linhaId} · Valor extrato ${dinheiro(Number(valorExtratoAbs))}`}
                 >
                     <button
                         type="button"
@@ -1085,16 +1078,18 @@ export function VincularModal({
                             <label htmlFor="vincular-janela" className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
                                 Janela de busca
                             </label>
-                            <select
+                            <SelectCampo
                                 id="vincular-janela"
-                                value={diasJanela}
-                                onChange={(e) => setDiasJanela(Number(e.target.value))}
-                                className="bg-[#1a1c23] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-primary/50">
-                                <option value={14}>± 14 dias</option>
-                                <option value={30}>± 30 dias</option>
-                                <option value={60}>± 60 dias</option>
-                                <option value={90}>± 90 dias</option>
-                            </select>
+                                value={String(diasJanela)}
+                                onChange={(v) => setDiasJanela(Number(v))}
+                                className="w-[10em]"
+                                opcoes={[
+                                    {value: "14", label: "± 14 dias"},
+                                    {value: "30", label: "± 30 dias"},
+                                    {value: "60", label: "± 60 dias"},
+                                    {value: "90", label: "± 90 dias"},
+                                ]}
+                            />
                         </div>
                         <div className="flex flex-col gap-1 flex-1 min-w-[160px]">
                             <label htmlFor="vincular-busca" className="text-xs font-bold text-muted-foreground uppercase tracking-wider">

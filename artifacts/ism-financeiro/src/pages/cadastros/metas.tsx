@@ -2,7 +2,7 @@ import {tenantQueryKey} from "@/lib/tenant-query";
 import {Fragment, useEffect, useMemo, useRef, useState} from "react";
 import {PageHeader} from "@/components/shared/page-header";
 import {Download, Target, TrendingUp, TrendingDown, Loader2, ChevronDown, ChevronRight} from "lucide-react";
-import {cn, formatCurrency} from "@/lib/utils";
+import {useDinheiro} from "@/components/conta/saldos-visiveis";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
@@ -14,10 +14,10 @@ import {
 import {invalidateRelated} from "@/App";
 import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription} from "@/components/ui/empty";
+import {SelectCampo} from "@/components/ui/select-campo";
 import {
     FiltrosAtivos,
     FiltrosPopover,
-    FOCO_VISIVEL,
     separarMulti,
     useFiltrosNaUrl,
     type DefinicaoFiltro,
@@ -233,6 +233,7 @@ function MetaCell({
 
 // ─── Página ────────────────────────────────────────────────────────────────────
 export default function Metas() {
+    const dinheiro = useDinheiro();
     const queryClient = useQueryClient();
     const {toast} = useToast();
 
@@ -498,21 +499,13 @@ export default function Metas() {
             <div className="glass-panel rounded-2xl overflow-hidden">
                 <div className="px-4 py-2.5 flex flex-wrap items-center gap-2 bg-black/10">
                     <label htmlFor="metas-ano" className="sr-only">Ano das metas</label>
-                    <select
+                    <SelectCampo
                         id="metas-ano"
-                        value={ano}
-                        onChange={(e) => setAno(Number(e.target.value))}
-                        className={cn(
-                            "bg-black/20 border border-white/10 rounded-xl px-3 py-1.5 text-xs font-semibold text-white cursor-pointer hover:bg-white/5 hover:border-white/20 [&>option]:bg-card",
-                            FOCO_VISIVEL,
-                        )}
-                    >
-                        {anosOpcoes.map((y) => (
-                            <option key={y} value={y} className="bg-card text-white">
-                                {y}
-                            </option>
-                        ))}
-                    </select>
+                        value={String(ano)}
+                        onChange={(v) => setAno(Number(v))}
+                        className="w-[8.5em]"
+                        opcoes={anosOpcoes.map((y) => ({value: String(y), label: String(y)}))}
+                    />
                     <FiltrosPopover
                         definicoes={definicoes}
                         valores={filtros.valores}
@@ -537,7 +530,7 @@ export default function Metas() {
                         <p className="text-xs text-muted-foreground">Meta Receita {ano}</p>
                     </div>
                     <p className="text-lg font-bold text-teal-400">
-                        {isLoading ? "…" : formatCurrency(stats.receitas)}
+                        {isLoading ? "…" : dinheiro(stats.receitas)}
                     </p>
                 </div>
                 <div className="glass-panel rounded-2xl p-4">
@@ -546,7 +539,7 @@ export default function Metas() {
                         <p className="text-xs text-muted-foreground">Despesas + Custos</p>
                     </div>
                     <p className="text-lg font-bold text-destructive">
-                        {isLoading ? "…" : formatCurrency(stats.saidas)}
+                        {isLoading ? "…" : dinheiro(stats.saidas)}
                     </p>
                 </div>
                 <div className="glass-panel rounded-2xl p-4">
@@ -556,7 +549,7 @@ export default function Metas() {
                         <p className="text-xs text-muted-foreground">Resultado Projetado</p>
                     </div>
                     <p className={`text-lg font-bold ${stats.resultado >= 0 ? "text-success" : "text-destructive"}`}>
-                        {isLoading ? "…" : formatCurrency(stats.resultado)}
+                        {isLoading ? "…" : dinheiro(stats.resultado)}
                     </p>
                 </div>
                 <div className="glass-panel rounded-2xl p-4">
@@ -706,7 +699,7 @@ export default function Metas() {
                                     <span
                                         className={`text-xs font-semibold ${total > 0 ? cfg.color : "text-muted-foreground/40"}`}
                                     >
-                                      {total > 0 ? formatCurrency(total) : "—"}
+                                      {total > 0 ? dinheiro(total) : "—"}
                                     </span>
                                                                 </td>
                                                             </tr>

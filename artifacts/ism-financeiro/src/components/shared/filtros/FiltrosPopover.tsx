@@ -1,7 +1,8 @@
 import {useEffect, useId, useMemo, useRef, useState, type KeyboardEvent} from "react";
-import {Check, ChevronDown, Filter, Search, X} from "lucide-react";
+import {Check, Filter, Search, X} from "lucide-react";
 import {Popover, PopoverContent, PopoverTrigger} from "@/components/ui/popover";
 import {cn} from "@/lib/utils";
+import {SelectCampo} from "@/components/ui/select-campo";
 import {
     atualizarRascunho,
     contemBusca,
@@ -152,6 +153,14 @@ export function FiltrosPopover({definicoes, valores, contagem, onAplicar, classN
                         e.preventDefault();
                     }
                 }}
+                onFocusOutside={(e) => {
+                    const alvo = e.target instanceof Element ? e.target : null;
+                    if (alvo?.closest("[data-radix-select-content]")) e.preventDefault();
+                }}
+                onInteractOutside={(e) => {
+                    const alvo = e.target instanceof Element ? e.target : null;
+                    if (alvo?.closest("[data-radix-select-content]")) e.preventDefault();
+                }}
             >
                 <form
                     noValidate
@@ -241,29 +250,18 @@ export function FiltrosPopover({definicoes, valores, contagem, onAplicar, classN
                                 return (
                                     <div key={def.chave} className="min-w-0">
                                         <label htmlFor={idCampo} className={ROTULO}>{def.rotulo}</label>
-                                        <div className="relative">
-                                            <select
-                                                id={idCampo}
-                                                data-campo-filtro
-                                                value={rascunho[def.chave] ?? ""}
-                                                disabled={desabilitado}
-                                                onChange={(e) => definir(def.chave, e.target.value)}
-                                                className={cn(CAMPO, FOCO_VISIVEL, "appearance-none pr-8 [&>option]:bg-card")}
-                                            >
-                                                <option value="">
-                                                    {desabilitado
-                                                        ? def.placeholderDependente ?? "Selecione antes o filtro anterior"
-                                                        : def.placeholder ?? "Todos"}
-                                                </option>
-                                                {opcoes.map((o) => (
-                                                    <option key={o.valor} value={o.valor}>{o.rotulo}</option>
-                                                ))}
-                                            </select>
-                                            <ChevronDown
-                                                aria-hidden="true"
-                                                className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"
-                                            />
-                                        </div>
+                                        <SelectCampo
+                                            id={idCampo}
+                                            campoFiltro
+                                            value={rascunho[def.chave] ?? ""}
+                                            disabled={desabilitado}
+                                            permitirVazio
+                                            placeholder={desabilitado
+                                                ? def.placeholderDependente ?? "Selecione antes o filtro anterior"
+                                                : def.placeholder ?? "Todos"}
+                                            onChange={(v) => definir(def.chave, v)}
+                                            opcoes={opcoes.map((o) => ({value: o.valor, label: o.rotulo}))}
+                                        />
                                     </div>
                                 );
                             }

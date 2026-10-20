@@ -1,6 +1,7 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
 import {useMemo, useState, useRef, useEffect, type ReactNode} from "react";
 import {PageHeader} from "@/components/shared/page-header";
+import {SelectCampo} from "@/components/ui/select-campo";
 import {useQuery} from "@tanstack/react-query";
 import {toast} from "sonner";
 import type {WorkSheet} from "xlsx";
@@ -19,8 +20,6 @@ import {
     FileSpreadsheet,
     FileText,
     ChevronDown,
-    Eye,
-    EyeOff,
 } from "lucide-react";
 import {
     BarChart,
@@ -791,14 +790,6 @@ export default function Dashboard() {
                 description="Visão geral financeira e indicadores da ISM Tecnologia"
                 actions={
                     <div className="flex gap-3">
-                        <button
-                            type="button"
-                            onClick={() => saldos.alternar()}
-                            className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all"
-                        >
-                            {saldos.visivel ? <EyeOff className="w-4 h-4"/> : <Eye className="w-4 h-4"/>}
-                            {saldos.visivel ? "Ocultar" : "Mostrar"} saldos
-                        </button>
                         <ExportDropdown getData={getExportData} isLoading={exportIsLoading}/>
                     </div>
                 }
@@ -941,17 +932,18 @@ export default function Dashboard() {
                     </div>
                     <h3 className="font-bold text-white text-sm">Alertas de Inadimplência e Risco (Contas a Pagar)</h3>
                     <div className="ml-auto flex items-center gap-3 flex-wrap">
-                        <select
+                        <SelectCampo
                             value={filtroRisco}
-                            onChange={(e) => setFiltroRisco(e.target.value)}
-                            className="bg-[#1a1c23] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-primary/50 max-w-[220px]">
-                            <option value="">Sem filtro</option>
-                            {RISK_FILTER_KEYS.map((k) => (
-                                <option key={k} value={k}>
-                                    {RISK_CONFIG[k]?.label ?? k}
-                                </option>
-                            ))}
-                        </select>
+                            permitirVazio
+                            placeholder="Sem filtro"
+                            aria-label="Filtrar alertas por risco"
+                            className="w-[16em] max-w-full"
+                            onChange={setFiltroRisco}
+                            opcoes={RISK_FILTER_KEYS.map((k) => ({
+                                value: k,
+                                label: RISK_CONFIG[k]?.label ?? k,
+                            }))}
+                        />
                         <span
                             className="text-[10px] bg-destructive/20 text-destructive px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
               {alertasLoading ? "…" : `${alertasRisco.length} ocorrências`}

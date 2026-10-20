@@ -4,15 +4,10 @@ import { useQuery } from "@tanstack/react-query";
 import { FOCO_VISIVEL, useParametrosUrl } from "@/components/shared/filtros";
 import { PageHeader } from "@/components/shared/page-header";
 import { Download, Loader2, TrendingUp, AlertCircle } from "lucide-react";
-import { formatCurrency, cn } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { useDinheiro } from "@/components/conta/saldos-visiveis";
 import { fetchApiData } from "@/lib/api-config";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import {SelectCampo} from "@/components/ui/select-campo";
 
 const monthKey = (m: number) => String(m).padStart(2, "0");
 
@@ -42,6 +37,7 @@ function valorMes(linha: DreLinhaApi, mes: number): number {
 }
 
 export default function DreGerencial() {
+  const dinheiro = useDinheiro();
   const currentYear = new Date().getFullYear();
   // Ano e regime na URL (?ano=2026&regime=caixa) para sobreviver ao F5 e ao compartilhar o link.
   const { ler, atualizar } = useParametrosUrl();
@@ -124,20 +120,13 @@ export default function DreGerencial() {
       <div className="glass-panel rounded-2xl border border-white/5 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <span id="dre-ano-rotulo" className="text-xs text-muted-foreground whitespace-nowrap">Ano</span>
-          <Select value={String(ano)} onValueChange={(v) => setAno(Number(v))}>
-            <SelectTrigger
-              aria-labelledby="dre-ano-rotulo"
-              className={cn("w-[110px] h-8 rounded-xl bg-black/20 border-white/10 text-xs font-semibold hover:bg-white/5 hover:border-white/20", FOCO_VISIVEL)}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {anosOpcoes.map((y) => (
-                <SelectItem key={y} value={String(y)}>
-                  {y}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SelectCampo
+            aria-labelledby="dre-ano-rotulo"
+            value={String(ano)}
+            onChange={(v) => setAno(Number(v))}
+            className="w-[8.5em]"
+            opcoes={anosOpcoes.map((y) => ({value: String(y), label: String(y)}))}
+          />
           <div className="flex gap-1 p-0.5 bg-black/20 rounded-lg border border-white/5" role="group" aria-label="Regime">
             <button
               type="button"
@@ -201,7 +190,7 @@ export default function DreGerencial() {
                   <TrendingUp className={cn("w-4 h-4", item.color)} />
                   <p className="text-xs text-muted-foreground">{item.label}</p>
                 </div>
-                <p className={cn("text-xl font-bold tabular-nums", item.color)}>{formatCurrency(item.value)}</p>
+                <p className={cn("text-xl font-bold tabular-nums", item.color)}>{dinheiro(item.value)}</p>
               </div>
             ))}
           </div>
@@ -263,7 +252,7 @@ export default function DreGerencial() {
                               cellClass(linha.codigo, v),
                               futuro && "opacity-40",
                             )}>
-                            {v !== 0 ? formatCurrency(v) : "—"}
+                            {v !== 0 ? dinheiro(v) : "—"}
                           </td>
                         );
                       })}
@@ -273,7 +262,7 @@ export default function DreGerencial() {
                           cellClass(linha.codigo, Number(linha.total)),
                           linha.codigo === "7" ? "bg-emerald-500/10" : "bg-[#121417]/90",
                         )}>
-                        {Number(linha.total) !== 0 ? formatCurrency(Number(linha.total)) : "—"}
+                        {Number(linha.total) !== 0 ? dinheiro(Number(linha.total)) : "—"}
                       </td>
                     </tr>
                   ))}

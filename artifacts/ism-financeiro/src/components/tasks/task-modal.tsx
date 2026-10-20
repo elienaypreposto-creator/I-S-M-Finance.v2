@@ -10,6 +10,7 @@ import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
 import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
 import {Modal, ModalBody, ModalFooter, ModalHeader, modalBtnPrimaryCls, modalBtnSecondaryCls, modalGrid2Cls} from "@/components/ui/modal-responsivo";
+import {SelectCampo} from "@/components/ui/select-campo";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 type ChecklistItem = { id: string; texto: string; completed: boolean };
@@ -362,16 +363,12 @@ export function TaskModal({
                             </div>
                             <div>
                                 <label htmlFor="tarefa-coluna" className={labelCls}>{colunaLabel}</label>
-                                <select
+                                <SelectCampo
                                     id="tarefa-coluna"
                                     value={coluna}
-                                    onChange={e => setColuna(e.target.value)}
-                                    className={fieldCls}
-                                >
-                                    {COLUNAS.map(c => (
-                                        <option key={c.value} value={c.value}>{c.label}</option>
-                                    ))}
-                                </select>
+                                    onChange={setColuna}
+                                    opcoes={COLUNAS.map((c) => ({value: c.value, label: c.label}))}
+                                />
                             </div>
                         </div>
 

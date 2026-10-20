@@ -15,6 +15,7 @@ import {PERM} from "@/lib/permissoes";
 import {ParceiroCombobox} from "@/components/shared/parceiro-combobox";
 import {PlanoContaCombobox, type PlanoContaOption} from "@/components/shared/plano-conta-combobox";
 import {NovoParceiroModal, type ParceiroRow} from "@/pages/cadastros/parceiros";
+import {SelectCampo} from "@/components/ui/select-campo";
 
 type DepartamentoOption = { id: number; nome: string };
 type ParceiroSubModal = { mode: "create" } | { mode: "edit"; data: ParceiroRow };
@@ -338,8 +339,6 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill, varian
     const inputCls =
         "w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-primary/50 transition-all placeholder:text-muted-foreground/30";
     const labelCls = "text-xs font-bold text-muted-foreground uppercase tracking-widest mb-1.5 block";
-    const selectCls =
-        "w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-primary/50 transition-all appearance-none cursor-pointer [&>option]:bg-[#1a1c23]";
     const podeSalvar = textoGatilho.trim().length > 0 && !saveMutation.isPending;
 
     const campos = (
@@ -347,15 +346,15 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill, varian
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-x-[1.8em] gap-y-[1.2em]">
                 <div>
                     <label htmlFor="regra-natureza" className={labelCls}>Tipo</label>
-                    <select
+                    <SelectCampo
                         id="regra-natureza"
                         value={natureza}
-                        onChange={(e) => setNatureza(e.target.value as "entrada" | "saida")}
-                        className={selectCls}
-                    >
-                        <option value="entrada">Receita</option>
-                        <option value="saida">Despesa</option>
-                    </select>
+                        onChange={(v) => setNatureza(v as "entrada" | "saida")}
+                        opcoes={[
+                            {value: "entrada", label: "Receita"},
+                            {value: "saida", label: "Despesa"},
+                        ]}
+                    />
                 </div>
                 <div>
                     <label htmlFor="regra-texto" className={labelCls}>Texto Conciliação</label>
@@ -401,23 +400,29 @@ export function RegraConciliacaoModal({open, onClose, onSuccess, prefill, varian
                 </div>
                 <div>
                     <label htmlFor="regra-departamento" className={labelCls}>Departamento</label>
-                    <select id="regra-departamento" value={departamentoId} onChange={(e) => setDepartamentoId(e.target.value)}
-                            className={selectCls}>
-                        <option value="">Selecione o departamento...</option>
-                        {departamentos.map((d) => (
-                            <option key={d.id} value={d.id}>{d.nome}</option>
-                        ))}
-                    </select>
+                    <SelectCampo
+                        id="regra-departamento"
+                        value={departamentoId}
+                        permitirVazio
+                        placeholder="Selecione o departamento..."
+                        onChange={setDepartamentoId}
+                        opcoes={departamentos.map((d) => ({value: String(d.id), label: d.nome}))}
+                    />
                 </div>
                 <div>
                     <label htmlFor="regra-forma" className={labelCls}>Forma de Pagamento</label>
-                    <select id="regra-forma" value={formaPagamento} onChange={(e) => setFormaPagamento(e.target.value)}
-                            className={selectCls}>
-                        <option value="">Selecione...</option>
-                        <option value="PIX">PIX</option>
-                        <option value="TED">TED</option>
-                        <option value="Boleto">Boleto</option>
-                    </select>
+                    <SelectCampo
+                        id="regra-forma"
+                        value={formaPagamento}
+                        permitirVazio
+                        placeholder="Selecione..."
+                        onChange={setFormaPagamento}
+                        opcoes={[
+                            {value: "PIX", label: "PIX"},
+                            {value: "TED", label: "TED"},
+                            {value: "Boleto", label: "Boleto"},
+                        ]}
+                    />
                 </div>
             </div>
         </div>

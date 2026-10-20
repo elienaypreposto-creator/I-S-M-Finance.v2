@@ -1,7 +1,7 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
 import {useEffect, useState} from "react";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
-import {useForm} from "react-hook-form";
+import {useForm, Controller} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {z} from "zod";
 import {useToast} from "@/hooks/use-toast";
@@ -12,6 +12,7 @@ import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
 import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
 import {Modal, ModalBody, ModalFooter, ModalForm, ModalHeader, ModalSpinner, modalBtnPrimaryCls, modalBtnSecondaryCls, modalGrid2Cls} from "@/components/ui/modal-responsivo";
+import {SelectCampo} from "@/components/ui/select-campo";
 
 type ContaBancariaOption = {
     id: number;
@@ -64,6 +65,7 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
 
     const {
         register,
+        control,
         handleSubmit,
         setValue,
         watch,
@@ -183,17 +185,26 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
                         <div className={modalGrid2Cls}>
                             <div>
                                 <label htmlFor="import-extrato-conta" className={labelCls}>Conta bancária *</label>
-                                <select id="import-extrato-conta" {...register("contaId")} disabled={loadingContas || pending}
-                                        aria-invalid={!!errors.contaId} className={inputCls}>
-                                    <option value="">{loadingContas ? "Carregando contas…" : "Selecione a conta"}</option>
-                                    {contas.map((c) => (
-                                        <option key={c.id} value={String(c.id)}>
-                                            {c.nome}
-                                            {c.agencia ? ` · Ag. ${c.agencia}` : ""}
-                                            {c.conta ? ` · ${c.conta}` : ""}
-                                        </option>
-                                    ))}
-                                </select>
+                                <Controller
+                                    name="contaId"
+                                    control={control}
+                                    render={({field}) => (
+                                        <SelectCampo
+                                            id="import-extrato-conta"
+                                            value={field.value ?? ""}
+                                            permitirVazio
+                                            disabled={loadingContas || pending}
+                                            aria-invalid={!!errors.contaId}
+                                            placeholder={loadingContas ? "Carregando contas…" : "Selecione a conta"}
+                                            onBlur={field.onBlur}
+                                            onChange={field.onChange}
+                                            opcoes={contas.map((c) => ({
+                                                value: String(c.id),
+                                                label: `${c.nome}${c.agencia ? ` · Ag. ${c.agencia}` : ""}${c.conta ? ` · ${c.conta}` : ""}`,
+                                            }))}
+                                        />
+                                    )}
+                                />
                                 {errors.contaId && <p className={errorCls}>{errors.contaId.message}</p>}
                             </div>
 

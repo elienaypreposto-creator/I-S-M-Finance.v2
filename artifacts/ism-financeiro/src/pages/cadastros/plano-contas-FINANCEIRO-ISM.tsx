@@ -1,6 +1,6 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
 import {useState, useRef, useEffect, useMemo} from "react";
-import {useForm} from "react-hook-form";
+import {useForm, Controller} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {z} from "zod";
 import {PageHeader} from "@/components/shared/page-header";
@@ -12,6 +12,8 @@ import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
 import {fetchApi, fetchApiData} from "@/lib/api-config";
 import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
+import {cn} from "@/lib/utils";
+import {SelectCampo} from "@/components/ui/select-campo";
 import {
     Modal,
     ModalBody,
@@ -91,6 +93,7 @@ function FormModal({
     const {confirm, ConfirmDialogProps} = useConfirm();
     const {
         register,
+        control,
         handleSubmit,
         formState: {errors, isDirty},
     } = useForm<PlanoContaFormValues>({
@@ -141,22 +144,27 @@ function FormModal({
                                 Tipo
                                 {lockedTipo && <Lock aria-hidden="true" className="w-3 h-3 text-red-400"/>}
                             </label>
-                            <select
-                                id="plano-conta-tipo"
-                                {...register("tipo")}
-                                disabled={lockedTipo}
-                                aria-invalid={!!errors.tipo}
-                                aria-describedby={lockedTipo ? "plano-conta-tipo-travado" : undefined}
-                                className={`mt-1 w-full border rounded-lg p-2.5 outline-none focus:border-primary/50 transition-colors ${
-                                    lockedTipo
-                                        ? 'bg-white/5 border-red-400/30 text-white/70 cursor-not-allowed'
-                                        : 'bg-black/20 border-white/10 text-white'
-                                }`}
-                            >
-                                <option value="receita" className="bg-[#1a1c23] text-white">Receita</option>
-                                <option value="custo" className="bg-[#1a1c23] text-white">Custo</option>
-                                <option value="despesa" className="bg-[#1a1c23] text-white">Despesa</option>
-                            </select>
+                            <Controller
+                                name="tipo"
+                                control={control}
+                                render={({field}) => (
+                                    <SelectCampo
+                                        id="plano-conta-tipo"
+                                        value={field.value}
+                                        disabled={lockedTipo}
+                                        aria-invalid={!!errors.tipo}
+                                        aria-describedby={lockedTipo ? "plano-conta-tipo-travado" : undefined}
+                                        className={cn("mt-1", lockedTipo && "border-red-400/30 text-white/70")}
+                                        onBlur={field.onBlur}
+                                        onChange={field.onChange}
+                                        opcoes={[
+                                            {value: "receita", label: "Receita"},
+                                            {value: "custo", label: "Custo"},
+                                            {value: "despesa", label: "Despesa"},
+                                        ]}
+                                    />
+                                )}
+                            />
                             {lockedTipo && (
                                 <p id="plano-conta-tipo-travado" className="text-xs text-red-400/80 mt-1">Tipo travado pelo grupo selecionado</p>
                             )}
