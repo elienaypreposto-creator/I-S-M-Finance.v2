@@ -4,7 +4,8 @@ import {useLocation} from "wouter";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
-import {formatCurrency, formatDate, cn} from "@/lib/utils";
+import {formatDate, cn} from "@/lib/utils";
+import {useDinheiro} from "@/components/conta/saldos-visiveis";
 import {VincularModal, type DraftVincular} from "@/components/conciliacao/vincular-modal";
 import {IgnorarLinhaModal, type MotivoIgnorarPayload} from "@/components/conciliacao/ignorar-linha-modal";
 import {EditarLancamentoConciliacaoModal} from "@/components/conciliacao/editar-lancamento-modal";
@@ -12,13 +13,13 @@ import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useAuth} from "@/hooks/use-auth";
 import {PERM} from "@/lib/permissoes";
 import {
-  ArrowLeft,
-  Loader2,
-  AlertCircle,
-  FileText,
-  Link2,
-  Ban,
-  CheckCircle2,
+    ArrowLeft,
+    Loader2,
+    AlertCircle,
+    FileText,
+    Link2,
+    Ban,
+    CheckCircle2,
     RotateCcw,
     Unlink,
     Pencil,
@@ -45,40 +46,40 @@ import {
 } from "@/components/shared/filtros";
 
 type ExtratoDetalheExtrato = {
-  id: number;
-  conta_id: number;
-  conta_nome: string | null;
-  status: string;
-  arquivo_nome: string | null;
-  periodo_inicio: string | null;
-  periodo_fim: string | null;
-  total_linhas: number;
-  total_creditos: string | number;
-  total_debitos: string | number;
+    id: number;
+    conta_id: number;
+    conta_nome: string | null;
+    status: string;
+    arquivo_nome: string | null;
+    periodo_inicio: string | null;
+    periodo_fim: string | null;
+    total_linhas: number;
+    total_creditos: string | number;
+    total_debitos: string | number;
     saldo_final_banco: string | number | null;
     saldo_banco_data: string | null;
-  created_at: string;
+    created_at: string;
 };
 
 type ConciliacaoResumo = {
-  id: number;
-  status: string;
-  resumo_conciliados: number;
-  resumo_ignorados: number;
-  resumo_pendentes: number;
-  resumo_total: number;
+    id: number;
+    status: string;
+    resumo_conciliados: number;
+    resumo_ignorados: number;
+    resumo_pendentes: number;
+    resumo_total: number;
     resumo_classificadas_automaticamente?: number;
 };
 
 type VinculacaoDetalhe = {
     vinculo_id?: number;
-  lancamento_id: number;
-  descricao: string | null;
-  tipo: string;
-  status: string;
+    lancamento_id: number;
+    descricao: string | null;
+    tipo: string;
+    status: string;
     is_residuo_parcial?: boolean;
-  valor_vinculado: string | number;
-  desconto: string | number;
+    valor_vinculado: string | number;
+    desconto: string | number;
     acrescimo?: string | number;
     juros_multa?: string | number;
     vencimento?: string | null;
@@ -94,17 +95,17 @@ type VinculacaoDetalhe = {
 };
 
 export type LinhaDetalhe = {
-  linha_id: number;
-  tipo_movimento: string;
-  descricao: string | null;
-  valor: string | number;
-  data_movimento: string | null;
-  documento: string | null;
-  status: string;
-  valor_vinculado_total: string | number;
-  valor_saldo: string | number;
+    linha_id: number;
+    tipo_movimento: string;
+    descricao: string | null;
+    valor: string | number;
+    data_movimento: string | null;
+    documento: string | null;
+    status: string;
+    valor_vinculado_total: string | number;
+    valor_saldo: string | number;
     saldo_pos_linha: string | number | null;
-  vinculacoes: VinculacaoDetalhe[];
+    vinculacoes: VinculacaoDetalhe[];
     regra_id?: number | null;
     classificacao_automatica?: boolean;
     regra_texto_gatilho?: string | null;
@@ -133,34 +134,34 @@ type DiagnosticoSaldo = {
 } | null;
 
 type ExtratoDetalheResponse = {
-  extrato: ExtratoDetalheExtrato;
-  conciliacao: ConciliacaoResumo;
-  linhas: LinhaDetalhe[];
+    extrato: ExtratoDetalheExtrato;
+    conciliacao: ConciliacaoResumo;
+    linhas: LinhaDetalhe[];
     diagnostico: DiagnosticoSaldo;
 };
 
 function statusExtratoBadge(status: string) {
-  switch (status) {
-    case "conciliado":
-      return "bg-emerald-500/15 text-emerald-300 border-emerald-500/30";
-    case "parcial":
-      return "bg-amber-500/15 text-amber-300 border-amber-500/30";
-    case "cancelado":
-      return "bg-white/10 text-muted-foreground border-white/15";
-    default:
-      return "bg-sky-500/15 text-sky-300 border-sky-500/30";
-  }
+    switch (status) {
+        case "conciliado":
+            return "bg-emerald-500/15 text-emerald-300 border-emerald-500/30";
+        case "parcial":
+            return "bg-amber-500/15 text-amber-300 border-amber-500/30";
+        case "cancelado":
+            return "bg-white/10 text-muted-foreground border-white/15";
+        default:
+            return "bg-sky-500/15 text-sky-300 border-sky-500/30";
+    }
 }
 
 function statusLinhaBadge(status: string) {
-  switch (status) {
-    case "vinculado":
-      return "bg-emerald-500/15 text-emerald-300 border-emerald-500/25";
-    case "ignorado":
-      return "bg-white/10 text-muted-foreground border-white/15";
-    default:
-      return "bg-amber-500/15 text-amber-200 border-amber-500/25";
-  }
+    switch (status) {
+        case "vinculado":
+            return "bg-emerald-500/15 text-emerald-300 border-emerald-500/25";
+        case "ignorado":
+            return "bg-white/10 text-muted-foreground border-white/15";
+        default:
+            return "bg-amber-500/15 text-amber-200 border-amber-500/25";
+    }
 }
 
 function corNaturezaBadge(isCredito: boolean) {
@@ -387,6 +388,7 @@ function CardLancamento({
 }) {
     const {toast} = useToast();
     const queryClient = useQueryClient();
+    const dinheiro = useDinheiro();
 
     const [editando, setEditando] =
         useState<null | "desconto" | "juros_multa">(null);
@@ -412,7 +414,7 @@ function CardLancamento({
                 );
 
             return fetchApiData("/lancamentos", {
-        method: "POST",
+                method: "POST",
                 body: JSON.stringify({
                     tipo: original.tipo,
                     vencimento: original.vencimento,
@@ -440,7 +442,7 @@ function CardLancamento({
             });
         },
 
-    onSuccess: () => {
+        onSuccess: () => {
             invalidateRelated(
                 queryClient,
                 "lancamentos",
@@ -677,7 +679,7 @@ function CardLancamento({
                             }
                             className="flex items-center gap-1 text-xs text-white/90 mt-0.5 group disabled:opacity-60"
                         >
-                            {formatCurrency(
+                            {dinheiro(
                                 Number(v.desconto) || 0,
                             )}
 
@@ -748,7 +750,7 @@ function CardLancamento({
                             }
                             className="flex items-center gap-1 text-xs text-white/90 mt-0.5 group disabled:opacity-60"
                         >
-                            {formatCurrency(
+                            {dinheiro(
                                 Number(jurosOuAcrescimo) || 0,
                             )}
 
@@ -779,7 +781,7 @@ function CardLancamento({
                         corNaturezaTexto(isCredito),
                     )}
                 >
-                    {formatCurrency(
+                    {dinheiro(
                         Number(v.valor_vinculado),
                     )}
                 </span>
@@ -791,7 +793,7 @@ function CardLancamento({
                     <CheckCircle2 className="w-3 h-3 shrink-0"/>
                     <span className="truncate">
                         Residual de{" "}
-                        {formatCurrency(
+                        {dinheiro(
                             Number(
                                 v.residuo_pendente.valor,
                             ) || 0,
@@ -826,7 +828,7 @@ function CardLancamento({
                         </span>
 
                         <span className="font-bold text-sky-300">
-                            {formatCurrency(
+                            {dinheiro(
                                 Number(
                                     v.residuo_gerado.valor,
                                 ) || 0,
@@ -855,6 +857,7 @@ export default function ConciliacaoExtratoDetalhe({
     const queryClient = useQueryClient();
     const {toast} = useToast();
     const {hasPermission} = useAuth();
+    const dinheiro = useDinheiro();
 
     const canVincular = hasPermission(
         PERM.CONCILIACAO_VINCULAR,
@@ -1011,9 +1014,9 @@ export default function ConciliacaoExtratoDetalhe({
         parametros?.motivo_ignorar_obrigatorio ??
         false;
 
-  const extrato = data?.extrato;
-  const conc = data?.conciliacao;
-  const linhas = data?.linhas ?? [];
+    const extrato = data?.extrato;
+    const conc = data?.conciliacao;
+    const linhas = data?.linhas ?? [];
 
     const linhasEfetivas =
         useMemo<LinhaEfetiva[]>(
@@ -1540,10 +1543,10 @@ export default function ConciliacaoExtratoDetalhe({
         linhasFiltradas.length -
         linhasVisiveis.length;
 
-  return (
+    return (
         <div className="flex flex-col gap-4 h-full w-full px-0 py-2">
-      <button
-        type="button"
+            <button
+                type="button"
                 onClick={() =>
                     irPara(
                         "/conciliacao",
@@ -1552,13 +1555,13 @@ export default function ConciliacaoExtratoDetalhe({
                 className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-white transition-colors w-fit"
             >
                 <ArrowLeft className="w-3.5 h-3.5"/>
-        Voltar para conciliações
-      </button>
+                Voltar para conciliações
+            </button>
 
-      {vincularLinha && (
-        <VincularModal
-          open
-          extratoId={extratoId}
+            {vincularLinha && (
+                <VincularModal
+                    open
+                    extratoId={extratoId}
                     linhaId={
                         vincularLinha.id
                     }
@@ -1943,17 +1946,17 @@ export default function ConciliacaoExtratoDetalhe({
                 }}
             />
 
-      {isLoading ? (
-        <div className="glass-panel rounded-2xl p-16 flex flex-col items-center gap-3 border border-white/10">
+            {isLoading ? (
+                <div className="glass-panel rounded-2xl p-16 flex flex-col items-center gap-3 border border-white/10">
                     <Loader2 className="w-10 h-10 animate-spin text-primary"/>
                     <p className="text-sm text-muted-foreground">
                         Carregando extrato…
                     </p>
-        </div>
+                </div>
             ) : isError ||
             !extrato ||
             !conc ? (
-        <div className="glass-panel rounded-2xl p-10 border border-destructive/30 text-center">
+                <div className="glass-panel rounded-2xl p-10 border border-destructive/30 text-center">
                     <AlertCircle className="w-10 h-10 text-destructive mx-auto mb-3"/>
 
                     <p className="text-sm text-white font-medium">
@@ -1969,11 +1972,11 @@ export default function ConciliacaoExtratoDetalhe({
                         }
                         className="mt-4 text-xs text-primary underline"
                     >
-            Tentar novamente
-          </button>
-        </div>
-      ) : (
-        <>
+                        Tentar novamente
+                    </button>
+                </div>
+            ) : (
+                <>
                     <div
                         className="glass-panel rounded-xl border border-white/10 overflow-hidden flex flex-col flex-1 min-h-0 w-full min-w-0 max-w-none">
                         <div
@@ -1996,7 +1999,7 @@ export default function ConciliacaoExtratoDetalhe({
                             >
                                 <RefreshCw
                                     aria-hidden="true"
-                    className={cn(
+                                    className={cn(
                                         "w-3.5 h-3.5",
                                         isLoading &&
                                         "animate-spin",
@@ -2014,7 +2017,7 @@ export default function ConciliacaoExtratoDetalhe({
                                 atrasoMs={BUSCA_DEBOUNCE_MS}
                                 className="sm:w-64"
                             />
-            </div>
+                        </div>
 
                         <FiltrosAtivos
                             chips={filtrosUrl.chips}
@@ -2046,7 +2049,7 @@ export default function ConciliacaoExtratoDetalhe({
                                             )}
                 </span>
                                     )}
-              </div>
+                            </div>
 
                             <div className="hidden xl:block"/>
 
@@ -2058,8 +2061,8 @@ export default function ConciliacaoExtratoDetalhe({
                                     Movimentações
                                     não conciliadas
                                 </h2>
-            </div>
-          </div>
+                            </div>
+                        </div>
 
                         {linhasFiltradas.length ===
                         0 ? (
@@ -2068,7 +2071,7 @@ export default function ConciliacaoExtratoDetalhe({
                                 encontrada com
                                 os filtros
                                 aplicados.
-            </div>
+                            </div>
                         ) : (
                             <div className="divide-y divide-white/5 overflow-y-auto flex-1 min-h-0">
                                 {linhasVisiveis.map(
@@ -2114,7 +2117,7 @@ export default function ConciliacaoExtratoDetalhe({
                                             (isPendente ||
                                                 faltaFechar);
 
-                return (
+                                        return (
                                             <div
                                                 key={
                                                     linha.linha_id
@@ -2129,7 +2132,7 @@ export default function ConciliacaoExtratoDetalhe({
                                                     <div className="flex items-center justify-between gap-2 flex-wrap">
                                                         <div className="flex items-center gap-2 min-w-0">
                           <span
-                            className={cn(
+                              className={cn(
                                   "text-[10px] font-black px-1.5 py-0.5 rounded border uppercase shrink-0",
                                   corNaturezaBadge(
                                       isCredito,
@@ -2141,7 +2144,7 @@ export default function ConciliacaoExtratoDetalhe({
                                                                 }
                           </span>
 
-                          {linha.data_movimento && (
+                                                            {linha.data_movimento && (
                                                                 <span
                                                                     className="text-xs text-muted-foreground truncate">
                                                                     {formatDate(
@@ -2157,13 +2160,13 @@ export default function ConciliacaoExtratoDetalhe({
                                                                 >
                                                                     Não salvo
                                                                 </span>
-                        )}
-                      </div>
+                                                            )}
+                                                        </div>
 
                                                         <div className="flex items-center gap-1.5 shrink-0">
                                                             {canCriarRegra && (
-                            <button
-                              type="button"
+                                                                <button
+                                                                    type="button"
                                                                     title="Criar regra de conciliação automática a partir desta linha"
                                                                     onClick={() =>
                                                                         setRegraLinha(
@@ -2173,13 +2176,13 @@ export default function ConciliacaoExtratoDetalhe({
                                                                     className="w-6 h-6 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 flex items-center justify-center shrink-0"
                                                                 >
                                                                     <Plus className="w-3.5 h-3.5"/>
-                            </button>
+                                                                </button>
                                                             )}
 
                                                             {isPendente &&
                                                                 canIgnorar && (
-                            <button
-                              type="button"
+                                                                    <button
+                                                                        type="button"
                                                                         onClick={() =>
                                                                             setIgnorarLinhaId(
                                                                                 linha.linha_id,
@@ -2188,8 +2191,8 @@ export default function ConciliacaoExtratoDetalhe({
                                                                         className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-[11px] font-semibold text-white/90 whitespace-nowrap"
                                                                     >
                                                                         <Ban className="w-3 h-3"/>
-                              Ignorar
-                            </button>
+                                                                        Ignorar
+                                                                    </button>
                                                                 )}
 
                                                             {isIgnorado &&
@@ -2208,22 +2211,22 @@ export default function ConciliacaoExtratoDetalhe({
                                                                     </button>
                                                                 )}
                                                         </div>
-                      </div>
+                                                    </div>
 
                                                     <p className="text-sm text-white font-medium leading-snug">
                                                         {linha.descricao ??
                                                             "-"}
                                                     </p>
 
-                                  <span
-                                    className={cn(
+                                                    <span
+                                                        className={cn(
                                                             "block text-lg font-black",
                                                             corNaturezaTexto(
                                                                 isCredito,
                                                             ),
                                                         )}
                                                     >
-                                                        {formatCurrency(
+                                                        {dinheiro(
                                                             valorAbs,
                                                         )}
                                   </span>
@@ -2233,7 +2236,7 @@ export default function ConciliacaoExtratoDetalhe({
                                                             <p className="text-[11px] text-amber-300/90">
                                                                 Falta
                                                                 vincular{" "}
-                                                                {formatCurrency(
+                                                                {dinheiro(
                                                                     saldoAbs,
                                                                 )}
                                                             </p>
@@ -2272,14 +2275,14 @@ export default function ConciliacaoExtratoDetalhe({
                                                             <p className="text-[11px] text-muted-foreground">
                                                                 Saldo
                                                                 pós-linha:{" "}
-                                                                {formatCurrency(
+                                                                {dinheiro(
                                                                     Number(
                                                                         linha.saldo_pos_linha,
                                                                     ),
                                                                 )}
                                                             </p>
                                                         )}
-                                </div>
+                                                </div>
 
                                                 <div className="flex items-center justify-center py-1.5 xl:py-2">
                                                     {!isIgnorado && (
@@ -2302,10 +2305,10 @@ export default function ConciliacaoExtratoDetalhe({
                                                                 <span className="text-xs font-black">
                                                                     ≠
                                     </span>
-                                  )}
-                                </div>
+                                                            )}
+                                                        </div>
                                                     )}
-                        </div>
+                                                </div>
 
                                                 <div className="p-3 min-w-0 space-y-1.5">
                                                     {isVinculado &&
@@ -2399,10 +2402,10 @@ export default function ConciliacaoExtratoDetalhe({
                                                             lançamento
                                                             vinculado.
                                                         </p>
-                      )}
-                    </div>
-                  </div>
-                );
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
                                     },
                                 )}
 
@@ -2509,10 +2512,10 @@ export default function ConciliacaoExtratoDetalhe({
                                 {rotuloAcaoConciliacao}
                             </button>
                             </span>
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  );
+                        </div>
+                    </div>
+                </>
+            )}
+        </div>
+    );
 }

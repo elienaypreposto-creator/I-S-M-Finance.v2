@@ -1,6 +1,7 @@
 import {createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode} from "react";
 import {useAuth} from "@/hooks/use-auth";
-import {lerPreferencias} from "@/lib/preferencias-usuario";
+import {gravarPreferencias, lerPreferencias} from "@/lib/preferencias-usuario";
+import {formatCurrency} from "@/lib/utils";
 
 type SaldosVisiveis = {
     visivel: boolean;
@@ -11,8 +12,8 @@ type SaldosVisiveis = {
 const Ctx = createContext<SaldosVisiveis | null>(null);
 
 /**
- * O padrão vem da preferência "Ocultar saldos" (ligada até o usuário desligar).
- * O botão da tela só revela ou esconde nesta visita; não grava no navegador.
+ * Um único interruptor para o sistema inteiro.
+ * A escolha fica no navegador, por usuário. O padrão é ocultar até a pessoa mostrar.
  */
 export function SaldosVisiveisProvider({children}: { children: ReactNode }) {
     const {user} = useAuth();
@@ -28,14 +29,15 @@ export function SaldosVisiveisProvider({children}: { children: ReactNode }) {
         };
     }, []);
 
-    const ocultarSaldos = useMemo(() => lerPreferencias(user?.id).ocultarSaldos, [user?.id, versao]);
-    const [visivel, setVisivel] = useState(!ocultarSaldos);
+    const visivel = useMemo(() => !lerPreferencias(user?.id).ocultarSaldos, [user?.id, versao]);
 
-    useEffect(() => {
-        setVisivel(!ocultarSaldos);
-    }, [ocultarSaldos, user?.id]);
+    const alternar = useCallback(() => {
+        if (!user?.id) return;
+        const atual = lerPreferencias(user.id);
+        const gravou = gravarPreferencias(user.id, {...atual, ocultarSaldos: visivel});
+        if (gravou) window.dispatchEvent(new Event("ism-preferencias"));
+    }, [user?.id, visivel]);
 
-    const alternar = useCallback(() => setVisivel((v) => !v), []);
     const value = useMemo<SaldosVisiveis>(
         () => ({
             visivel,
@@ -54,4 +56,9 @@ export function useSaldosVisiveis(): SaldosVisiveis {
         return {visivel: false, alternar: () => undefined, texto: () => "••••••"};
     }
     return ctx;
+}
+
+export function useDinheiro(): (valor: number) => string {
+    const {texto} = useSaldosVisiveis();
+    return useCallback((valor: number) => texto(formatCurrency(valor)), [texto]);
 }

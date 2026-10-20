@@ -12,6 +12,7 @@ import {
 } from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {PageHeader} from "@/components/shared/page-header";
+import {SelectCampo} from "@/components/ui/select-campo";
 import {BotaoBloquear, BotaoEditar, BotaoExcluir} from "@/components/shared/botoes-acao";
 import {
     Plus,
@@ -279,9 +280,6 @@ const innerFieldCls = (hasError?: boolean) =>
         hasError ? "border-destructive/60 focus:border-destructive" : "border-white/10"
     }`;
 
-const selectCls =
-    "w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 transition-colors [&>option]:bg-[#1A1A24] [&>option]:text-white";
-
 type ErrRecord = Record<string, { message?: string } | undefined>;
 
 // ─── Linha de uma chave PIX dentro da tabela ────────────────────────────────
@@ -303,19 +301,16 @@ function PixKeyRow({contaIndex, pixIndex, control, setValue, remove, canRemove, 
                     name={`dadosBancarios.${contaIndex}.pix.${pixIndex}.tipo_chave`}
                     control={control}
                     render={({field}) => (
-                        <select
+                        <SelectCampo
                             value={field.value ?? ""}
-                            onChange={(e) => {
-                                field.onChange(e.target.value);
+                            aria-label="Tipo de chave PIX"
+                            onBlur={field.onBlur}
+                            onChange={(value) => {
+                                field.onChange(value);
                                 setValue(`dadosBancarios.${contaIndex}.pix.${pixIndex}.chave`, "", {shouldDirty: true});
                             }}
-                            onBlur={field.onBlur}
-                            className={selectCls}
-                        >
-                            {PIX_TIPO_CHAVE_OPTIONS.map((o) => (
-                                <option key={o.value} value={o.value}>{o.label}</option>
-                            ))}
-                        </select>
+                            opcoes={PIX_TIPO_CHAVE_OPTIONS.map((o) => ({value: o.value, label: o.label}))}
+                        />
                     )}
                 />
                 {errs?.tipo_chave?.message && (
@@ -864,12 +859,21 @@ export function NovoParceiroModal({onClose, initialData, onSaved, returnFocusTo}
                         {/* Departamento */}
                         <div>
                             <label htmlFor="parceiro-departamento" className={labelCls}>Lotação / Departamento</label>
-                            <select id="parceiro-departamento" {...register("departamento_id")}
-                                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors [&>option]:bg-[#1A1A24] [&>option]:text-white">
-                                <option value="">Selecione...</option>
-                                {departamentos.map((d) => <option key={d.id}
-                                                                  value={String(d.id)}>{d.nome}</option>)}
-                            </select>
+                            <Controller
+                                name="departamento_id"
+                                control={control}
+                                render={({field}) => (
+                                    <SelectCampo
+                                        id="parceiro-departamento"
+                                        value={field.value ?? ""}
+                                        permitirVazio
+                                        placeholder="Selecione..."
+                                        onBlur={field.onBlur}
+                                        onChange={field.onChange}
+                                        opcoes={departamentos.map((d) => ({value: String(d.id), label: d.nome}))}
+                                    />
+                                )}
+                            />
                         </div>
 
                         {/* Tipos de Parceiro */}

@@ -17,6 +17,7 @@ export function AppLayout({children}: { children: ReactNode }) {
 
     return (
         <SidebarProvider style={style as React.CSSProperties}>
+            <SaldosVisiveisProvider>
             <div className="flex min-h-screen w-full bg-background text-foreground selection:bg-primary/30">
                 <AppSidebar/>
                 <div className="flex flex-col flex-1 min-w-0">
@@ -46,14 +47,13 @@ export function AppLayout({children}: { children: ReactNode }) {
                         </div>
                     </header>
                     <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 animate-in">
-                        <SaldosVisiveisProvider>
-                            <div className="w-full">
-                                {children}
-                            </div>
-                        </SaldosVisiveisProvider>
+                        <div className="w-full">
+                            {children}
+                        </div>
                     </main>
                 </div>
             </div>
+            </SaldosVisiveisProvider>
         </SidebarProvider>
     );
 }

@@ -20,7 +20,7 @@ import {format as formatBtn, parseISO} from "date-fns";
 import {ptBR} from "date-fns/locale";
 import {cn} from "@/lib/utils";
 import {TIPOS_DOCUMENTO_LANCAMENTO} from "@/lib/lancamento-documento";
-import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from "@/components/ui/select";
+import {SelectCampo} from "@/components/ui/select-campo";
 import {fetchApiData} from "@/lib/api-config";
 import {
     AlertDialog,
@@ -57,7 +57,6 @@ import {
     Calendar,
     ChevronLeft,
     ChevronRight,
-    ChevronDown,
     CalendarDays,
     Target,
     Building2,
@@ -115,7 +114,6 @@ const fieldCls = cn(
     "disabled:opacity-50 disabled:cursor-not-allowed",
     focusRingCls,
 );
-const nativeSelectCls = cn(fieldCls, "appearance-none cursor-pointer pr-[2.4em] [&>option]:bg-[#1a1c23]");
 const labelCls = "block text-[0.75em] font-bold text-muted-foreground uppercase tracking-[0.06em] mb-[0.45em]";
 const errorCls = "text-[0.75em] text-destructive mt-[0.3em] font-medium";
 const pmtCellInputCls = cn(
@@ -123,7 +121,6 @@ const pmtCellInputCls = cn(
     "transition-colors placeholder:text-muted-foreground/50 focus:border-primary/60",
     focusRingCls,
 );
-const pmtCellSelectCls = cn(pmtCellInputCls, "appearance-none cursor-pointer pr-[2em] [&>option]:bg-[#1a1c23]");
 const pmtErrCls = "text-[0.75em] text-destructive mt-[0.3em]";
 const pmtThCls = "px-[0.75em] py-[0.5em] text-[0.75em] font-medium text-muted-foreground uppercase tracking-wide";
 const pmtAddBtnCls = cn(
@@ -152,17 +149,6 @@ function FormSection({id, title, className, children}: {
             </h3>
             <div className="space-y-[1em]">{children}</div>
         </section>
-    );
-}
-
-/** `<select>` nativo com a seta desenhada (o appearance-none remove a do navegador). */
-function NativeSelectWrap({children}: { children: ReactNode }) {
-    return (
-        <div className="relative">
-            {children}
-            <ChevronDown aria-hidden="true"
-                         className="pointer-events-none absolute right-[0.85em] top-1/2 -translate-y-1/2 w-[1em] h-[1em] text-muted-foreground"/>
-        </div>
     );
 }
 
@@ -363,25 +349,24 @@ function PagamentoPIXRow({index, control, setValue, removePagamento, errors}: Pa
                     name={`pagamentos.${index}.tipo_chave_pix`}
                     control={control}
                     render={({field}) => (
-                        <NativeSelectWrap>
-                            <select
-                                value={field.value ?? ""}
-                                onChange={(e) => {
-                                    field.onChange(e.target.value);
-                                    setValue(`pagamentos.${index}.chave_pix`, "", {shouldDirty: true});
-                                }}
-                                onBlur={field.onBlur}
-                                aria-label="Tipo de chave PIX"
-                                className={pmtCellSelectCls}
-                            >
-                                <option value="">Selecione...</option>
-                                <option value="cpf">CPF</option>
-                                <option value="cnpj">CNPJ</option>
-                                <option value="email">E-mail</option>
-                                <option value="telefone">Telefone</option>
-                                <option value="aleatoria">Chave Aleatória</option>
-                            </select>
-                        </NativeSelectWrap>
+                        <SelectCampo
+                            value={field.value ?? ""}
+                            permitirVazio
+                            placeholder="Selecione..."
+                            aria-label="Tipo de chave PIX"
+                            onBlur={field.onBlur}
+                            onChange={(value) => {
+                                field.onChange(value);
+                                setValue(`pagamentos.${index}.chave_pix`, "", {shouldDirty: true});
+                            }}
+                            opcoes={[
+                                {value: "cpf", label: "CPF"},
+                                {value: "cnpj", label: "CNPJ"},
+                                {value: "email", label: "E-mail"},
+                                {value: "telefone", label: "Telefone"},
+                                {value: "aleatoria", label: "Chave Aleatória"},
+                            ]}
+                        />
                     )}
                 />
                 {itemErr?.tipo_chave_pix && <p className={pmtErrCls}>{itemErr.tipo_chave_pix.message}</p>}
@@ -506,6 +491,7 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     const status = watch("status");
     const riscos = watch("riscos");
     const departamento_id = watch("departamento_id");
+    const centro_custo_id = watch("centro_custo_id");
     const observacao = watch("observacao") ?? "";
     const exigirTipoDocumento = watch("exigir_tipo_documento");
     const exigirDescricao = watch("exigir_descricao");
@@ -704,7 +690,6 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     };
 
     const inputCls = fieldCls;
-    const selectCls = nativeSelectCls;
     const comboTriggerCls = cn("h-[3.4em] md:h-[2.9em] py-0 px-[0.95em] text-[0.93em] rounded-[0.7em]", focusRingCls);
 
     const selectedRisk = riskLevels[nivelRisco];
@@ -852,39 +837,27 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                                 Tipo de documento{exigirTipoDocumento ? " *" : ""}
                                             </label>
                                             <Controller name="tipo_documento" control={control} render={({field}) => (
-                                                <Select
-                                                    value={field.value || undefined}
-                                                    onValueChange={(value) => {
+                                                <SelectCampo
+                                                    id="tipo-documento"
+                                                    value={field.value || ""}
+                                                    placeholder="Selecione..."
+                                                    aria-required={exigirTipoDocumento}
+                                                    aria-invalid={!!errors.tipo_documento}
+                                                    aria-describedby={errors.tipo_documento ? "tipo-documento-erro" : undefined}
+                                                    onChange={(value) => {
                                                         field.onChange(value);
                                                         if (editItem) {
                                                             setValue("exigir_tipo_documento", true, {
                                                                 shouldValidate: true,
-                                                                shouldDirty: true
+                                                                shouldDirty: true,
                                                             });
                                                         }
                                                     }}
-                                                >
-                                                    <SelectTrigger
-                                                        id="tipo-documento"
-                                                        aria-required={exigirTipoDocumento}
-                                                        aria-invalid={!!errors.tipo_documento}
-                                                        aria-describedby={errors.tipo_documento ? "tipo-documento-erro" : undefined}
-                                                        className={cn(inputCls, "py-0 shadow-none focus:ring-0 [&>svg]:w-[1em] [&>svg]:h-[1em]")}
-                                                    >
-                                                        <SelectValue placeholder="Selecione..."/>
-                                                    </SelectTrigger>
-                                                    <SelectContent className="z-[90] bg-[#1a1c23] border-white/10 text-white">
-                                                        {TIPOS_DOCUMENTO_LANCAMENTO.map((tipoDoc) => (
-                                                            <SelectItem
-                                                                key={tipoDoc.value}
-                                                                value={tipoDoc.value}
-                                                                className="text-white focus:bg-primary/20 focus:text-white"
-                                                            >
-                                                                {tipoDoc.label}
-                                                            </SelectItem>
-                                                        ))}
-                                                    </SelectContent>
-                                                </Select>
+                                                    opcoes={TIPOS_DOCUMENTO_LANCAMENTO.map((tipoDoc) => ({
+                                                        value: tipoDoc.value,
+                                                        label: tipoDoc.label,
+                                                    }))}
+                                                />
                                             )}/>
                                             {errors.tipo_documento && (
                                                 <p id="tipo-documento-erro"
@@ -977,18 +950,23 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                         </div>
                                         <div className="min-w-0">
                                             <label htmlFor="lancamento-status" className={labelCls}>Status</label>
-                                            <NativeSelectWrap>
-                                                <select id="lancamento-status" {...register("status")} className={selectCls}>
-                                                    <option value="pendente">Pendente</option>
-                                                    {tipo === "CR"
-                                                        ? <option value="recebido">Recebido (Liquidado)</option>
-                                                        : <option value="pago">Pago (Liquidado)</option>
-                                                    }
-                                                    <option value="pago_parcial">Pago parcial</option>
-                                                    <option value="atrasado">Atrasado</option>
-                                                    <option value="cancelado">Cancelado</option>
-                                                </select>
-                                            </NativeSelectWrap>
+                                            <SelectCampo
+                                                id="lancamento-status"
+                                                value={status ?? ""}
+                                                onChange={(value) => setValue("status", value as typeof status, {
+                                                    shouldDirty: true,
+                                                    shouldValidate: true,
+                                                })}
+                                                opcoes={[
+                                                    {value: "pendente", label: "Pendente"},
+                                                    tipo === "CR"
+                                                        ? {value: "recebido", label: "Recebido (Liquidado)"}
+                                                        : {value: "pago", label: "Pago (Liquidado)"},
+                                                    {value: "pago_parcial", label: "Pago parcial"},
+                                                    {value: "atrasado", label: "Atrasado"},
+                                                    {value: "cancelado", label: "Cancelado"},
+                                                ]}
+                                            />
                                             {errors.status && <p className={errorCls}>{errors.status.message}</p>}
                                         </div>
                                     </div>
@@ -1048,22 +1026,17 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                         <label className={labelCls} htmlFor="lancamento-departamento">
                                             <Building2 aria-hidden="true" className="w-[1em] h-[1em] inline mr-[0.3em] align-[-0.1em]"/> Departamento
                                         </label>
-                                        <NativeSelectWrap>
-                                            <select
-                                                id="lancamento-departamento"
-                                                {...register("departamento_id")}
-                                                className={selectCls}
-                                                onChange={(e) => {
-                                                    setValue("departamento_id", e.target.value, {shouldDirty: true});
-                                                    setValue("centro_custo_id", "", {shouldDirty: true});
-                                                }}
-                                            >
-                                                <option value="">Selecione o departamento...</option>
-                                                {departamentos.map((d) => (
-                                                    <option key={d.id} value={d.id}>{d.nome}</option>
-                                                ))}
-                                            </select>
-                                        </NativeSelectWrap>
+                                        <SelectCampo
+                                            id="lancamento-departamento"
+                                            value={departamento_id ?? ""}
+                                            permitirVazio
+                                            placeholder="Selecione o departamento..."
+                                            onChange={(value) => {
+                                                setValue("departamento_id", value, {shouldDirty: true});
+                                                setValue("centro_custo_id", "", {shouldDirty: true});
+                                            }}
+                                            opcoes={departamentos.map((d) => ({value: String(d.id), label: d.nome}))}
+                                        />
                                         {errors.departamento_id &&
                                             <p className={errorCls}>{errors.departamento_id.message}</p>}
                                     </div>
@@ -1071,20 +1044,17 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                     {/* Centro de Custo (filtrado por departamento) */}
                                     <div>
                                         <label htmlFor="lancamento-centro-custo" className={labelCls}>Centro de Custo</label>
-                                        <NativeSelectWrap>
-                                            <select id="lancamento-centro-custo" {...register("centro_custo_id")}
-                                                    className={selectCls}
-                                                    disabled={centrosCustoFiltrado.length === 0}>
-                                                <option value="">
-                                                    {centrosCustoFiltrado.length === 0
-                                                        ? departamento_id ? "Nenhum centro de custo neste departamento" : "Selecione um departamento primeiro..."
-                                                        : "Selecione o centro de custo..."}
-                                                </option>
-                                                {centrosCustoFiltrado.map((cc) => (
-                                                    <option key={cc.id} value={cc.id}>{cc.nome}</option>
-                                                ))}
-                                            </select>
-                                        </NativeSelectWrap>
+                                        <SelectCampo
+                                            id="lancamento-centro-custo"
+                                            value={centro_custo_id ?? ""}
+                                            permitirVazio
+                                            disabled={centrosCustoFiltrado.length === 0}
+                                            placeholder={centrosCustoFiltrado.length === 0
+                                                ? departamento_id ? "Nenhum centro de custo neste departamento" : "Selecione um departamento primeiro..."
+                                                : "Selecione o centro de custo..."}
+                                            onChange={(value) => setValue("centro_custo_id", value, {shouldDirty: true})}
+                                            opcoes={centrosCustoFiltrado.map((cc) => ({value: String(cc.id), label: cc.nome}))}
+                                        />
                                         {errors.centro_custo_id &&
                                             <p className={errorCls}>{errors.centro_custo_id.message}</p>}
                                     </div>
@@ -1112,22 +1082,22 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                                     <Target aria-hidden="true" className="w-[1em] h-[1em]"/> Sugestão Ativa
                                                 </span>
                                             </div>
-                                            <NativeSelectWrap>
-                                                <select
-                                                    id="lancamento-nivel-risco"
-                                                    value={nivelRisco}
-                                                    onChange={(e) => {
-                                                        setNivelRisco(parseInt(e.target.value, 10));
-                                                        setValue("riscos", [], {shouldDirty: true});
-                                                    }}
-                                                    className={cn(selectCls, "border-white/5 bg-black/40 font-black tracking-tight", selectedRisk?.color || "text-muted-foreground")}>
-                                                    <option value={0}>Sem Risco Definido</option>
-                                                    {Object.entries(riskLevels).map(([lv, data]) => (
-                                                        <option key={lv} value={lv}
-                                                                className="bg-[#1a1c23] py-2">{data.label}</option>
-                                                    ))}
-                                                </select>
-                                            </NativeSelectWrap>
+                                            <SelectCampo
+                                                id="lancamento-nivel-risco"
+                                                value={String(nivelRisco)}
+                                                className={cn("font-black tracking-tight", selectedRisk?.color || "text-muted-foreground")}
+                                                onChange={(value) => {
+                                                    setNivelRisco(parseInt(value, 10));
+                                                    setValue("riscos", [], {shouldDirty: true});
+                                                }}
+                                                opcoes={[
+                                                    {value: "0", label: "Sem Risco Definido"},
+                                                    ...Object.entries(riskLevels).map(([lv, data]) => ({
+                                                        value: lv,
+                                                        label: data.label,
+                                                    })),
+                                                ]}
+                                            />
 
                                             {selectedRisk && (
                                                 <div className="space-y-[0.9em] pt-[0.4em]">

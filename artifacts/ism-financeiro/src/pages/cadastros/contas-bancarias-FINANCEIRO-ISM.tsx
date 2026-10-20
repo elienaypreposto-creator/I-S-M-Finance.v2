@@ -7,8 +7,6 @@ import {BotaoBloquear, BotaoEditar, BotaoExcluir} from "@/components/shared/boto
 import {
     Plus,
     Landmark,
-    Eye,
-    EyeOff,
     CheckCircle,
     AlertCircle,
     Loader2,
@@ -1372,27 +1370,13 @@ export default function ContasBancarias() {
                 title="Contas Bancárias"
                 description="Gerencie as contas bancárias reais da empresa. O saldo é atualizado automaticamente via conciliação."
                 actions={
-                    <div className="flex gap-3">
-                        <button
-                            type="button"
-                            onClick={() => saldos.alternar()}
-                            className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all"
-                        >
-                            {saldos.visivel ? (
-                                <EyeOff className="w-4 h-4"/>
-                            ) : (
-                                <Eye className="w-4 h-4"/>
-                            )}
-                            {saldos.visivel ? "Ocultar" : "Mostrar"} Saldos
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setShowModal(true)}
-                            className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25"
-                        >
-                            <Plus className="w-4 h-4"/> Cadastrar Novo
-                        </button>
-                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setShowModal(true)}
+                        className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25"
+                    >
+                        <Plus className="w-4 h-4"/> Cadastrar Novo
+                    </button>
                 }
             />
 

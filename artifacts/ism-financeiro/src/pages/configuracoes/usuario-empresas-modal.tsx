@@ -5,7 +5,7 @@ import {fetchApiData} from "@/lib/api-config";
 import {nomeEmpresa, tenantQueryKey} from "@/lib/tenant-query";
 import {useToast} from "@/hooks/use-toast";
 import {cn} from "@/lib/utils";
-import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from "@/components/ui/select";
+import {SelectCampo} from "@/components/ui/select-campo";
 import {
     Modal,
     ModalBody,
@@ -150,40 +150,26 @@ export function UsuarioEmpresasModal({
                     <div className={modalGridCls}>
                         <div>
                             <label htmlFor="usuario-empresas-empresa" className={labelCls}>Empresa</label>
-                            <Select
-                                value={empresaId === "" ? undefined : String(empresaId)}
-                                onValueChange={(v) => setEmpresaId(Number(v))}
+                            <SelectCampo
+                                id="usuario-empresas-empresa"
+                                value={empresaId === "" ? "" : String(empresaId)}
+                                onChange={(v) => setEmpresaId(Number(v))}
                                 disabled={disponiveis.length === 0}
-                            >
-                                <SelectTrigger id="usuario-empresas-empresa"
-                                               className="w-full h-10 bg-white/5 border-white/10 rounded-xl text-sm text-white shadow-none">
-                                    <SelectValue placeholder={disponiveis.length === 0 ? "Sem empresas disponíveis" : "Empresa…"} />
-                                </SelectTrigger>
-                                <SelectContent className="z-[70] bg-[#1A1A24] border-white/10 text-white">
-                                    {disponiveis.map((e) => (
-                                        <SelectItem key={e.id} value={String(e.id)} className="text-white focus:bg-primary/20 focus:text-white">
-                                            {nomeEmpresa(e)}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
+                                placeholder={disponiveis.length === 0 ? "Sem empresas disponíveis" : "Empresa…"}
+                                opcoes={disponiveis.map((e) => ({value: String(e.id), label: nomeEmpresa(e)}))}
+                            />
                         </div>
                         <div>
                             <label htmlFor="usuario-empresas-papel" className={labelCls}>Papel</label>
-                            <Select value={papel} onValueChange={(v) => setPapel(v as "admin" | "membro")}>
-                                <SelectTrigger id="usuario-empresas-papel"
-                                               className="w-full h-10 bg-white/5 border-white/10 rounded-xl text-sm text-white shadow-none">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent className="z-[70] bg-[#1A1A24] border-white/10 text-white">
-                                    <SelectItem value="membro" className="text-white focus:bg-primary/20 focus:text-white">
-                                        Membro
-                                    </SelectItem>
-                                    <SelectItem value="admin" className="text-white focus:bg-primary/20 focus:text-white">
-                                        Admin
-                                    </SelectItem>
-                                </SelectContent>
-                            </Select>
+                            <SelectCampo
+                                id="usuario-empresas-papel"
+                                value={papel}
+                                onChange={(v) => setPapel(v as "admin" | "membro")}
+                                opcoes={[
+                                    {value: "membro", label: "Membro"},
+                                    {value: "admin", label: "Admin"},
+                                ]}
+                            />
                         </div>
                         <div className="flex items-end md:col-span-2 xl:col-span-1">
                             <button

@@ -1,7 +1,7 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
 import {useMemo, useState} from "react";
 import {StatusBadge} from "@/components/shared/status-badge";
-import {cn, formatCurrency, formatDate} from "@/lib/utils";
+import {cn, formatDate} from "@/lib/utils";
 import {DateRangePicker} from "@/components/shared/date-range-picker";
 import {keepPreviousData, useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
@@ -17,6 +17,7 @@ import {
     type OpcaoFiltro,
 } from "@/components/shared/filtros";
 import {BotaoEditar, BotaoExcluir} from "@/components/shared/botoes-acao";
+import {useDinheiro} from "@/components/conta/saldos-visiveis";
 import {ApiEnvelope, fetchApi, fetchApiData} from "@/lib/api-config";
 import {LancamentoModal} from "@/components/lancamentos/lancamento-modal";
 import {exportToExcel, fmtBRL, fmtDate as fmtDateExport} from "@/lib/export";
@@ -177,6 +178,7 @@ export default function Lancamentos() {
     const {toast} = useToast();
     const {confirm, ConfirmDialogProps} = useConfirm();
     const limit = 25;
+    const dinheiro = useDinheiro();
 
     // ── Opções dos filtros ──────────────────────────────────────────────────────
     const {data: contas = []} = useQuery({
@@ -494,9 +496,9 @@ export default function Lancamentos() {
                                 {data.totais && (
                                     <>
                                         {" · "}A receber{" "}
-                                        <strong className="text-teal-300">{formatCurrency(data.totais.receber)}</strong>
+                                        <strong className="text-teal-300">{dinheiro(data.totais.receber)}</strong>
                                         {" · "}A pagar{" "}
-                                        <strong className="text-orange-300">{formatCurrency(data.totais.pagar)}</strong>
+                                        <strong className="text-orange-300">{dinheiro(data.totais.pagar)}</strong>
                                     </>
                                 )}
                             </span>
@@ -630,7 +632,7 @@ export default function Lancamentos() {
                                     {/* Valor - sem $ na frente */}
                                     <td className={`px-3 py-2.5 text-right font-bold ${isCR ? "text-teal-300" : "text-white/90"}`}>
                                         {isCR ? "" : "- "}
-                                        {formatCurrency(Number(l.valor)).replace("R$", "").trim()}
+                                        {dinheiro(Number(l.valor)).replace("R$", "").trim()}
                                     </td>
 
                                     {/* Status */}

@@ -30,6 +30,7 @@ import {fetchApiData} from "@/lib/api-config";
 import {PERM} from "@/lib/permissoes";
 import {useAuth} from "@/hooks/use-auth";
 import {UsuarioEmpresasModal} from "./usuario-empresas-modal";
+import {SelectCampo} from "@/components/ui/select-campo";
 import {tenantQueryKey} from "@/lib/tenant-query";
 import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
@@ -720,15 +721,21 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
                             <label htmlFor="usuario-perfil-base" className={userLabelCls}>
                                 Perfil Base <span className="text-destructive">*</span>
                             </label>
-                            <select
-                                id="usuario-perfil-base"
-                                {...register("perfil_base")}
-                                aria-invalid={!!e.perfil_base}
-                                className={`w-full bg-white/5 border rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors [&>option]:bg-[#1A1A24] [&>option]:text-white ${e.perfil_base ? "border-destructive/60" : "border-white/10"}`}
-                            >
-
-                                {Object.keys(perfisBase).map((p) => <option key={p} value={p}>{p}</option>)}
-                            </select>
+                            <Controller
+                                name="perfil_base"
+                                control={control}
+                                render={({field}) => (
+                                    <SelectCampo
+                                        id="usuario-perfil-base"
+                                        value={field.value ?? ""}
+                                        aria-invalid={!!e.perfil_base}
+                                        className={e.perfil_base ? "border-destructive/60" : undefined}
+                                        onBlur={field.onBlur}
+                                        onChange={field.onChange}
+                                        opcoes={Object.keys(perfisBase).map((p) => ({value: p, label: p}))}
+                                    />
+                                )}
+                            />
                         </div>
 
                         <div>
@@ -753,27 +760,6 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
                             )}/>
                             <FieldError message={e.celular?.message}/>
                         </div>
-
-                        {/* Nota informativa sobre credenciais de acesso - apenas na criação */}
-                        {!isEdit && (
-                            <div className="col-span-full rounded-xl border border-white/10 bg-white/5 p-4 space-y-2">
-                                <div className="flex items-center gap-2">
-                                    <KeyRound aria-hidden="true" className="w-4 h-4 text-primary shrink-0"/>
-                                    <p className="text-xs font-semibold text-white uppercase tracking-wide">
-                                        Credenciais de Acesso
-                                    </p>
-                                </div>
-                                <p className="text-xs text-muted-foreground leading-relaxed">
-                                    <span className="font-medium text-white">Sem senha:</span> o sistema envia um
-                                    link de ativação por e-mail. O próprio utilizador define a senha no primeiro
-                                    acesso.
-                                </p>
-                                <p className="text-xs text-muted-foreground leading-relaxed">
-                                    <span className="font-medium text-white">Com senha:</span> a conta fica pronta
-                                    de imediato. O utilizador deverá alterá-la no primeiro login.
-                                </p>
-                            </div>
-                        )}
                     </div>
                 </ModalBody>
                 <ModalFooter hint="* Campos obrigatórios · Esc fecha">

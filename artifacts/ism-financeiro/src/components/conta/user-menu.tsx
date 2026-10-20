@@ -2,6 +2,8 @@ import {useState} from "react";
 import {
     Building2,
     CircleHelp,
+    Eye,
+    EyeOff,
     LogOut,
     Settings2,
     Shield,
@@ -24,6 +26,7 @@ import {Modal, ModalBody, ModalHeader} from "@/components/ui/modal-responsivo";
 import {PerfilModal} from "./perfil-modal";
 import {SegurancaModal} from "./seguranca-modal";
 import {iniciaisDe} from "./formatos";
+import {useSaldosVisiveis} from "./saldos-visiveis";
 
 const COMMIT = import.meta.env.VITE_APP_COMMIT || "local";
 const BUILD = import.meta.env.VITE_APP_BUILD || "";
@@ -32,6 +35,7 @@ type Painel = "perfil" | "preferencias" | "seguranca" | "ajuda" | null;
 
 export function UserMenu() {
     const {user, empresas, empresaAtiva, logout, switchEmpresa} = useAuth();
+    const saldos = useSaldosVisiveis();
     const {toast} = useToast();
     const [aberto, setAberto] = useState(false);
     const [painel, setPainel] = useState<Painel>(null);
@@ -124,6 +128,17 @@ export function UserMenu() {
                     <DropdownMenuItem className="rounded-lg focus:bg-white/10 focus:text-white"
                                       onSelect={() => setPainel("preferencias")}>
                         <Settings2 aria-hidden="true"/> Preferências
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                        className="rounded-lg focus:bg-white/10 focus:text-white"
+                        aria-pressed={saldos.visivel}
+                        onSelect={(e) => {
+                            e.preventDefault();
+                            saldos.alternar();
+                        }}
+                    >
+                        {saldos.visivel ? <EyeOff aria-hidden="true"/> : <Eye aria-hidden="true"/>}
+                        {saldos.visivel ? "Ocultar saldos" : "Mostrar saldos"}
                     </DropdownMenuItem>
                     <DropdownMenuItem className="rounded-lg focus:bg-white/10 focus:text-white"
                                       onSelect={() => setPainel("seguranca")}>

@@ -12,8 +12,9 @@ import {
   ArrowUpCircle,
   ArrowDownCircle,
 } from "lucide-react";
-import { cn, formatCurrency } from "@/lib/utils";
-import { FOCO_VISIVEL, useParametrosUrl } from "@/components/shared/filtros";
+import { useDinheiro } from "@/components/conta/saldos-visiveis";
+import { useParametrosUrl } from "@/components/shared/filtros";
+import { SelectCampo } from "@/components/ui/select-campo";
 import { useQuery } from "@tanstack/react-query";
 import { fetchApiData } from "@/lib/api-config";
 import { exportToExcel, exportToPDF, fmtBRL } from "@/lib/export";
@@ -25,12 +26,6 @@ const MESES = [
 ];
 const CURRENT_YEAR = new Date().getFullYear();
 const YEARS = Array.from({ length: 8 }, (_, i) => CURRENT_YEAR + 2 - i);
-
-/** Seletores de período no mesmo visual do botão Filtros (barra padrão ISMF-33). */
-const SELETOR_PERIODO = cn(
-  "bg-black/20 border border-white/10 rounded-xl px-3 py-1.5 text-xs font-semibold text-white cursor-pointer hover:bg-white/5 hover:border-white/20 transition-colors",
-  FOCO_VISIVEL,
-);
 
 /** Mês da URL (1–12); inválido ou ausente cai no mês atual. */
 function lerMes(valor: string): number {
@@ -86,6 +81,7 @@ function KpiCard({
 
 // ─── Página ────────────────────────────────────────────────────────────────────
 export default function FechamentoMensal() {
+  const dinheiro = useDinheiro();
   // Período na URL (?mes=10&ano=2026) para sobreviver ao F5 e ao compartilhar o link.
   const { ler, atualizar } = useParametrosUrl();
   const mes = lerMes(ler("mes"));
@@ -187,31 +183,21 @@ export default function FechamentoMensal() {
       <div className="glass-panel rounded-2xl border border-white/5 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Período do fechamento">
           <label htmlFor="fechamento-mes" className="sr-only">Mês</label>
-          <select
+          <SelectCampo
             id="fechamento-mes"
-            value={mes}
-            onChange={(e) => mudarPeriodo(Number(e.target.value), ano)}
-            className={SELETOR_PERIODO}
-          >
-            {MESES.map((m, i) => (
-              <option key={i} value={i + 1} className="bg-card text-white">
-                {m}
-              </option>
-            ))}
-          </select>
+            value={String(mes)}
+            onChange={(v) => mudarPeriodo(Number(v), ano)}
+            className="w-[12em]"
+            opcoes={MESES.map((m, i) => ({value: String(i + 1), label: m}))}
+          />
           <label htmlFor="fechamento-ano" className="sr-only">Ano</label>
-          <select
+          <SelectCampo
             id="fechamento-ano"
-            value={ano}
-            onChange={(e) => mudarPeriodo(mes, Number(e.target.value))}
-            className={SELETOR_PERIODO}
-          >
-            {anosOpcoes.map((y) => (
-              <option key={y} value={y} className="bg-card text-white">
-                {y}
-              </option>
-            ))}
-          </select>
+            value={String(ano)}
+            onChange={(v) => mudarPeriodo(mes, Number(v))}
+            className="w-[8.5em]"
+            opcoes={anosOpcoes.map((y) => ({value: String(y), label: String(y)}))}
+          />
         </div>
       </div>
 
@@ -256,7 +242,7 @@ export default function FechamentoMensal() {
               {/* Meta (planejado) */}
               <KpiCard
                 label="Meta Receita (Orçado)"
-                value={formatCurrency(data.planejado_receber)}
+                value={dinheiro(data.planejado_receber)}
                 colorClass="text-primary"
                 icon={<Wallet className="w-4 h-4 text-primary" />}
                 sub={
@@ -267,7 +253,7 @@ export default function FechamentoMensal() {
               {/* Realizado CR */}
               <KpiCard
                 label="Receitas Realizadas (CR)"
-                value={formatCurrency(data.realizado_receber)}
+                value={dinheiro(data.realizado_receber)}
                 colorClass={
                   data.realizado_receber >= data.planejado_receber
                     ? "text-success"
@@ -294,7 +280,7 @@ export default function FechamentoMensal() {
               {/* Realizado CP */}
               <KpiCard
                 label="Saídas Realizadas (CP)"
-                value={formatCurrency(data.realizado_gastar)}
+                value={dinheiro(data.realizado_gastar)}
                 colorClass="text-destructive"
                 icon={<ArrowDownCircle className="w-4 h-4 text-destructive" />}
                 sub={
@@ -321,7 +307,7 @@ export default function FechamentoMensal() {
                 <p
                   className={`text-2xl font-bold ${saldo >= 0 ? "text-success" : "text-destructive"}`}
                 >
-                  {formatCurrency(saldo)}
+                  {dinheiro(saldo)}
                 </p>
                 <p className="text-xs text-muted-foreground mt-1.5">
                   Receitas − Saídas realizadas

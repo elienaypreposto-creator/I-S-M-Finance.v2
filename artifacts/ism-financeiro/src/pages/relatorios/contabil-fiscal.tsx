@@ -9,10 +9,12 @@ import {
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
-import { cn, formatCurrency } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { useDinheiro } from "@/components/conta/saldos-visiveis";
 import { useQuery } from "@tanstack/react-query";
 import { fetchApiData } from "@/lib/api-config";
 import { exportToExcel, exportToPDF, fmtBRL, fmtDate } from "@/lib/export";
+import { SelectCampo } from "@/components/ui/select-campo";
 import {
   FiltrosAtivos,
   FiltrosPopover,
@@ -46,12 +48,6 @@ type TipoFiltro = "ambos" | "CR" | "CP";
 
 type ContaOpcao = { id: number; nome: string };
 
-/** Seletores de período no mesmo visual do botão Filtros (barra padrão ISMF-33). */
-const SELETOR_PERIODO = cn(
-  "bg-black/20 border border-white/10 rounded-xl px-3 py-1.5 text-xs font-semibold text-white cursor-pointer hover:bg-white/5 hover:border-white/20 transition-colors",
-  FOCO_VISIVEL,
-);
-
 /** Mês da URL (1–12); inválido ou ausente cai no mês atual. */
 function lerMes(valor: string): number {
   const n = Number.parseInt(valor, 10);
@@ -80,6 +76,7 @@ function lastDayOfMonth(ano: number, mes: number): string {
 
 // ─── Página ────────────────────────────────────────────────────────────────────
 export default function ContabilFiscal() {
+  const dinheiro = useDinheiro();
   const [tab, setTab] = useState<"livro" | "impostos">("livro");
 
   // Opções do filtro "Conta bancária" (mesma chave de cache da tela de lançamentos).
@@ -235,31 +232,21 @@ export default function ContabilFiscal() {
               <div className="flex flex-wrap items-center gap-2">
                 <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Período">
                   <label htmlFor="contabil-mes" className="sr-only">Mês</label>
-                  <select
+                  <SelectCampo
                     id="contabil-mes"
-                    value={mesFiltro}
-                    onChange={(e) => mudarPeriodo(Number(e.target.value), anoFiltro)}
-                    className={SELETOR_PERIODO}
-                  >
-                    {MESES_LONGOS.map((m, i) => (
-                      <option key={i} value={i + 1} className="bg-card text-white">
-                        {m}
-                      </option>
-                    ))}
-                  </select>
+                    value={String(mesFiltro)}
+                    onChange={(v) => mudarPeriodo(Number(v), anoFiltro)}
+                    className="w-[12em]"
+                    opcoes={MESES_LONGOS.map((m, i) => ({value: String(i + 1), label: m}))}
+                  />
                   <label htmlFor="contabil-ano" className="sr-only">Ano</label>
-                  <select
+                  <SelectCampo
                     id="contabil-ano"
-                    value={anoFiltro}
-                    onChange={(e) => mudarPeriodo(mesFiltro, Number(e.target.value))}
-                    className={SELETOR_PERIODO}
-                  >
-                    {anosOpcoes.map((y) => (
-                      <option key={y} value={y} className="bg-card text-white">
-                        {y}
-                      </option>
-                    ))}
-                  </select>
+                    value={String(anoFiltro)}
+                    onChange={(v) => mudarPeriodo(mesFiltro, Number(v))}
+                    className="w-[8.5em]"
+                    opcoes={anosOpcoes.map((y) => ({value: String(y), label: String(y)}))}
+                  />
                 </div>
                 <FiltrosPopover
                   definicoes={definicoes}
@@ -338,13 +325,13 @@ export default function ContabilFiscal() {
                   <div>
                     <p className="text-muted-foreground">Entradas</p>
                     <p className="font-bold text-teal-400">
-                      {formatCurrency(totalEntradas / 100)}
+                      {dinheiro(totalEntradas / 100)}
                     </p>
                   </div>
                   <div>
                     <p className="text-muted-foreground">Saídas</p>
                     <p className="font-bold text-destructive">
-                      {formatCurrency(totalSaidas / 100)}
+                      {dinheiro(totalSaidas / 100)}
                     </p>
                   </div>
                   <div>
@@ -356,7 +343,7 @@ export default function ContabilFiscal() {
                           : "text-destructive"
                       }`}
                     >
-                      {formatCurrency((totalEntradas - totalSaidas) / 100)}
+                      {dinheiro((totalEntradas - totalSaidas) / 100)}
                     </p>
                   </div>
                 </div>
@@ -421,7 +408,7 @@ export default function ContabilFiscal() {
                               }`}
                             >
                               {l.tipo === "CR" ? "+" : "-"}
-                              {formatCurrency(l.valor)}
+                              {dinheiro(l.valor)}
                             </td>
                             <td className="px-4 py-3 text-xs text-muted-foreground">
                               {l.categoria}
@@ -439,10 +426,10 @@ export default function ContabilFiscal() {
                           </td>
                           <td className="px-4 py-3 text-right">
                             <div className="text-teal-400 font-bold text-xs">
-                              +{formatCurrency(totalEntradas / 100)}
+                              +{dinheiro(totalEntradas / 100)}
                             </div>
                             <div className="text-destructive font-bold text-xs">
-                              -{formatCurrency(totalSaidas / 100)}
+                              -{dinheiro(totalSaidas / 100)}
                             </div>
                           </td>
                           <td />
