@@ -46,18 +46,37 @@ const getPurposeKey = (): Uint8Array => {
     return deriveKey(`purpose:${raw}`);
 };
 
+/**
+ * Em produção a cifra do access token não pode reaproveitar a chave de assinatura:
+ * sem JWT_ENCRYPT_SECRET próprio, o fallback acima usaria JWT_SECRET para as duas coisas.
+ */
+export function assertSegredosJwt(
+    env: NodeJS.ProcessEnv,
+    sair: (code: number) => never = process.exit,
+): void {
+    if (env.NODE_ENV !== "production") return;
+    const {JWT_SECRET: assinatura, JWT_ENCRYPT_SECRET: cifra} = env;
+    if (!assinatura || !cifra) {
+        console.error("[boot][jwt] JWT_SECRET e JWT_ENCRYPT_SECRET são obrigatórios em produção. Arranque recusado.");
+        sair(1);
+        return;
+    }
+    if (assinatura === cifra) {
+        console.error("[boot][jwt] JWT_SECRET igual a JWT_ENCRYPT_SECRET. Gere segredos distintos. Arranque recusado.");
+        sair(1);
+    }
+}
+
 /** Payload do Access Token JWE -> carrega permissões e a empresa ativa da sessão. */
 export interface AccessTokenPayload {
     sub: string;
     email: string;
     permissions: string[];
     empresa_id: number;
-    /**
-     * NOVO — Card 2 (Permissões). Único bit que concede acesso irrestrito a
-     * TODAS as empresas. Substitui o antigo padrão de permissão curinga
-     * `"*"` em permissions[] — ver withPermission.ts e withSuperadmin.ts.
-     */
+    /** Acesso irrestrito a todas as empresas. Não é um item de `permissions`. */
     superadmin: boolean;
+    /** Ausente nos tokens emitidos antes deste campo. Eles seguem válidos até o TTL. */
+    sid?: string;
     /**
      * Instante de emissão (epoch, segundos). Preenchido apenas por
      * `verifyAccessToken`; ignorado em `signAccessToken` (o `setIssuedAt()` define o valor).
@@ -77,6 +96,7 @@ export const signAccessToken = async (payload: AccessTokenPayload): Promise<stri
         permissions: payload.permissions,
         empresa_id: payload.empresa_id,
         superadmin: payload.superadmin,
+        ...(payload.sid ? {sid: payload.sid} : {}),
     })
         .setProtectedHeader({alg: "dir", enc: "A256GCM"})
         .setIssuedAt()
@@ -98,6 +118,7 @@ export const verifyAccessToken = async (token: string): Promise<AccessTokenPaylo
     const empresaRaw = payload.empresa_id as unknown;
     const empresa_id = typeof empresaRaw === "number" ? empresaRaw : Number(empresaRaw);
     const superadmin = payload.superadmin === true;
+    const sid = typeof payload.sid === "string" && payload.sid.length > 0 ? payload.sid : undefined;
     const iat = typeof payload.iat === "number" ? payload.iat : undefined;
 
     if (!sub || !email) throw new Error("Payload do token inválido: sub ou email ausente.");
@@ -109,7 +130,7 @@ export const verifyAccessToken = async (token: string): Promise<AccessTokenPaylo
         ? (permissions as unknown[]).filter((p): p is string => typeof p === "string")
         : [];
 
-    return {sub, email, permissions: safePermissions, empresa_id, superadmin, iat};
+    return {sub, email, permissions: safePermissions, empresa_id, superadmin, sid, iat};
 };
 
 /** Payload mínimo do Refresh Token JWS -> sem permissões por design. */
@@ -207,10 +228,6 @@ export const verifyPurposeToken = async (
 
     return {sub, email, purpose};
 };
-
-/** SHA-256 de senhas legadas -> usado exclusivamente para migração transparente no login. */
-export const sha256Hash = (value: string): string =>
-    crypto.createHash("sha256").update(value, "utf8").digest("hex");
 
 /** SHA-256 de um token opaco -> usado para armazenar e comparar refresh tokens no banco. */
 export const hashToken = (token: string): string =>

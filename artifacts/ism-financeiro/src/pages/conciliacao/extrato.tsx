@@ -4,12 +4,12 @@ import {useLocation} from "wouter";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
-import {formatCurrency, formatDate, cn} from "@/lib/utils";
+import {formatDate, cn} from "@/lib/utils";
+import {useDinheiro} from "@/components/conta/saldos-visiveis";
 import {VincularModal, type DraftVincular} from "@/components/conciliacao/vincular-modal";
 import {IgnorarLinhaModal, type MotivoIgnorarPayload} from "@/components/conciliacao/ignorar-linha-modal";
 import {EditarLancamentoConciliacaoModal} from "@/components/conciliacao/editar-lancamento-modal";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
-import {RequiresPermission} from "@/components/auth/requires-permission";
 import {useAuth} from "@/hooks/use-auth";
 import {PERM} from "@/lib/permissoes";
 import {
@@ -24,19 +24,26 @@ import {
     Unlink,
     Pencil,
     Plus,
-    X,
     Search,
     Copy,
     Trash2,
     Sparkles,
     RefreshCw,
-    Filter,
     Download,
     ChevronDown,
 } from "lucide-react";
 import {invalidateRelated} from "@/App";
 import {formatValorBrInput, brMoneyDisplayToApiString} from "@/validations/lancamentos.schema";
 import {RegraConciliacaoModal} from "@/components/conciliacao/regra-conciliacao-modal";
+import {
+    CampoBusca,
+    casaMulti,
+    FiltrosAtivos,
+    FiltrosPopover,
+    FOCO_VISIVEL,
+    useFiltrosNaUrl,
+    type DefinicaoFiltro,
+} from "@/components/shared/filtros";
 
 type ExtratoDetalheExtrato = {
     id: number;
@@ -381,6 +388,7 @@ function CardLancamento({
 }) {
     const {toast} = useToast();
     const queryClient = useQueryClient();
+    const dinheiro = useDinheiro();
 
     const [editando, setEditando] =
         useState<null | "desconto" | "juros_multa">(null);
@@ -671,7 +679,7 @@ function CardLancamento({
                             }
                             className="flex items-center gap-1 text-xs text-white/90 mt-0.5 group disabled:opacity-60"
                         >
-                            {formatCurrency(
+                            {dinheiro(
                                 Number(v.desconto) || 0,
                             )}
 
@@ -742,7 +750,7 @@ function CardLancamento({
                             }
                             className="flex items-center gap-1 text-xs text-white/90 mt-0.5 group disabled:opacity-60"
                         >
-                            {formatCurrency(
+                            {dinheiro(
                                 Number(jurosOuAcrescimo) || 0,
                             )}
 
@@ -773,7 +781,7 @@ function CardLancamento({
                         corNaturezaTexto(isCredito),
                     )}
                 >
-                    {formatCurrency(
+                    {dinheiro(
                         Number(v.valor_vinculado),
                     )}
                 </span>
@@ -785,7 +793,7 @@ function CardLancamento({
                     <CheckCircle2 className="w-3 h-3 shrink-0"/>
                     <span className="truncate">
                         Residual de{" "}
-                        {formatCurrency(
+                        {dinheiro(
                             Number(
                                 v.residuo_pendente.valor,
                             ) || 0,
@@ -820,7 +828,7 @@ function CardLancamento({
                         </span>
 
                         <span className="font-bold text-sky-300">
-                            {formatCurrency(
+                            {dinheiro(
                                 Number(
                                     v.residuo_gerado.valor,
                                 ) || 0,
@@ -834,7 +842,6 @@ function CardLancamento({
 }
 
 const TOLERANCIA_SALDO = 0.005;
-const BUSCA_MIN_CHARS = 3;
 const BUSCA_DEBOUNCE_MS = 350;
 const LINHAS_POR_PAGINA = 25;
 const PENDING_RELOAD = "__reload__";
@@ -850,6 +857,7 @@ export default function ConciliacaoExtratoDetalhe({
     const queryClient = useQueryClient();
     const {toast} = useToast();
     const {hasPermission} = useAuth();
+    const dinheiro = useDinheiro();
 
     const canVincular = hasPermission(
         PERM.CONCILIACAO_VINCULAR,
@@ -865,6 +873,10 @@ export default function ConciliacaoExtratoDetalhe({
 
     const canEditarLancamento = hasPermission(
         PERM.LANCAMENTOS_EDITAR,
+    );
+
+    const canConcluir = hasPermission(
+        PERM.CONCILIACAO_CONCLUIR,
     );
 
     const canCriarRegra = hasPermission(
@@ -925,85 +937,40 @@ export default function ConciliacaoExtratoDetalhe({
         setRegraLinha,
     ] = useState<LinhaDetalhe | null>(null);
 
-    const [filtroTipo, setFiltroTipo] =
-        useState<
-            "todos" | "credito" | "debito"
-        >("todos");
+    // Filtros na URL (tipo, status e busca), aplicados no navegador sobre as linhas carregadas.
+    const definicoesFiltro: DefinicaoFiltro[] = useMemo(() => [
+        {
+            chave: "tipo",
+            rotulo: "Tipo",
+            tipo: "select",
+            placeholder: "Crédito e débito",
+            opcoes: [
+                {valor: "credito", rotulo: "Crédito"},
+                {valor: "debito", rotulo: "Débito"},
+            ],
+        },
+        {
+            chave: "status",
+            rotulo: "Status",
+            tipo: "multi",
+            opcoes: [
+                {valor: "pendente", rotulo: "Pendente"},
+                {valor: "vinculado", rotulo: "Vinculado"},
+                {valor: "ignorado", rotulo: "Ignorado"},
+            ],
+        },
+    ], []);
+    const filtrosUrl = useFiltrosNaUrl(definicoesFiltro);
+    const buscaUrl = filtrosUrl.ler("q");
 
-    const [filtroStatus, setFiltroStatus] =
-        useState<
-            | "todos"
-            | "pendente"
-            | "vinculado"
-            | "ignorado"
-        >("todos");
-
-    const [buscaTexto, setBuscaTexto] =
-        useState("");
-
-    const [filtrosAplicados, setFiltrosAplicados] =
-        useState<{
-            tipo:
-                | "todos"
-                | "credito"
-                | "debito";
-            status:
-                | "todos"
-                | "pendente"
-                | "vinculado"
-                | "ignorado";
-            busca: string;
-        }>({
-            tipo: "todos",
-            status: "todos",
-            busca: "",
-        });
-
-    useEffect(() => {
-        const termo = buscaTexto.trim();
-
-        if (termo.length === 0) {
-            setFiltrosAplicados((prev) =>
-                prev.busca === ""
-                    ? prev
-                    : {...prev, busca: ""},
-            );
-            return;
-        }
-
-        if (termo.length < BUSCA_MIN_CHARS)
-            return;
-
-        const timeoutId = setTimeout(() => {
-            setFiltrosAplicados((prev) =>
-                prev.busca === termo
-                    ? prev
-                    : {...prev, busca: termo},
-            );
-        }, BUSCA_DEBOUNCE_MS);
-
-        return () => clearTimeout(timeoutId);
-    }, [buscaTexto]);
-
-    function aplicarFiltros() {
-        setFiltrosAplicados({
-            tipo: filtroTipo,
-            status: filtroStatus,
-            busca: buscaTexto.trim(),
-        });
-    }
-
-    function limparFiltros() {
-        setFiltroTipo("todos");
-        setFiltroStatus("todos");
-        setBuscaTexto("");
-
-        setFiltrosAplicados({
-            tipo: "todos",
-            status: "todos",
-            busca: "",
-        });
-    }
+    const filtrosAplicados = useMemo(
+        () => ({
+            tipo: filtrosUrl.valores.tipo ?? "",
+            status: filtrosUrl.valores.status ?? "",
+            busca: buscaUrl,
+        }),
+        [filtrosUrl.valores, buscaUrl],
+    );
 
     const [
         linhasVisiveisCount,
@@ -1500,6 +1467,8 @@ export default function ConciliacaoExtratoDetalhe({
     const podeFinalizar =
         pendentesEfetivos === 0;
 
+    const semPermissaoFinalizar = podeFinalizar && !canConcluir;
+
     const rotuloAcaoConciliacao =
         podeFinalizar
             ? "Conciliar"
@@ -1510,8 +1479,7 @@ export default function ConciliacaoExtratoDetalhe({
             return linhasEfetivas.filter(
                 (linha) => {
                     if (
-                        filtrosAplicados.tipo !==
-                        "todos" &&
+                        filtrosAplicados.tipo &&
                         linha.tipo_movimento !==
                         filtrosAplicados.tipo
                     ) {
@@ -1519,10 +1487,10 @@ export default function ConciliacaoExtratoDetalhe({
                     }
 
                     if (
-                        filtrosAplicados.status !==
-                        "todos" &&
-                        linha.status !==
-                        filtrosAplicados.status
+                        !casaMulti(
+                            filtrosAplicados.status,
+                            linha.status,
+                        )
                     ) {
                         return false;
                     }
@@ -2013,79 +1981,24 @@ export default function ConciliacaoExtratoDetalhe({
                         className="glass-panel rounded-xl border border-white/10 overflow-hidden flex flex-col flex-1 min-h-0 w-full min-w-0 max-w-none">
                         <div
                             className="flex flex-wrap items-center gap-2 px-3.5 py-2.5 border-b border-white/5 bg-black/10">
-                            <select
-                                value={
-                                    filtroTipo
-                                }
-                                onChange={(
-                                    e,
-                                ) =>
-                                    setFiltroTipo(
-                                        e.target
-                                            .value as typeof filtroTipo,
-                                    )
-                                }
-                                className="bg-black/30 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white/90 outline-none focus:border-primary/40"
-                            >
-                                <option value="todos">
-                                    Tipo
-                                </option>
-                                <option value="credito">
-                                    Crédito
-                                </option>
-                                <option value="debito">
-                                    Débito
-                                </option>
-                            </select>
-
-                            <select
-                                value={
-                                    filtroStatus
-                                }
-                                onChange={(
-                                    e,
-                                ) =>
-                                    setFiltroStatus(
-                                        e.target
-                                            .value as typeof filtroStatus,
-                                    )
-                                }
-                                className="bg-black/30 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white/90 outline-none focus:border-primary/40"
-                            >
-                                <option value="todos">
-                                    Status
-                                </option>
-                                <option value="pendente">
-                                    Pendente
-                                </option>
-                                <option value="vinculado">
-                                    Vinculado
-                                </option>
-                                <option value="ignorado">
-                                    Ignorado
-                                </option>
-                            </select>
-
-                            <button
-                                type="button"
-                                onClick={
-                                    aplicarFiltros
-                                }
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/90 hover:bg-primary text-primary-foreground text-xs font-bold"
-                            >
-                                <Filter className="w-3.5 h-3.5"/>
-                                Aplicar
-                            </button>
+                            <FiltrosPopover
+                                definicoes={definicoesFiltro}
+                                valores={filtrosUrl.valores}
+                                contagem={filtrosUrl.contagem}
+                                onAplicar={filtrosUrl.aplicar}
+                            />
 
                             <button
                                 type="button"
                                 title="Atualizar"
+                                aria-label="Atualizar extrato"
                                 onClick={() =>
                                     void refetch()
                                 }
-                                className="p-1.5 rounded-lg border border-white/10 text-white/80 hover:bg-white/5 hover:text-white"
+                                className={cn("p-1.5 rounded-lg border border-white/10 text-white/80 hover:bg-white/5 hover:text-white", FOCO_VISIVEL)}
                             >
                                 <RefreshCw
+                                    aria-hidden="true"
                                     className={cn(
                                         "w-3.5 h-3.5",
                                         isLoading &&
@@ -2094,48 +2007,25 @@ export default function ConciliacaoExtratoDetalhe({
                                 />
                             </button>
 
-                            <button
-                                type="button"
-                                title="Limpar filtros"
-                                onClick={
-                                    limparFiltros
-                                }
-                                className="p-1.5 rounded-lg border border-white/10 text-white/80 hover:bg-white/5 hover:text-white"
-                            >
-                                <X className="w-3.5 h-3.5"/>
-                            </button>
-
                             <div className="flex-1"/>
 
-                            <div className="relative w-full sm:w-64">
-                                <Search
-                                    className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2"/>
-
-                                <input
-                                    type="text"
-                                    value={
-                                        buscaTexto
-                                    }
-                                    onChange={(
-                                        e,
-                                    ) =>
-                                        setBuscaTexto(
-                                            e.target
-                                                .value,
-                                        )
-                                    }
-                                    onKeyDown={(
-                                        e,
-                                    ) =>
-                                        e.key ===
-                                        "Enter" &&
-                                        aplicarFiltros()
-                                    }
-                                    placeholder="Pesquisar (mín. 3 letras)"
-                                    className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-black/30 border border-white/10 text-xs text-white placeholder:text-muted-foreground outline-none focus:border-primary/40"
-                                />
-                            </div>
+                            <CampoBusca
+                                valor={buscaUrl}
+                                onBuscar={(termo) => filtrosUrl.atualizar({q: termo || null})}
+                                placeholder="Pesquisar na descrição…"
+                                rotulo="Pesquisar linhas do extrato pela descrição"
+                                atrasoMs={BUSCA_DEBOUNCE_MS}
+                                className="sm:w-64"
+                            />
                         </div>
+
+                        <FiltrosAtivos
+                            chips={filtrosUrl.chips}
+                            onRemover={filtrosUrl.remover}
+                            onLimparTodos={filtrosUrl.limpar}
+                            anuncio={`${linhasFiltradas.length} ${linhasFiltradas.length === 1 ? "linha encontrada" : "linhas encontradas"}`}
+                            className="px-3.5"
+                        />
 
                         <div
                             className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_36px_minmax(0,1fr)] border-b border-white/5 bg-black/20">
@@ -2336,7 +2226,7 @@ export default function ConciliacaoExtratoDetalhe({
                                                             ),
                                                         )}
                                                     >
-                                                        {formatCurrency(
+                                                        {dinheiro(
                                                             valorAbs,
                                                         )}
                                   </span>
@@ -2346,7 +2236,7 @@ export default function ConciliacaoExtratoDetalhe({
                                                             <p className="text-[11px] text-amber-300/90">
                                                                 Falta
                                                                 vincular{" "}
-                                                                {formatCurrency(
+                                                                {dinheiro(
                                                                     saldoAbs,
                                                                 )}
                                                             </p>
@@ -2385,7 +2275,7 @@ export default function ConciliacaoExtratoDetalhe({
                                                             <p className="text-[11px] text-muted-foreground">
                                                                 Saldo
                                                                 pós-linha:{" "}
-                                                                {formatCurrency(
+                                                                {dinheiro(
                                                                     Number(
                                                                         linha.saldo_pos_linha,
                                                                     ),
@@ -2565,55 +2455,63 @@ export default function ConciliacaoExtratoDetalhe({
                                 </span>
                             )}
 
-                            <RequiresPermission
-                                permission={
-                                    PERM.CONCILIACAO_CONCLUIR
-                                }
-                            >
+                            {semPermissaoFinalizar && hasPendingChanges && (
                                 <button
                                     type="button"
                                     disabled={
-                                        !hasPendingChanges ||
                                         salvarMutation.isPending ||
-                                        extrato.status ===
-                                        "conciliado"
+                                        extrato.status === "conciliado"
                                     }
                                     onClick={() => {
-                                        if (
-                                            salvarMutation.isPending
-                                        ) {
-                                            return;
-                                        }
-
-                                        if (
-                                            podeFinalizar
-                                        ) {
-                                            setFinalizarOpen(
-                                                true,
-                                            );
-                                            return;
-                                        }
-
-                                        salvarMutation.mutate(
-                                            {
-                                                finalizar:
-                                                    false,
-                                            },
-                                        );
+                                        if (salvarMutation.isPending) return;
+                                        salvarMutation.mutate({finalizar: false});
                                     }}
-                                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-success hover:bg-success/90 text-white text-xs font-bold disabled:opacity-40 disabled:pointer-events-none shadow-lg shadow-success/20"
+                                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-bold disabled:opacity-40"
                                 >
-                                    {salvarMutation.isPending ? (
-                                        <Loader2 className="w-4 h-4 animate-spin"/>
-                                    ) : (
-                                        <CheckCircle2 className="w-4 h-4"/>
-                                    )}
-
-                                    {
-                                        rotuloAcaoConciliacao
-                                    }
+                                    Salvar
                                 </button>
-                            </RequiresPermission>
+                            )}
+                            <span
+                                title={
+                                    semPermissaoFinalizar
+                                        ? "Você não tem permissão para finalizar a conciliação."
+                                        : undefined
+                                }
+                                className="inline-flex"
+                            >
+                            <button
+                                type="button"
+                                disabled={
+                                    semPermissaoFinalizar ||
+                                    !hasPendingChanges ||
+                                    salvarMutation.isPending ||
+                                    extrato.status === "conciliado"
+                                }
+                                onClick={() => {
+                                    if (salvarMutation.isPending || semPermissaoFinalizar) {
+                                        return;
+                                    }
+
+                                    if (podeFinalizar) {
+                                        setFinalizarOpen(true);
+                                        return;
+                                    }
+
+                                    salvarMutation.mutate({
+                                        finalizar: false,
+                                    });
+                                }}
+                                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-success hover:bg-success/90 text-white text-xs font-bold disabled:opacity-40 disabled:pointer-events-none shadow-lg shadow-success/20"
+                            >
+                                {salvarMutation.isPending ? (
+                                    <Loader2 className="w-4 h-4 animate-spin"/>
+                                ) : (
+                                    <CheckCircle2 className="w-4 h-4"/>
+                                )}
+
+                                {rotuloAcaoConciliacao}
+                            </button>
+                            </span>
                         </div>
                     </div>
                 </>

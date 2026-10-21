@@ -1,7 +1,7 @@
 /**
  * Middleware de auditoria HTTP.
  *
- * Intercepta POST / PUT / PATCH / DELETE e grava de forma assíncrona
+ * Intercepta POST / PUT / PATCH / DELETE (e todo /api/v1) e grava de forma assíncrona
  * no evento res.on("finish"), nunca bloqueando a resposta.
  *
  * logs_auditoria exige empresa_id NOT NULL. Rotas pre-tenant (login, refresh,
@@ -20,12 +20,17 @@ import crypto from "crypto";
 import {db, withTenantTx, type TenantDb} from "@workspace/db";
 import {logsAuditoriaTable, logsSistemaTable} from "@workspace/db/schema";
 import {isAuthGlobalPath, resolveAuditEmpresaId} from "../lib/audit-scope";
-import {shouldAuditRequest} from "../lib/audit-routes";
+import {isApiV1Path, shouldAuditRequest} from "../lib/audit-routes";
+import {identidadeAuditoria} from "../lib/api-token-identity";
 import {auditRequestId} from "./request-id";
+import {clientIp} from "../lib/client-ip";
 
 const SENSITIVE_KEYS = new Set([
     "senha",
     "senha_hash",
+    "senha_atual",
+    "senha_nova",
+    "confirmacao",
     "novaSenha",
     "password",
     "currentPassword",
@@ -64,18 +69,9 @@ function sanitize(value: unknown): unknown {
     return out;
 }
 
+/** IP real do cliente (resolvido por `trust proxy`); não lê `X-Forwarded-For` à mão. */
 export function extractIp(req: Request): string | null {
-    const forwarded = req.headers["x-forwarded-for"];
-
-    if (forwarded) {
-        const first = Array.isArray(forwarded)
-            ? forwarded[0]
-            : forwarded.split(",")[0];
-
-        return first?.trim() ?? null;
-    }
-
-    return req.ip ?? req.socket.remoteAddress ?? null;
+    return clientIp(req);
 }
 
 function buildDetalhes(req: Request): Record<string, unknown> {
@@ -87,8 +83,8 @@ function buildDetalhes(req: Request): Record<string, unknown> {
         !Array.isArray(body)
             ? {...(body as Record<string, unknown>)}
             : body !== undefined
-              ? {body}
-              : {};
+                ? {body}
+                : {};
 
     if (req.auditAntes !== undefined) {
         return {
@@ -100,11 +96,11 @@ function buildDetalhes(req: Request): Record<string, unknown> {
     return base;
 }
 
-function writeSistema(req: Request, res: Response): void {
+function writeSistema(req: Request, res: Response, servico = "auth"): void {
     void db
         .insert(logsSistemaTable)
         .values({
-            servico: "auth",
+            servico,
             mensagem: `${req.method} ${req.originalUrl} → ${res.statusCode}`,
             detalhes: {
                 ip: extractIp(req),
@@ -138,10 +134,8 @@ function writeAuditoria(
         async (tx: TenantDb) => {
             await tx.insert(logsAuditoriaTable).values({
                 empresa_id: empresaId,
-                usuario_id:
-                    req.user?.id && req.user.id > 0
-                        ? req.user.id
-                        : null,
+                // Chamada por token v1: usuario_id null + token_api_id (nunca o id do token como usuário).
+                ...identidadeAuditoria(req),
                 acao: req.method,
                 recurso: req.originalUrl,
                 ip: extractIp(req),
@@ -149,7 +143,6 @@ function writeAuditoria(
                 status_code: res.statusCode,
                 request_id: requestId,
                 user_agent: userAgent ?? null,
-                token_api_id: req.tokenApiId ?? null,
                 duracao_ms: Math.max(
                     0,
                     Date.now() - startedAt,
@@ -205,6 +198,12 @@ export const auditLogger = (
             )
         ) {
             writeSistema(req, res);
+            return;
+        }
+
+        // v1 recusada antes de resolver o token (401/formato): sem empresa, vai para logs_sistema.
+        if (isApiV1Path(req.originalUrl ?? req.path ?? "")) {
+            writeSistema(req, res, "api-v1");
             return;
         }
 

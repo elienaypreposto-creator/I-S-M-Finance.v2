@@ -2,6 +2,7 @@
   "name": "workspace",
   "version": "0.0.0",
   "license": "MIT",
+  "packageManager": "pnpm@12.11.2",
   "scripts": {
     "dev": "concurrently -c \"cyan,magenta\" -n \"api,web\" \"pnpm run dev:api\" \"pnpm run dev:web\"",
     "dev:api": "cd artifacts/api-server && pnpm run dev",
@@ -9,12 +10,9 @@
     "build": "pnpm -r --if-present run build && node scripts/copy-dist.cjs",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
-    "test": "pnpm --filter @workspace/api-server run test"
-  },
-  "pnpm": {
-    "overrides": {
-      "esbuild": "0.27.3"
-    }
+    "test": "pnpm --filter @workspace/api-server run test && pnpm run test:web",
+    "test:web": "pnpm --filter @workspace/api-server exec tsx --tsconfig ../ism-financeiro/tsconfig.json --test \"../ism-financeiro/src/**/*.test.ts\" \"../ism-financeiro/src/**/*.test.tsx\"",
+    "test:all": "node scripts/test-all.mjs"
   },
   "private": true,
   "devDependencies": {

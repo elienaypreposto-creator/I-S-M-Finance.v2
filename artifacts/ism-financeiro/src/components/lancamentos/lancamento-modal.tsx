@@ -1,6 +1,6 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
-import {useEffect, useRef, useState} from "react";
-import {createPortal} from "react-dom";
+import {useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode} from "react";
+import * as AlertDialogPrimitive from "@radix-ui/react-alert-dialog";
 import {
     useForm,
     Controller,
@@ -14,12 +14,21 @@ import {zodResolver} from "@hookform/resolvers/zod";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {Popover, PopoverContent, PopoverTrigger} from "@/components/ui/popover";
+import {Modal, ModalBody, ModalFooter, ModalForm, ModalHeader, ModalSpinner, modalBtnPrimaryCls, modalBtnSecondaryCls} from "@/components/ui/modal-responsivo";
 import {Calendar as CalendarPicker} from "@/components/ui/calendar";
 import {format as formatBtn, parseISO} from "date-fns";
 import {ptBR} from "date-fns/locale";
 import {cn} from "@/lib/utils";
+import {TIPOS_DOCUMENTO_LANCAMENTO} from "@/lib/lancamento-documento";
+import {SelectCampo} from "@/components/ui/select-campo";
 import {fetchApiData} from "@/lib/api-config";
-import {useEscapeClose} from "@/hooks/use-escape-close";
+import {
+    AlertDialog,
+    AlertDialogOverlay,
+    AlertDialogPortal,
+    AlertDialogTitle,
+    AlertDialogDescription,
+} from "@/components/ui/dialog";
 import {
     maskChavePix,
     mascararCodigoBanco,
@@ -91,10 +100,64 @@ function parseValorBrToNumber(display: string | undefined | null): number {
     return isNaN(n) ? 0 : n;
 }
 
+// ── Estilos do modal ──────────────────────────────────────────────────────
+// Tudo em `em`: o DialogContent define o font-size com
+// clamp(14px, 0.45vw + 8px, 18px) e campos, rótulos e espaçamentos crescem
+// junto em telas maiores. Nenhum texto fica abaixo de 0.75em (10,5px no
+// celular). O foco é indicado por um anel visível (não só pela cor da borda).
+const focusRingCls =
+    "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-[#121417]";
+// Altura 3.4em no celular (≈44px, alvo de toque) e 2.9em do tablet em diante.
+const fieldCls = cn(
+    "w-full h-[3.4em] md:h-[2.9em] bg-[#1a1c23] border border-white/10 rounded-[0.7em] px-[0.95em] text-[0.93em] text-white",
+    "transition-colors placeholder:text-muted-foreground/50 hover:border-white/20 focus:border-primary/60",
+    "disabled:opacity-50 disabled:cursor-not-allowed",
+    focusRingCls,
+);
+const labelCls = "block text-[0.75em] font-bold text-muted-foreground uppercase tracking-[0.06em] mb-[0.45em]";
+const errorCls = "text-[0.75em] text-destructive mt-[0.3em] font-medium";
+const pmtCellInputCls = cn(
+    "w-full h-[2.6em] bg-white/5 border border-white/10 rounded-[0.6em] px-[0.75em] text-[0.93em] text-white",
+    "transition-colors placeholder:text-muted-foreground/50 focus:border-primary/60",
+    focusRingCls,
+);
+const pmtErrCls = "text-[0.75em] text-destructive mt-[0.3em]";
+const pmtThCls = "px-[0.75em] py-[0.5em] text-[0.75em] font-medium text-muted-foreground uppercase tracking-wide";
+const pmtAddBtnCls = cn(
+    "inline-flex items-center gap-[0.25em] rounded-[0.4em] text-[0.8em] text-primary hover:text-primary/80 font-semibold transition-colors",
+    focusRingCls,
+);
+const pmtRemoveBtnCls = cn(
+    "inline-flex items-center justify-center w-[2em] h-[2em] rounded-[0.5em] text-muted-foreground hover:bg-destructive/20 hover:text-destructive transition-colors",
+    focusRingCls,
+);
+
+const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
+
+/** Bloco com título (Identificação, Valores e classificação, Pagamento e risco). */
+function FormSection({id, title, className, children}: {
+    id: string;
+    title: string;
+    className?: string;
+    children: ReactNode;
+}) {
+    return (
+        <section aria-labelledby={id} className={cn("min-w-0", className)}>
+            <h3 id={id}
+                className="text-[0.78em] font-extrabold uppercase tracking-[0.09em] text-[#7FC4EA] mb-[0.9em] pb-[0.5em] border-b border-white/[0.06]">
+                {title}
+            </h3>
+            <div className="space-y-[1em]">{children}</div>
+        </section>
+    );
+}
+
 // Modal de confirmação genérico e reutilizável, seguindo o padrão visual usado
 // em toda a aplicação (ícone no topo, título em negrito, descrição centralizada,
 // dois botões lado a lado). Usado aqui para confirmar o cancelamento do
 // cadastro/edição quando há alterações não salvas no formulário.
+// É um AlertDialog do Radix aninhado no Dialog do lançamento: prende o foco,
+// o Esc fecha só ele e o foco volta para o formulário.
 type ConfirmDialogTone = "warning" | "danger" | "info";
 
 function ConfirmDialog({
@@ -118,9 +181,6 @@ function ConfirmDialog({
     onConfirm: () => void;
     onCancel: () => void;
 }) {
-    useEscapeClose(open, onCancel, 70);
-    if (!open) return null;
-
     const toneCls: Record<ConfirmDialogTone, { iconBg: string; iconColor: string; confirmBtn: string }> = {
         warning: {
             iconBg: "bg-yellow-500/10",
@@ -139,38 +199,56 @@ function ConfirmDialog({
         },
     };
     const t = toneCls[tone];
+    // O AlertDialog do Radix só devolve o foco a um Trigger (não há): guardamos
+    // o elemento focado ao abrir e voltamos para ele ao fechar.
+    const returnFocusRef = useRef<HTMLElement | null>(null);
+    const btnFocus = "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-[#181a20]";
 
     return (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 backdrop-blur-md p-4">
-            <div
-                className="bg-[#181a20] border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl p-6 flex flex-col items-center text-center gap-4">
-                <div className={`w-12 h-12 rounded-full flex items-center justify-center ${t.iconBg}`}>
-                    {icon ?? <AlertTriangle className={`w-6 h-6 ${t.iconColor}`}/>}
-                </div>
-                <div className="space-y-1.5">
-                    <h3 className="text-base font-black text-white tracking-tight">{title}</h3>
-                    {description && (
-                        <p className="text-xs text-muted-foreground leading-relaxed">{description}</p>
-                    )}
-                </div>
-                <div className="flex gap-3 w-full pt-2">
-                    <button
-                        type="button"
-                        onClick={onCancel}
-                        className="flex-1 px-4 py-2.5 rounded-xl border border-white/10 text-white hover:bg-white/5 text-sm font-bold transition-all"
-                    >
-                        {cancelLabel}
-                    </button>
-                    <button
-                        type="button"
-                        onClick={onConfirm}
-                        className={`flex-1 px-4 py-2.5 rounded-xl text-white text-sm font-bold transition-all ${t.confirmBtn}`}
-                    >
-                        {confirmLabel}
-                    </button>
-                </div>
-            </div>
-        </div>
+        <AlertDialog open={open} onOpenChange={(o) => {
+            if (!o) onCancel();
+        }}>
+            <AlertDialogPortal>
+                <AlertDialogOverlay className="z-[70] bg-black/70 backdrop-blur-md motion-reduce:animate-none"/>
+                <AlertDialogPrimitive.Content
+                    onOpenAutoFocus={() => {
+                        returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                    }}
+                    onCloseAutoFocus={(e) => {
+                        const el = returnFocusRef.current;
+                        if (el?.isConnected) {
+                            e.preventDefault();
+                            el.focus();
+                        }
+                    }}
+                    className="fixed inset-0 m-auto h-fit z-[70] bg-[#181a20] border border-white/10 rounded-2xl w-[calc(100%-2rem)] max-w-sm shadow-2xl p-6 flex flex-col items-center text-center gap-4 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 motion-reduce:animate-none">
+                    <div className={`w-12 h-12 rounded-full flex items-center justify-center ${t.iconBg}`}>
+                        {icon ?? <AlertTriangle aria-hidden="true" className={`w-6 h-6 ${t.iconColor}`}/>}
+                    </div>
+                    <div className="space-y-1.5">
+                        <AlertDialogTitle className="text-base font-black text-white tracking-tight">{title}</AlertDialogTitle>
+                        {description ? (
+                            <AlertDialogDescription className="text-sm text-muted-foreground leading-relaxed">
+                                {description}
+                            </AlertDialogDescription>
+                        ) : null}
+                    </div>
+                    <div className="flex gap-3 w-full pt-2">
+                        <AlertDialogPrimitive.Cancel
+                            className={cn("flex-1 px-4 py-2.5 rounded-xl border border-white/10 text-white hover:bg-white/5 text-sm font-bold transition-colors", btnFocus)}>
+                            {cancelLabel}
+                        </AlertDialogPrimitive.Cancel>
+                        <button
+                            type="button"
+                            onClick={onConfirm}
+                            className={cn(`flex-1 px-4 py-2.5 rounded-xl text-white text-sm font-bold transition-colors ${t.confirmBtn}`, btnFocus)}
+                        >
+                            {confirmLabel}
+                        </button>
+                    </div>
+                </AlertDialogPrimitive.Content>
+            </AlertDialogPortal>
+        </AlertDialog>
     );
 }
 
@@ -206,21 +284,21 @@ function CompetenciaPicker({value, onChange}: { value: string; onChange: (v: str
     return (
         <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
-                <button type="button"
-                        className="w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white flex items-center justify-between hover:border-white/20 transition-all">
+                <button type="button" id="lancamento-competencia"
+                        className={cn(fieldCls, "flex items-center justify-between text-left", !value && "text-muted-foreground/70")}>
                     {value || "Selecione..."}
-                    <CalendarDays className="w-4 h-4 text-muted-foreground"/>
+                    <CalendarDays aria-hidden="true" className="w-[1.05em] h-[1.05em] text-muted-foreground shrink-0"/>
                 </button>
             </PopoverTrigger>
             <PopoverContent align="start"
                             className="bg-[#1a1c23] border border-white/10 rounded-xl shadow-2xl p-4 w-72">
                 <div className="flex items-center justify-between mb-4 px-1">
-                    <button type="button" onClick={() => setCurrentYear((y) => y - 1)}
+                    <button type="button" onClick={() => setCurrentYear((y) => y - 1)} aria-label="Ano anterior"
                             className="p-1 hover:bg-white/5 rounded text-white/50 hover:text-white transition-colors">
                         <ChevronLeft className="w-5 h-5"/>
                     </button>
                     <span className="text-sm font-bold text-white tracking-widest">{currentYear}</span>
-                    <button type="button" onClick={() => setCurrentYear((y) => y + 1)}
+                    <button type="button" onClick={() => setCurrentYear((y) => y + 1)} aria-label="Próximo ano"
                             className="p-1 hover:bg-white/5 rounded text-white/50 hover:text-white transition-colors">
                         <ChevronRight className="w-5 h-5"/>
                     </button>
@@ -252,81 +330,6 @@ function CompetenciaPicker({value, onChange}: { value: string; onChange: (v: str
     );
 }
 
-// Sub-componente isolado para campos PIX
-
-type PagamentoPixSectionProps = {
-    index: number;
-    control: Control<LancamentoModalFormValues>;
-    setValue: UseFormSetValue<LancamentoModalFormValues>;
-    errors: FieldErrors<LancamentoModalFormValues>;
-};
-
-function PagamentoPixSection({index, control, setValue, errors}: PagamentoPixSectionProps) {
-    const tipoChave = useWatch({control, name: `pagamentos.${index}.tipo_chave_pix`}) ?? "";
-    const itemErr = errors.pagamentos?.[index];
-
-    const innerLbl = "text-[10px] text-muted-foreground uppercase tracking-widest mb-1 block";
-    const innerInp = "w-full bg-[#141720] border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 transition-all placeholder:text-muted-foreground/30";
-    const innerSel = "w-full bg-[#141720] border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 transition-all appearance-none cursor-pointer [&>option]:bg-[#141720]";
-    const errCls = "text-[10px] text-destructive mt-1 font-medium";
-
-    return (
-        <div className="grid grid-cols-2 gap-3">
-            <div>
-                <label className={innerLbl}>Tipo de Chave *</label>
-                <Controller
-                    name={`pagamentos.${index}.tipo_chave_pix`}
-                    control={control}
-                    render={({field}) => (
-                        <select
-                            value={field.value ?? ""}
-                            onChange={(e) => {
-                                field.onChange(e.target.value);
-                                setValue(`pagamentos.${index}.chave_pix`, "", {shouldDirty: true});
-                            }}
-                            onBlur={field.onBlur}
-                            className={innerSel}
-                        >
-                            <option value="">Selecione...</option>
-                            <option value="cpf">CPF</option>
-                            <option value="cnpj">CNPJ</option>
-                            <option value="email">E-mail</option>
-                            <option value="telefone">Telefone</option>
-                            <option value="aleatoria">Chave Aleatória</option>
-                        </select>
-                    )}
-                />
-                {itemErr?.tipo_chave_pix && <p className={errCls}>{itemErr.tipo_chave_pix.message}</p>}
-            </div>
-            <div>
-                <label className={innerLbl}>Chave PIX *</label>
-                <Controller
-                    name={`pagamentos.${index}.chave_pix`}
-                    control={control}
-                    render={({field}) => (
-                        <input
-                            value={field.value ?? ""}
-                            onChange={(e) => field.onChange(maskChavePix(e.target.value, tipoChave))}
-                            onBlur={field.onBlur}
-                            ref={field.ref}
-                            maxLength={pixKeyMaxLength(tipoChave)}
-                            placeholder={pixKeyPlaceholder(tipoChave)}
-                            className={innerInp}
-                        />
-                    )}
-                />
-                {itemErr?.chave_pix && <p className={errCls}>{itemErr.chave_pix.message}</p>}
-            </div>
-        </div>
-    );
-}
-
-const pmtCellInputCls =
-    "w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 transition-colors placeholder:text-muted-foreground/30";
-const pmtCellSelectCls =
-    "w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 transition-colors appearance-none cursor-pointer [&>option]:bg-[#1a1c23]";
-const pmtErrCls = "text-[11px] text-destructive mt-1";
-
 type PagamentoPIXRowProps = {
     index: number;
     control: Control<LancamentoModalFormValues>;
@@ -341,32 +344,34 @@ function PagamentoPIXRow({index, control, setValue, removePagamento, errors}: Pa
 
     return (
         <tr className="border-t border-white/5">
-            <td className="px-3 py-2 align-top">
+            <td className="px-[0.75em] py-[0.5em] align-top w-[11em]">
                 <Controller
                     name={`pagamentos.${index}.tipo_chave_pix`}
                     control={control}
                     render={({field}) => (
-                        <select
+                        <SelectCampo
                             value={field.value ?? ""}
-                            onChange={(e) => {
-                                field.onChange(e.target.value);
+                            permitirVazio
+                            placeholder="Selecione..."
+                            aria-label="Tipo de chave PIX"
+                            onBlur={field.onBlur}
+                            onChange={(value) => {
+                                field.onChange(value);
                                 setValue(`pagamentos.${index}.chave_pix`, "", {shouldDirty: true});
                             }}
-                            onBlur={field.onBlur}
-                            className={pmtCellSelectCls}
-                        >
-                            <option value="">Selecione...</option>
-                            <option value="cpf">CPF</option>
-                            <option value="cnpj">CNPJ</option>
-                            <option value="email">E-mail</option>
-                            <option value="telefone">Telefone</option>
-                            <option value="aleatoria">Chave Aleatória</option>
-                        </select>
+                            opcoes={[
+                                {value: "cpf", label: "CPF"},
+                                {value: "cnpj", label: "CNPJ"},
+                                {value: "email", label: "E-mail"},
+                                {value: "telefone", label: "Telefone"},
+                                {value: "aleatoria", label: "Chave Aleatória"},
+                            ]}
+                        />
                     )}
                 />
                 {itemErr?.tipo_chave_pix && <p className={pmtErrCls}>{itemErr.tipo_chave_pix.message}</p>}
             </td>
-            <td className="px-3 py-2 align-top">
+            <td className="px-[0.75em] py-[0.5em] align-top">
                 <Controller
                     name={`pagamentos.${index}.chave_pix`}
                     control={control}
@@ -378,20 +383,22 @@ function PagamentoPIXRow({index, control, setValue, removePagamento, errors}: Pa
                             ref={field.ref}
                             maxLength={pixKeyMaxLength(tipoChave)}
                             placeholder={pixKeyPlaceholder(tipoChave)}
+                            aria-label="Chave PIX"
                             className={pmtCellInputCls}
                         />
                     )}
                 />
                 {itemErr?.chave_pix && <p className={pmtErrCls}>{itemErr.chave_pix.message}</p>}
             </td>
-            <td className="px-2 py-2 align-top text-right w-[40px]">
+            <td className="px-[0.5em] py-[0.5em] align-top text-right w-[3em]">
                 <button
                     type="button"
                     onClick={() => removePagamento(index)}
-                    className="p-1 hover:bg-destructive/20 rounded text-muted-foreground hover:text-destructive transition-colors"
+                    className={pmtRemoveBtnCls}
                     title="Remover chave PIX"
+                    aria-label="Remover chave PIX"
                 >
-                    <Trash2 className="w-3.5 h-3.5"/>
+                    <Trash2 aria-hidden="true" className="w-[1em] h-[1em]"/>
                 </button>
             </td>
         </tr>
@@ -425,6 +432,8 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
 
     type ParceiroSubModal = { mode: "create" } | { mode: "edit"; data: ParceiroRow };
     const [parceiroSubModal, setParceiroSubModal] = useState<ParceiroSubModal | null>(null);
+    const formRef = useRef<HTMLFormElement>(null);
+    const bodyRef = useRef<HTMLDivElement>(null);
 
     // Só é edição de um lançamento já existente quando `editItem` foi passado
     // (criação nova e criação via prefill de conciliação NÃO mostram
@@ -443,9 +452,13 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     const hydratedAtRef = useRef<number>(0);
 
     function buildInitialValues(): LancamentoModalFormValues {
-        if (editItem) return getLancamentoModalDefaultValues(editItem);
-        if (prefill) return buildDefaultValuesFromPrefill(prefill);
-        return getLancamentoModalDefaultValues(null);
+        const criar = !editItem;
+        const base = editItem
+            ? getLancamentoModalDefaultValues(editItem)
+            : prefill
+                ? buildDefaultValuesFromPrefill(prefill)
+                : getLancamentoModalDefaultValues(null);
+        return {...base, exigir_tipo_documento: criar, exigir_descricao: criar};
     }
 
     const form = useForm<LancamentoModalFormValues>({
@@ -460,7 +473,7 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
         watch,
         setValue,
         reset,
-        formState: {errors, isDirty},
+        formState: {errors, isDirty, dirtyFields},
     } = form;
 
     const {data: editItemFull, dataUpdatedAt} = useQuery<LancamentoEditItem>({
@@ -478,6 +491,10 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     const status = watch("status");
     const riscos = watch("riscos");
     const departamento_id = watch("departamento_id");
+    const centro_custo_id = watch("centro_custo_id");
+    const observacao = watch("observacao") ?? "";
+    const exigirTipoDocumento = watch("exigir_tipo_documento");
+    const exigirDescricao = watch("exigir_descricao");
     const isCP = tipo === "CP";
 
     const valorBr = watch("valorBr");
@@ -522,7 +539,9 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
         }
     }
 
-    useEscapeClose(!showCancelConfirm && !parceiroSubModal, handleRequestClose, 65);
+    // Esc, foco preso e devolução do foco ficam com o Modal (Dialog do Radix).
+    // O cadastro de parceiro é outro Modal aninhado: enquanto aberto, o Esc e
+    // o Tab ficam só nele, e ao fechar o foco volta ao campo Cliente/Fornecedor.
 
     // Reset ao abrir / mudar item (usa dados da lista - sem pagamentos ainda,
     // ou dados de pré-preenchimento vindos da Conciliação)
@@ -547,6 +566,16 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     // (2) um refetch por foco de janela no meio da edição não sobrescreve o
     // que o usuário digitou (isso já está coberto por `refetchOnWindowFocus:
     // false` acima, então aqui só filtramos re-renders sem busca nova).
+    useEffect(() => {
+        if (!editItem) return;
+        if (dirtyFields.tipo_documento) {
+            setValue("exigir_tipo_documento", true, {shouldValidate: true});
+        }
+        if (dirtyFields.descricao) {
+            setValue("exigir_descricao", true, {shouldValidate: true});
+        }
+    }, [editItem, dirtyFields.tipo_documento, dirtyFields.descricao, setValue]);
+
     useEffect(() => {
         if (editItemFull && dataUpdatedAt !== hydratedAtRef.current) {
             reset(getLancamentoModalDefaultValues(editItemFull));
@@ -660,682 +689,797 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
         toast({title: "Tag criada", description: `Tag adicionada ao Nível ${newTag.level}.`});
     };
 
-    const inputCls =
-        "w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-primary/50 transition-all placeholder:text-muted-foreground/30";
-    const innerInputCls =
-        "w-full bg-[#141720] border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 transition-all placeholder:text-muted-foreground/30";
-    const labelCls = "text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5 block";
-    const innerLabelCls = "text-[10px] text-muted-foreground uppercase tracking-widest mb-1 block";
-    const selectCls =
-        "w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-primary/50 transition-all appearance-none cursor-pointer [&>option]:bg-[#1a1c23]";
-    const innerSelectCls =
-        "w-full bg-[#141720] border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 transition-all appearance-none cursor-pointer [&>option]:bg-[#141720]";
-    const errorCls = "text-[10px] text-destructive mt-1 font-medium";
+    const inputCls = fieldCls;
+    const comboTriggerCls = cn("h-[3.4em] md:h-[2.9em] py-0 px-[0.95em] text-[0.93em] rounded-[0.7em]", focusRingCls);
 
     const selectedRisk = riskLevels[nivelRisco];
 
-    return createPortal(
-        <>
-            <div
-                className="fixed inset-0 z-[65] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 overflow-hidden">
-                <div
-                    className="bg-[#121417] border border-white/10 rounded-2xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[90vh]">
+    // Ctrl/⌘ + Enter conclui o lançamento de qualquer campo do formulário.
+    // Não vale com a confirmação de cancelamento ou o cadastro de parceiro
+    // abertos por cima (os eventos deles também passam por aqui no React).
+    function handleContentKeyDown(e: ReactKeyboardEvent<HTMLDivElement>) {
+        if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey)) return;
+        if (showCancelConfirm || parceiroSubModal || mutation.isPending) return;
+        e.preventDefault();
+        formRef.current?.requestSubmit();
+    }
 
-                    {/* Header */}
-                    <div
-                        className="flex items-center justify-between p-6 border-b border-white/5 bg-[#121417] rounded-t-2xl">
-                        <div>
-                            <h2 className="text-lg font-black text-white uppercase tracking-tighter">
-                                {editItem ? "Editar Lançamento" : "Novo Lançamento"}
-                            </h2>
-                            <p className="text-xs text-muted-foreground">Preencha os dados financeiros detalhados</p>
+    const valorAtualFmt = valorAtual.toLocaleString("pt-BR", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
+
+    return (
+        // Clique fora não fecha (evita perder o que foi digitado): padrão do Modal.
+        <Modal onClose={handleRequestClose} onKeyDown={handleContentKeyDown}>
+                {/* Header (fixo) */}
+                <ModalHeader title={editItem ? "Editar Lançamento" : "Novo Lançamento"}
+                             description="Preencha os dados financeiros detalhados">
+                    {/* Valor Atual - fixo durante toda a edição (Bruto - Desconto + Juros).
+                        Fica fora do cabeçalho no celular. */}
+                    {isEditing && (
+                        <div className="hidden md:block text-right">
+                            <p className="text-[0.75em] font-bold text-muted-foreground uppercase tracking-[0.08em]">
+                                Valor Atual
+                            </p>
+                            <p className="text-[1.35em] font-black text-primary leading-tight tabular-nums">
+                                {valorAtualFmt}
+                            </p>
                         </div>
-                        <div className="flex items-center gap-4">
-                            {/* Valor Atual - fixo durante toda a edição (Bruto - Desconto + Juros) */}
-                            {isEditing && (
-                                <div className="text-right">
-                                    <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">Valor
-                                        Atual</p>
-                                    <p className="text-xl font-black text-primary leading-tight">
-                                        {valorAtual.toLocaleString("pt-BR", {
-                                            minimumFractionDigits: 2,
-                                            maximumFractionDigits: 2
-                                        })}
-                                    </p>
-                                </div>
-                            )}
-                            <button type="button" onClick={handleRequestClose}
-                                    className="p-2 hover:bg-white/5 rounded-xl text-muted-foreground hover:text-white transition-all group">
-                                <X className="w-5 h-5 group-hover:rotate-90 transition-transform"/>
-                            </button>
-                        </div>
-                    </div>
+                    )}
+                </ModalHeader>
 
-                    <form onSubmit={handleSubmit(onSubmit)} className="p-6 space-y-6 overflow-y-auto">
+                    <ModalForm ref={formRef} onSubmit={handleSubmit(onSubmit)}>
 
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                        {/* Corpo: o único trecho que rola */}
+                        <ModalBody ref={bodyRef}>
+                            <div
+                                className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-[1.05fr_1fr_1fr] gap-x-[1.8em] gap-y-[1.4em]">
 
-                            <div className="space-y-5">
+                                {/* ── Identificação ──────────────────────────────────────── */}
+                                <FormSection id="lancamento-sec-identificacao" title="Identificação">
 
-                                {/* Tipo */}
-                                <div>
-                                    <label className={labelCls}>Tipo de Registro *</label>
-                                    <div className="flex gap-3">
-                                        {[
-                                            {
-                                                v: "CP" as const,
-                                                label: "Contas a Pagar",
-                                                color: "border-orange-500 bg-orange-500/10 text-orange-400"
-                                            },
-                                            {
-                                                v: "CR" as const,
-                                                label: "Contas a Receber",
-                                                color: "border-teal-500 bg-teal-500/10 text-teal-400"
-                                            },
-                                        ].map(({v, label, color}) => (
-                                            <button
-                                                key={v}
-                                                type="button"
-                                                onClick={() => {
-                                                    setValue("tipo", v, {shouldValidate: true, shouldDirty: true});
-                                                    // Limpeza síncrona: CR não tem formas de pagamento
-                                                    if (v === "CR") setValue("pagamentos", []);
-                                                }}
-                                                className={`flex-1 py-3 rounded-xl text-sm font-bold border transition-all ${
-                                                    tipo === v ? `${color} shadow-lg` : "border-white/5 bg-white/5 text-muted-foreground hover:border-white/10"
-                                                }`}>
-                                                {label}
-                                            </button>
-                                        ))}
+                                    {/* Tipo */}
+                                    <div role="group" aria-labelledby="lancamento-tipo-label">
+                                        <span id="lancamento-tipo-label" className={labelCls}>Tipo de Registro *</span>
+                                        <div className="grid grid-cols-2 gap-[0.6em]">
+                                            {[
+                                                {
+                                                    v: "CP" as const,
+                                                    label: "Contas a Pagar",
+                                                    color: "border-orange-500 bg-orange-500/10 text-orange-400"
+                                                },
+                                                {
+                                                    v: "CR" as const,
+                                                    label: "Contas a Receber",
+                                                    color: "border-teal-500 bg-teal-500/10 text-teal-400"
+                                                },
+                                            ].map(({v, label, color}) => (
+                                                <button
+                                                    key={v}
+                                                    type="button"
+                                                    aria-pressed={tipo === v}
+                                                    onClick={() => {
+                                                        setValue("tipo", v, {shouldValidate: true, shouldDirty: true});
+                                                        // Limpeza síncrona: CR não tem formas de pagamento
+                                                        if (v === "CR") setValue("pagamentos", []);
+                                                    }}
+                                                    className={cn(
+                                                        "h-[3.4em] md:h-[2.9em] px-[0.5em] rounded-[0.7em] text-[0.93em] font-bold border transition-colors",
+                                                        tipo === v ? `${color} shadow-lg` : "border-white/10 bg-white/5 text-muted-foreground hover:border-white/20 hover:text-white",
+                                                        focusRingCls,
+                                                    )}>
+                                                    {label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        {errors.tipo && <p className={errorCls}>{errors.tipo.message}</p>}
                                     </div>
-                                    {errors.tipo && <p className={errorCls}>{errors.tipo.message}</p>}
-                                </div>
 
-                                {/* Vencimento + Competência */}
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className={labelCls}>Data de Vencimento *</label>
-                                        <Controller name="vencimento" control={control} render={({field}) => (
-                                            <Popover>
-                                                <PopoverTrigger asChild>
-                                                    <button type="button"
-                                                            className={cn(inputCls, "flex items-center justify-between text-left", !field.value && "text-muted-foreground/30")}>
-                                                        {field.value ? formatBtn(parseISO(field.value), "dd/MM/yyyy") : "Selecione uma data..."}
-                                                        <Calendar className="w-4 h-4 text-muted-foreground"/>
-                                                    </button>
-                                                </PopoverTrigger>
-                                                <PopoverContent className="w-auto p-0 border border-white/10"
-                                                                align="start">
-                                                    <CalendarPicker
-                                                        mode="single"
-                                                        selected={field.value ? parseISO(field.value) : undefined}
-                                                        onSelect={(date) => field.onChange(date ? formatBtn(date, "yyyy-MM-dd") : "")}
-                                                        locale={ptBR}
-                                                        initialFocus
-                                                    />
-                                                </PopoverContent>
-                                            </Popover>
-                                        )}/>
-                                        {errors.vencimento && <p className={errorCls}>{errors.vencimento.message}</p>}
+                                    {/* Vencimento + Competência */}
+                                    <div className="grid grid-cols-2 gap-[0.8em]">
+                                        <div className="min-w-0">
+                                            <label htmlFor="lancamento-vencimento" className={labelCls}>Vencimento *</label>
+                                            <Controller name="vencimento" control={control} render={({field}) => (
+                                                <Popover>
+                                                    <PopoverTrigger asChild>
+                                                        <button type="button" id="lancamento-vencimento"
+                                                                className={cn(inputCls, "flex items-center justify-between text-left", !field.value && "text-muted-foreground/70")}>
+                                                            {field.value ? formatBtn(parseISO(field.value), "dd/MM/yyyy") : "Selecione..."}
+                                                            <Calendar aria-hidden="true"
+                                                                      className="w-[1.05em] h-[1.05em] text-muted-foreground shrink-0"/>
+                                                        </button>
+                                                    </PopoverTrigger>
+                                                    <PopoverContent className="w-auto p-0 border border-white/10"
+                                                                    align="start">
+                                                        <CalendarPicker
+                                                            mode="single"
+                                                            selected={field.value ? parseISO(field.value) : undefined}
+                                                            onSelect={(date) => field.onChange(date ? formatBtn(date, "yyyy-MM-dd") : "")}
+                                                            locale={ptBR}
+                                                            initialFocus
+                                                        />
+                                                    </PopoverContent>
+                                                </Popover>
+                                            )}/>
+                                            {errors.vencimento && <p className={errorCls}>{errors.vencimento.message}</p>}
+                                        </div>
+                                        <div className="min-w-0">
+                                            <label htmlFor="lancamento-competencia" className={labelCls}>Competência</label>
+                                            <Controller name="competencia" control={control} render={({field}) => (
+                                                <CompetenciaPicker value={field.value || ""} onChange={field.onChange}/>
+                                            )}/>
+                                        </div>
                                     </div>
-                                    <div>
-                                        <label className={labelCls}>Mês de Competência</label>
-                                        <Controller name="competencia" control={control} render={({field}) => (
-                                            <CompetenciaPicker value={field.value || ""} onChange={field.onChange}/>
-                                        )}/>
-                                    </div>
-                                </div>
 
-                                {/* Cliente/Fornecedor - Combobox com busca */}
-                                <div>
-                                    <label className={labelCls}>Cliente / Fornecedor</label>
-                                    <Controller name="parceiro_id" control={control} render={({field}) => (
-                                        <ParceiroCombobox
-                                            value={field.value}
-                                            onChange={field.onChange}
-                                            parceiros={parceiros}
-                                            search={searchParceiro}
-                                            onSearchChange={setSearchParceiro}
-                                            isLoading={isFetchingParceiros}
-                                            onEdit={(p) => setParceiroSubModal({mode: "edit", data: p})}
-                                            onCreateNew={() => setParceiroSubModal({mode: "create"})}
-                                        />
-                                    )}/>
-                                    {errors.parceiro_id && <p className={errorCls}>{errors.parceiro_id.message}</p>}
-                                </div>
-
-                                {/* Descrição */}
-                                <div>
-                                    <label className={labelCls}>Título / Descrição</label>
-                                    <input type="text" {...register("descricao")} className={inputCls}
-                                           placeholder="Ex: Manutenção servidor AWS, Aluguel Setembro..."/>
-                                </div>
-
-                                {/* Departamento */}
-                                <div>
-                                    <label className={labelCls}>
-                                        <Building2 className="w-3 h-3 inline mr-1"/> Departamento
-                                    </label>
-                                    <select {...register("departamento_id")} className={selectCls}
-                                            onChange={(e) => {
-                                                setValue("departamento_id", e.target.value, {shouldDirty: true});
-                                                setValue("centro_custo_id", "", {shouldDirty: true});
-                                            }}>
-                                        <option value="">Selecione o departamento...</option>
-                                        {departamentos.map((d) => (
-                                            <option key={d.id} value={d.id}>{d.nome}</option>
-                                        ))}
-                                    </select>
-                                    {errors.departamento_id &&
-                                        <p className={errorCls}>{errors.departamento_id.message}</p>}
-                                </div>
-                            </div>
-
-                            {/* ── Coluna direita ──────────────────────────────────────────── */}
-                            <div className="space-y-5">
-
-                                {/* Classificação (Plano de Contas) - combobox com busca:
-                                    debounce de 200ms, busca no servidor a partir de 3 caracteres,
-                                    resultados agrupados por categoria */}
-                                <div>
-                                    <label className={labelCls}>Classificação (Plano de Contas)</label>
-                                    <Controller name="plano_conta_id" control={control} render={({field}) => (
-                                        <PlanoContaCombobox
-                                            value={field.value}
-                                            onChange={field.onChange}
-                                            planoContas={planoContas}
-                                            error={errors.plano_conta_id?.message}
-                                        />
-                                    )}/>
-                                </div>
-
-                                {/* Valor + Status */}
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className={labelCls}>Valor Previsto (R$)</label>
-                                        <Controller name="valorBr" control={control} render={({field}) => (
-                                            <input
-                                                type="text"
-                                                inputMode="numeric"
-                                                autoComplete="off"
+                                    {/* Cliente/Fornecedor - Combobox com busca */}
+                                    <div role="group" aria-labelledby="lancamento-parceiro-label">
+                                        <span id="lancamento-parceiro-label" className={labelCls}>Cliente / Fornecedor</span>
+                                        <Controller name="parceiro_id" control={control} render={({field}) => (
+                                            <ParceiroCombobox
                                                 value={field.value}
-                                                onChange={(e) => field.onChange(formatValorBrInput(e.target.value))}
-                                                onBlur={field.onBlur}
-                                                name={field.name}
-                                                ref={field.ref}
-                                                className={`${inputCls} font-bold text-lg text-primary`}
-                                                placeholder="0,00"
+                                                onChange={field.onChange}
+                                                parceiros={parceiros}
+                                                search={searchParceiro}
+                                                onSearchChange={setSearchParceiro}
+                                                isLoading={isFetchingParceiros}
+                                                onEdit={(p) => setParceiroSubModal({mode: "edit", data: p})}
+                                                onCreateNew={() => setParceiroSubModal({mode: "create"})}
+                                                className={comboTriggerCls}
                                             />
                                         )}/>
-                                        {errors.valorBr && <p className={errorCls}>{errors.valorBr.message}</p>}
+                                        {errors.parceiro_id && <p className={errorCls}>{errors.parceiro_id.message}</p>}
                                     </div>
+
+                                    <div className="grid grid-cols-2 gap-[0.8em]">
+                                        <div className="min-w-0">
+                                            <label htmlFor="tipo-documento" className={labelCls}>
+                                                Tipo de documento{exigirTipoDocumento ? " *" : ""}
+                                            </label>
+                                            <Controller name="tipo_documento" control={control} render={({field}) => (
+                                                <SelectCampo
+                                                    id="tipo-documento"
+                                                    value={field.value || ""}
+                                                    placeholder="Selecione..."
+                                                    aria-required={exigirTipoDocumento}
+                                                    aria-invalid={!!errors.tipo_documento}
+                                                    aria-describedby={errors.tipo_documento ? "tipo-documento-erro" : undefined}
+                                                    onChange={(value) => {
+                                                        field.onChange(value);
+                                                        if (editItem) {
+                                                            setValue("exigir_tipo_documento", true, {
+                                                                shouldValidate: true,
+                                                                shouldDirty: true,
+                                                            });
+                                                        }
+                                                    }}
+                                                    opcoes={TIPOS_DOCUMENTO_LANCAMENTO.map((tipoDoc) => ({
+                                                        value: tipoDoc.value,
+                                                        label: tipoDoc.label,
+                                                    }))}
+                                                />
+                                            )}/>
+                                            {errors.tipo_documento && (
+                                                <p id="tipo-documento-erro"
+                                                   className={errorCls}>{errors.tipo_documento.message}</p>
+                                            )}
+                                        </div>
+                                        <div className="min-w-0">
+                                            <label htmlFor="numero-documento" className={labelCls}>Nº do documento</label>
+                                            <input
+                                                id="numero-documento"
+                                                type="text"
+                                                maxLength={60}
+                                                {...register("numero_documento")}
+                                                className={inputCls}
+                                                placeholder="Ex.: 12345"
+                                                aria-invalid={!!errors.numero_documento}
+                                                aria-describedby={errors.numero_documento ? "numero-documento-erro" : undefined}
+                                            />
+                                            {errors.numero_documento && (
+                                                <p id="numero-documento-erro"
+                                                   className={errorCls}>{errors.numero_documento.message}</p>
+                                            )}
+                                        </div>
+                                    </div>
+
                                     <div>
-                                        <label className={labelCls}>Status Atual</label>
-                                        <select {...register("status")} className={selectCls}>
-                                            <option value="pendente">Pendente</option>
-                                            {tipo === "CR"
-                                                ? <option value="recebido">Recebido (Liquidado)</option>
-                                                : <option value="pago">Pago (Liquidado)</option>
-                                            }
-                                            <option value="pago_parcial">Pago parcial</option>
-                                            <option value="atrasado">Atrasado</option>
-                                            <option value="cancelado">Cancelado</option>
-                                        </select>
-                                        {errors.status && <p className={errorCls}>{errors.status.message}</p>}
+                                        <label htmlFor="lancamento-descricao" className={labelCls}>
+                                            Descrição{exigirDescricao ? " *" : ""}
+                                        </label>
+                                        <input
+                                            id="lancamento-descricao"
+                                            type="text"
+                                            {...register("descricao")}
+                                            className={inputCls}
+                                            placeholder="Ex.: Manutenção servidor AWS - Outubro"
+                                            aria-required={exigirDescricao}
+                                            aria-invalid={!!errors.descricao}
+                                            aria-describedby={errors.descricao ? "lancamento-descricao-erro lancamento-descricao-hint" : "lancamento-descricao-hint"}
+                                        />
+                                        <p id="lancamento-descricao-hint"
+                                           className="text-[0.75em] text-muted-foreground mt-[0.3em]">
+                                            Aparece na lista de lançamentos e na busca.
+                                        </p>
+                                        {errors.descricao && (
+                                            <p id="lancamento-descricao-erro"
+                                               className={errorCls}>{errors.descricao.message}</p>
+                                        )}
                                     </div>
-                                </div>
+                                </FormSection>
 
-                                {/* Desconto / Juros - só na EDIÇÃO de um lançamento já existente.
-                                    Ajustam o valor líquido do título (Valor Atual, exibido no
-                                    cabeçalho do modal) sem alterar o Valor Previsto/de face acima. */}
-                                {isEditing && (
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div>
-                                            <label className={labelCls}>Desconto (R$)</label>
-                                            <Controller name="descontoBr" control={control} render={({field}) => (
+                                {/* ── Valores e classificação ────────────────────────────── */}
+                                <FormSection id="lancamento-sec-valores" title="Valores e classificação">
+
+                                    {/* Classificação (Plano de Contas) - combobox com busca:
+                                        debounce de 200ms, busca no servidor a partir de 3 caracteres,
+                                        resultados agrupados por categoria */}
+                                    <div role="group" aria-labelledby="lancamento-plano-label">
+                                        <span id="lancamento-plano-label" className={labelCls}>Classificação (Plano de Contas)</span>
+                                        <Controller name="plano_conta_id" control={control} render={({field}) => (
+                                            <PlanoContaCombobox
+                                                value={field.value}
+                                                onChange={field.onChange}
+                                                planoContas={planoContas}
+                                                error={errors.plano_conta_id?.message}
+                                                className={comboTriggerCls}
+                                            />
+                                        )}/>
+                                    </div>
+
+                                    {/* Valor + Status */}
+                                    <div className="grid grid-cols-2 gap-[0.8em]">
+                                        <div className="min-w-0">
+                                            <label htmlFor="lancamento-valor" className={labelCls}>Valor Previsto (R$) *</label>
+                                            <Controller name="valorBr" control={control} render={({field}) => (
                                                 <input
+                                                    id="lancamento-valor"
                                                     type="text"
                                                     inputMode="numeric"
                                                     autoComplete="off"
-                                                    value={field.value ?? ""}
+                                                    value={field.value}
                                                     onChange={(e) => field.onChange(formatValorBrInput(e.target.value))}
                                                     onBlur={field.onBlur}
                                                     name={field.name}
                                                     ref={field.ref}
-                                                    className={cn(inputCls, "text-green-400")}
+                                                    className={cn(inputCls, "text-[1em] font-bold text-primary tabular-nums")}
                                                     placeholder="0,00"
                                                 />
                                             )}/>
-                                            {errors.descontoBr &&
-                                                <p className={errorCls}>{errors.descontoBr.message}</p>}
+                                            {errors.valorBr && <p className={errorCls}>{errors.valorBr.message}</p>}
                                         </div>
-                                        <div>
-                                            <label className={labelCls}>Juros / Acréscimo (R$)</label>
-                                            <Controller name="jurosBr" control={control} render={({field}) => (
-                                                <input
-                                                    type="text"
-                                                    inputMode="numeric"
-                                                    autoComplete="off"
-                                                    value={field.value ?? ""}
-                                                    onChange={(e) => field.onChange(formatValorBrInput(e.target.value))}
-                                                    onBlur={field.onBlur}
-                                                    name={field.name}
-                                                    ref={field.ref}
-                                                    className={cn(inputCls, "text-red-400")}
-                                                    placeholder="0,00"
-                                                />
-                                            )}/>
-                                            {errors.jurosBr && <p className={errorCls}>{errors.jurosBr.message}</p>}
+                                        <div className="min-w-0">
+                                            <label htmlFor="lancamento-status" className={labelCls}>Status</label>
+                                            <SelectCampo
+                                                id="lancamento-status"
+                                                value={status ?? ""}
+                                                onChange={(value) => setValue("status", value as typeof status, {
+                                                    shouldDirty: true,
+                                                    shouldValidate: true,
+                                                })}
+                                                opcoes={[
+                                                    {value: "pendente", label: "Pendente"},
+                                                    tipo === "CR"
+                                                        ? {value: "recebido", label: "Recebido (Liquidado)"}
+                                                        : {value: "pago", label: "Pago (Liquidado)"},
+                                                    {value: "pago_parcial", label: "Pago parcial"},
+                                                    {value: "atrasado", label: "Atrasado"},
+                                                    {value: "cancelado", label: "Cancelado"},
+                                                ]}
+                                            />
+                                            {errors.status && <p className={errorCls}>{errors.status.message}</p>}
                                         </div>
                                     </div>
-                                )}
 
-                                {/* Centro de Custo (filtrado por departamento) */}
-                                <div>
-                                    <label className={labelCls}>Centro de Custo</label>
-                                    <select {...register("centro_custo_id")} className={selectCls}
-                                            disabled={centrosCustoFiltrado.length === 0}>
-                                        <option value="">
-                                            {centrosCustoFiltrado.length === 0
+                                    {/* Desconto / Juros - só na EDIÇÃO de um lançamento já existente.
+                                        Ajustam o valor líquido do título (Valor Atual, exibido no
+                                        cabeçalho do modal) sem alterar o Valor Previsto/de face acima. */}
+                                    {isEditing && (
+                                        <div className="grid grid-cols-2 gap-[0.8em]">
+                                            <div className="min-w-0">
+                                                <label htmlFor="lancamento-desconto" className={labelCls}>Desconto (R$)</label>
+                                                <Controller name="descontoBr" control={control} render={({field}) => (
+                                                    <input
+                                                        id="lancamento-desconto"
+                                                        type="text"
+                                                        inputMode="numeric"
+                                                        autoComplete="off"
+                                                        value={field.value ?? ""}
+                                                        onChange={(e) => field.onChange(formatValorBrInput(e.target.value))}
+                                                        onBlur={field.onBlur}
+                                                        name={field.name}
+                                                        ref={field.ref}
+                                                        className={cn(inputCls, "text-green-400 tabular-nums")}
+                                                        placeholder="0,00"
+                                                    />
+                                                )}/>
+                                                {errors.descontoBr &&
+                                                    <p className={errorCls}>{errors.descontoBr.message}</p>}
+                                            </div>
+                                            <div className="min-w-0">
+                                                <label htmlFor="lancamento-juros" className={labelCls}>Juros / Acréscimo (R$)</label>
+                                                <Controller name="jurosBr" control={control} render={({field}) => (
+                                                    <input
+                                                        id="lancamento-juros"
+                                                        type="text"
+                                                        inputMode="numeric"
+                                                        autoComplete="off"
+                                                        value={field.value ?? ""}
+                                                        onChange={(e) => field.onChange(formatValorBrInput(e.target.value))}
+                                                        onBlur={field.onBlur}
+                                                        name={field.name}
+                                                        ref={field.ref}
+                                                        className={cn(inputCls, "text-red-400 tabular-nums")}
+                                                        placeholder="0,00"
+                                                    />
+                                                )}/>
+                                                {errors.jurosBr && <p className={errorCls}>{errors.jurosBr.message}</p>}
+                                            </div>
+                                            {/* No celular o Valor Atual sai do cabeçalho e aparece aqui. */}
+                                            <p className="md:hidden col-span-2 text-[0.85em] text-muted-foreground">
+                                                Valor atual: <span className="font-black text-primary tabular-nums">{valorAtualFmt}</span>
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    <div>
+                                        <label className={labelCls} htmlFor="lancamento-departamento">
+                                            <Building2 aria-hidden="true" className="w-[1em] h-[1em] inline mr-[0.3em] align-[-0.1em]"/> Departamento
+                                        </label>
+                                        <SelectCampo
+                                            id="lancamento-departamento"
+                                            value={departamento_id ?? ""}
+                                            permitirVazio
+                                            placeholder="Selecione o departamento..."
+                                            onChange={(value) => {
+                                                setValue("departamento_id", value, {shouldDirty: true});
+                                                setValue("centro_custo_id", "", {shouldDirty: true});
+                                            }}
+                                            opcoes={departamentos.map((d) => ({value: String(d.id), label: d.nome}))}
+                                        />
+                                        {errors.departamento_id &&
+                                            <p className={errorCls}>{errors.departamento_id.message}</p>}
+                                    </div>
+
+                                    {/* Centro de Custo (filtrado por departamento) */}
+                                    <div>
+                                        <label htmlFor="lancamento-centro-custo" className={labelCls}>Centro de Custo</label>
+                                        <SelectCampo
+                                            id="lancamento-centro-custo"
+                                            value={centro_custo_id ?? ""}
+                                            permitirVazio
+                                            disabled={centrosCustoFiltrado.length === 0}
+                                            placeholder={centrosCustoFiltrado.length === 0
                                                 ? departamento_id ? "Nenhum centro de custo neste departamento" : "Selecione um departamento primeiro..."
                                                 : "Selecione o centro de custo..."}
-                                        </option>
-                                        {centrosCustoFiltrado.map((cc) => (
-                                            <option key={cc.id} value={cc.id}>{cc.nome}</option>
-                                        ))}
-                                    </select>
-                                    {errors.centro_custo_id &&
-                                        <p className={errorCls}>{errors.centro_custo_id.message}</p>}
-                                </div>
+                                            onChange={(value) => setValue("centro_custo_id", value, {shouldDirty: true})}
+                                            opcoes={centrosCustoFiltrado.map((cc) => ({value: String(cc.id), label: cc.nome}))}
+                                        />
+                                        {errors.centro_custo_id &&
+                                            <p className={errorCls}>{errors.centro_custo_id.message}</p>}
+                                    </div>
+                                </FormSection>
 
-                                {/* Riscos (apenas CP) */}
-                                {isCP && (
-                                    <div
-                                        className="bg-white/5 border border-white/10 p-5 rounded-2xl space-y-4 shadow-inner">
-                                        <div className="flex items-center justify-between">
-                                            <label className={labelCls}>Vulnerabilidade / Nível de Risco</label>
-                                            <div
-                                                className="flex items-center gap-1 text-[9px] font-black text-primary uppercase">
-                                                <Target className="w-3 h-3"/> Sugestão Ativa
+                                {/* ── Pagamento e risco ───────────────────────────────────── */}
+                                <FormSection id="lancamento-sec-pagamento" title="Pagamento e risco"
+                                             className="md:col-span-2 xl:col-span-1">
+                                    {!isCP && (
+                                        <p className="bg-white/[0.03] border border-white/10 rounded-[0.9em] p-[1em] text-[0.85em] text-muted-foreground">
+                                            Contas a receber não têm nível de risco nem formas de pagamento.
+                                        </p>
+                                    )}
+
+                                    {/* Riscos (apenas CP) */}
+                                    {isCP && (
+                                        <div
+                                            className="bg-white/[0.03] border border-white/10 rounded-[0.9em] p-[1em] space-y-[0.9em]">
+                                            <div className="flex items-center justify-between gap-[0.5em] flex-wrap">
+                                                <label htmlFor="lancamento-nivel-risco" className={cn(labelCls, "mb-0")}>
+                                                    Vulnerabilidade / Nível de Risco
+                                                </label>
+                                                <span
+                                                    className="flex items-center gap-[0.3em] text-[0.75em] font-black text-primary uppercase">
+                                                    <Target aria-hidden="true" className="w-[1em] h-[1em]"/> Sugestão Ativa
+                                                </span>
                                             </div>
-                                        </div>
-                                        <div className="relative group">
-                                            <select
-                                                value={nivelRisco}
-                                                onChange={(e) => {
-                                                    setNivelRisco(parseInt(e.target.value, 10));
+                                            <SelectCampo
+                                                id="lancamento-nivel-risco"
+                                                value={String(nivelRisco)}
+                                                className={cn("font-black tracking-tight", selectedRisk?.color || "text-muted-foreground")}
+                                                onChange={(value) => {
+                                                    setNivelRisco(parseInt(value, 10));
                                                     setValue("riscos", [], {shouldDirty: true});
                                                 }}
-                                                className={`${selectCls} border-white/5 bg-black/40 font-black tracking-tight ${selectedRisk?.color || "text-white/40"} hover:border-white/20`}>
-                                                <option value={0}>Sem Risco Definido</option>
-                                                {Object.entries(riskLevels).map(([lv, data]) => (
-                                                    <option key={lv} value={lv}
-                                                            className="bg-[#1a1c23] py-2">{data.label}</option>
-                                                ))}
-                                            </select>
-                                            <div
-                                                className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-muted-foreground group-hover:text-white transition-colors">
-                                                <ChevronRight className="w-4 h-4 rotate-90"/>
-                                            </div>
-                                        </div>
+                                                opcoes={[
+                                                    {value: "0", label: "Sem Risco Definido"},
+                                                    ...Object.entries(riskLevels).map(([lv, data]) => ({
+                                                        value: lv,
+                                                        label: data.label,
+                                                    })),
+                                                ]}
+                                            />
 
-                                        {selectedRisk && (
-                                            <div className="space-y-4 animate-in pt-2">
-                                                <div
-                                                    className="flex items-center justify-between border-b border-white/5 pb-2">
-                                                    <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest opacity-40">Tags
-                                                        de Monitoramento</p>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setShowAddTag(!showAddTag)}
-                                                        className={`text-[9px] font-bold flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all border ${
-                                                            showAddTag ? "bg-primary/20 border-primary text-primary" : "bg-white/5 border-white/5 text-white/50 hover:bg-white/10 hover:text-white"
-                                                        }`}>
-                                                        <Plus
-                                                            className={`w-2.5 h-2.5 transition-transform ${showAddTag ? "rotate-45" : ""}`}/>
-                                                        {showAddTag ? "Cancelar" : "Nova Tag"}
-                                                    </button>
-                                                </div>
-                                                {showAddTag && (
+                                            {selectedRisk && (
+                                                <div className="space-y-[0.9em] pt-[0.4em]">
                                                     <div
-                                                        className="flex gap-2 p-1.5 bg-black/60 rounded-xl border border-primary/20 animate-in ring-1 ring-primary/10">
-                                                        <input
-                                                            type="text"
-                                                            autoFocus
-                                                            value={newTag.name}
-                                                            onChange={(e) => setNewTag((f) => ({
-                                                                ...f,
-                                                                name: e.target.value.toUpperCase()
-                                                            }))}
-                                                            placeholder="NOME DA NOVA TAG..."
-                                                            className="bg-transparent border-none outline-none text-[10px] font-bold text-white flex-1 px-2"
-                                                            onKeyDown={(e) => {
-                                                                if (e.key === "Enter") {
-                                                                    e.preventDefault();
-                                                                    handleCreateTag();
-                                                                }
-                                                            }}
-                                                        />
-                                                        <button type="button" onClick={handleCreateTag}
-                                                                className="text-[10px] font-black bg-primary/20 hover:bg-primary text-primary hover:text-white px-4 py-1.5 rounded-lg transition-all">
-                                                            CRIAR
+                                                        className="flex items-center justify-between gap-[0.5em] border-b border-white/5 pb-[0.5em]">
+                                                        <p className="text-[0.75em] font-black text-muted-foreground uppercase tracking-[0.06em]">
+                                                            Tags de Monitoramento
+                                                        </p>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setShowAddTag(!showAddTag)}
+                                                            aria-expanded={showAddTag}
+                                                            className={cn(
+                                                                "text-[0.75em] font-bold flex items-center gap-[0.4em] px-[0.8em] py-[0.3em] rounded-full transition-colors border",
+                                                                showAddTag ? "bg-primary/20 border-primary text-primary" : "bg-white/5 border-white/10 text-white/70 hover:bg-white/10 hover:text-white",
+                                                                focusRingCls,
+                                                            )}>
+                                                            <Plus aria-hidden="true"
+                                                                  className={`w-[1em] h-[1em] transition-transform motion-reduce:transition-none ${showAddTag ? "rotate-45" : ""}`}/>
+                                                            {showAddTag ? "Cancelar" : "Nova Tag"}
                                                         </button>
                                                     </div>
-                                                )}
-                                                <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto pr-2">
-                                                    {selectedRisk.tags.map((tag) => {
-                                                        const selected = riscos.includes(tag);
-                                                        return (
-                                                            <button
-                                                                key={tag}
-                                                                type="button"
-                                                                onClick={() => handleToggleTag(tag)}
-                                                                className={`px-4 py-2 rounded-xl text-[10px] font-black border transition-all flex items-center gap-2 group/tag ${
-                                                                    selected
-                                                                        ? `${selectedRisk.color.replace("text-", "bg-")}/20 ${selectedRisk.color} border-current shadow-lg shadow-current/5`
-                                                                        : "bg-white/5 border-white/5 text-muted-foreground hover:bg-white/10 hover:border-white/20 hover:text-white"
-                                                                }`}>
-                                                                {tag}
-                                                                {selected &&
-                                                                    <X className="w-2.5 h-2.5 opacity-50 group-hover/tag:opacity-100"/>}
-                                                            </button>
-                                                        );
-                                                    })}
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Formas de Pagamento - sub-seções modulares por tipo */}
-                        {isCP && (
-                            <div className="border border-white/10 rounded-2xl p-5 space-y-3 bg-white/[0.02]">
-                                {/* Cabeçalho com botões de adição por tipo */}
-                                <div className="flex items-center justify-between flex-wrap gap-y-2">
-                                    <div className="flex items-center gap-2">
-                                        <CreditCard className="w-4 h-4 text-primary"/>
-                                        <label className={`${labelCls} mb-0`}>Formas de Pagamento</label>
-                                    </div>
-                                    <div className="flex items-center gap-4">
-                                        <button type="button"
-                                                onClick={() => appendPagamento({...pagamentoItemDefault, tipo: "PIX"})}
-                                                className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold transition-colors">
-                                            <Plus className="w-3 h-3"/> PIX
-                                        </button>
-                                        <button type="button"
-                                                onClick={() => appendPagamento({...pagamentoItemDefault, tipo: "TED"})}
-                                                className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold transition-colors">
-                                            <Plus className="w-3 h-3"/> TED
-                                        </button>
-                                        <button type="button"
-                                                onClick={() => appendPagamento({
-                                                    ...pagamentoItemDefault,
-                                                    tipo: "Boleto"
-                                                })}
-                                                className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold transition-colors">
-                                            <Plus className="w-3 h-3"/> Boleto
-                                        </button>
-                                    </div>
-                                </div>
-
-                                {pagamentosFields.length === 0 ? (
-                                    <p className="text-xs text-muted-foreground/50 text-center py-3">
-                                        Nenhuma forma de pagamento. Use os botões acima para adicionar PIX, TED ou
-                                        Boleto.
-                                    </p>
-                                ) : (
-                                    <div className="space-y-3">
-
-                                        {/* Sub-bloco PIX */}
-                                        {pixEntries.length > 0 && (
-                                            <div>
-                                                <div className="flex items-center justify-between mb-2">
-                                                    <span
-                                                        className="text-xs text-muted-foreground">Tipo de Chave PIX</span>
-                                                    <button type="button"
-                                                            onClick={() => appendPagamento({
-                                                                ...pagamentoItemDefault,
-                                                                tipo: "PIX"
-                                                            })}
-                                                            className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold">
-                                                        <Plus className="w-3 h-3"/> Adicionar Chave
-                                                    </button>
-                                                </div>
-                                                <div
-                                                    className="bg-black/10 border border-white/10 rounded-lg overflow-hidden">
-                                                    <table className="w-full text-left text-sm">
-                                                        <thead className="bg-black/20">
-                                                        <tr>
-                                                            <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Tipo
-                                                                de Chave
-                                                            </th>
-                                                            <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Chave</th>
-                                                            <th className="px-2 py-2 w-[40px]"/>
-                                                        </tr>
-                                                        </thead>
-                                                        <tbody>
-                                                        {pixEntries.map(({f, i}) => (
-                                                            <PagamentoPIXRow
-                                                                key={f.id}
-                                                                index={i}
-                                                                control={control}
-                                                                setValue={setValue}
-                                                                removePagamento={removePagamento}
-                                                                errors={errors}
+                                                    {showAddTag && (
+                                                        <div
+                                                            className="flex gap-[0.5em] p-[0.4em] bg-black/60 rounded-[0.8em] border border-primary/20 ring-1 ring-primary/10">
+                                                            <input
+                                                                type="text"
+                                                                autoFocus
+                                                                value={newTag.name}
+                                                                onChange={(e) => setNewTag((f) => ({
+                                                                    ...f,
+                                                                    name: e.target.value.toUpperCase()
+                                                                }))}
+                                                                placeholder="NOME DA NOVA TAG..."
+                                                                aria-label="Nome da nova tag"
+                                                                className={cn("bg-transparent border-none text-[0.8em] font-bold text-white flex-1 min-w-0 px-[0.6em] rounded-[0.4em]", focusRingCls)}
+                                                                onKeyDown={(e) => {
+                                                                    if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
+                                                                        e.preventDefault();
+                                                                        handleCreateTag();
+                                                                    }
+                                                                }}
                                                             />
-                                                        ))}
-                                                        </tbody>
-                                                    </table>
+                                                            <button type="button" onClick={handleCreateTag}
+                                                                    className={cn("text-[0.75em] font-black bg-primary/20 hover:bg-primary text-primary hover:text-white px-[1.2em] py-[0.5em] rounded-[0.6em] transition-colors", focusRingCls)}>
+                                                                CRIAR
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                    <div className="flex flex-wrap gap-[0.5em] max-h-[10em] overflow-y-auto pr-[0.4em]">
+                                                        {selectedRisk.tags.map((tag) => {
+                                                            const selected = riscos.includes(tag);
+                                                            return (
+                                                                <button
+                                                                    key={tag}
+                                                                    type="button"
+                                                                    aria-pressed={selected}
+                                                                    onClick={() => handleToggleTag(tag)}
+                                                                    className={cn(
+                                                                        "px-[1em] py-[0.55em] rounded-[0.7em] text-[0.75em] font-black border transition-colors flex items-center gap-[0.5em] group/tag",
+                                                                        selected
+                                                                            ? `${selectedRisk.color.replace("text-", "bg-")}/20 ${selectedRisk.color} border-current shadow-lg shadow-current/5`
+                                                                            : "bg-white/5 border-white/10 text-muted-foreground hover:bg-white/10 hover:border-white/20 hover:text-white",
+                                                                        focusRingCls,
+                                                                    )}>
+                                                                    {tag}
+                                                                    {selected &&
+                                                                        <X aria-hidden="true"
+                                                                           className="w-[1em] h-[1em] opacity-60 group-hover/tag:opacity-100"/>}
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* Formas de Pagamento - sub-seções modulares por tipo */}
+                                    {isCP && (
+                                        <div
+                                            className="bg-white/[0.03] border border-white/10 rounded-[0.9em] p-[1em] space-y-[0.8em]">
+                                            {/* Cabeçalho com botões de adição por tipo */}
+                                            <div className="flex items-center justify-between flex-wrap gap-[0.5em]">
+                                                <div className="flex items-center gap-[0.5em]">
+                                                    <CreditCard aria-hidden="true" className="w-[1em] h-[1em] text-primary"/>
+                                                    <span className={cn(labelCls, "mb-0")}>Formas de Pagamento</span>
+                                                </div>
+                                                <div className="flex items-center gap-[0.9em]">
+                                                    {(["PIX", "TED", "Boleto"] as const).map((t) => (
+                                                        <button key={t} type="button"
+                                                                onClick={() => appendPagamento({...pagamentoItemDefault, tipo: t})}
+                                                                aria-label={`Adicionar ${t}`}
+                                                                className={pmtAddBtnCls}>
+                                                            <Plus aria-hidden="true" className="w-[1em] h-[1em]"/> {t}
+                                                        </button>
+                                                    ))}
                                                 </div>
                                             </div>
-                                        )}
 
-                                        {/* Sub-bloco TED */}
-                                        {tedEntries.length > 0 && (
-                                            <div>
-                                                <div className="flex items-center justify-between mb-2">
-                                                    <span className="text-xs text-muted-foreground">Contas TED</span>
-                                                    <button type="button"
-                                                            onClick={() => appendPagamento({
-                                                                ...pagamentoItemDefault,
-                                                                tipo: "TED"
-                                                            })}
-                                                            className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold">
-                                                        <Plus className="w-3 h-3"/> Adicionar Conta TED
-                                                    </button>
-                                                </div>
-                                                <div
-                                                    className="bg-black/10 border border-white/10 rounded-lg overflow-hidden">
-                                                    <table className="w-full text-left text-sm">
-                                                        <thead className="bg-black/20">
-                                                        <tr>
-                                                            <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Cód.</th>
-                                                            <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Nome
-                                                                do Banco
-                                                            </th>
-                                                            <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Agência</th>
-                                                            <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Conta</th>
-                                                            <th className="px-2 py-2 w-[40px]"/>
-                                                        </tr>
-                                                        </thead>
-                                                        <tbody>
-                                                        {tedEntries.map(({f, i}) => {
-                                                            const itemErr = errors.pagamentos?.[i];
-                                                            return (
-                                                                <tr key={f.id} className="border-t border-white/5">
-                                                                    <td className="px-3 py-2 align-top w-[90px]">
-                                                                        <Controller
-                                                                            name={`pagamentos.${i}.banco_codigo`}
-                                                                            control={control} render={({field}) => (
-                                                                            <input value={field.value ?? ""}
-                                                                                   onChange={(e) => field.onChange(mascararCodigoBanco(e.target.value))}
-                                                                                   onBlur={field.onBlur} ref={field.ref}
-                                                                                   inputMode="numeric"
-                                                                                   className={pmtCellInputCls}
-                                                                                   placeholder="033"/>
-                                                                        )}/>
-                                                                        {itemErr?.banco_codigo &&
-                                                                            <p className={pmtErrCls}>{itemErr.banco_codigo.message}</p>}
-                                                                    </td>
-                                                                    <td className="px-3 py-2 align-top">
-                                                                        <input {...register(`pagamentos.${i}.banco_nome`)}
-                                                                               className={pmtCellInputCls}
-                                                                               placeholder="Ex: Santander"/>
-                                                                        {itemErr?.banco_nome &&
-                                                                            <p className={pmtErrCls}>{itemErr.banco_nome.message}</p>}
-                                                                    </td>
-                                                                    <td className="px-3 py-2 align-top w-[110px]">
-                                                                        <Controller
-                                                                            name={`pagamentos.${i}.banco_agencia`}
-                                                                            control={control} render={({field}) => (
-                                                                            <input value={field.value ?? ""}
-                                                                                   onChange={(e) => field.onChange(mascararAgencia(e.target.value))}
-                                                                                   onBlur={field.onBlur} ref={field.ref}
-                                                                                   inputMode="numeric"
-                                                                                   className={pmtCellInputCls}
-                                                                                   placeholder="0000-0"/>
-                                                                        )}/>
-                                                                        {itemErr?.banco_agencia &&
-                                                                            <p className={pmtErrCls}>{itemErr.banco_agencia.message}</p>}
-                                                                    </td>
-                                                                    <td className="px-3 py-2 align-top w-[120px]">
-                                                                        <Controller name={`pagamentos.${i}.banco_conta`}
-                                                                                    control={control}
-                                                                                    render={({field}) => (
+                                            {pagamentosFields.length === 0 ? (
+                                                <p className="text-[0.85em] text-muted-foreground py-[0.3em]">
+                                                    Nenhuma forma de pagamento. Use os botões acima para adicionar PIX, TED
+                                                    ou Boleto.
+                                                </p>
+                                            ) : (
+                                                <div className="space-y-[0.9em]">
+
+                                                    {/* Sub-bloco PIX */}
+                                                    {pixEntries.length > 0 && (
+                                                        <div>
+                                                            <div className="flex items-center justify-between mb-[0.5em]">
+                                                                <span className="text-[0.8em] text-muted-foreground">Tipo de Chave PIX</span>
+                                                                <button type="button"
+                                                                        onClick={() => appendPagamento({
+                                                                            ...pagamentoItemDefault,
+                                                                            tipo: "PIX"
+                                                                        })}
+                                                                        className={pmtAddBtnCls}>
+                                                                    <Plus aria-hidden="true" className="w-[1em] h-[1em]"/> Adicionar Chave
+                                                                </button>
+                                                            </div>
+                                                            <div
+                                                                className="bg-black/10 border border-white/10 rounded-[0.6em] overflow-x-auto">
+                                                                <table className="w-full min-w-[22em] text-left">
+                                                                    <thead className="bg-black/20">
+                                                                    <tr>
+                                                                        <th className={pmtThCls}>Tipo de Chave</th>
+                                                                        <th className={pmtThCls}>Chave</th>
+                                                                        <th className="w-[3em]"><span className="sr-only">Ações</span></th>
+                                                                    </tr>
+                                                                    </thead>
+                                                                    <tbody>
+                                                                    {pixEntries.map(({f, i}) => (
+                                                                        <PagamentoPIXRow
+                                                                            key={f.id}
+                                                                            index={i}
+                                                                            control={control}
+                                                                            setValue={setValue}
+                                                                            removePagamento={removePagamento}
+                                                                            errors={errors}
+                                                                        />
+                                                                    ))}
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {/* Sub-bloco TED */}
+                                                    {tedEntries.length > 0 && (
+                                                        <div>
+                                                            <div className="flex items-center justify-between mb-[0.5em]">
+                                                                <span className="text-[0.8em] text-muted-foreground">Contas TED</span>
+                                                                <button type="button"
+                                                                        onClick={() => appendPagamento({
+                                                                            ...pagamentoItemDefault,
+                                                                            tipo: "TED"
+                                                                        })}
+                                                                        className={pmtAddBtnCls}>
+                                                                    <Plus aria-hidden="true" className="w-[1em] h-[1em]"/> Adicionar Conta TED
+                                                                </button>
+                                                            </div>
+                                                            <div
+                                                                className="bg-black/10 border border-white/10 rounded-[0.6em] overflow-x-auto">
+                                                                <table className="w-full min-w-[30em] text-left">
+                                                                    <thead className="bg-black/20">
+                                                                    <tr>
+                                                                        <th className={pmtThCls}>Cód.</th>
+                                                                        <th className={pmtThCls}>Nome do Banco</th>
+                                                                        <th className={pmtThCls}>Agência</th>
+                                                                        <th className={pmtThCls}>Conta</th>
+                                                                        <th className="w-[3em]"><span className="sr-only">Ações</span></th>
+                                                                    </tr>
+                                                                    </thead>
+                                                                    <tbody>
+                                                                    {tedEntries.map(({f, i}) => {
+                                                                        const itemErr = errors.pagamentos?.[i];
+                                                                        return (
+                                                                            <tr key={f.id} className="border-t border-white/5">
+                                                                                <td className="px-[0.75em] py-[0.5em] align-top w-[5.5em]">
+                                                                                    <Controller
+                                                                                        name={`pagamentos.${i}.banco_codigo`}
+                                                                                        control={control} render={({field}) => (
                                                                                         <input value={field.value ?? ""}
-                                                                                               onChange={(e) => field.onChange(mascararConta(e.target.value))}
-                                                                                               onBlur={field.onBlur}
-                                                                                               ref={field.ref}
+                                                                                               onChange={(e) => field.onChange(mascararCodigoBanco(e.target.value))}
+                                                                                               onBlur={field.onBlur} ref={field.ref}
                                                                                                inputMode="numeric"
+                                                                                               aria-label="Código do banco"
                                                                                                className={pmtCellInputCls}
-                                                                                               placeholder="00000-0"/>
+                                                                                               placeholder="033"/>
                                                                                     )}/>
-                                                                        {itemErr?.banco_conta &&
-                                                                            <p className={pmtErrCls}>{itemErr.banco_conta.message}</p>}
-                                                                    </td>
-                                                                    <td className="px-2 py-2 align-top text-right w-[40px]">
-                                                                        <button type="button"
-                                                                                onClick={() => removePagamento(i)}
-                                                                                className="p-1 hover:bg-destructive/20 rounded text-muted-foreground hover:text-destructive transition-colors"
-                                                                                title="Remover conta TED">
-                                                                            <Trash2 className="w-3.5 h-3.5"/>
-                                                                        </button>
-                                                                    </td>
-                                                                </tr>
-                                                            );
-                                                        })}
-                                                        </tbody>
-                                                    </table>
-                                                </div>
-                                            </div>
-                                        )}
+                                                                                    {itemErr?.banco_codigo &&
+                                                                                        <p className={pmtErrCls}>{itemErr.banco_codigo.message}</p>}
+                                                                                </td>
+                                                                                <td className="px-[0.75em] py-[0.5em] align-top">
+                                                                                    <input {...register(`pagamentos.${i}.banco_nome`)}
+                                                                                           aria-label="Nome do banco"
+                                                                                           className={pmtCellInputCls}
+                                                                                           placeholder="Ex: Santander"/>
+                                                                                    {itemErr?.banco_nome &&
+                                                                                        <p className={pmtErrCls}>{itemErr.banco_nome.message}</p>}
+                                                                                </td>
+                                                                                <td className="px-[0.75em] py-[0.5em] align-top w-[7em]">
+                                                                                    <Controller
+                                                                                        name={`pagamentos.${i}.banco_agencia`}
+                                                                                        control={control} render={({field}) => (
+                                                                                        <input value={field.value ?? ""}
+                                                                                               onChange={(e) => field.onChange(mascararAgencia(e.target.value))}
+                                                                                               onBlur={field.onBlur} ref={field.ref}
+                                                                                               inputMode="numeric"
+                                                                                               aria-label="Agência"
+                                                                                               className={pmtCellInputCls}
+                                                                                               placeholder="0000-0"/>
+                                                                                    )}/>
+                                                                                    {itemErr?.banco_agencia &&
+                                                                                        <p className={pmtErrCls}>{itemErr.banco_agencia.message}</p>}
+                                                                                </td>
+                                                                                <td className="px-[0.75em] py-[0.5em] align-top w-[7.5em]">
+                                                                                    <Controller name={`pagamentos.${i}.banco_conta`}
+                                                                                                control={control}
+                                                                                                render={({field}) => (
+                                                                                                    <input value={field.value ?? ""}
+                                                                                                           onChange={(e) => field.onChange(mascararConta(e.target.value))}
+                                                                                                           onBlur={field.onBlur}
+                                                                                                           ref={field.ref}
+                                                                                                           inputMode="numeric"
+                                                                                                           aria-label="Conta"
+                                                                                                           className={pmtCellInputCls}
+                                                                                                           placeholder="00000-0"/>
+                                                                                                )}/>
+                                                                                    {itemErr?.banco_conta &&
+                                                                                        <p className={pmtErrCls}>{itemErr.banco_conta.message}</p>}
+                                                                                </td>
+                                                                                <td className="px-[0.5em] py-[0.5em] align-top text-right w-[3em]">
+                                                                                    <button type="button"
+                                                                                            onClick={() => removePagamento(i)}
+                                                                                            className={pmtRemoveBtnCls}
+                                                                                            title="Remover conta TED"
+                                                                                            aria-label="Remover conta TED">
+                                                                                        <Trash2 aria-hidden="true" className="w-[1em] h-[1em]"/>
+                                                                                    </button>
+                                                                                </td>
+                                                                            </tr>
+                                                                        );
+                                                                    })}
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
+                                                        </div>
+                                                    )}
 
-                                        {/* Sub-bloco Boleto */}
-                                        {boletoEntries.length > 0 && (
-                                            <div>
-                                                <div className="flex items-center justify-between mb-2">
-                                                    <span className="text-xs text-muted-foreground">Boletos</span>
-                                                    <button type="button"
-                                                            onClick={() => appendPagamento({
-                                                                ...pagamentoItemDefault,
-                                                                tipo: "Boleto"
-                                                            })}
-                                                            className="flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 font-semibold">
-                                                        <Plus className="w-3 h-3"/> Adicionar Boleto
-                                                    </button>
-                                                </div>
-                                                <div
-                                                    className="bg-black/10 border border-white/10 rounded-lg overflow-hidden">
-                                                    <table className="w-full text-left text-sm">
-                                                        <thead className="bg-black/20">
-                                                        <tr>
-                                                            <th className="px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Código
-                                                                de Barras
-                                                            </th>
-                                                            <th className="px-2 py-2 w-[40px]"/>
-                                                        </tr>
-                                                        </thead>
-                                                        <tbody>
-                                                        {boletoEntries.map(({f, i}) => {
-                                                            const itemErr = errors.pagamentos?.[i];
-                                                            return (
-                                                                <tr key={f.id} className="border-t border-white/5">
-                                                                    <td className="px-3 py-2 align-top">
-                                                                        <input {...register(`pagamentos.${i}.boleto_codigo_barras`)}
-                                                                               className={pmtCellInputCls}
-                                                                               placeholder="00000000000000000000000000000000000000000000"/>
-                                                                        {itemErr?.boleto_codigo_barras &&
-                                                                            <p className={pmtErrCls}>{itemErr.boleto_codigo_barras.message}</p>}
-                                                                    </td>
-                                                                    <td className="px-2 py-2 align-top text-right w-[40px]">
-                                                                        <button type="button"
-                                                                                onClick={() => removePagamento(i)}
-                                                                                className="p-1 hover:bg-destructive/20 rounded text-muted-foreground hover:text-destructive transition-colors"
-                                                                                title="Remover boleto">
-                                                                            <Trash2 className="w-3.5 h-3.5"/>
-                                                                        </button>
-                                                                    </td>
-                                                                </tr>
-                                                            );
-                                                        })}
-                                                        </tbody>
-                                                    </table>
-                                                </div>
-                                            </div>
-                                        )}
+                                                    {/* Sub-bloco Boleto */}
+                                                    {boletoEntries.length > 0 && (
+                                                        <div>
+                                                            <div className="flex items-center justify-between mb-[0.5em]">
+                                                                <span className="text-[0.8em] text-muted-foreground">Boletos</span>
+                                                                <button type="button"
+                                                                        onClick={() => appendPagamento({
+                                                                            ...pagamentoItemDefault,
+                                                                            tipo: "Boleto"
+                                                                        })}
+                                                                        className={pmtAddBtnCls}>
+                                                                    <Plus aria-hidden="true" className="w-[1em] h-[1em]"/> Adicionar Boleto
+                                                                </button>
+                                                            </div>
+                                                            <div
+                                                                className="bg-black/10 border border-white/10 rounded-[0.6em] overflow-x-auto">
+                                                                <table className="w-full text-left">
+                                                                    <thead className="bg-black/20">
+                                                                    <tr>
+                                                                        <th className={pmtThCls}>Código de Barras</th>
+                                                                        <th className="w-[3em]"><span className="sr-only">Ações</span></th>
+                                                                    </tr>
+                                                                    </thead>
+                                                                    <tbody>
+                                                                    {boletoEntries.map(({f, i}) => {
+                                                                        const itemErr = errors.pagamentos?.[i];
+                                                                        return (
+                                                                            <tr key={f.id} className="border-t border-white/5">
+                                                                                <td className="px-[0.75em] py-[0.5em] align-top">
+                                                                                    <input {...register(`pagamentos.${i}.boleto_codigo_barras`)}
+                                                                                           aria-label="Código de barras do boleto"
+                                                                                           className={pmtCellInputCls}
+                                                                                           placeholder="00000000000000000000000000000000000000000000"/>
+                                                                                    {itemErr?.boleto_codigo_barras &&
+                                                                                        <p className={pmtErrCls}>{itemErr.boleto_codigo_barras.message}</p>}
+                                                                                </td>
+                                                                                <td className="px-[0.5em] py-[0.5em] align-top text-right w-[3em]">
+                                                                                    <button type="button"
+                                                                                            onClick={() => removePagamento(i)}
+                                                                                            className={pmtRemoveBtnCls}
+                                                                                            title="Remover boleto"
+                                                                                            aria-label="Remover boleto">
+                                                                                        <Trash2 aria-hidden="true" className="w-[1em] h-[1em]"/>
+                                                                                    </button>
+                                                                                </td>
+                                                                            </tr>
+                                                                        );
+                                                                    })}
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
+                                                        </div>
+                                                    )}
 
-                                    </div>
-                                )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </FormSection>
+
+                                {/* ── Observação (largura total) ─────────────────────────── */}
+                                <div className="col-span-full">
+                                    <label htmlFor="lancamento-observacao" className={labelCls}>Observação</label>
+                                    <textarea
+                                        id="lancamento-observacao"
+                                        rows={3}
+                                        maxLength={1000}
+                                        {...register("observacao")}
+                                        className={cn(inputCls, "h-auto md:h-auto min-h-[4.6em] py-[0.7em] resize-y")}
+                                        placeholder="Informações adicionais (opcional): condições, referência do pedido, contato..."
+                                        aria-invalid={!!errors.observacao}
+                                        aria-describedby={errors.observacao ? "observacao-erro observacao-contador" : "observacao-contador"}
+                                    />
+                                    <p id="observacao-contador"
+                                       className="text-[0.75em] text-muted-foreground mt-[0.3em] text-right"
+                                       aria-hidden="true">
+                                        {observacao.length}/1000
+                                    </p>
+                                    <p className="sr-only" aria-live="polite">
+                                        {observacao.length >= 900 ? `${observacao.length} de 1000 caracteres` : ""}
+                                    </p>
+                                    {errors.observacao && (
+                                        <p id="observacao-erro" className={errorCls}>{errors.observacao.message}</p>
+                                    )}
+                                </div>
                             </div>
-                        )}
+                        </ModalBody>
 
-                        {/* Largura natural, alinhados à direita */}
-                        <div className="flex justify-end gap-3 pt-4 border-t border-white/5">
-                            <button type="button" onClick={handleRequestClose}
-                                    className="px-6 py-2.5 rounded-xl border border-white/10 text-white hover:bg-white/5 text-sm font-bold transition-all">
+                        {/* Rodapé (fixo): no celular, os botões dividem a largura */}
+                        <ModalFooter hint={<>* Campos obrigatórios · Esc fecha · {IS_MAC ? "⌘" : "Ctrl"}+Enter conclui</>}>
+                            <button type="button" onClick={handleRequestClose} className={modalBtnSecondaryCls}>
                                 Cancelar
                             </button>
                             <button
                                 type="submit"
                                 disabled={mutation.isPending}
-                                className="px-8 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-sm font-black shadow-xl shadow-primary/25 transition-all disabled:opacity-50 flex items-center gap-2">
-                                {mutation.isPending ? <Loader2
-                                    className="w-5 h-5 animate-spin"/> : editItem ? "Salvar Alterações" : "Concluir Lançamento"}
+                                aria-keyshortcuts="Control+Enter Meta+Enter"
+                                className={modalBtnPrimaryCls}>
+                                {mutation.isPending ? <ModalSpinner/> : editItem ? "Salvar Alterações" : "Concluir Lançamento"}
                             </button>
-                        </div>
-                    </form>
-                </div>
-            </div>
+                        </ModalFooter>
+                    </ModalForm>
 
-            {/* Confirmação de cancelamento - só aparece se o formulário tiver alterações não salvas */}
-            <ConfirmDialog
-                open={showCancelConfirm}
-                tone="warning"
-                title="Cancelar cadastro?"
-                description="As informações preenchidas serão perdidas. Deseja realmente cancelar?"
-                confirmLabel="Sim, cancelar"
-                cancelLabel="Não, continuar"
-                onCancel={() => setShowCancelConfirm(false)}
-                onConfirm={() => {
-                    setShowCancelConfirm(false);
-                    onClose();
-                }}
-            />
-
-            {/* Sub-modal de parceiro: portal próprio em z-[80], acima deste lançamento (z-[65]). */}
-            {parceiroSubModal && (
-                <NovoParceiroModal
-                    key={parceiroSubModal.mode === "edit" ? parceiroSubModal.data.id : "new-parceiro"}
-                    initialData={parceiroSubModal.mode === "edit" ? parceiroSubModal.data : null}
-                    onClose={() => setParceiroSubModal(null)}
-                    onSaved={() => {
-                        void queryClient.invalidateQueries({queryKey: tenantQueryKey("parceiros-modal")});
+                {/* Confirmação de cancelamento - só aparece se o formulário tiver alterações não salvas */}
+                <ConfirmDialog
+                    open={showCancelConfirm}
+                    tone="warning"
+                    title="Cancelar cadastro?"
+                    description="As informações preenchidas serão perdidas. Deseja realmente cancelar?"
+                    confirmLabel="Sim, cancelar"
+                    cancelLabel="Não, continuar"
+                    onCancel={() => setShowCancelConfirm(false)}
+                    onConfirm={() => {
+                        setShowCancelConfirm(false);
+                        onClose();
                     }}
                 />
-            )}
-        </>,
-        document.body,
+
+                {/* Cadastro de parceiro: Modal aninhado (foco, Tab e Esc ficam nele). */}
+                {parceiroSubModal && (
+                    <NovoParceiroModal
+                        key={parceiroSubModal.mode === "edit" ? parceiroSubModal.data.id : "new-parceiro"}
+                        initialData={parceiroSubModal.mode === "edit" ? parceiroSubModal.data : null}
+                        returnFocusTo={() => bodyRef.current?.querySelector<HTMLElement>("[aria-labelledby=lancamento-parceiro-label] button")}
+                        onClose={() => setParceiroSubModal(null)}
+                        onSaved={() => {
+                            void queryClient.invalidateQueries({queryKey: tenantQueryKey("parceiros-modal")});
+                        }}
+                    />
+                )}
+        </Modal>
     );
 }

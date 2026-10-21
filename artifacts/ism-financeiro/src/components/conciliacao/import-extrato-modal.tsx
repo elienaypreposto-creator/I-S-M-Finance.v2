@@ -1,16 +1,18 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
 import {useEffect, useState} from "react";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
-import {useForm} from "react-hook-form";
+import {useForm, Controller} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {z} from "zod";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
-import {Loader2, Upload, X, FileSpreadsheet} from "lucide-react";
+import {Upload, FileSpreadsheet} from "lucide-react";
+import {cn} from "@/lib/utils";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
-import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
-import {ViewportOverlay} from "@/components/shared/viewport-overlay";
+import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
+import {Modal, ModalBody, ModalFooter, ModalForm, ModalHeader, ModalSpinner, modalBtnPrimaryCls, modalBtnSecondaryCls, modalGrid2Cls} from "@/components/ui/modal-responsivo";
+import {SelectCampo} from "@/components/ui/select-campo";
 
 type ContaBancariaOption = {
     id: number;
@@ -63,6 +65,7 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
 
     const {
         register,
+        control,
         handleSubmit,
         setValue,
         watch,
@@ -154,10 +157,6 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
         onClose();
     }
 
-    useEscapeClose(open && !ConfirmDialogProps.open, () => {
-        void handleRequestClose();
-    });
-
     if (!open) return null;
 
     const onSubmit = (data: ImportExtratoForm) => {
@@ -173,86 +172,83 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
 
     const inputCls =
         "w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-primary/50 transition-all";
-    const labelCls = "text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5 block";
-    const errorCls = "text-[10px] text-destructive mt-1 font-medium";
+    const labelCls = "text-xs font-bold text-muted-foreground uppercase tracking-widest mb-1.5 block";
+    const errorCls = "text-xs text-destructive mt-1 font-medium";
 
     return (
-        <ViewportOverlay className="bg-black/70 backdrop-blur-md">
-            <div className="bg-[#121417] border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl">
-                <div className="flex items-center justify-between p-5 border-b border-white/5">
-                    <div>
-                        <h2 className="text-lg font-bold text-white">Importar extrato</h2>
-                        <p className="text-xs text-muted-foreground mt-0.5">Envie OFX da conta selecionada</p>
-                    </div>
-                    <button
-                        type="button"
-                        onClick={() => void handleRequestClose()}
-                        className="p-2 rounded-xl text-muted-foreground hover:bg-white/5 hover:text-white transition-colors">
-                        <X className="w-5 h-5"/>
-                    </button>
-                </div>
+        <Modal onClose={() => void handleRequestClose()}>
+            <ModalHeader title="Importar extrato" description="Envie OFX da conta selecionada"/>
 
-                {!preAnalise ? (
-                    <form onSubmit={handleSubmit(onSubmit)} className="p-5 space-y-5">
-                        <div>
-                            <label className={labelCls}>Conta bancária *</label>
-                            <select {...register("contaId")} disabled={loadingContas || pending} className={inputCls}>
-                                <option value="">{loadingContas ? "Carregando contas…" : "Selecione a conta"}</option>
-                                {contas.map((c) => (
-                                    <option key={c.id} value={String(c.id)}>
-                                        {c.nome}
-                                        {c.agencia ? ` · Ag. ${c.agencia}` : ""}
-                                        {c.conta ? ` · ${c.conta}` : ""}
-                                    </option>
-                                ))}
-                            </select>
-                            {errors.contaId && <p className={errorCls}>{errors.contaId.message}</p>}
-                        </div>
-
-                        <div>
-                            <label className={labelCls}>Arquivo OFX *</label>
-                            <label
-                                className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 bg-black/30 px-4 py-8 cursor-pointer hover:border-primary/40 transition-colors">
-                                <FileSpreadsheet className="w-8 h-8 text-muted-foreground"/>
-                                <span className="text-xs text-white/80 text-center">
-                  {arquivoSelecionado ? arquivoSelecionado.name : "Clique para escolher ou solte o arquivo aqui"}
-                </span>
-                                <input
-                                    type="file"
-                                    accept=".ofx,.OFX,application/x-ofx,application/vnd.intu.qfx"
-                                    className="sr-only"
-                                    disabled={pending}
-                                    onChange={(e) => {
-                                        const f = e.target.files?.[0];
-                                        if (f) setValue("arquivo", f, {shouldValidate: true});
-                                    }}
+            {!preAnalise ? (
+                <ModalForm onSubmit={handleSubmit(onSubmit)}>
+                    <ModalBody>
+                        <div className={modalGrid2Cls}>
+                            <div>
+                                <label htmlFor="import-extrato-conta" className={labelCls}>Conta bancária *</label>
+                                <Controller
+                                    name="contaId"
+                                    control={control}
+                                    render={({field}) => (
+                                        <SelectCampo
+                                            id="import-extrato-conta"
+                                            value={field.value ?? ""}
+                                            permitirVazio
+                                            disabled={loadingContas || pending}
+                                            aria-invalid={!!errors.contaId}
+                                            placeholder={loadingContas ? "Carregando contas…" : "Selecione a conta"}
+                                            onBlur={field.onBlur}
+                                            onChange={field.onChange}
+                                            opcoes={contas.map((c) => ({
+                                                value: String(c.id),
+                                                label: `${c.nome}${c.agencia ? ` · Ag. ${c.agencia}` : ""}${c.conta ? ` · ${c.conta}` : ""}`,
+                                            }))}
+                                        />
+                                    )}
                                 />
-                            </label>
-                            {errors.arquivo && <p className={errorCls}>{errors.arquivo.message}</p>}
-                        </div>
+                                {errors.contaId && <p className={errorCls}>{errors.contaId.message}</p>}
+                            </div>
 
-                        <div className="flex gap-3 pt-2">
-                            <button
-                                type="button"
-                                onClick={() => void handleRequestClose()}
-                                className="flex-1 py-2.5 rounded-xl border border-white/10 text-sm font-medium text-white hover:bg-white/5 transition-colors">
-                                Cancelar
-                            </button>
-                            <button
-                                type="submit"
-                                disabled={pending}
-                                className="flex-1 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
-                                {preAnaliseMutation.isPending ? (
-                                    <Loader2 className="w-4 h-4 animate-spin"/>
-                                ) : (
-                                    <Upload className="w-4 h-4"/>
-                                )}
-                                Analisar arquivo
-                            </button>
+                            <div>
+                                <span id="import-extrato-arquivo-label" className={labelCls}>Arquivo OFX *</span>
+                                <label
+                                    className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 bg-black/30 px-4 py-8 cursor-pointer hover:border-primary/40 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-primary">
+                                    <FileSpreadsheet aria-hidden="true" className="w-8 h-8 text-muted-foreground"/>
+                                    <span className="text-xs text-white/80 text-center">
+                                        {arquivoSelecionado ? arquivoSelecionado.name : "Clique para escolher ou solte o arquivo aqui"}
+                                    </span>
+                                    <input
+                                        type="file"
+                                        accept=".ofx,.OFX,application/x-ofx,application/vnd.intu.qfx"
+                                        className="sr-only"
+                                        aria-labelledby="import-extrato-arquivo-label"
+                                        disabled={pending}
+                                        onChange={(e) => {
+                                            const f = e.target.files?.[0];
+                                            if (f) setValue("arquivo", f, {shouldValidate: true});
+                                        }}
+                                    />
+                                </label>
+                                {errors.arquivo && <p className={errorCls}>{errors.arquivo.message}</p>}
+                            </div>
                         </div>
-                    </form>
-                ) : (
-                    <div className="p-5 space-y-4">
+                    </ModalBody>
+                    <ModalFooter hint="* Campos obrigatórios · Esc fecha">
+                        <button type="button" onClick={() => void handleRequestClose()} className={modalBtnSecondaryCls}>
+                            Cancelar
+                        </button>
+                        <button type="submit" disabled={pending} className={modalBtnPrimaryCls}>
+                            {preAnaliseMutation.isPending ? (
+                                <ModalSpinner label="Analisando..."/>
+                            ) : (
+                                <Upload aria-hidden="true" className="w-4 h-4"/>
+                            )}
+                            Analisar arquivo
+                        </button>
+                    </ModalFooter>
+                </ModalForm>
+            ) : (
+                <>
+                    <ModalBody className="space-y-4">
                         <p className="text-sm text-white/90 leading-relaxed">
                             Este arquivo tem <strong>{preAnalise.total_linhas}</strong> linhas;{" "}
                             <strong>{preAnalise.ja_existentes}</strong> já existem nesta conta
@@ -266,38 +262,35 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
                                 <> Não há linhas novas para importar.</>
                             )}
                         </p>
-                        <p className="text-[11px] text-muted-foreground">
+                        <p className="text-xs text-muted-foreground">
                             Período {preAnalise.periodo_inicio} - {preAnalise.periodo_fim}
                         </p>
-                        <div className="flex flex-col gap-2 pt-2">
-                            <button
-                                type="button"
-                                disabled={pending || preAnalise.novas === 0}
-                                onClick={confirmarImportarNovas}
-                                className="w-full py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
-                                {importMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin"/> : null}
-                                Importar apenas as {preAnalise.novas} novas
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setPreAnalise(null);
-                                    setPendingForm(null);
-                                }}
-                                className="w-full py-2.5 rounded-xl border border-white/10 text-sm font-medium text-white hover:bg-white/5">
-                                Voltar
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => void handleRequestClose()}
-                                className="w-full py-2.5 rounded-xl text-sm text-muted-foreground hover:text-white">
-                                Cancelar
-                            </button>
-                        </div>
-                    </div>
-                )}
-            </div>
+                    </ModalBody>
+                    <ModalFooter hint="Esc fecha">
+                        <button type="button" onClick={() => void handleRequestClose()} className={modalBtnSecondaryCls}>
+                            Cancelar
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setPreAnalise(null);
+                                setPendingForm(null);
+                            }}
+                            className={modalBtnSecondaryCls}>
+                            Voltar
+                        </button>
+                        <button
+                            type="button"
+                            disabled={pending || preAnalise.novas === 0}
+                            onClick={confirmarImportarNovas}
+                            className={cn(modalBtnPrimaryCls, "col-span-2")}>
+                            {importMutation.isPending ? <ModalSpinner label="Importando..."/> : null}
+                            Importar apenas as {preAnalise.novas} novas
+                        </button>
+                    </ModalFooter>
+                </>
+            )}
             <ConfirmDialog {...ConfirmDialogProps} />
-        </ViewportOverlay>
+        </Modal>
     );
 }

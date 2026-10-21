@@ -183,6 +183,41 @@
       "when": 1790167600000,
       "tag": "0025_lgpd_dpa_empresa",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1790167700000,
+      "tag": "0026_remove_permissao_migrate_passwords",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1790167800000,
+      "tag": "0027_lgpd_empresa_ativa_exige_dpa",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1790167900000,
+      "tag": "0028_lancamento_documento",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1790168000000,
+      "tag": "0029_remove_admin_empresas_concedivel",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1790168100000,
+      "tag": "0030_kanban_permissoes",
+      "breakpoints": true
     }
   ]
 }

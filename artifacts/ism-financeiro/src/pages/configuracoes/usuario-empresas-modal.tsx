@@ -1,11 +1,23 @@
 import {useState} from "react";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
-import {Loader2, Unlink, X} from "lucide-react";
+import {Unlink} from "lucide-react";
 import {fetchApiData} from "@/lib/api-config";
 import {nomeEmpresa, tenantQueryKey} from "@/lib/tenant-query";
 import {useToast} from "@/hooks/use-toast";
-import {ViewportOverlay} from "@/components/shared/viewport-overlay";
-import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from "@/components/ui/select";
+import {cn} from "@/lib/utils";
+import {SelectCampo} from "@/components/ui/select-campo";
+import {
+    Modal,
+    ModalBody,
+    ModalFooter,
+    ModalHeader,
+    ModalSpinner,
+    modalBtnPrimaryCls,
+    modalBtnSecondaryCls,
+    modalGridCls,
+} from "@/components/ui/modal-responsivo";
+
+const labelCls = "text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block";
 
 type VinculoRow = {
     id: number;
@@ -82,91 +94,102 @@ export function UsuarioEmpresasModal({
     const disponiveis = empresas.filter((e) => e.ativa && !vinculados.has(e.id));
 
     return (
-        <ViewportOverlay>
-            <div className="glass-panel w-full max-w-lg rounded-2xl p-6 space-y-4">
-                <div className="flex items-start justify-between gap-3">
-                    <div>
-                        <h2 className="text-lg font-bold text-white">Empresas de {usuarioNome}</h2>
-                        <p className="text-xs text-muted-foreground mt-1">Vincular, definir papel ou desvincular</p>
-                    </div>
-                    <button type="button" onClick={onClose} className="p-1.5 hover:bg-white/10 rounded-lg">
-                        <X className="w-4 h-4 text-muted-foreground"/>
-                    </button>
-                </div>
-
-                {isLoading ? (
-                    <p className="text-sm text-muted-foreground">A carregar…</p>
-                ) : (
-                    <ul className="space-y-2">
-                        {vinculos.map((v) => (
-                            <li
-                                key={v.id}
-                                className="flex items-center justify-between gap-2 rounded-xl border border-white/10 px-3 py-2"
-                            >
-                                <span className="min-w-0">
-                                    <span className="block text-sm text-white truncate">{nomeEmpresa(v)}</span>
-                                    <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
-                                        {v.papel} · {v.ativo ? "ativo" : "inativo"}
-                                    </span>
-                                </span>
-                                <button
-                                    type="button"
-                                    disabled={unlink.isPending}
-                                    onClick={() => unlink.mutate(v.empresa_id)}
-                                    className="p-1.5 hover:bg-destructive/15 rounded-lg text-muted-foreground hover:text-destructive"
-                                    title="Desvincular"
+        <Modal
+            onClose={onClose}
+            // O 1º focável do corpo pode ser um "Desvincular": começa pelo campo Empresa
+            // (ou Papel, se não houver empresa disponível).
+            initialFocus={(content) =>
+                content.querySelector<HTMLElement>("#usuario-empresas-empresa:not([disabled]), #usuario-empresas-papel")}
+        >
+            <ModalHeader title={`Empresas de ${usuarioNome}`} description="Vincular, definir papel ou desvincular"/>
+            <ModalBody className="space-y-5">
+                <section aria-labelledby="usuario-empresas-vinculos-titulo">
+                    <h3 id="usuario-empresas-vinculos-titulo"
+                        className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                        Vínculos atuais
+                    </h3>
+                    {isLoading ? (
+                        <p className="text-sm text-muted-foreground">A carregar…</p>
+                    ) : (
+                        <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+                            {vinculos.map((v) => (
+                                <li
+                                    key={v.id}
+                                    className="flex items-center justify-between gap-2 rounded-xl border border-white/10 px-3 py-2"
                                 >
-                                    <Unlink className="w-4 h-4"/>
-                                </button>
-                            </li>
-                        ))}
-                        {vinculos.length === 0 ? (
-                            <li className="text-sm text-muted-foreground">Nenhum vínculo.</li>
-                        ) : null}
-                    </ul>
-                )}
-
-                <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t border-white/5">
-                    <Select
-                        value={empresaId === "" ? undefined : String(empresaId)}
-                        onValueChange={(v) => setEmpresaId(Number(v))}
-                        disabled={disponiveis.length === 0}
-                    >
-                        <SelectTrigger className="flex-1 h-10 bg-white/5 border-white/10 rounded-xl text-sm text-white shadow-none">
-                            <SelectValue placeholder={disponiveis.length === 0 ? "Sem empresas disponíveis" : "Empresa…"} />
-                        </SelectTrigger>
-                        <SelectContent className="z-[70] bg-[#1A1A24] border-white/10 text-white">
-                            {disponiveis.map((e) => (
-                                <SelectItem key={e.id} value={String(e.id)} className="text-white focus:bg-primary/20 focus:text-white">
-                                    {nomeEmpresa(e)}
-                                </SelectItem>
+                                    <span className="min-w-0">
+                                        <span className="block text-sm text-white truncate">{nomeEmpresa(v)}</span>
+                                        <span className="text-xs uppercase tracking-widest text-muted-foreground">
+                                            {v.papel} · {v.ativo ? "ativo" : "inativo"}
+                                        </span>
+                                    </span>
+                                    <button
+                                        type="button"
+                                        disabled={unlink.isPending}
+                                        onClick={() => unlink.mutate(v.empresa_id)}
+                                        className="p-1.5 hover:bg-destructive/15 rounded-lg text-muted-foreground hover:text-destructive"
+                                        title="Desvincular"
+                                        aria-label={`Desvincular ${nomeEmpresa(v)}`}
+                                    >
+                                        <Unlink aria-hidden="true" className="w-4 h-4"/>
+                                    </button>
+                                </li>
                             ))}
-                        </SelectContent>
-                    </Select>
-                    <Select value={papel} onValueChange={(v) => setPapel(v as "admin" | "membro")}>
-                        <SelectTrigger className="sm:w-[140px] h-10 bg-white/5 border-white/10 rounded-xl text-sm text-white shadow-none">
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="z-[70] bg-[#1A1A24] border-white/10 text-white">
-                            <SelectItem value="membro" className="text-white focus:bg-primary/20 focus:text-white">
-                                Membro
-                            </SelectItem>
-                            <SelectItem value="admin" className="text-white focus:bg-primary/20 focus:text-white">
-                                Admin
-                            </SelectItem>
-                        </SelectContent>
-                    </Select>
-                    <button
-                        type="button"
-                        disabled={!empresaId || upsert.isPending}
-                        onClick={() => upsert.mutate()}
-                        className="px-4 py-2 rounded-xl bg-primary text-white text-sm disabled:opacity-50 inline-flex items-center justify-center gap-2"
-                    >
-                        {upsert.isPending && <Loader2 className="w-4 h-4 animate-spin"/>}
-                        Vincular
-                    </button>
-                </div>
-            </div>
-        </ViewportOverlay>
+                            {vinculos.length === 0 ? (
+                                <li className="col-span-full text-sm text-muted-foreground">Nenhum vínculo.</li>
+                            ) : null}
+                        </ul>
+                    )}
+                </section>
+
+                <section aria-labelledby="usuario-empresas-novo-titulo" className="pt-4 border-t border-white/5">
+                    <h3 id="usuario-empresas-novo-titulo"
+                        className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                        Novo vínculo
+                    </h3>
+                    <div className={modalGridCls}>
+                        <div>
+                            <label htmlFor="usuario-empresas-empresa" className={labelCls}>Empresa</label>
+                            <SelectCampo
+                                id="usuario-empresas-empresa"
+                                value={empresaId === "" ? "" : String(empresaId)}
+                                onChange={(v) => setEmpresaId(Number(v))}
+                                disabled={disponiveis.length === 0}
+                                placeholder={disponiveis.length === 0 ? "Sem empresas disponíveis" : "Empresa…"}
+                                opcoes={disponiveis.map((e) => ({value: String(e.id), label: nomeEmpresa(e)}))}
+                            />
+                        </div>
+                        <div>
+                            <label htmlFor="usuario-empresas-papel" className={labelCls}>Papel</label>
+                            <SelectCampo
+                                id="usuario-empresas-papel"
+                                value={papel}
+                                onChange={(v) => setPapel(v as "admin" | "membro")}
+                                opcoes={[
+                                    {value: "membro", label: "Membro"},
+                                    {value: "admin", label: "Admin"},
+                                ]}
+                            />
+                        </div>
+                        <div className="flex items-end md:col-span-2 xl:col-span-1">
+                            <button
+                                type="button"
+                                disabled={!empresaId || upsert.isPending}
+                                onClick={() => upsert.mutate()}
+                                className={cn(modalBtnPrimaryCls, "w-full")}
+                            >
+                                {upsert.isPending && <ModalSpinner label="Vinculando..."/>}
+                                Vincular
+                            </button>
+                        </div>
+                    </div>
+                </section>
+            </ModalBody>
+            <ModalFooter hint="Esc fecha">
+                <button type="button" onClick={onClose} className={modalBtnSecondaryCls}>
+                    Fechar
+                </button>
+            </ModalFooter>
+        </Modal>
     );
 }

@@ -7,7 +7,11 @@ on:
       - develop
 
 jobs:
+  testes:
+    uses: ./.github/workflows/ci.yml
+
   deploy:
+    needs: testes
     runs-on: ubuntu-latest
     env:
       # master -> HML, develop -> TST. Variáveis e secrets usam o prefixo do ambiente (ex.: HML_DB_PORT).
@@ -16,6 +20,7 @@ jobs:
       WEB_PORT: ${{ vars[format('{0}_WEB_PORT', github.ref_name == 'master' && 'HML' || 'TST')] }}
       API_PORT: ${{ vars[format('{0}_API_PORT', github.ref_name == 'master' && 'HML' || 'TST')] }}
       DB_PORT: ${{ vars[format('{0}_DB_PORT', github.ref_name == 'master' && 'HML' || 'TST')] }}
+      FRONTEND_URL: ${{ vars[format('{0}_FRONTEND_URL', github.ref_name == 'master' && 'HML' || 'TST')] }}
       SMTP_HOST: ${{ vars[format('{0}_SMTP_HOST', github.ref_name == 'master' && 'HML' || 'TST')] }}
       SMTP_PORT: ${{ vars[format('{0}_SMTP_PORT', github.ref_name == 'master' && 'HML' || 'TST')] }}
       SMTP_USER: ${{ vars[format('{0}_SMTP_USER', github.ref_name == 'master' && 'HML' || 'TST')] }}
@@ -27,16 +32,21 @@ jobs:
       JWT_ENCRYPT_SECRET: ${{ secrets[format('{0}_JWT_ENCRYPT_SECRET', github.ref_name == 'master' && 'HML' || 'TST')] }}
       SMTP_PASS: ${{ secrets[format('{0}_SMTP_PASS', github.ref_name == 'master' && 'HML' || 'TST')] }}
       REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+      LUKS_PASSPHRASE: ${{ secrets[format('{0}_LUKS_PASSPHRASE', github.ref_name == 'master' && 'HML' || 'TST')] }}
     steps:
       - name: Validar variáveis do ambiente
         run: |
           faltando=0
-          for v in PORT WEB_PORT API_PORT DB_PORT SMTP_HOST SMTP_PORT SMTP_USER DB_PASSWORD JWT_SECRET JWT_ENCRYPT_SECRET SMTP_PASS REDIS_PASSWORD; do
+          for v in PORT WEB_PORT API_PORT DB_PORT FRONTEND_URL SMTP_HOST SMTP_PORT SMTP_USER DB_PASSWORD JWT_SECRET JWT_ENCRYPT_SECRET SMTP_PASS REDIS_PASSWORD; do
             if [ -z "${!v}" ]; then
               echo "::error::$v não definida para $TARGET_DIR"
               faltando=1
             fi
           done
+          if [ -n "$JWT_SECRET" ] && [ "$JWT_SECRET" = "$JWT_ENCRYPT_SECRET" ]; then
+            echo "::error::JWT_SECRET e JWT_ENCRYPT_SECRET iguais em $TARGET_DIR (a API recusa arrancar)."
+            faltando=1
+          fi
           if [ -z "$ISM_APP_PASSWORD" ] || [ -z "$ISM_ADMIN_PASSWORD" ] || [ -z "$ISM_OWNER_PASSWORD" ]; then
             echo "::warning::Defina TST_/HML_ISM_APP_PASSWORD, ISM_ADMIN_PASSWORD e ISM_OWNER_PASSWORD. A usar DB_PASSWORD até existirem."
           fi
@@ -53,7 +63,7 @@ jobs:
           host: ${{ secrets.SERVER_IP }}
           username: ubuntu
           key: ${{ secrets.SSH_KEY }}
-          envs: TARGET_DIR,PORT,WEB_PORT,API_PORT,DB_PORT,SMTP_HOST,SMTP_PORT,SMTP_USER,DB_PASSWORD,ISM_APP_PASSWORD,ISM_ADMIN_PASSWORD,ISM_OWNER_PASSWORD,JWT_SECRET,JWT_ENCRYPT_SECRET,SMTP_PASS,REDIS_PASSWORD
+          envs: TARGET_DIR,PORT,WEB_PORT,API_PORT,DB_PORT,FRONTEND_URL,SMTP_HOST,SMTP_PORT,SMTP_USER,DB_PASSWORD,ISM_APP_PASSWORD,ISM_ADMIN_PASSWORD,ISM_OWNER_PASSWORD,JWT_SECRET,JWT_ENCRYPT_SECRET,SMTP_PASS,REDIS_PASSWORD,LUKS_PASSPHRASE
           script: |
             set -e
             echo "Iniciando deploy no diretório: $TARGET_DIR para a branch: ${{ github.ref_name }}"
@@ -70,6 +80,7 @@ jobs:
               "WEB_PORT=$WEB_PORT" \
               "API_PORT=$API_PORT" \
               "DB_PORT=$DB_PORT" \
+              "FRONTEND_URL=$FRONTEND_URL" \
               "DB_PASSWORD=$DB_PASSWORD" \
               "ISM_APP_PASSWORD=$ISM_APP_PASSWORD" \
               "ISM_ADMIN_PASSWORD=$ISM_ADMIN_PASSWORD" \
@@ -84,7 +95,17 @@ jobs:
               > .env
             chmod 600 .env
 
-            export PG_LUKS_PASSPHRASE="${ISM_OWNER_PASSWORD:-$DB_PASSWORD}"
+            if [ -n "${LUKS_PASSPHRASE:-}" ]; then
+              if [ "$LUKS_PASSPHRASE" = "$ISM_OWNER_PASSWORD" ] || [ "$LUKS_PASSPHRASE" = "$DB_PASSWORD" ]; then
+                echo "LUKS_PASSPHRASE não pode repetir ISM_OWNER_PASSWORD nem DB_PASSWORD."
+                exit 1
+              fi
+              export PG_LUKS_PASSPHRASE="$LUKS_PASSPHRASE"
+            else
+              # Sem secret dedicado, o script abre a chave que já está na VM
+              # e troca-a se o ficheiro ainda for a senha do banco.
+              export PG_LUKS_PASSPHRASE="${ISM_OWNER_PASSWORD:-$DB_PASSWORD}"
+            fi
             eval "$(bash scripts/lgpd-volume-luks.sh | tee /dev/stderr | grep '^PGDATA_MOUNT=')"
             if [ -z "${PGDATA_MOUNT:-}" ]; then
               echo "Volume LUKS não devolveu PGDATA_MOUNT. Deploy interrompido."

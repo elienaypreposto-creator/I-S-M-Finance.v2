@@ -19,14 +19,12 @@ import PlanoContas from "./pages/cadastros/plano-contas-FINANCEIRO-ISM";
 import ContasBancarias from "./pages/cadastros/contas-bancarias-FINANCEIRO-ISM";
 import Metas from "./pages/cadastros/metas";
 import Departamentos from "./pages/cadastros/departamentos";
-import RegrasConciliacao from "./pages/cadastros/regras-conciliacao";
 
 import FechamentoMensal from "./pages/relatorios/fechamento-mensal";
 import ContabilFiscal from "./pages/relatorios/contabil-fiscal";
 import DreGerencial from "./pages/relatorios/dre-FINANCEIRO-ISM";
 import FluxoCaixa from "./pages/relatorios/fluxo-caixa-FINANCEIRO-ISM";
 import MetasRelatorio from "./pages/relatorios/metas-relatorio";
-import RelatorioConciliacao from "./pages/relatorios/relatorio-conciliacao";
 
 import Usuarios from "./pages/configuracoes/usuarios";
 import Filiais from "./pages/configuracoes/filiais";
@@ -46,15 +44,20 @@ function PrivateRoute({
                           component: Component,
                           path,
                           permission,
+                          superadminOnly,
                       }: {
     component: any;
     path: string;
     permission?: string;
+    /** Operação do ISM (ex.: cadastro de empresas): só `user.superadmin`. */
+    superadminOnly?: boolean;
 }) {
     const token = authStorage.getToken();
-    const {hasPermission, loading} = useAuth();
+    const {hasPermission, loading, user} = useAuth();
 
-    if (!token) {
+    // No F5 o access token (só em memória) ainda não voltou do refresh: espera a sessão
+    // antes de mandar para o login, senão a URL (e os filtros nela) se perde.
+    if (!token && !loading) {
         return <Redirect to="/login"/>;
     }
 
@@ -70,8 +73,9 @@ function PrivateRoute({
         );
     }
 
-    if (permission) {
-        if (!hasPermission(permission)) {
+    if (permission || superadminOnly) {
+        const permitido = superadminOnly ? user?.superadmin === true : hasPermission(permission!);
+        if (!permitido) {
             return (
                 <Route path={path}>
                     {() => (
@@ -107,8 +111,8 @@ function Router() {
             <Route path="/redefinir-senha" component={RedefinirSenha}/>
             <PrivateRoute path="/" component={Dashboard}/>
 
-            <PrivateRoute path="/kanban" component={Kanban}/>
-            <PrivateRoute path="/lancamentos" component={Lancamentos}/>
+            <PrivateRoute path="/kanban" component={Kanban} permission={PERM.KANBAN_LISTAR}/>
+            <PrivateRoute path="/lancamentos" component={Lancamentos} permission={PERM.LANCAMENTOS_LISTAR}/>
             <PrivateRoute path="/conciliacao" component={ConciliacaoList} permission={PERM.CONCILIACAO_ACESSAR}/>
             <PrivateRoute
                 path="/conciliacao/extrato/:extratoId"
@@ -121,28 +125,21 @@ function Router() {
             <PrivateRoute path="/cadastros/contas-bancarias" component={ContasBancarias}/>
             <PrivateRoute path="/cadastros/metas" component={Metas}/>
             <PrivateRoute path="/cadastros/departamentos" component={Departamentos}/>
-            <PrivateRoute
-                path="/cadastros/regras-conciliacao"
-                component={RegrasConciliacao}
-                permission={PERM.CONCILIACAO_ACESSAR}
-            />
+            <Route path="/cadastros/regras-conciliacao"><Redirect to="/conciliacao" replace/></Route>
 
             <PrivateRoute path="/relatorios/fechamento-mensal" component={FechamentoMensal}/>
             <PrivateRoute path="/relatorios/contabil-fiscal" component={ContabilFiscal}/>
             <PrivateRoute path="/relatorios/dre" component={DreGerencial}/>
             <PrivateRoute path="/relatorios/fluxo-caixa" component={FluxoCaixa}/>
             <PrivateRoute path="/relatorios/metas" component={MetasRelatorio}/>
-            <PrivateRoute
-                path="/relatorios/conciliacao"
-                component={RelatorioConciliacao}
-                permission={PERM.RELATORIOS_CONCILIACAO}
-            />
+            <Route path="/relatorios/conciliacao"><Redirect to="/conciliacao" replace/></Route>
 
             <PrivateRoute path="/configuracoes/usuarios" component={Usuarios}/>
             <PrivateRoute path="/admin/usuarios" component={Usuarios}/>
             <PrivateRoute path="/configuracoes/filiais" component={Filiais}/>
             <PrivateRoute path="/configuracoes/tokens-api" component={TokensApi}/>
-            <PrivateRoute path="/admin/empresas" component={AdminEmpresas} permission={PERM.ADMIN_EMPRESAS_LISTAR}/>
+            {/* Superadmin vê todas; admin com admin:empresas:editar vê só a empresa da sessão. */}
+            <PrivateRoute path="/admin/empresas" component={AdminEmpresas} permission={PERM.ADMIN_EMPRESAS_EDITAR}/>
 
             <Route component={NotFound}/>
         </Switch>

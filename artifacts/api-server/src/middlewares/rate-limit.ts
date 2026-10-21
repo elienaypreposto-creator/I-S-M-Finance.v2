@@ -1,4 +1,3 @@
-
 /**
  * Rate Limit - Limitação de requisições contra força bruta e flood.
  *
@@ -14,10 +13,11 @@
  * - 10 requisições / 15 min por combinação IP + e-mail.
  * - Aplicado ao login.
  *
- * loginEmailLimiter
- * - 20 falhas / 15 min por e-mail.
- * - Independente do IP.
- * - Logins bem-sucedidos não consomem a cota.
+ * O IP é sempre `req.ip`, que só é o IP real do cliente com `trust proxy`
+ * correto (ver lib/client-ip.ts); sem isso todos caem no balde do gateway.
+ * O bloqueio por conta (falhas por e-mail) fica em lib/account-lockout.ts:
+ * ele substitui o antigo limiter por e-mail, que respondia 429 para a vítima
+ * enquanto o atacante continuasse errando a senha dela.
  *
  * Infraestrutura:
  * - Contadores armazenados no Redis.
@@ -65,12 +65,11 @@ const FIFTEEN_MINUTES_MS =
 getRedis();
 
 /**
- * Tipo exigido pelo rate-limit-redis.
+ * Assinatura de `sendCommand` do rate-limit-redis (cliente único, não cluster).
+ * O construtor aceita união com o modo cluster, que não tem este campo.
  */
-type RedisSendCommand =
-    ConstructorParameters<
-        typeof RedisStore
-    >[0]["sendCommand"];
+type RedisReply = boolean | number | string | Array<boolean | number | string>;
+type RedisSendCommand = (...args: string[]) => Promise<RedisReply>;
 
 /**
  * Envia comandos para o Redis.
@@ -264,34 +263,27 @@ class ResilientRedisStore
     }
 }
 
+
 /**
  * Handler comum para HTTP 429.
  */
-const rateLimitHandler:
-    RateLimitExceededEventHandler =
-    (_req, res) => {
-        errorResponse(
-            res,
-            429,
-            "RATE_LIMIT_EXCEEDED",
-            "Muitas requisições. Tente novamente em alguns minutos.",
-        );
-    };
+const rateLimitHandler: RateLimitExceededEventHandler = (_req, res) => {
+    errorResponse(
+        res,
+        429,
+        "RATE_LIMIT_EXCEEDED",
+        "Muitas requisições. Tente novamente em alguns minutos.",
+    );
+};
 
 /**
  * Requests OPTIONS não consomem rate limit.
  */
-const skipOptions = (
-    req: Request,
-): boolean =>
-    req.method === "OPTIONS";
+const skipOptions = (req: Request): boolean => req.method === "OPTIONS";
 
 /**
- * Validações relacionadas a proxy.
- *
- * O ambiente pode estar atrás de Nginx /
- * X-Forwarded-For.
- *
+ * As validações de proxy da lib ficam desligadas: o `trust proxy` é numérico
+ * e a lib v8 lança ValidationError em setups que ela não reconhece.
  * O IP utilizado continua sendo req.ip.
  */
 const proxyValidate = {
@@ -302,213 +294,45 @@ const proxyValidate = {
 /**
  * Extrai e normaliza o e-mail do corpo.
  */
-const emailDoCorpo = (
-    req: Request,
-): string | null => {
-    if (
-        typeof req.body?.email !==
-            "string" ||
-        !req.body.email.trim()
-    ) {
+export const emailDoCorpo = (req: Request): string | null => {
+    if (typeof req.body?.email !== "string" || !req.body.email.trim()) {
         return null;
     }
-
-    return req.body.email
-        .trim()
-        .toLowerCase();
+    return req.body.email.trim().toLowerCase();
 };
 
+/** IP real normalizado (IPv6 agrupado por /56 - CVE-2026-30827). */
+export const chaveIp = (req: Request): string =>
+    ipKeyGenerator(req.ip ?? req.socket.remoteAddress ?? "unknown");
+
+/** Chave composta do login: IP real + e-mail. */
+export const chaveLogin = (req: Request): string => `${chaveIp(req)}:${emailDoCorpo(req) ?? "sem-email"}`;
+
 /**
- * GLOBAL LIMITER
- *
- * 300 requisições / 15 minutos por IP.
+ * Monta os limiters com o Store recebido (Redis em produção, memória nos
+ * testes). Cada limiter precisa de um Store próprio.
  */
-export const globalLimiter =
-    rateLimit({
-        windowMs:
-            FIFTEEN_MINUTES_MS,
-
-        limit: 300,
-
-        standardHeaders: "draft-7",
+export function criarLimiters(novoStore: (prefixo: string) => Store) {
+    const base = {
+        windowMs: FIFTEEN_MINUTES_MS,
+        standardHeaders: "draft-7" as const,
         legacyHeaders: false,
-
         skip: skipOptions,
-
-        handler:
-            rateLimitHandler,
-
-        validate:
-            proxyValidate,
-
-        store:
-            new ResilientRedisStore(
-                "rl:global:",
-            ),
-
-        /**
-         * Segurança adicional:
-         * se o Store falhar,
-         * permite a requisição.
-         */
+        handler: rateLimitHandler,
+        validate: proxyValidate,
         passOnStoreError: true,
-    });
+    };
 
-/**
- * AUTH LIMITER
- *
- * 10 requisições / 15 minutos por IP.
- */
-export const authLimiter =
-    rateLimit({
-        windowMs:
-            FIFTEEN_MINUTES_MS,
+    return {
+        /** 300 requisições / 15 minutos por IP. */
+        globalLimiter: rateLimit({...base, limit: 300, keyGenerator: chaveIp, store: novoStore("rl:global:")}),
+        /** 10 requisições / 15 minutos por IP. */
+        authLimiter: rateLimit({...base, limit: 10, keyGenerator: chaveIp, store: novoStore("rl:auth:")}),
+        /** 10 tentativas / 15 minutos por IP + e-mail. */
+        loginLimiter: rateLimit({...base, limit: 10, keyGenerator: chaveLogin, store: novoStore("rl:login:")}),
+    };
+}
 
-        limit: 10,
-
-        standardHeaders: "draft-7",
-        legacyHeaders: false,
-
-        skip: skipOptions,
-
-        handler:
-            rateLimitHandler,
-
-        validate:
-            proxyValidate,
-
-        keyGenerator: (
-            req: Request,
-        ) =>
-            ipKeyGenerator(
-                req.ip ??
-                    req.socket
-                        .remoteAddress ??
-                    "unknown",
-            ),
-
-        store:
-            new ResilientRedisStore(
-                "rl:auth:",
-            ),
-
-        passOnStoreError: true,
-    });
-
-/**
- * LOGIN LIMITER
- *
- * 10 tentativas / 15 minutos por:
- *
- * IP + e-mail
- */
-export const loginLimiter =
-    rateLimit({
-        windowMs:
-            FIFTEEN_MINUTES_MS,
-
-        limit: 10,
-
-        standardHeaders: "draft-7",
-        legacyHeaders: false,
-
-        skip: skipOptions,
-
-        handler:
-            rateLimitHandler,
-
-        validate:
-            proxyValidate,
-
-        keyGenerator: (
-            req: Request,
-        ) => {
-            const ip =
-                ipKeyGenerator(
-                    req.ip ??
-                        req.socket
-                            .remoteAddress ??
-                        "unknown",
-                );
-
-            const email =
-                emailDoCorpo(req) ??
-                "sem-email";
-
-            return `${ip}:${email}`;
-        },
-
-        store:
-            new ResilientRedisStore(
-                "rl:login:",
-            ),
-
-        passOnStoreError: true,
-    });
-
-/**
- * LOGIN EMAIL LIMITER
- *
- * 20 falhas / 15 minutos por e-mail.
- *
- * As tentativas são somadas entre todos os IPs.
- *
- * Exemplo:
- *
- * IP 1 ─┐
- * IP 2 ─┼──> usuario@email.com
- * IP 3 ─┘
- *
- * Todos compartilham o mesmo contador.
- */
-export const loginEmailLimiter =
-    rateLimit({
-        windowMs:
-            FIFTEEN_MINUTES_MS,
-
-        limit: 20,
-
-        standardHeaders: "draft-7",
-        legacyHeaders: false,
-
-        /**
-         * Logins bem-sucedidos não consomem
-         * a cota.
-         */
-        skipSuccessfulRequests:
-            true,
-
-        /**
-         * Sem e-mail:
-         * não participa deste limiter.
-         *
-         * Continua protegido por:
-         * - loginLimiter;
-         * - globalLimiter.
-         */
-        skip: (req: Request) =>
-            skipOptions(req) ||
-            emailDoCorpo(req) === null,
-
-        handler:
-            rateLimitHandler,
-
-        /**
-         * O e-mail é a chave.
-         *
-         * Não utiliza IP.
-         */
-        keyGenerator: (
-            req: Request,
-        ) =>
-            `email:${emailDoCorpo(
-                req,
-            )}`,
-
-        store:
-            new ResilientRedisStore(
-                "rl:email:",
-            ),
-
-        passOnStoreError: true,
-    });
+export const {globalLimiter, authLimiter, loginLimiter} = criarLimiters(
+    (prefixo) => new ResilientRedisStore(prefixo),
+);

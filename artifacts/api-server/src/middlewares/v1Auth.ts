@@ -4,16 +4,8 @@ import {eq} from "drizzle-orm";
 import {withBypassRls, type TenantDb} from "@workspace/db";
 import {tokensApiTable} from "@workspace/db/schema";
 import {errorResponse} from "../utils/response";
-
-// Extensão de tipos do Express.
-declare global {
-    namespace Express {
-        interface Request {
-            tenant?: {empresaId: number};
-            apiToken?: {id: number; escopos: string[]};
-        }
-    }
-}
+import {hashConfere, tokenExpirado} from "../lib/api-token-identity";
+import {popularContexto} from "./v1-contexto";
 
 // Formato novo: ism_v1_<id>.<secret>
 const TOKEN_REGEX = /^ism_v1_(\d+)\.([A-Za-z0-9_-]+)$/;
@@ -32,32 +24,6 @@ const getBearerToken = (authHeader?: string) => {
 
     return token;
 };
-
-function popularContexto(
-    req: Request,
-    tokenRow: {
-        id: number;
-        empresa_id: number;
-        escopos: string[] | null;
-    },
-) {
-    req.tenant = {
-        empresaId: tokenRow.empresa_id,
-    };
-
-    req.apiToken = {
-        id: tokenRow.id,
-        escopos: tokenRow.escopos ?? [],
-    };
-
-    // Mantido por compatibilidade com o auditLogger.
-    req.user = {
-        id: tokenRow.id,
-        email: "api-v1@token",
-        permissions: ["*"],
-        empresaId: tokenRow.empresa_id,
-    };
-}
 
 function agendarAtualizacaoUso(req: Request, tokenId: number) {
     const ip = req.ip ?? req.socket?.remoteAddress ?? null;
@@ -95,8 +61,6 @@ export const v1AuthMiddleware = async (
                 "Token Bearer da API v1 ausente ou inválido.",
             );
         }
-
-        const hoje = new Date().toISOString().split("T")[0];
 
         /**
          * ============================================================
@@ -156,10 +120,7 @@ export const v1AuthMiddleware = async (
                 );
             }
 
-            if (
-                tokenRow.data_expiracao &&
-                tokenRow.data_expiracao < hoje
-            ) {
+            if (tokenExpirado(tokenRow.data_expiracao)) {
                 return errorResponse(
                     res,
                     401,
@@ -168,21 +129,7 @@ export const v1AuthMiddleware = async (
                 );
             }
 
-            const secretHash = crypto
-                .createHash("sha256")
-                .update(secret)
-                .digest();
-
-            const storedHash = Buffer.from(
-                tokenRow.token_hash,
-                "hex",
-            );
-
-            const valido =
-                secretHash.length === storedHash.length &&
-                crypto.timingSafeEqual(secretHash, storedHash);
-
-            if (!valido) {
+            if (!hashConfere(secret, tokenRow.token_hash)) {
                 return errorResponse(
                     res,
                     401,
@@ -215,6 +162,7 @@ export const v1AuthMiddleware = async (
                     .select({
                         id: tokensApiTable.id,
                         empresa_id: tokensApiTable.empresa_id,
+                        token_hash: tokensApiTable.token_hash,
                         escopos: tokensApiTable.escopos,
                         ativo: tokensApiTable.ativo,
                         data_expiracao: tokensApiTable.data_expiracao,
@@ -225,6 +173,22 @@ export const v1AuthMiddleware = async (
             );
 
             if (!tokenRow || !tokenRow.ativo) {
+                return errorResponse(
+                    res,
+                    401,
+                    "UNAUTHORIZED",
+                    "Token da API v1 inválido ou inativo.",
+                );
+            }
+
+            // Confirmação em tempo constante do hash devolvido pelo banco
+            // (o lookup por índice não é tempo-constante).
+            const calculado = Buffer.from(tokenHash, "hex");
+            const armazenado = Buffer.from(tokenRow.token_hash, "hex");
+            if (
+                calculado.length !== armazenado.length ||
+                !crypto.timingSafeEqual(calculado, armazenado)
+            ) {
                 return errorResponse(
                     res,
                     401,
@@ -245,10 +209,7 @@ export const v1AuthMiddleware = async (
                 );
             }
 
-            if (
-                tokenRow.data_expiracao &&
-                tokenRow.data_expiracao < hoje
-            ) {
+            if (tokenExpirado(tokenRow.data_expiracao)) {
                 return errorResponse(
                     res,
                     401,

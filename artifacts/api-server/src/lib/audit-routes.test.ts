@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
-import {AUDIT_SENSITIVE_GET_PREFIXES, shouldAuditRequest} from "./audit-routes";
+import {AUDIT_SENSITIVE_GET_PREFIXES, isApiV1Path, shouldAuditRequest} from "./audit-routes";
 
 describe("shouldAuditRequest", () => {
     it("audita mutações independentemente do path", () => {
@@ -20,9 +20,32 @@ describe("shouldAuditRequest", () => {
         assert.equal(shouldAuditRequest("GET", "/api/relatorios/dre/export"), true);
     });
 
+    it("audita todas as chamadas da API v1 (só tem GET)", () => {
+        assert.equal(shouldAuditRequest("GET", "/api/v1/bancos"), true);
+        assert.equal(shouldAuditRequest("GET", "/api/v1/contasPagar?pagina=1"), true);
+        assert.equal(shouldAuditRequest("GET", "/v1/pessoas"), true);
+        assert.equal(shouldAuditRequest("GET", "/api/v1x/outra"), false);
+    });
+
     it("não audita GET de listagem comum", () => {
         assert.equal(shouldAuditRequest("GET", "/api/lancamentos"), false);
         assert.equal(shouldAuditRequest("GET", "/api/healthz"), false);
         assert.equal(shouldAuditRequest("OPTIONS", "/api/relatorios/dre"), false);
+    });
+
+    it("audita toda chamada da API v1 (GET inclusive), exceto OPTIONS", () => {
+        assert.equal(shouldAuditRequest("GET", "/api/v1/contasPagar"), true);
+        assert.equal(shouldAuditRequest("GET", "/api/v1/bancos?limit=5"), true);
+        assert.equal(shouldAuditRequest("get", "/v1/pessoas"), true);
+        assert.equal(shouldAuditRequest("HEAD", "/api/v1/filiais"), true);
+        assert.equal(shouldAuditRequest("OPTIONS", "/api/v1/filiais"), false);
+        assert.equal(shouldAuditRequest("GET", "/api/v1x/qualquer"), false);
+    });
+
+    it("isApiV1Path reconhece só o prefixo /v1", () => {
+        assert.equal(isApiV1Path("/api/v1"), true);
+        assert.equal(isApiV1Path("/api/v1/planoContas?x=1"), true);
+        assert.equal(isApiV1Path("/api/v10/x"), false);
+        assert.equal(isApiV1Path("/api/lancamentos/v1"), false);
     });
 });

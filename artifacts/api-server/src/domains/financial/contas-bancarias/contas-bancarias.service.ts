@@ -5,7 +5,7 @@ import {AppError} from "../../../utils/app-error";
 import {centsToDecimalString, fromCents, toCents} from "../../../utils/money";
 import {sqlLancamentosDaConta} from "../../../utils/lancamentos-conta";
 import {tenantScope, tenantWhere, withEmpresaId} from "../../../lib/tenant-scope";
-import type {CreateContaBancariaBody, UpdateContaBancariaBody} from "./schemas";
+import {TIPOS_CONTA_BANCARIA, type CreateContaBancariaBody, type UpdateContaBancariaBody} from "./schemas";
 
 async function calcularSaldoCents(empresaId: number, contaId: number, dataRef?: string): Promise<{
     saldoInicialCents: number;
@@ -130,6 +130,16 @@ export const contasBancariasService = {
                 "CONFLICT",
                 "Não é possível editar este cadastro, pois já existem lançamentos ou conciliações registrados utilizando-o.",
             );
+        }
+
+        if (payload.tipo !== undefined && !(TIPOS_CONTA_BANCARIA as readonly string[]).includes(payload.tipo)) {
+            const [atual] = await db
+                .select({tipo: contasBancariasTable.tipo})
+                .from(contasBancariasTable)
+                .where(tenantWhere(contasBancariasTable, empresaId, eq(contasBancariasTable.id, id)));
+            if (atual && atual.tipo !== payload.tipo) {
+                throw new AppError(400, "VALIDATION_ERROR", `Tipo de conta inválido. Use: ${TIPOS_CONTA_BANCARIA.join(", ")}.`);
+            }
         }
 
         const {empresa, titular, ...rest} = payload;

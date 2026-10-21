@@ -33,24 +33,28 @@ export const PERM = {
     REGRAS_CONCILIACAO_EDITAR: "financeiro:regras-conciliacao:editar",
     REGRAS_CONCILIACAO_DELETAR: "financeiro:regras-conciliacao:deletar",
     ADMIN_PERMISSOES_CONCEDER: "admin:permissoes:conceder",
-    ADMIN_EMPRESAS_LISTAR: "admin:empresas:listar",
-    ADMIN_EMPRESAS_CRIAR: "admin:empresas:criar",
+    /** Edita os dados cadastrais da empresa da sessão (não lista nem cria outras). */
     ADMIN_EMPRESAS_EDITAR: "admin:empresas:editar",
     ADMIN_USUARIOS_LISTAR: "admin:usuarios:listar",
     ADMIN_USUARIOS_CRIAR: "admin:usuarios:criar",
     ADMIN_USUARIOS_EDITAR: "admin:usuarios:editar",
     ADMIN_USUARIOS_DELETAR: "admin:usuarios:deletar",
+    LANCAMENTOS_LISTAR: "financeiro:lancamentos:listar",
+    KANBAN_LISTAR: "kanban:tarefas:listar",
+    KANBAN_CRIAR: "kanban:tarefas:criar",
+    KANBAN_EDITAR: "kanban:tarefas:editar",
+    KANBAN_EXCLUIR: "kanban:tarefas:excluir",
 } as const;
 
 export type PermissaoCodigo = (typeof PERM)[keyof typeof PERM];
 
 /**
- * NOVO — Card 2 (Permissões). Concedido automaticamente pelo `fetchPermissions`
+ * NOVO - Card 2 (Permissões). Concedido automaticamente pelo `fetchPermissions`
  * (routes/auth.ts) a quem tem `papel = "admin"` em `usuario_empresas` para a
- * empresa ativa — NÃO é uma linha gravada em `usuario_permissoes`, é
+ * empresa ativa - NÃO é uma linha gravada em `usuario_permissoes`, é
  * calculado no momento de emitir o token. Cobre as ações de gestão de
  * usuários DENTRO da empresa (distinto de `superadmin`, que é acesso
- * irrestrito a TODAS as empresas — ver usuarios.ts).
+ * irrestrito a TODAS as empresas - ver usuarios.ts).
  *
  * Lista de códigos concretos (não um wildcard `"admin:usuarios:*"`): assim
  * `withPermission`/`permissions.includes(...)` continua sendo comparação

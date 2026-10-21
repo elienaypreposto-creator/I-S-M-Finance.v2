@@ -1,6 +1,7 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
-import {useMemo, useState} from "react";
+import {useMemo} from "react";
 import {PageHeader} from "@/components/shared/page-header";
+import {useParametrosUrl} from "@/components/shared/filtros";
 import {
     Download,
     FileText,
@@ -10,7 +11,8 @@ import {
     Loader2,
     AlertCircle,
 } from "lucide-react";
-import {formatCurrency} from "@/lib/utils";
+import {useDinheiro} from "@/components/conta/saldos-visiveis";
+import {SelectCampo} from "@/components/ui/select-campo";
 import {useQuery} from "@tanstack/react-query";
 import {fetchApiData} from "@/lib/api-config";
 import {exportToExcel, exportToPDF, fmtBRL} from "@/lib/export";
@@ -48,13 +50,14 @@ function toCents(v: number): number {
 }
 
 const CustomTooltip = ({active, payload, label}: any) => {
+    const dinheiro = useDinheiro();
     if (!active || !payload?.length) return null;
     return (
         <div className="bg-card/95 backdrop-blur-md border border-white/10 p-3 rounded-lg shadow-xl">
             <p className="text-white font-medium mb-2">{label}</p>
             {payload.map((entry: any, i: number) => (
                 <p key={i} style={{color: entry.color}} className="text-sm">
-                    {entry.name}: {formatCurrency(entry.value)}
+                    {entry.name}: {dinheiro(entry.value)}
                 </p>
             ))}
         </div>
@@ -62,7 +65,15 @@ const CustomTooltip = ({active, payload, label}: any) => {
 };
 
 export default function MetasRelatorio() {
-    const [ano, setAno] = useState(CURRENT_YEAR);
+    const dinheiro = useDinheiro();
+    // Ano na URL (?ano=2026) para sobreviver ao F5 e ao compartilhar o link.
+    const {ler, atualizar} = useParametrosUrl();
+    const anoUrl = ler("ano");
+    const ano = /^\d{4}$/.test(anoUrl) ? Number(anoUrl) : CURRENT_YEAR;
+    const anosOpcoes = useMemo(
+        () => (YEARS.includes(ano) ? YEARS : [...YEARS, ano].sort((a, b) => b - a)),
+        [ano],
+    );
 
     const {data: metas = [], isLoading, isError} = useQuery<MetaItem[]>({
         queryKey: tenantQueryKey("relatorio-metas", ano),
@@ -169,17 +180,6 @@ export default function MetasRelatorio() {
                 description={`Previsto × Realizado via data_quitação — ${ano}`}
                 actions={
                     <div className="flex gap-3">
-                        <select
-                            value={ano}
-                            onChange={(e) => setAno(Number(e.target.value))}
-                            className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white outline-none cursor-pointer"
-                        >
-                            {YEARS.map((y) => (
-                                <option key={y} value={y} className="bg-card text-white">
-                                    {y}
-                                </option>
-                            ))}
-                        </select>
                         <button
                             type="button"
                             onClick={() =>
@@ -206,6 +206,20 @@ export default function MetasRelatorio() {
                 }
             />
 
+            {/* Barra padrão: período (ano) à esquerda */}
+            <div className="glass-panel rounded-2xl border border-white/5 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                    <label htmlFor="metas-ano" className="text-xs text-muted-foreground whitespace-nowrap">Ano</label>
+                    <SelectCampo
+                        id="metas-ano"
+                        value={String(ano)}
+                        onChange={(v) => atualizar({ano: v})}
+                        className="w-[8.5em]"
+                        opcoes={anosOpcoes.map((y) => ({value: String(y), label: String(y)}))}
+                    />
+                </div>
+            </div>
+
             {isLoading && (
                 <div className="flex items-center justify-center h-48 gap-3 text-muted-foreground">
                     <Loader2 className="w-6 h-6 animate-spin"/>
@@ -228,14 +242,14 @@ export default function MetasRelatorio() {
                                 <Target className="w-5 h-5 text-primary"/>
                                 <p className="text-xs text-muted-foreground">Total Orçado</p>
                             </div>
-                            <p className="text-xl font-bold text-primary">{formatCurrency(totalOrcado)}</p>
+                            <p className="text-xl font-bold text-primary">{dinheiro(totalOrcado)}</p>
                         </div>
                         <div className="glass-panel rounded-2xl p-4">
                             <div className="flex items-center gap-2 mb-3">
                                 <TrendingUp className="w-5 h-5 text-teal-400"/>
                                 <p className="text-xs text-muted-foreground">Realizado (quitação)</p>
                             </div>
-                            <p className="text-xl font-bold text-teal-400">{formatCurrency(totalRealizado)}</p>
+                            <p className="text-xl font-bold text-teal-400">{dinheiro(totalRealizado)}</p>
                             {atingimentoPct != null && (
                                 <p className={`text-xs mt-1 ${atingimentoPct >= 100 ? "text-success" : "text-warning"}`}>
                                     {atingimentoPct.toFixed(1)}% do orçado
@@ -261,7 +275,7 @@ export default function MetasRelatorio() {
                                 <Target className="w-5 h-5 text-amber-400"/>
                                 <p className="text-xs text-muted-foreground">Juros (fora do resultado)</p>
                             </div>
-                            <p className="text-xl font-bold text-amber-300">{formatCurrency(totalJuros)}</p>
+                            <p className="text-xl font-bold text-amber-300">{dinheiro(totalJuros)}</p>
                             <p className="text-xs text-muted-foreground mt-1">Não entra na meta</p>
                         </div>
                     </div>
@@ -333,12 +347,12 @@ export default function MetasRelatorio() {
                                         return (
                                             <tr key={cat} className="hover:bg-white/[0.02]">
                                                 <td className="px-4 py-3 text-white font-medium">{cat}</td>
-                                                <td className="px-4 py-3 text-right text-white/80">{formatCurrency(orcado)}</td>
-                                                <td className="px-4 py-3 text-right text-teal-300">{formatCurrency(realizado)}</td>
+                                                <td className="px-4 py-3 text-right text-white/80">{dinheiro(orcado)}</td>
+                                                <td className="px-4 py-3 text-right text-teal-300">{dinheiro(realizado)}</td>
                                                 <td className={`px-4 py-3 text-right font-semibold ${pct != null && pct >= 100 ? "text-success" : "text-warning"}`}>
                                                     {pct == null ? "—" : `${pct.toFixed(0)}%`}
                                                 </td>
-                                                <td className="px-4 py-3 text-right text-amber-300/80">{formatCurrency(data.juros)}</td>
+                                                <td className="px-4 py-3 text-right text-amber-300/80">{dinheiro(data.juros)}</td>
                                             </tr>
                                         );
                                     })}

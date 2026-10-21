@@ -10,6 +10,7 @@ import {
   type UpdateDepartamentoBody,
   createDepartamentoBodySchema,
   departamentoIdParamSchema,
+  listCentrosCustosQuerySchema,
   updateDepartamentoBodySchema,
 } from "./schemas";
 
@@ -19,6 +20,15 @@ router.get(
   "/departamentos",
   asyncHandler(async (req, res) => {
     const items = await departamentosService.list(requireTenant(req).empresaId);
+    return successResponse(res, items);
+  }),
+);
+
+router.get(
+  "/centros-custos",
+  asyncHandler(async (req, res) => {
+    const query = listCentrosCustosQuerySchema.parse(req.query);
+    const items = await departamentosService.listCentrosCustos(requireTenant(req).empresaId, query);
     return successResponse(res, items);
   }),
 );

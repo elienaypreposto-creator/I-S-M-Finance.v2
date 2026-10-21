@@ -3,31 +3,28 @@ import {useEffect, useMemo, useState, useRef} from "react";
 import {useForm, Controller} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {PageHeader} from "@/components/shared/page-header";
+import {BotaoBloquear, BotaoEditar, BotaoExcluir} from "@/components/shared/botoes-acao";
 import {
     Plus,
     Landmark,
-    Eye,
-    EyeOff,
     CheckCircle,
     AlertCircle,
-    X,
-    Pencil,
-    Lock,
-    Unlock,
     Loader2,
-    Trash2,
     PiggyBank,
     PackageOpen,
     CheckCircle2,
-    Search,
     ChevronsLeft,
     ChevronLeft,
     ChevronRight,
     ChevronsRight,
     ChevronDown,
     Info,
+    TrendingUp,
 } from "lucide-react";
 import {formatCurrency, cn} from "@/lib/utils";
+import {useSaldosVisiveis} from "@/components/conta/saldos-visiveis";
+import {classeSaldo} from "@/lib/saldo";
+import {hojeIsoLocal} from "@/lib/datas";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
@@ -35,6 +32,7 @@ import {
     contaBancariaFormSchema,
     type ContaBancariaFormValues,
     TIPOS_CONTA,
+    type TipoConta,
 } from "@/validations/cadastros.schema";
 import {
     apiValorToValorBr,
@@ -43,8 +41,32 @@ import {
 } from "@/validations/lancamentos.schema";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
-import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
-import {ViewportOverlay} from "@/components/shared/viewport-overlay";
+import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
+import {
+    Modal,
+    ModalBody,
+    ModalFooter,
+    ModalForm,
+    ModalHeader,
+    ModalSpinner,
+    focarPrimeiro,
+    modalBtnPrimaryCls,
+    modalBtnSecondaryCls,
+    modalGrid2Cls,
+    modalGridCls,
+} from "@/components/ui/modal-responsivo";
+import {
+    CampoBusca,
+    FiltrosAtivos,
+    FiltrosPopover,
+    FOCO_VISIVEL,
+    casaMulti,
+    contemBusca,
+    patchDosValores,
+    useFiltrosNaUrl,
+    type DefinicaoFiltro,
+    type OpcaoFiltro,
+} from "@/components/shared/filtros";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 type ContaBancaria = {
@@ -52,7 +74,10 @@ type ContaBancaria = {
     nome: string;
     banco: string | null;
     agencia: string | null;
+    digito_agencia?: string | null;
     conta: string | null;
+    digito_conta?: string | null;
+    empresa?: string | null;
     tipo: string;
     status: string;
     cor: string;
@@ -81,17 +106,9 @@ function maskConta(value: string): string {
     return `${digits.slice(0, -1)}-${digits.slice(-1)}`;
 }
 
-function normalizeSearch(value: string): string {
-    return value
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toLowerCase()
-        .trim();
-}
-
 // Data máxima permitida (hoje), formatada dd/mm/aaaa
 function getTodayIso(): string {
-    return new Date().toISOString().split("T")[0];
+    return hojeIsoLocal();
 }
 
 function formatDateBr(iso: string): string {
@@ -100,18 +117,33 @@ function formatDateBr(iso: string): string {
 }
 
 // ─── Tipos de conta disponíveis (derivados do schema canônico) ────────────────
-const TIPO_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+const TIPO_ICONS: Record<string, React.ComponentType<{
+    className?: string;
+    "aria-hidden"?: React.AriaAttributes["aria-hidden"]
+}>> = {
     "Conta Corrente": Landmark,
     "Conta Movimento": PackageOpen,
     "Conta Poupança": PiggyBank,
+    "Conta Aplicação": TrendingUp,
 };
 
-// Ordem de exibição no Passo 1 (Corrente -> Poupança -> Movimento)
+// Ordem de exibição no Passo 1 (Corrente -> Poupança -> Movimento -> Aplicação).
+// `satisfies` garante que todo valor existe em TIPOS_CONTA (a fonte canônica).
+const TIPO_ROTULOS: Record<string, string> = {
+    "Conta Movimento": "Conta Movimento (Caixinha)",
+    "Conta Aplicação": "Conta de Aplicação / Investimento",
+};
+
+/** Rótulo do tipo para tela (passo 1, filtro e lista usam esta mesma função). */
+function rotuloDoTipo(tipo: string): string {
+    return TIPO_ROTULOS[tipo] ?? tipo;
+}
+
 const ACCOUNT_TYPES = (
-    ["Conta Corrente", "Conta Poupança", "Conta Movimento"] as const
+    ["Conta Corrente", "Conta Poupança", "Conta Movimento", "Conta Aplicação"] as const satisfies readonly TipoConta[]
 ).map((value) => ({
     value,
-    label: value === "Conta Movimento" ? "Conta Movimento (Caixinha)" : value,
+    label: rotuloDoTipo(value),
     Icon: TIPO_ICONS[value] ?? Landmark,
 }));
 
@@ -217,6 +249,21 @@ const BANCOS_BR = [
 ] as const;
 
 const ITEMS_PER_PAGE = 8;
+
+// ─── Filtros da listagem (ISMF-33) ────────────────────────────────────────────
+// A tela trata como ativa só a conta com status "ativo"; qualquer outro status
+// (hoje "bloqueado") é exibido como inativa/bloqueada.
+const STATUS_OPCOES: OpcaoFiltro[] = [
+    {valor: "ativo", rotulo: "Ativa"},
+    {valor: "bloqueado", rotulo: "Bloqueada (inativa)"},
+];
+
+const statusDoFiltro = (status: string) => (status === "ativo" ? "ativo" : "bloqueado");
+
+/** Valor do filtro de banco para contas sem banco vinculado (ex.: Conta Movimento). */
+const SEM_BANCO = "sem-banco";
+
+const collatorBancos = new Intl.Collator("pt-BR", {sensitivity: "base"});
 
 function hexParaHsl(hex: string): [number, number, number] {
     const r = parseInt(hex.slice(1, 3), 16) / 255;
@@ -382,11 +429,12 @@ function StepPanel({
             <div className="flex items-center justify-between px-4 py-3 bg-white/[0.03]">
                 <div className="flex items-center gap-3">
                     {status === "completed" ? (
-                        <CheckCircle2 className="w-5 h-5 text-success flex-shrink-0"/>
+                        <CheckCircle2 aria-hidden="true" className="w-5 h-5 text-success flex-shrink-0"/>
                     ) : (
                         <div
+                            aria-hidden="true"
                             className={cn(
-                                "w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold flex-shrink-0",
+                                "w-5 h-5 rounded-full border-2 flex items-center justify-center text-xs font-bold flex-shrink-0",
                                 status === "active"
                                     ? "border-primary text-primary"
                                     : "border-white/20 text-white/20",
@@ -397,18 +445,23 @@ function StepPanel({
                     )}
                     <div>
                         <p
+                            id={`conta-passo-${stepNumber}-titulo`}
                             className={cn(
                                 "text-sm font-semibold leading-tight",
                                 status === "pending" ? "text-white/40" : "text-white",
                             )}
                         >
+                            <span className="sr-only">Passo {stepNumber}: </span>
                             {title}
                             {status !== "pending" && (
                                 <span className="text-destructive ml-0.5">*</span>
                             )}
+                            <span className="sr-only">
+                                {status === "completed" ? " (concluído)" : status === "pending" ? " (pendente)" : ""}
+                            </span>
                         </p>
                         {status === "completed" && summary && (
-                            <p className="text-[11px] text-muted-foreground mt-0.5">
+                            <p className="text-xs text-muted-foreground mt-0.5">
                                 {summary}
                             </p>
                         )}
@@ -418,6 +471,7 @@ function StepPanel({
                     <button
                         type="button"
                         onClick={onEdit}
+                        aria-label={`Editar passo ${stepNumber}: ${title}`}
                         className="text-xs text-primary hover:text-primary/80 font-semibold transition-colors"
                     >
                         Editar
@@ -427,7 +481,7 @@ function StepPanel({
 
             {/* Step body - visível apenas quando ativo */}
             {status === "active" && (
-                <div className="p-5 border-t border-white/5 space-y-4">{children}</div>
+                <div data-passo-ativo="" className="p-5 border-t border-white/5 space-y-4">{children}</div>
             )}
         </div>
     );
@@ -435,12 +489,15 @@ function StepPanel({
 
 // ─── Campo de texto padrão ─────────────────────────────────────────────────
 function Field({
+                   id,
                    label,
                    required,
                    error,
                    hint,
                    children,
                }: {
+    /** id do campo (o `<label>` aponta para ele). */
+    id: string;
     label: string;
     required?: boolean;
     error?: string;
@@ -449,15 +506,16 @@ function Field({
 }) {
     return (
         <div>
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+            <label htmlFor={id}
+                   className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
                 {label}
                 {required && <span className="text-destructive ml-0.5">*</span>}
             </label>
             {children}
             {hint && !error && (
-                <p className="text-[11px] text-muted-foreground/70 mt-1.5">{hint}</p>
+                <p className="text-xs text-muted-foreground/70 mt-1.5">{hint}</p>
             )}
-            {error && <p className="text-[11px] text-destructive mt-1">{error}</p>}
+            {error && <p className="text-xs text-destructive mt-1">{error}</p>}
         </div>
     );
 }
@@ -472,9 +530,11 @@ const continueBtnClass =
 
 // ─── Select de Banco (dropdown customizado, tema escuro, com logo real) ───
 function BancoSelect({
+                         id,
                          value,
                          onChange,
                      }: {
+    id?: string;
     value: string;
     onChange: (v: string) => void;
 }) {
@@ -501,7 +561,9 @@ function BancoSelect({
     return (
         <div className="relative" ref={containerRef}>
             <button
+                id={id}
                 type="button"
+                aria-expanded={open}
                 onClick={() => setOpen((o) => !o)}
                 className={cn(selectClass, "flex items-center gap-2.5")}
             >
@@ -518,6 +580,7 @@ function BancoSelect({
         </span>
             </button>
             <ChevronDown
+                aria-hidden="true"
                 className={cn(
                     "absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none transition-transform",
                     open && "rotate-180",
@@ -575,7 +638,10 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
             nome: initialData?.nome ?? "",
             banco: initialData?.banco ?? "",
             agencia: initialData?.agencia ?? "",
+            digito_agencia: initialData?.digito_agencia ?? "",
             conta: initialData?.conta ?? "",
+            digito_conta: initialData?.digito_conta ?? "",
+            empresa: initialData?.empresa ?? "",
             saldo_inicial_br: initialData
                 ? apiValorToValorBr(initialData.saldo_inicial)
                 : "",
@@ -688,7 +754,7 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                 conta: values.conta?.trim() || null,
                 tipo: values.tipo,
                 saldo_inicial: saldoApi,
-                data_inicio: values.data_inicio || new Date().toISOString().split("T")[0],
+                data_inicio: values.data_inicio || hojeIsoLocal(),
                 cor: values.cor,
                 ...(isEdit && initialData ? {status: initialData.status} : {}),
             };
@@ -752,6 +818,8 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                 return "Ex: Poupança Caixa";
             case "Conta Movimento":
                 return "Ex: Caixa Operacional";
+            case "Conta Aplicação":
+                return "Ex: CDB Itaú 2027";
             default:
                 return "Ex: Itaú PJ Principal";
         }
@@ -768,215 +836,229 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
         onClose();
     }
 
-    useEscapeClose(!ConfirmDialogProps.open, () => {
-        void handleRequestClose();
-    });
+    // Ao trocar de passo o conteúdo do passo anterior some: leva o foco ao
+    // primeiro campo do passo aberto (na abertura, quem foca é o Modal).
+    const bodyRef = useRef<HTMLDivElement>(null);
+    const primeiroPassoRef = useRef(true);
+    useEffect(() => {
+        if (primeiroPassoRef.current) {
+            primeiroPassoRef.current = false;
+            return;
+        }
+        focarPrimeiro(bodyRef.current?.querySelector<HTMLElement>("[data-passo-ativo]"));
+    }, [activeStep]);
 
     return (
-        <ViewportOverlay>
-            <div className="bg-card border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]">
-                {/* Header fixo */}
-                <div className="flex items-center justify-between p-6 border-b border-white/5 flex-shrink-0">
-                    <h2 className="text-lg font-bold text-white">
-                        {initialData ? "Editar Conta Bancária" : "Cadastrar conta bancária"}
-                    </h2>
-                    <button
-                        type="button"
-                        onClick={() => void handleRequestClose()}
-                        className="p-1.5 hover:bg-white/5 rounded-lg transition-colors"
-                    >
-                        <X className="w-5 h-5"/>
-                    </button>
-                </div>
+        <Modal onClose={() => void handleRequestClose()}>
+            <ModalHeader title={initialData ? "Editar Conta Bancária" : "Cadastrar conta bancária"}/>
 
+            <ModalForm noValidate onSubmit={(e) => e.preventDefault()}>
                 {/* Accordion com scroll */}
-                <div className="overflow-y-auto flex-1 min-h-0">
-                    <form
-                        noValidate
-                        onSubmit={(e) => e.preventDefault()}
-                        className="p-5 space-y-3"
+                <ModalBody ref={bodyRef} className="space-y-3">
+                    {/* ── Passo 1: Tipo de Conta ── */}
+                    <StepPanel
+                        stepNumber={1}
+                        title="Escolha o tipo de conta"
+                        status={getStatus(1)}
+                        summary={step1Summary}
+                        onEdit={() => setActiveStep(1)}
                     >
-                        {/* ── Passo 1: Tipo de Conta ── */}
-                        <StepPanel
-                            stepNumber={1}
-                            title="Escolha o tipo de conta"
-                            status={getStatus(1)}
-                            summary={step1Summary}
-                            onEdit={() => setActiveStep(1)}
-                        >
-                            <div className="flex flex-col gap-2">
-                                {ACCOUNT_TYPES.map(({value, label, Icon}) => {
-                                    const selected = tipo === value;
-                                    return (
-                                        <button
-                                            key={value}
-                                            type="button"
-                                            onClick={() => handleSelectTipo(value)}
-                                            className={cn(
-                                                "w-full flex items-center justify-between gap-3 px-4 py-3.5 rounded-xl border-2 text-left transition-all",
-                                                selected
-                                                    ? "border-primary bg-primary/5 text-white"
-                                                    : "border-white/10 bg-white/5 text-muted-foreground hover:border-white/20 hover:text-white",
-                                            )}
-                                        >
-                                            <div className="flex items-center gap-2.5 min-w-0">
-                        <span
-                            className={cn(
-                                "w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0",
-                                selected ? "border-primary" : "border-white/20",
-                            )}
-                        >
-                          {selected && (
-                              <span className="w-2 h-2 rounded-full bg-primary"/>
-                          )}
-                        </span>
-                                                <span className="text-sm font-medium truncate">
-                          {label}
-                        </span>
-                                            </div>
-                                            <Icon
+                        <div role="group" aria-labelledby="conta-passo-1-titulo"
+                             className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
+                            {ACCOUNT_TYPES.map(({value, label, Icon}) => {
+                                const selected = tipo === value;
+                                return (
+                                    <button
+                                        key={value}
+                                        type="button"
+                                        aria-pressed={selected}
+                                        onClick={() => handleSelectTipo(value)}
+                                        className={cn(
+                                            "w-full flex items-center justify-between gap-3 px-4 py-3.5 rounded-xl border-2 text-left transition-all",
+                                            selected
+                                                ? "border-primary bg-primary/5 text-white"
+                                                : "border-white/10 bg-white/5 text-muted-foreground hover:border-white/20 hover:text-white",
+                                        )}
+                                    >
+                                        <div className="flex items-center gap-2.5 min-w-0">
+                                            <span
+                                                aria-hidden="true"
                                                 className={cn(
-                                                    "w-5 h-5 flex-shrink-0",
-                                                    selected ? "text-primary" : "text-muted-foreground/60",
+                                                    "w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0",
+                                                    selected ? "border-primary" : "border-white/20",
                                                 )}
-                                            />
-                                        </button>
-                                    );
-                                })}
-                            </div>
+                                            >
+                                                {selected && (
+                                                    <span className="w-2 h-2 rounded-full bg-primary"/>
+                                                )}
+                                            </span>
+                                            <span className="text-sm font-medium leading-tight break-words">
+                                                {label}
+                                            </span>
+                                        </div>
+                                        <Icon
+                                            aria-hidden="true"
+                                            className={cn(
+                                                "w-5 h-5 flex-shrink-0",
+                                                selected ? "text-primary" : "text-muted-foreground/60",
+                                            )}
+                                        />
+                                    </button>
+                                );
+                            })}
+                        </div>
 
-                            <button
-                                type="button"
-                                disabled={!step1Valid}
-                                onClick={handleStep1Continue}
-                                className={continueBtnClass}
-                            >
-                                Continuar
-                            </button>
-                        </StepPanel>
-
-                        {/* ── Passo 2: Preencha os dados ── */}
-                        <StepPanel
-                            stepNumber={2}
-                            title="Preencha os dados"
-                            status={getStatus(2)}
-                            summary={step2Summary}
-                            onEdit={() => setActiveStep(2)}
+                        <button
+                            type="button"
+                            disabled={!step1Valid}
+                            onClick={handleStep1Continue}
+                            className={continueBtnClass}
                         >
-                            {tipo !== TIPO_SEM_BANCO ? (
-                                /* Conta Corrente e Conta Poupança: Banco + Agência + Conta + Nome */
-                                <div className="space-y-4">
-                                    <Field label="Banco" required error={errors.banco?.message}>
-                                        <Controller
-                                            name="banco"
-                                            control={control}
-                                            render={({field}) => (
-                                                <BancoSelect
-                                                    value={field.value ?? ""}
-                                                    onChange={field.onChange}
-                                                />
-                                            )}
-                                        />
-                                    </Field>
+                            Continuar
+                        </button>
+                    </StepPanel>
 
-                                    <Field
-                                        label="Agência (sem dígito)"
-                                        required
-                                        error={errors.agencia?.message}
-                                    >
-                                        <Controller
-                                            name="agencia"
-                                            control={control}
-                                            render={({field}) => (
-                                                <input
-                                                    type="text"
-                                                    inputMode="numeric"
-                                                    autoComplete="off"
-                                                    value={field.value ?? ""}
-                                                    onChange={(e) =>
-                                                        field.onChange(maskAgencia(e.target.value))
-                                                    }
-                                                    className={monoInputClass}
-                                                    placeholder="0000"
-                                                    maxLength={4}
-                                                />
-                                            )}
-                                        />
-                                    </Field>
+                    {/* ── Passo 2: Preencha os dados ── */}
+                    <StepPanel
+                        stepNumber={2}
+                        title="Preencha os dados"
+                        status={getStatus(2)}
+                        summary={step2Summary}
+                        onEdit={() => setActiveStep(2)}
+                    >
+                        {tipo !== TIPO_SEM_BANCO ? (
+                            /* Conta Corrente, Poupança e Aplicação: Banco + Agência + Conta + Nome */
+                            <div className={modalGridCls}>
+                                <Field id="conta-banco" label="Banco" required error={errors.banco?.message}>
+                                    <Controller
+                                        name="banco"
+                                        control={control}
+                                        render={({field}) => (
+                                            <BancoSelect
+                                                id="conta-banco"
+                                                value={field.value ?? ""}
+                                                onChange={field.onChange}
+                                            />
+                                        )}
+                                    />
+                                </Field>
 
-                                    <Field
-                                        label="Conta (com dígito)"
-                                        required
-                                        error={errors.conta?.message}
-                                    >
-                                        <Controller
-                                            name="conta"
-                                            control={control}
-                                            render={({field}) => (
-                                                <input
-                                                    type="text"
-                                                    inputMode="numeric"
-                                                    autoComplete="off"
-                                                    value={field.value ?? ""}
-                                                    onChange={(e) =>
-                                                        field.onChange(maskConta(e.target.value))
-                                                    }
-                                                    className={monoInputClass}
-                                                    placeholder="00000-0"
-                                                    maxLength={9}
-                                                />
-                                            )}
-                                        />
-                                    </Field>
-
-                                    <Field
-                                        label="Nome da conta"
-                                        required
-                                        error={errors.nome?.message}
-                                        hint="Dê um nome para identificar esta conta depois."
-                                    >
-                                        <input
-                                            {...register("nome")}
-                                            className={inputClass}
-                                            placeholder={getNomePlaceholder()}
-                                        />
-                                    </Field>
-                                </div>
-                            ) : (
-                                /* Conta Movimento (Caixinha): apenas Nome */
                                 <Field
+                                    id="conta-agencia"
+                                    label="Agência (sem dígito)"
+                                    required
+                                    error={errors.agencia?.message}
+                                >
+                                    <Controller
+                                        name="agencia"
+                                        control={control}
+                                        render={({field}) => (
+                                            <input
+                                                id="conta-agencia"
+                                                type="text"
+                                                inputMode="numeric"
+                                                autoComplete="off"
+                                                aria-invalid={!!errors.agencia}
+                                                value={field.value ?? ""}
+                                                onChange={(e) =>
+                                                    field.onChange(maskAgencia(e.target.value))
+                                                }
+                                                className={monoInputClass}
+                                                placeholder="0000"
+                                                maxLength={4}
+                                            />
+                                        )}
+                                    />
+                                </Field>
+
+                                <Field
+                                    id="conta-conta"
+                                    label="Conta (com dígito)"
+                                    required
+                                    error={errors.conta?.message}
+                                >
+                                    <Controller
+                                        name="conta"
+                                        control={control}
+                                        render={({field}) => (
+                                            <input
+                                                id="conta-conta"
+                                                type="text"
+                                                inputMode="numeric"
+                                                autoComplete="off"
+                                                aria-invalid={!!errors.conta}
+                                                value={field.value ?? ""}
+                                                onChange={(e) =>
+                                                    field.onChange(maskConta(e.target.value))
+                                                }
+                                                className={monoInputClass}
+                                                placeholder="00000-0"
+                                                maxLength={9}
+                                            />
+                                        )}
+                                    />
+                                </Field>
+
+                                <Field
+                                    id="conta-nome"
+                                    label="Nome da conta"
+                                    required
+                                    error={errors.nome?.message}
+                                    hint="Dê um nome para identificar esta conta depois."
+                                >
+                                    <input
+                                        id="conta-nome"
+                                        {...register("nome")}
+                                        aria-invalid={!!errors.nome}
+                                        className={inputClass}
+                                        placeholder={getNomePlaceholder()}
+                                    />
+                                </Field>
+                            </div>
+                        ) : (
+                            /* Conta Movimento (Caixinha): apenas Nome */
+                            <div className={modalGridCls}>
+                                <Field
+                                    id="conta-nome"
                                     label="Nome da conta movimento"
                                     required
                                     error={errors.nome?.message}
                                     hint="Dê um nome para identificar esta conta depois."
                                 >
                                     <input
+                                        id="conta-nome"
                                         {...register("nome")}
+                                        aria-invalid={!!errors.nome}
                                         className={inputClass}
                                         placeholder={getNomePlaceholder()}
                                     />
                                 </Field>
-                            )}
+                            </div>
+                        )}
 
-                            {/* Cor (opcional) */}
-                            <div>
-                                <label
-                                    className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-                                    Cor de Identificação
-                                </label>
-                                <div className="flex flex-wrap gap-2 p-2 bg-white/5 border border-white/10 rounded-xl">
-                                    {COLOR_PALETTE.map((c) => (
+                        {/* Cor (opcional) */}
+                        <div>
+                            <p id="conta-cor-rotulo"
+                               className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                                Cor de Identificação
+                            </p>
+                            <div role="group" aria-labelledby="conta-cor-rotulo"
+                                 className="flex flex-wrap gap-2 p-2 bg-white/5 border border-white/10 rounded-xl">
+                                {COLOR_PALETTE.map((c) => {
+                                    const nomeCor =
+                                        BANCOS_BR.find((b) => b.cor === c)?.nome ??
+                                        CORES_EXTRAS.find((e) => e.cor === c)?.nome ??
+                                        "Cor padrão";
+                                    return (
                                         <button
                                             key={c}
                                             type="button"
                                             onClick={() =>
                                                 setValue("cor", c, {shouldValidate: true})
                                             }
-                                            title={
-                                                BANCOS_BR.find((b) => b.cor === c)?.nome ??
-                                                CORES_EXTRAS.find((e) => e.cor === c)?.nome ??
-                                                "Cor padrão"
-                                            }
+                                            title={nomeCor}
+                                            aria-label={nomeCor}
+                                            aria-pressed={cor === c}
                                             className={cn(
                                                 "w-8 h-8 rounded-lg border-2 transition-all",
                                                 cor === c
@@ -985,45 +1067,50 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                                             )}
                                             style={{backgroundColor: c}}
                                         />
-                                    ))}
-                                </div>
+                                    );
+                                })}
                             </div>
+                        </div>
 
-                            <div className="border-t border-white/5 pt-4">
-                                <button
-                                    type="button"
-                                    disabled={!step2Valid}
-                                    onClick={() => void handleStep2Continue()}
-                                    className={continueBtnClass}
-                                >
-                                    Continuar
-                                </button>
-                            </div>
-                        </StepPanel>
+                        <div className="border-t border-white/5 pt-4">
+                            <button
+                                type="button"
+                                disabled={!step2Valid}
+                                onClick={() => void handleStep2Continue()}
+                                className={continueBtnClass}
+                            >
+                                Continuar
+                            </button>
+                        </div>
+                    </StepPanel>
 
-                        {/* ── Passo 3: Defina a forma de cadastro ── */}
-                        <StepPanel
-                            stepNumber={3}
-                            title="Dados Iniciais da Conta"
-                            status={getStatus(3)}
-                            onEdit={() => setActiveStep(3)}
-                        >
-                            {/* Caixa de instrução */}
-                            <div className="border border-primary/30 bg-primary/5 rounded-xl p-4 space-y-4">
-                                <p className="flex items-start gap-2 text-xs text-primary/90 font-medium">
-                                    <Info className="w-4 h-4 flex-shrink-0 mt-0.5"/>
+                    {/* ── Passo 3: Defina a forma de cadastro ── */}
+                    <StepPanel
+                        stepNumber={3}
+                        title="Dados Iniciais da Conta"
+                        status={getStatus(3)}
+                        onEdit={() => setActiveStep(3)}
+                    >
+                        {/* Caixa de instrução */}
+                        <div className="border border-primary/30 bg-primary/5 rounded-xl p-4">
+                            <div className={modalGrid2Cls}>
+                                <p className="col-span-full flex items-start gap-2 text-xs text-primary/90 font-medium">
+                                    <Info aria-hidden="true" className="w-4 h-4 flex-shrink-0 mt-0.5"/>
                                     Informe uma data de início e o saldo do dia anterior:
                                 </p>
 
                                 {/* Data de início */}
                                 <Field
+                                    id="conta-data-inicio"
                                     label="Início dos lançamentos"
                                     required
                                     error={errors.data_inicio?.message}
                                 >
                                     <input
+                                        id="conta-data-inicio"
                                         type="date"
                                         {...register("data_inicio")}
+                                        aria-invalid={!!errors.data_inicio}
                                         max={maxDataInicio}
                                         className={inputClass}
                                     />
@@ -1031,22 +1118,26 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
 
                                 {/* Saldo do dia anterior */}
                                 <Field
+                                    id="conta-saldo-inicial"
                                     label="Saldo final da conta no dia anterior"
                                     required
                                     error={errors.saldo_inicial_br?.message}
                                 >
                                     <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground text-sm font-bold">
-                      R$
-                    </span>
+                                        <span aria-hidden="true"
+                                              className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground text-sm font-bold">
+                                            R$
+                                        </span>
                                         <Controller
                                             name="saldo_inicial_br"
                                             control={control}
                                             render={({field}) => (
                                                 <input
+                                                    id="conta-saldo-inicial"
                                                     type="text"
                                                     inputMode="numeric"
                                                     autoComplete="off"
+                                                    aria-invalid={!!errors.saldo_inicial_br}
                                                     value={field.value}
                                                     onChange={(e) =>
                                                         field.onChange(formatValorBrInput(e.target.value))
@@ -1059,37 +1150,35 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                                     </div>
                                 </Field>
                             </div>
+                        </div>
+                    </StepPanel>
+                </ModalBody>
 
-                            {/* Ações */}
-                            <div className="flex gap-3 pt-1">
-                                <button
-                                    type="button"
-                                    onClick={() => void handleRequestClose()}
-                                    className="px-5 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium transition-all"
-                                >
-                                    Cancelar
-                                </button>
-                                <button
-                                    type="button"
-                                    disabled={mutation.isPending || !step3Valid}
-                                    onClick={() => void handleSave()}
-                                    className="px-6 py-2.5 bg-success hover:bg-success/90 text-white rounded-xl text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-success flex items-center gap-2"
-                                >
-                                    {mutation.isPending ? (
-                                        <Loader2 className="w-4 h-4 animate-spin"/>
-                                    ) : initialData ? (
-                                        "Salvar Alterações"
-                                    ) : (
-                                        "Salvar"
-                                    )}
-                                </button>
-                            </div>
-                        </StepPanel>
-                    </form>
-                </div>
-            </div>
+                <ModalFooter hint="* Campos obrigatórios · Esc fecha">
+                    <button type="button" onClick={() => void handleRequestClose()} className={modalBtnSecondaryCls}>
+                        Cancelar
+                    </button>
+                    {/* Salvar só no passo 3, como antes da migração. */}
+                    {activeStep === 3 && (
+                        <button
+                            type="button"
+                            disabled={mutation.isPending || !step3Valid}
+                            onClick={() => void handleSave()}
+                            className={modalBtnPrimaryCls}
+                        >
+                            {mutation.isPending ? (
+                                <ModalSpinner/>
+                            ) : initialData ? (
+                                "Salvar Alterações"
+                            ) : (
+                                "Salvar"
+                            )}
+                        </button>
+                    )}
+                </ModalFooter>
+            </ModalForm>
             <ConfirmDialog {...ConfirmDialogProps} />
-        </ViewportOverlay>
+        </Modal>
     );
 }
 
@@ -1098,16 +1187,57 @@ export default function ContasBancarias() {
     const queryClient = useQueryClient();
     const {toast} = useToast();
     const {confirm, ConfirmDialogProps} = useConfirm();
-    const [showSaldos, setShowSaldos] = useState(true);
+    const saldos = useSaldosVisiveis();
     const [showModal, setShowModal] = useState(false);
     const [editingConta, setEditingConta] = useState<ContaBancaria | null>(null);
-    const [search, setSearch] = useState("");
-    const [currentPage, setCurrentPage] = useState(1);
 
     const {data: contas = [], isLoading} = useQuery<ContaBancaria[]>({
         queryKey: tenantQueryKey("contas-bancarias"),
         queryFn: () => fetchApiData<ContaBancaria[]>("/contas-bancarias"),
     });
+
+    // ── Filtros (estado na URL: ?status=&tipo=&banco=&q=&pagina=) ──
+    const definicoes: DefinicaoFiltro[] = useMemo(() => {
+        const tiposCarregados = Array.from(new Set(contas.map((c) => c.tipo).filter(Boolean)));
+        const ordemTipos = ACCOUNT_TYPES.map((t) => t.value as string);
+        tiposCarregados.sort((a, b) => {
+            const ia = ordemTipos.indexOf(a);
+            const ib = ordemTipos.indexOf(b);
+            return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || collatorBancos.compare(a, b);
+        });
+        const bancosCarregados = Array.from(
+            new Set(contas.map((c) => c.banco?.trim() ?? "").filter(Boolean)),
+        ).sort(collatorBancos.compare);
+        const temSemBanco = contas.some((c) => !c.banco?.trim());
+        return [
+            {chave: "status", rotulo: "Status", tipo: "multi", opcoes: STATUS_OPCOES},
+            {
+                chave: "tipo",
+                rotulo: "Tipo de conta",
+                tipo: "multi",
+                opcoes: tiposCarregados.map((t) => ({
+                    valor: t,
+                    rotulo: rotuloDoTipo(t),
+                })),
+            },
+            {
+                chave: "banco",
+                rotulo: "Banco",
+                tipo: "select",
+                placeholder: "Todos os bancos",
+                opcoes: [
+                    ...bancosCarregados.map((b) => ({valor: b, rotulo: b})),
+                    ...(temSemBanco ? [{valor: SEM_BANCO, rotulo: "Sem banco vinculado"}] : []),
+                ],
+            },
+        ];
+    }, [contas]);
+
+    const filtros = useFiltrosNaUrl(definicoes);
+    const busca = filtros.ler("q");
+    const temFiltroOuBusca = filtros.contagem > 0 || Boolean(busca);
+
+    const limparFiltrosEBusca = () => filtros.atualizar({...patchDosValores(definicoes, {}), q: null});
 
     const blockMutation = useMutation({
         mutationFn: ({id, status}: { id: number; status: string }) =>
@@ -1174,26 +1304,33 @@ export default function ContasBancarias() {
         if (ok) deleteMutation.mutate(conta.id);
     };
 
-    // ── Filtro por nome (busca) ──
-    const filteredContas = useMemo(() => {
-        const term = normalizeSearch(search);
-        if (!term) return contas;
-        return contas.filter((c) => normalizeSearch(c.nome).includes(term));
-    }, [contas, search]);
+    // ── Filtros + busca por nome (no navegador) ──
+    const {status: filtroStatus, tipo: filtroTipo, banco: filtroBanco} = filtros.valores;
+    const filteredContas = useMemo(
+        () =>
+            contas.filter((c) => {
+                if (!casaMulti(filtroStatus, statusDoFiltro(c.status))) return false;
+                if (!casaMulti(filtroTipo, c.tipo)) return false;
+                if (filtroBanco) {
+                    const banco = c.banco?.trim() ?? "";
+                    if (filtroBanco === SEM_BANCO ? banco !== "" : banco !== filtroBanco) return false;
+                }
+                return contemBusca(busca, c.nome);
+            }),
+        [contas, filtroStatus, filtroTipo, filtroBanco, busca],
+    );
 
-    // ── Paginação ──
+    const anuncio = isLoading
+        ? ""
+        : `${filteredContas.length} ${filteredContas.length === 1 ? "conta encontrada" : "contas encontradas"}`;
+
+    // ── Paginação (página na URL; qualquer mudança de filtro/busca volta à 1) ──
     const totalPages = Math.max(
         1,
         Math.ceil(filteredContas.length / ITEMS_PER_PAGE),
     );
-
-    useEffect(() => {
-        setCurrentPage(1);
-    }, [search]);
-
-    useEffect(() => {
-        if (currentPage > totalPages) setCurrentPage(totalPages);
-    }, [currentPage, totalPages]);
+    const currentPage = Math.min(filtros.pagina, totalPages);
+    const setCurrentPage = filtros.irParaPagina;
 
     const paginatedContas = useMemo(() => {
         const start = (currentPage - 1) * ITEMS_PER_PAGE;
@@ -1206,10 +1343,6 @@ export default function ContasBancarias() {
         currentPage * ITEMS_PER_PAGE,
         filteredContas.length,
     );
-
-    const totalSaldoCents = contas
-        .filter((c) => c.status === "ativo")
-        .reduce((acc, c) => acc + toCents(c.saldo_atual), 0);
 
     if (isLoading)
         return (
@@ -1237,73 +1370,61 @@ export default function ContasBancarias() {
                 title="Contas Bancárias"
                 description="Gerencie as contas bancárias reais da empresa. O saldo é atualizado automaticamente via conciliação."
                 actions={
-                    <div className="flex gap-3">
-                        <button
-                            type="button"
-                            onClick={() => setShowSaldos((v) => !v)}
-                            className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all"
-                        >
-                            {showSaldos ? (
-                                <EyeOff className="w-4 h-4"/>
-                            ) : (
-                                <Eye className="w-4 h-4"/>
-                            )}
-                            {showSaldos ? "Ocultar" : "Mostrar"} Saldos
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setShowModal(true)}
-                            className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25"
-                        >
-                            <Plus className="w-4 h-4"/> Cadastrar Novo
-                        </button>
-                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setShowModal(true)}
+                        className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-medium transition-all shadow-lg shadow-primary/25"
+                    >
+                        <Plus className="w-4 h-4"/> Cadastrar Novo
+                    </button>
                 }
             />
 
-            {/* Saldo consolidado */}
-            <div className="glass-panel rounded-2xl p-6">
-                <div className="flex items-center justify-between">
-                    <div>
-                        <p className="text-sm text-muted-foreground">
-                            Saldo Consolidado (contas ativas)
-                        </p>
-                        <p className="text-3xl font-bold text-white mt-1">
-                            {showSaldos
-                                ? formatCurrency(totalSaldoCents / 100)
-                                : "R$ ••••••"}
-                        </p>
-                    </div>
-                    <div className="w-14 h-14 bg-primary/20 rounded-2xl flex items-center justify-center">
-                        <Landmark className="w-7 h-7 text-primary"/>
-                    </div>
-                </div>
-            </div>
-
-            {/* Busca */}
-            <div className="glass-panel rounded-2xl p-4">
-                <div className="relative max-w-sm">
-                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"/>
-                    <input
-                        type="text"
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        placeholder="Pesquisar por nome"
-                        className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white outline-none focus:border-primary/50 transition-colors"
-                    />
-                </div>
-            </div>
-
             {/* Listagem em tabela */}
             <div className="glass-panel rounded-2xl overflow-hidden">
+                {/* Barra de filtros: painel à esquerda, busca à direita */}
+                <div
+                    className="px-4 py-2.5 border-b border-white/5 flex flex-wrap items-center justify-between gap-3 bg-black/10">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <FiltrosPopover
+                            definicoes={definicoes}
+                            valores={filtros.valores}
+                            contagem={filtros.contagem}
+                            onAplicar={filtros.aplicar}
+                        />
+                    </div>
+                    <CampoBusca
+                        valor={busca}
+                        onBuscar={(termo) => filtros.atualizar({q: termo || null})}
+                        placeholder="Buscar por nome…"
+                        rotulo="Buscar contas bancárias por nome"
+                    />
+                </div>
+
+                <FiltrosAtivos
+                    chips={filtros.chips}
+                    onRemover={filtros.remover}
+                    onLimparTodos={filtros.limpar}
+                    anuncio={anuncio}
+                />
+
                 {filteredContas.length === 0 ? (
                     <div className="py-16 text-center border-dashed border-2 border-white/10 rounded-2xl">
-                        <Landmark className="w-12 h-12 text-muted-foreground/30 mx-auto mb-4"/>
+                        <Landmark className="w-12 h-12 text-muted-foreground/30 mx-auto mb-4" aria-hidden="true"/>
                         <p className="text-muted-foreground text-sm font-medium">
                             {contas.length === 0
                                 ? "Nenhuma conta cadastrada ainda."
-                                : "Nenhuma conta encontrada para essa busca."}
+                                : "Nenhum resultado para os filtros aplicados."}
                         </p>
+                        {contas.length > 0 && temFiltroOuBusca && (
+                            <button
+                                type="button"
+                                onClick={limparFiltrosEBusca}
+                                className={cn("text-primary text-sm font-bold hover:underline mt-2 rounded px-1", FOCO_VISIVEL)}
+                            >
+                                Limpar filtros e busca
+                            </button>
+                        )}
                         {contas.length === 0 && (
                             <button
                                 type="button"
@@ -1387,7 +1508,7 @@ export default function ContasBancarias() {
                                         {/* Tipo */}
                                         <td className="px-5 py-4">
                         <span className="text-white/80 font-medium">
-                          {conta.tipo}
+                          {rotuloDoTipo(conta.tipo)}
                         </span>
                                         </td>
 
@@ -1410,14 +1531,17 @@ export default function ContasBancarias() {
 
                                         {/* Saldo Atual */}
                                         <td className="px-5 py-4 text-right">
-                        <span
-                            className="font-bold"
-                            style={{color: conta.cor}}
-                        >
-                          {showSaldos
-                              ? formatCurrency(toCents(conta.saldo_atual) / 100)
-                              : "R$ ••••••"}
-                        </span>
+                                            {saldos.visivel ? (
+                                                <span
+                                                    className={cn("font-bold whitespace-nowrap", classeSaldo(toCents(conta.saldo_atual) / 100))}>
+                                {formatCurrency(toCents(conta.saldo_atual) / 100)}
+                            </span>
+                                            ) : (
+                                                <span className="font-bold text-muted-foreground">
+                                <span className="sr-only">Saldo oculto</span>
+                                <span aria-hidden="true">R$ ••••••</span>
+                            </span>
+                                            )}
                                         </td>
 
                                         {/* Status */}
@@ -1442,16 +1566,9 @@ export default function ContasBancarias() {
                                         {/* Ações */}
                                         <td className="px-5 py-4">
                                             <div className="flex items-center justify-end gap-2">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setEditingConta(conta)}
-                                                    title="Editar"
-                                                    className="p-2 bg-white/5 hover:bg-white/10 rounded-lg text-muted-foreground hover:text-white transition-colors"
-                                                >
-                                                    <Pencil className="w-4 h-4"/>
-                                                </button>
-                                                <button
-                                                    type="button"
+                                                <BotaoEditar onClick={() => setEditingConta(conta)}/>
+                                                <BotaoBloquear
+                                                    bloqueado={conta.status !== "ativo"}
                                                     onClick={() =>
                                                         blockMutation.mutate({
                                                             id: conta.id,
@@ -1461,32 +1578,8 @@ export default function ContasBancarias() {
                                                                     : "ativo",
                                                         })
                                                     }
-                                                    title={
-                                                        conta.status === "ativo"
-                                                            ? "Bloquear"
-                                                            : "Desbloquear"
-                                                    }
-                                                    className={cn(
-                                                        "p-2 rounded-lg transition-colors",
-                                                        conta.status === "ativo"
-                                                            ? "bg-white/5 hover:bg-orange-500/20 text-muted-foreground hover:text-orange-400"
-                                                            : "bg-success/20 text-success hover:bg-success/30",
-                                                    )}
-                                                >
-                                                    {conta.status === "ativo" ? (
-                                                        <Lock className="w-4 h-4"/>
-                                                    ) : (
-                                                        <Unlock className="w-4 h-4"/>
-                                                    )}
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleDelete(conta)}
-                                                    title="Excluir"
-                                                    className="p-2 bg-white/5 hover:bg-destructive/20 rounded-lg text-muted-foreground hover:text-destructive transition-colors"
-                                                >
-                                                    <Trash2 className="w-4 h-4"/>
-                                                </button>
+                                                />
+                                                <BotaoExcluir onClick={() => handleDelete(conta)}/>
                                             </div>
                                         </td>
                                     </tr>
@@ -1509,19 +1602,21 @@ export default function ContasBancarias() {
                                 type="button"
                                 disabled={currentPage === 1}
                                 onClick={() => setCurrentPage(1)}
-                                className="p-1.5 rounded-lg text-muted-foreground hover:bg-white/5 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                                className={cn("p-1.5 rounded-lg text-muted-foreground hover:bg-white/5 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-colors", FOCO_VISIVEL)}
                                 title="Primeiro"
+                                aria-label="Primeira página"
                             >
-                                <ChevronsLeft className="w-4 h-4"/>
+                                <ChevronsLeft className="w-4 h-4" aria-hidden="true"/>
                             </button>
                             <button
                                 type="button"
                                 disabled={currentPage === 1}
-                                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                                className="p-1.5 rounded-lg text-muted-foreground hover:bg-white/5 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                                onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                                className={cn("p-1.5 rounded-lg text-muted-foreground hover:bg-white/5 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-colors", FOCO_VISIVEL)}
                                 title="Anterior"
+                                aria-label="Página anterior"
                             >
-                                <ChevronLeft className="w-4 h-4"/>
+                                <ChevronLeft className="w-4 h-4" aria-hidden="true"/>
                             </button>
                             <span className="text-xs text-muted-foreground px-2 whitespace-nowrap">
                 Página {currentPage} de {totalPages}
@@ -1529,22 +1624,22 @@ export default function ContasBancarias() {
                             <button
                                 type="button"
                                 disabled={currentPage === totalPages}
-                                onClick={() =>
-                                    setCurrentPage((p) => Math.min(totalPages, p + 1))
-                                }
-                                className="p-1.5 rounded-lg text-muted-foreground hover:bg-white/5 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                                onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                                className={cn("p-1.5 rounded-lg text-muted-foreground hover:bg-white/5 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-colors", FOCO_VISIVEL)}
                                 title="Próxima"
+                                aria-label="Próxima página"
                             >
-                                <ChevronRight className="w-4 h-4"/>
+                                <ChevronRight className="w-4 h-4" aria-hidden="true"/>
                             </button>
                             <button
                                 type="button"
                                 disabled={currentPage === totalPages}
                                 onClick={() => setCurrentPage(totalPages)}
-                                className="p-1.5 rounded-lg text-muted-foreground hover:bg-white/5 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                                className={cn("p-1.5 rounded-lg text-muted-foreground hover:bg-white/5 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-colors", FOCO_VISIVEL)}
                                 title="Última"
+                                aria-label="Última página"
                             >
-                                <ChevronsRight className="w-4 h-4"/>
+                                <ChevronsRight className="w-4 h-4" aria-hidden="true"/>
                             </button>
                         </div>
                     </div>

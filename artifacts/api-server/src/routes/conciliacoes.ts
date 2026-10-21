@@ -1,7 +1,7 @@
 import {createHash} from "crypto";
 import {Router} from "express";
 import {z} from "zod";
-import multer from "multer";
+import {pareceOfx, uploadExtratoOfx} from "../lib/upload-limits";
 import {and, asc, count, desc, eq, gte, ilike, inArray, isNull, lt, lte, notInArray, or, sql, type SQL} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {
@@ -34,17 +34,20 @@ import {
 import {hashLinhaExtrato} from "../utils/extrato-hash";
 import {encontrarRegraParaLinha, type RegraParaMatch} from "../utils/regras-match";
 import {hojeIsoLocal} from "../utils/date-civil";
+import {parseCsvPermitido} from "../utils/filtro-csv";
 import {contasBancariasService} from "../domains/financial/contas-bancarias/contas-bancarias.service";
 import {regrasConciliacaoService} from "../domains/financial/regras-conciliacao/regras-conciliacao.service";
 import {promoverLancamentosAtrasados} from "../jobs/promover-atrasados";
 import {withPermission} from "../middlewares/withPermission";
+import {finalizarConciliacaoNegada, MSG_FINALIZAR_CONCILIACAO_NEGADA} from "./conciliacao-finalizar-permissao";
 import {PERM} from "../constants/permissoes";
 import {requireTenant, tenantScope, tenantWhere, withEmpresaId} from "../lib/tenant-scope";
 
 type DbLike = Pick<typeof db, "select" | "insert" | "update" | "delete">;
 
 const router = Router();
-const upload = multer({storage: multer.memoryStorage()});
+// Limites de tamanho/quantidade/tipo do OFX: ver lib/upload-limits.ts (ISMF-8).
+const upload = uploadExtratoOfx;
 
 /**
  * Erro com status/code HTTP explícitos - usado para abortar uma transaction
@@ -431,6 +434,8 @@ const atualizarResumoConciliacao = async (
         .where(tenantWhere(extratosTable, empresaId, eq(extratosTable.id, extratoId)));
 };
 
+const STATUS_EXTRATO = ["pendente", "parcial", "conciliado", "cancelado"] as const;
+
 router.get("/conciliacoes", withPermission(PERM.CONCILIACAO_ACESSAR), async (req, res) => {
     try {
         const {empresaId} = requireTenant(req);
@@ -439,13 +444,18 @@ router.get("/conciliacoes", withPermission(PERM.CONCILIACAO_ACESSAR), async (req
         const offset = (page - 1) * limit;
 
         const conditions = [];
-        if (req.query.status) {
-            conditions.push(
-                eq(
-                    extratosTable.status,
-                    req.query.status as "pendente" | "parcial" | "conciliado" | "cancelado",
-                ),
+        // Aceita vários status em CSV (ex.: "pendente,parcial" = tudo que ainda não foi conciliado).
+        const status = parseCsvPermitido(req.query.status, STATUS_EXTRATO);
+        if (status === null) {
+            return errorResponse(
+                res,
+                400,
+                "VALIDATION_ERROR",
+                `status inválido. Use um ou mais de: ${STATUS_EXTRATO.join(", ")}.`,
             );
+        }
+        if (status) {
+            conditions.push(inArray(extratosTable.status, status));
         }
         if (req.query.conta_id) {
             conditions.push(eq(conciliacoesTable.conta_id, parseInt(req.query.conta_id as string)));
@@ -853,9 +863,13 @@ router.put(
 router.post(
     "/conciliacoes/jobs/promover-atrasados",
     withPermission(PERM.CONCILIACAO_CONFIGURAR),
-    async (_req, res) => {
+    async (req, res) => {
         try {
-            const result = await promoverLancamentosAtrasados();
+            // Superadmin pode promover todas as empresas; os demais, só a da própria sessão.
+            const result = await promoverLancamentosAtrasados(
+                undefined,
+                req.user?.superadmin ? undefined : requireTenant(req).empresaId,
+            );
             return successResponse(res, result);
         } catch (e) {
             return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao promover atrasados.", e);
@@ -885,11 +899,11 @@ async function parseExtratoUpload(req: {
     | { parsed: OFXParseResult }
     | { error: { status: number; code: string; message: string; detail?: string } }
 > {
-    if (!req.file) {
+        if (!req.file) {
         return {error: {status: 400, code: "VALIDATION_ERROR", message: "Campo obrigatório: arquivo OFX."}};
     }
     const ext = req.file.originalname.split(".").pop()?.toLowerCase() ?? "";
-    if (ext !== "ofx") {
+    if (ext !== "ofx" || !pareceOfx(req.file.buffer)) {
         return {
             error: {
                 status: 400,
@@ -1172,15 +1186,15 @@ router.post(
                     linhasInseridas.map((l) => {
                         const regra = matchPorLinhaId.get(l.id);
                         return withEmpresaId({
-                            conciliacao_id: conciliacao.id,
-                            extrato_linha_id: l.id,
-                            valor_extrato: l.valor,
-                            valor_vinculado_total: "0.00",
-                            valor_saldo: l.valor,
-                            status: "pendente" as const,
-                            tipo_extrato: l.tipo_movimento,
-                            descricao: l.descricao,
-                            data: l.data_movimento,
+                        conciliacao_id: conciliacao.id,
+                        extrato_linha_id: l.id,
+                        valor_extrato: l.valor,
+                        valor_vinculado_total: "0.00",
+                        valor_saldo: l.valor,
+                        status: "pendente" as const,
+                        tipo_extrato: l.tipo_movimento,
+                        descricao: l.descricao,
+                        data: l.data_movimento,
                             regra_id: regra?.id ?? null,
                             classificacao_automatica: Boolean(regra),
                         }, empresaId);
@@ -1741,17 +1755,17 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
 /** Lê e valida o item/conciliação de uma linha para poder ignorá-la. */
 async function validarIgnorar(executor: DbLike, empresaId: number, linhaId: number) {
     const [item] = await executor
-        .select({
-            id: itensConciliacaoTable.id,
-            conciliacao_id: itensConciliacaoTable.conciliacao_id,
-            extrato_linha_id: itensConciliacaoTable.extrato_linha_id,
+            .select({
+                id: itensConciliacaoTable.id,
+                conciliacao_id: itensConciliacaoTable.conciliacao_id,
+                extrato_linha_id: itensConciliacaoTable.extrato_linha_id,
             status: itensConciliacaoTable.status,
-        })
-        .from(itensConciliacaoTable)
+            })
+            .from(itensConciliacaoTable)
         .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.extrato_linha_id, linhaId)))
-        .limit(1);
+            .limit(1);
 
-    if (!item) {
+        if (!item) {
         return {ok: false as const, status: 404, code: "NOT_FOUND", message: "Linha de extrato não encontrada para conciliação."};
     }
     if (item.status === "ignorado") {
@@ -1762,12 +1776,12 @@ async function validarIgnorar(executor: DbLike, empresaId: number, linhaId: numb
     }
 
     const [conciliacao] = await executor
-        .select({extrato_id: conciliacoesTable.extrato_id})
-        .from(conciliacoesTable)
+            .select({extrato_id: conciliacoesTable.extrato_id})
+            .from(conciliacoesTable)
         .where(tenantWhere(conciliacoesTable, empresaId, eq(conciliacoesTable.id, item.conciliacao_id)))
-        .limit(1);
+            .limit(1);
 
-    if (!conciliacao) {
+        if (!conciliacao) {
         return {ok: false as const, status: 404, code: "NOT_FOUND", message: "Conciliação não encontrada."};
     }
 
@@ -1785,29 +1799,29 @@ async function persistirIgnorar(
     const {linhaId, motivoCodigo, motivo, usuarioId} = params;
     const motivoTexto = motivo || (motivoCodigo ? motivoCodigo.replace(/_/g, " ") : null);
 
-    await tx
-        .update(itensConciliacaoTable)
-        .set({
-            status: "ignorado",
+            await tx
+                .update(itensConciliacaoTable)
+                .set({
+                    status: "ignorado",
             motivo_ignorar: motivoTexto,
             motivo_ignorar_codigo: motivoCodigo,
             data_conciliacao: hojeIsoLocal(),
-            updated_at: new Date(),
-        })
+                    updated_at: new Date(),
+                })
         .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.id, item.id)));
 
     await tx.insert(historicoConciliacaoTable).values(withEmpresaId({
-        conciliacao_id: item.conciliacao_id,
-        item_conciliacao_id: item.id,
+                conciliacao_id: item.conciliacao_id,
+                item_conciliacao_id: item.id,
         usuario_id: usuarioId,
-        acao: "ignorar",
+                acao: "ignorar",
         detalhes: JSON.stringify({linha_id: linhaId, motivo_codigo: motivoCodigo, motivo: motivoTexto}),
     }, empresaId));
 
     await atualizarResumoConciliacao(tx, empresaId, item.conciliacao_id, conciliacao.extrato_id);
 
     return {linha_id: linhaId, status: "ignorado" as const, motivo_ignorar: motivoTexto};
-}
+    }
 
 router.post(
     "/conciliacoes/linhas/:linha_id/ignorar",
@@ -1873,12 +1887,12 @@ async function calcularVinculo(
     const {linhaId, lancamentosPayload, gerarParcial, residuoLancamentoId, contextoRascunho} = params;
 
     const [item] = await executor
-        .select()
-        .from(itensConciliacaoTable)
+                .select()
+                .from(itensConciliacaoTable)
         .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.extrato_linha_id, linhaId)))
-        .limit(1);
+                .limit(1);
 
-    if (!item) {
+            if (!item) {
         return {ok: false as const, status: 404, code: "NOT_FOUND", message: "Linha de extrato não encontrada para conciliação."};
     }
     if (item.status === "ignorado") {
@@ -1891,7 +1905,7 @@ async function calcularVinculo(
             lancamento_id: itensConciliacaoLancamentosTable.lancamento_id,
             valor_vinculado: itensConciliacaoLancamentosTable.valor_vinculado,
         })
-        .from(itensConciliacaoLancamentosTable)
+                .from(itensConciliacaoLancamentosTable)
         .where(tenantWhere(itensConciliacaoLancamentosTable, empresaId, eq(itensConciliacaoLancamentosTable.item_conciliacao_id, item.id)));
 
     // Preview: se um "Desfazer" desta mesma linha já está rascunhado antes
@@ -1934,24 +1948,24 @@ async function calcularVinculo(
     const extratoParaDecisaoCents = houveVinculoAnterior ? saldoAbertoCents : extratoTotalCents;
 
     const [conciliacao] = await executor
-        .select()
-        .from(conciliacoesTable)
+                .select()
+                .from(conciliacoesTable)
         .where(tenantWhere(conciliacoesTable, empresaId, eq(conciliacoesTable.id, item.conciliacao_id)))
-        .limit(1);
-    if (!conciliacao) {
+                .limit(1);
+            if (!conciliacao) {
         return {ok: false as const, status: 404, code: "NOT_FOUND", message: "Conciliação não encontrada."};
-    }
+            }
 
     const lancamentos = await executor
-        .select()
-        .from(lancamentosTable)
+                .select()
+                .from(lancamentosTable)
         .where(tenantWhere(lancamentosTable, empresaId, inArray(lancamentosTable.id, idsNovos)));
 
     if (lancamentos.length !== idsNovos.length) {
         return {ok: false as const, status: 400, code: "VALIDATION_ERROR", message: "Um ou mais lançamentos informados são inválidos."};
-    }
+            }
 
-    const payloadMap = new Map(lancamentosPayload.map((l) => [l.lancamento_id, l]));
+            const payloadMap = new Map(lancamentosPayload.map((l) => [l.lancamento_id, l]));
     const quitadoLocalExtra = contextoRascunho?.quitado_local_por_lancamento ?? {};
 
     // Regra de Ouro: persistirVinculo agora martela o título assim que o
@@ -2114,13 +2128,13 @@ async function persistirVinculo(
             parceiroNomeOrigem = parceiro?.nome ?? null;
         }
         const [novoResiduo] = await tx
-            .insert(lancamentosTable)
+                        .insert(lancamentosTable)
             .values(withEmpresaId({
-                tipo: origem.tipo,
-                vencimento: origem.vencimento,
-                competencia: origem.competencia,
+                            tipo: origem.tipo,
+                            vencimento: origem.vencimento,
+                            competencia: origem.competencia,
                 conta_id: origem.conta_id ?? conciliacao.conta_id,
-                parceiro_id: origem.parceiro_id,
+                            parceiro_id: origem.parceiro_id,
                 descricao: descreverResiduoParcial({
                     valorCents: decision.residual.valorCents,
                     vencimento: origem.vencimento,
@@ -2132,30 +2146,30 @@ async function persistirVinculo(
                 // Residual é saldo em aberto: só pendente ou atrasado - nunca
                 // herda pago_parcial do título de origem.
                 status: statusAbertoPorVencimento(origem.vencimento, hojeIsoLocal()),
-                origem: "residuo_parcial",
-                plano_conta_id: origem.plano_conta_id,
-                departamento_id: origem.departamento_id,
-                centro_custo_id: origem.centro_custo_id,
-                parcela_atual: origem.parcela_atual,
-                total_parcelas: origem.total_parcelas,
-                riscos: origem.riscos ?? [],
+                            origem: "residuo_parcial",
+                            plano_conta_id: origem.plano_conta_id,
+                            departamento_id: origem.departamento_id,
+                            centro_custo_id: origem.centro_custo_id,
+                            parcela_atual: origem.parcela_atual,
+                            total_parcelas: origem.total_parcelas,
+                            riscos: origem.riscos ?? [],
                 // Clona forma de pagamento do título de origem - sem isso o
                 // residual nascia sem PIX/TED/Boleto (campo obrigatório em
                 // telas que dependem dele, ex. baixa manual do residual).
                 forma_pagamento: origem.forma_pagamento,
                 dados_pagamento: origem.dados_pagamento,
-                is_residuo_parcial: true,
-                lancamento_origem_id: origem.id,
+                            is_residuo_parcial: true,
+                            lancamento_origem_id: origem.id,
                 criado_por: usuarioId,
             }, empresaId))
-            .returning();
+                        .returning();
         residuoCriado = {lancamento_id: novoResiduo.id, valor: fromCents(decision.residual.valorCents)};
         }
-    }
+                }
 
-    await tx.insert(itensConciliacaoLancamentosTable).values(
+                await tx.insert(itensConciliacaoLancamentosTable).values(
         decision.itens.map((v) => withEmpresaId({
-            item_conciliacao_id: item.id,
+                        item_conciliacao_id: item.id,
             lancamento_id: v.lancamento_id,
             valor_vinculado: centsToDecimalString(v.valorVinculadoCents),
             desconto: centsToDecimalString(v.descontoCents),
@@ -2189,40 +2203,40 @@ async function persistirVinculo(
             descontoAcumuladoCents: novoDescontoCents,
         });
 
-        await tx
-            .update(lancamentosTable)
-            .set({
+                    await tx
+                        .update(lancamentosTable)
+                        .set({
                 status: novoStatus,
                 data_quitacao: toDateIso(origem.data_quitacao) ?? toDateIso(item.data) ?? hojeIsoLocal(),
                 conta_id: conciliacao.conta_id,
                 valor_quitado: centsToDecimalString(novoQuitadoCents),
                 juros: centsToDecimalString(novoJurosCents),
                 desconto: centsToDecimalString(novoDescontoCents),
-                updated_at: new Date(),
-            })
+                            updated_at: new Date(),
+                        })
             .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.id, vinculoItem.lancamento_id)));
-    }
+                }
 
-    await tx
-        .update(itensConciliacaoTable)
-        .set({
-            status: "vinculado",
+                await tx
+                    .update(itensConciliacaoTable)
+                    .set({
+                        status: "vinculado",
             valor_vinculado_total: centsToDecimalString(totalConciliadoCents),
             valor_saldo: centsToDecimalString(valorSaldoFinalCents),
             data_conciliacao: hojeIsoLocal(),
-            updated_at: new Date(),
-        })
+                        updated_at: new Date(),
+                    })
         .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.id, item.id)));
 
     await tx.insert(historicoConciliacaoTable).values(withEmpresaId({
-        conciliacao_id: item.conciliacao_id,
-        item_conciliacao_id: item.id,
+                    conciliacao_id: item.conciliacao_id,
+                    item_conciliacao_id: item.id,
         usuario_id: usuarioId,
         acao: decision.residual ? "criar_residuo_parcial" : "vincular",
-        detalhes: JSON.stringify({
-            linha_id: linhaId,
-            lancamentos: lancamentosPayload,
-            gerar_parcial: gerarParcial,
+                    detalhes: JSON.stringify({
+                        linha_id: linhaId,
+                        lancamentos: lancamentosPayload,
+                        gerar_parcial: gerarParcial,
             residuo_lancamento_id: residuoLancamentoId ?? null,
             valor_extrato: fromCents(extratoTotalCents),
             total_conciliado: fromCents(totalConciliadoCents),
@@ -2235,8 +2249,8 @@ async function persistirVinculo(
 
     await atualizarResumoConciliacao(tx, empresaId, item.conciliacao_id, conciliacao.extrato_id);
 
-    return {
-        linha_id: linhaId,
+                return {
+                    linha_id: linhaId,
         status: "vinculado" as const,
         ramo: decision.ramo,
         delta: fromCents(decision.deltaCents),
@@ -2352,12 +2366,12 @@ router.post(
                 return errorResponse(res, 404, "NOT_FOUND", "Linha de extrato não encontrada.");
             }
 
-            const [conciliacao] = await db
-                .select()
-                .from(conciliacoesTable)
+        const [conciliacao] = await db
+            .select()
+            .from(conciliacoesTable)
                 .where(tenantWhere(conciliacoesTable, empresaId, eq(conciliacoesTable.id, item.conciliacao_id)))
-                .limit(1);
-            if (!conciliacao) {
+            .limit(1);
+        if (!conciliacao) {
                 return errorResponse(res, 404, "NOT_FOUND", "Conciliação não encontrada.");
             }
 
@@ -2474,7 +2488,7 @@ router.patch(
 
             const [item] = await db
                 .select()
-                .from(itensConciliacaoTable)
+            .from(itensConciliacaoTable)
                 .where(tenantWhere(itensConciliacaoTable, empresaId, eq(itensConciliacaoTable.id, vinculo.item_conciliacao_id)))
                 .limit(1);
 
@@ -2509,9 +2523,9 @@ router.patch(
                     "VALIDATION_ERROR",
                     "Juros/Multa não pode exceder o valor vinculado do título nesta linha.",
                 );
-            }
+        }
 
-            await db.transaction(async (tx) => {
+        await db.transaction(async (tx) => {
                 await tx
                     .update(itensConciliacaoLancamentosTable)
                     .set({
@@ -2617,13 +2631,13 @@ async function contarPendentes(executor: DbLike, empresaId: number, conciliacaoI
 async function persistirFinalizacao(tx: any, empresaId: number, conciliacao: { id: number; conta_id: number | null }, extratoId: number, usuarioId?: number) {
     const dataConciliacao = hojeIsoLocal();
 
-                await tx
-                    .update(extratosTable)
-                    .set({status: "conciliado", updated_at: new Date()})
+            await tx
+                .update(extratosTable)
+                .set({status: "conciliado", updated_at: new Date()})
                     .where(tenantWhere(extratosTable, empresaId, eq(extratosTable.id, extratoId)));
 
-                await tx
-                    .update(conciliacoesTable)
+            await tx
+                .update(conciliacoesTable)
                     .set({
                         status: "conciliado",
                         data_conciliacao: dataConciliacao,
@@ -2972,9 +2986,9 @@ async function persistirFinalizacao(tx: any, empresaId: number, conciliacao: { i
                 }
 
     await tx.insert(historicoConciliacaoTable).values(withEmpresaId({
-        conciliacao_id: conciliacao.id,
+                conciliacao_id: conciliacao.id,
         usuario_id: usuarioId,
-        acao: "salvar",
+                acao: "salvar",
         detalhes: `Extrato ${extratoId} finalizado como conciliado em ${dataConciliacao}. Lançamentos atualizados: ${porLancamento.size}.`,
     }, empresaId));
 }
@@ -3060,6 +3074,10 @@ router.post(
             const extratoId = Number(req.params.extrato_id);
             const body = req.body as z.infer<typeof salvarBodySchema>;
             const usuarioId = req.user?.id;
+
+            if (finalizarConciliacaoNegada(req.user, body.finalizar)) {
+                return errorResponse(res, 403, "FORBIDDEN", MSG_FINALIZAR_CONCILIACAO_NEGADA);
+            }
 
             const [conciliacao] = await db
                 .select()
@@ -3154,7 +3172,7 @@ router.post(
                 linhas_processadas: resultadoPorLinha,
                 finalizado,
             });
-        } catch (e) {
+    } catch (e) {
             if (e instanceof ErroComStatus) {
                 return errorResponse(res, e.status, e.code, e.message);
             }

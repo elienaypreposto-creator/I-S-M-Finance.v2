@@ -3,7 +3,7 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 # Instalar pnpm
-RUN npm install -g pnpm@9
+RUN npm install -g pnpm@12.11.2
 
 # Copiar arquivos de configuração
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json tsconfig.json ./

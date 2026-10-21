@@ -29,6 +29,9 @@ export const listParceirosQuerySchema = z.object({
     limit: z.coerce.number().int().positive().max(200).default(20),
     search: z.string().trim().min(1).optional(),
     status: z.enum(["ativo", "inativo"]).optional(),
+    /** Um dos tipos do parceiro (coluna jsonb `tipos`), ex.: "Fornecedor". */
+    tipo: z.string().trim().min(1).max(60).optional(),
+    tipo_pessoa: z.enum(["PF", "PJ"]).optional(),
 
     // Quando "true", exclui parceiros que já estão vinculados a um usuário.
     excluir_com_usuario: z

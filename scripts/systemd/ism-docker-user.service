@@ -1,0 +1,15 @@
+# Reaplica as regras DOCKER-USER do ISM sempre que o Docker arranca. Ver docs/runbook-endurecimento-vm.md.
+# O script é copiado para /usr/local/sbin (dono root), não executado a partir da pasta do deploy.
+[Unit]
+Description=ISM Finance: bloquear acesso externo direto às portas web publicadas pelo Docker
+After=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/ism-docker-user.sh aplicar
+ExecStop=/usr/local/sbin/ism-docker-user.sh remover
+
+[Install]
+WantedBy=docker.service

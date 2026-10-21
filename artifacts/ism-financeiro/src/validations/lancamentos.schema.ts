@@ -1,4 +1,5 @@
 import {z} from "zod";
+import {TIPO_DOCUMENTO_VALUES, type TipoDocumentoLancamento} from "@/lib/lancamento-documento";
 
 export const lancamentoStatusEnum = z.enum([
     "pendente",
@@ -49,6 +50,9 @@ export const lancamentoApiBodySchema = z.object({
     conta_id: z.number().int().positive().nullable().optional(),
     parceiro_id: z.number().int().positive().nullable().optional(),
     descricao: z.string().trim().min(1).nullable().optional(),
+    tipo_documento: z.enum(TIPO_DOCUMENTO_VALUES).nullable().optional(),
+    numero_documento: z.string().trim().max(60).nullable().optional(),
+    observacao: z.string().trim().max(1000).nullable().optional(),
     valor: z
         .union([z.string(), z.number()])
         .transform((v) => String(v))
@@ -247,6 +251,11 @@ export const lancamentoModalFormSchema = z.object({
     parceiro_id: optionalIdSelect,
     conta_id: optionalIdSelect,
     descricao: z.string().optional(),
+    tipo_documento: z.union([z.enum(TIPO_DOCUMENTO_VALUES), z.literal("")]),
+    numero_documento: z.string().max(60, "O número do documento tem no máximo 60 caracteres."),
+    observacao: z.string().max(1000, "A observação tem no máximo 1000 caracteres."),
+    exigir_tipo_documento: z.boolean(),
+    exigir_descricao: z.boolean(),
 
     valorBr: z
         .string()
@@ -275,8 +284,32 @@ export const lancamentoModalFormSchema = z.object({
     centro_custo_id: optionalIdSelect,
     riscos: z.array(z.string()),
 
+    // Campos planos ainda usados pelos modais de lançamento (além do array pagamentos).
+    forma_pagamento: z.string().optional(),
+    chave_pix: z.string().optional(),
+    tipo_chave_pix: z.string().optional(),
+    banco_codigo: z.string().optional(),
+    banco_nome: z.string().optional(),
+    banco_agencia: z.string().optional(),
+    banco_conta: z.string().optional(),
+
     // Split de pagamento - array vazio = sem forma de pagamento informada (CR ou CP sem detalhe)
     pagamentos: z.array(pagamentoItemFormSchema),
+}).superRefine((data, ctx) => {
+    if (data.exigir_tipo_documento && !data.tipo_documento) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["tipo_documento"],
+            message: "Selecione o tipo de documento.",
+        });
+    }
+    if (data.exigir_descricao && !data.descricao?.trim()) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["descricao"],
+            message: "Informe a descrição.",
+        });
+    }
 });
 
 export type LancamentoModalFormValues = z.infer<typeof lancamentoModalFormSchema>;
@@ -291,6 +324,9 @@ export type LancamentoEditItem = {
     conta_id: number | null;
     parceiro_id: number | null;
     descricao: string | null;
+    tipo_documento?: TipoDocumentoLancamento | null;
+    numero_documento?: string | null;
+    observacao?: string | null;
     valor: string | number;
     /** Desconto já aplicado ao título (colunas `desconto`/`juros` da tabela
      *  lancamentos - também usadas no fluxo de conciliação bancária). */
@@ -324,7 +360,7 @@ function normalizeStatusForForm(tipo: string, status: string): z.infer<typeof la
  *
  * Recebe `dados_pagamento` (array da API / BD) e devolve o array
  * `pagamentos` do `useFieldArray`. Cada item é validado via
- * `dadosPagamentoItemApiSchema.safeParse()` antes do mapeamento —
+ * `dadosPagamentoItemApiSchema.safeParse()` antes do mapeamento -
  * registros com estrutura obsoleta ou corrompida na BD são descartados
  * silenciosamente, em vez de provocar erros em runtime.
  */
@@ -400,6 +436,11 @@ export function getLancamentoModalDefaultValues(editItem?: LancamentoEditItem | 
         parceiro_id: "",
         conta_id: "",
         descricao: "",
+        tipo_documento: "",
+        numero_documento: "",
+        observacao: "",
+        exigir_tipo_documento: false,
+        exigir_descricao: false,
         valorBr: "",
         descontoBr: "",
         jurosBr: "",
@@ -421,6 +462,9 @@ export function getLancamentoModalDefaultValues(editItem?: LancamentoEditItem | 
         parceiro_id: editItem.parceiro_id != null ? String(editItem.parceiro_id) : "",
         conta_id: editItem.conta_id != null ? String(editItem.conta_id) : "",
         descricao: editItem.descricao ?? "",
+        tipo_documento: editItem.tipo_documento ?? "",
+        numero_documento: editItem.numero_documento ?? "",
+        observacao: editItem.observacao ?? "",
         valorBr: apiValorToValorBr(editItem.valor),
         descontoBr: editItem.desconto != null ? apiValorToValorBr(editItem.desconto) : "",
         jurosBr: editItem.juros != null ? apiValorToValorBr(editItem.juros) : "",
@@ -499,7 +543,7 @@ function buildDadosPagamentoArray(pagamentos: PagamentoItemFormValues[]): DadosP
  * • `valorBr` (string mascarada) -> `valor` (string decimal para o backend aceitar
  *    `z.union([z.string(), z.number()])`)
  * • `descontoBr` / `jurosBr` (string mascarada) -> `desconto` / `juros` (string
- *    decimal). Vazio equivale a "0.00" — o valor de face (`valor`) nunca é
+ *    decimal). Vazio equivale a "0.00" - o valor de face (`valor`) nunca é
  *    recalculado aqui; desconto/juros ficam em colunas próprias.
  * • `pagamentos[]` (useFieldArray) -> `dados_pagamento[]` (métodos de transação,
  *    sem valor individual) - via `buildDadosPagamentoArray`
@@ -522,6 +566,9 @@ export function mapModalFormToApiBody(values: LancamentoModalFormValues): Lancam
         conta_id: values.conta_id === "" ? null : Number(values.conta_id),
         parceiro_id: values.parceiro_id === "" ? null : Number(values.parceiro_id),
         descricao: values.descricao?.trim() || null,
+        tipo_documento: values.tipo_documento || null,
+        numero_documento: values.numero_documento.trim() || null,
+        observacao: values.observacao.trim() || null,
         valor: brMoneyDisplayToApiString(values.valorBr),
         desconto: brMoneyDisplayToApiString(values.descontoBr ?? "") || "0.00",
         juros: brMoneyDisplayToApiString(values.jurosBr ?? "") || "0.00",

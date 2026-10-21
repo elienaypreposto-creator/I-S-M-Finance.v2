@@ -18,13 +18,7 @@ import {drizzle} from "drizzle-orm/node-postgres";
 import {migrate} from "drizzle-orm/node-postgres/migrator";
 import pg from "pg";
 import {pgUrlPassword} from "./src/db-urls";
-
-/**
- * Mesmo workaround do client.ts: o driver `pg` honra sslmode=require da URL e
- * valida o certificado, ignorando `ssl: { rejectUnauthorized: false }`.
- * Precisa estar definido ANTES de conectar.
- */
-(process.env as Record<string, string>).NODE_TLS_REJECT_UNAUTHORIZED = "0";
+import {pgTlsConfig} from "./src/db-ssl";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsFolder = path.join(__dirname, "migrations");
@@ -117,6 +111,35 @@ async function stampBaselineIfNeeded(client: pg.Client): Promise<string[]> {
     return stamped;
 }
 
+async function hashesAplicados(client: pg.Client): Promise<Set<string>> {
+    const existe = await tableExists(client, "drizzle", "__drizzle_migrations");
+    if (!existe) return new Set();
+    const {rows} = await client.query<{hash: string}>(`SELECT hash FROM drizzle.__drizzle_migrations`);
+    return new Set(rows.map((row) => row.hash));
+}
+
+/** Nome de cada migration cujo hash entrou em `__drizzle_migrations` nesta execução. */
+async function logarMigrationsAplicadas(client: pg.Client, antes: Set<string>): Promise<void> {
+    const journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as Journal;
+    const depois = await hashesAplicados(client);
+    const aplicadas: string[] = [];
+
+    for (const entry of journal.entries) {
+        const sqlPath = path.join(migrationsFolder, `${entry.tag}.sql`);
+        if (!fs.existsSync(sqlPath)) continue;
+        const hash = hashMigrationSql(fs.readFileSync(sqlPath, "utf8"));
+        if (depois.has(hash) && !antes.has(hash)) aplicadas.push(entry.tag);
+    }
+
+    if (aplicadas.length === 0) {
+        console.log("[db:migrate] Nenhuma migration nova.");
+        return;
+    }
+    for (const tag of aplicadas) {
+        console.log(`[db:migrate] Aplicada: ${tag}`);
+    }
+}
+
 async function applyRolePasswords(client: pg.Client, ownerUrl: string): Promise<void> {
     const appPass = process.env.ISM_APP_PASSWORD ?? pgUrlPassword(ownerUrl);
     const adminPass = process.env.ISM_ADMIN_PASSWORD ?? pgUrlPassword(ownerUrl);
@@ -199,13 +222,7 @@ async function reassignPublicToOwner(client: pg.Client): Promise<void> {
 async function run(): Promise<void> {
     loadOptionalEnvFiles();
     const connectionString = requireMigrateUrl();
-    const client = new pg.Client({
-        connectionString,
-        ssl:
-            process.env.DB_REQUIRE_SSL === "true" || connectionString.includes("supabase.co")
-                ? {rejectUnauthorized: false}
-                : undefined,
-    });
+    const client = new pg.Client(pgTlsConfig(connectionString));
 
     await client.connect();
     try {
@@ -218,14 +235,16 @@ async function run(): Promise<void> {
         }
 
         const db = drizzle(client);
+        const antes = await hashesAplicados(client);
         console.log("[db:migrate] Aplicando migrations pendentes…");
         await migrate(db, {migrationsFolder});
+        await logarMigrationsAplicadas(client, antes);
         await applyRolePasswords(client, connectionString);
         await reassignPublicToOwner(client);
         console.log("[db:migrate] Concluído.");
-    } finally {
+  } finally {
         await client.end();
-    }
+  }
 }
 
 run().catch((error: unknown) => {

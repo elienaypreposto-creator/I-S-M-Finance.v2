@@ -26,7 +26,9 @@ export const queryClient = new QueryClient({
 });
 
 const QUERY_DEPENDENCIES: Record<string, string[]> = {
-    lancamentos: ["dashboard", "relatorio", "conciliacoes-list"],
+    // saldo_atual das contas vem dos lançamentos quitados e da conciliação
+    lancamentos: ["dashboard", "relatorio", "conciliacoes-list", "contas-bancarias"],
+    conciliacao: ["contas-bancarias"],
     "kanban-cards": ["dashboard"],
     "conciliacoes-list": ["dashboard", "lancamentos"],
     "plano-contas": ["dashboard", "relatorio", "lancamentos"],

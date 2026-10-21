@@ -3,11 +3,19 @@ import {z} from "zod";
 import {and, desc, eq, ne} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {empresasTable} from "@workspace/db/schema";
+import {requireTenant} from "../lib/tenant-scope";
+import {withSuperadmin} from "../middlewares/withSuperadmin";
 import {withPermission} from "../middlewares/withPermission";
 import {PERM} from "../constants/permissoes";
 import {validateBody} from "../middlewares/validate";
 import {errorResponse, successResponse} from "../utils/response";
 
+/**
+ * Cadastro de empresas (tenants), ISMF-16:
+ * - listar todas e criar: operação do ISM, só `superadmin` (withSuperadmin);
+ * - editar: superadmin edita qualquer uma; quem tem `admin:empresas:editar` edita
+ *   só a empresa da sessão, e só os dados cadastrais (razão social, fantasia, CNPJ).
+ */
 const router = Router();
 
 const createEmpresaBodySchema = z.object({
@@ -60,7 +68,7 @@ async function uniqueSlug(desired: string, exceptId?: number): Promise<string> {
     return `${desired}-${Date.now()}`;
 }
 
-router.get("/empresas", withPermission(PERM.ADMIN_EMPRESAS_LISTAR), async (req, res) => {
+router.get("/empresas", withSuperadmin, async (req, res) => {
     try {
         const items = await db.select().from(empresasTable).orderBy(desc(empresasTable.id));
         return successResponse(res, items);
@@ -69,7 +77,19 @@ router.get("/empresas", withPermission(PERM.ADMIN_EMPRESAS_LISTAR), async (req, 
     }
 });
 
-router.post("/empresas", withPermission(PERM.ADMIN_EMPRESAS_CRIAR), validateBody(createEmpresaBodySchema), async (req, res) => {
+/** Empresa da sessão, para o admin editar os próprios dados sem listar as outras. */
+router.get("/empresas/atual", withPermission(PERM.ADMIN_EMPRESAS_EDITAR), async (req, res) => {
+    try {
+        const {empresaId} = requireTenant(req);
+        const [item] = await db.select().from(empresasTable).where(eq(empresasTable.id, empresaId)).limit(1);
+        if (!item) return errorResponse(res, 404, "NOT_FOUND", "Empresa não encontrada.");
+        return successResponse(res, item);
+    } catch (e) {
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao carregar a empresa.", e);
+    }
+});
+
+router.post("/empresas", withSuperadmin, validateBody(createEmpresaBodySchema), async (req, res) => {
     try {
         const body = req.body as CreateEmpresaBody;
         const slug = await uniqueSlug(slugify(body.slug || body.razao_social));
@@ -112,7 +132,22 @@ router.patch("/empresas/:id", withPermission(PERM.ADMIN_EMPRESAS_EDITAR), valida
             return errorResponse(res, 400, "VALIDATION_ERROR", "ID inválido.");
         }
 
+        // Sem este guard, qualquer usuário com admin:empresas:editar alterava OUTRA empresa:
+        // `empresas` não tem RLS e o UPDATE filtrava só por id. GET/POST /empresas já são
+        // superadmin-only; aqui o admin comum só edita a empresa da própria sessão.
+        if (!req.user?.superadmin && id !== requireTenant(req).empresaId) {
+            return errorResponse(res, 404, "NOT_FOUND", "Empresa não encontrada.");
+        }
+
         const body = req.body as UpdateEmpresaBody;
+
+        // Ativar/desativar, slug e aceite do DPA seguem com o ISM (superadmin).
+        if (!req.user?.superadmin) {
+            const restritos = (["ativa", "slug", "dpa_representante"] as const).filter((k) => body[k] !== undefined);
+            if (restritos.length > 0) {
+                return errorResponse(res, 403, "FORBIDDEN", `Somente o superadmin altera: ${restritos.join(", ")}.`);
+            }
+        }
         const patch: {
             updated_at: Date;
             razao_social?: string;

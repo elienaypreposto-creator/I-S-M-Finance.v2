@@ -54,6 +54,7 @@ type AuthContextValue = {
     loading: boolean;
     login: (accessToken: string, userData: AuthUser, perms?: string[], empresas?: EmpresaVinculo[]) => void;
     logout: () => Promise<void>;
+    definirUsuario: (parcial: Partial<AuthUser>) => void;
     switchEmpresa: (empresaId: number) => Promise<void>;
     hasPermission: (permission: string) => boolean;
     isAuthenticated: boolean;
@@ -70,7 +71,7 @@ function toEmpresaAtiva(empresas: EmpresaVinculo[], empresaId: number | undefine
     return {id: found.id, nome: nomeEmpresa(found), slug: found.slug};
 }
 
-export function AuthProvider({children}: {children: ReactNode}) {
+export function AuthProvider({children}: { children: ReactNode }) {
     const [user, setUser] = useState<AuthUser | null>(null);
     const [permissions, setPermissions] = useState<string[]>([]);
     const [empresas, setEmpresas] = useState<EmpresaVinculo[]>([]);
@@ -128,8 +129,12 @@ export function AuthProvider({children}: {children: ReactNode}) {
         window.location.href = "/login";
     }, []);
 
+    const definirUsuario = useCallback((parcial: Partial<AuthUser>) => {
+        setUser((atual) => (atual ? {...atual, ...parcial} : atual));
+    }, []);
+
     const switchEmpresa = useCallback(async (empresaId: number) => {
-        const res = await fetchApi<{data: SessionPayload}>("/auth/switch-empresa", {
+        const res = await fetchApi<{ data: SessionPayload }>("/auth/switch-empresa", {
             method: "POST",
             body: JSON.stringify({empresa_id: empresaId}),
         });
@@ -198,11 +203,12 @@ export function AuthProvider({children}: {children: ReactNode}) {
             loading,
             login,
             logout,
+            definirUsuario,
             switchEmpresa,
             hasPermission,
             isAuthenticated: !!user,
         }),
-        [user, permissions, empresas, empresaAtiva, loading, login, logout, switchEmpresa, hasPermission],
+        [user, permissions, empresas, empresaAtiva, loading, login, logout, definirUsuario, switchEmpresa, hasPermission],
     );
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

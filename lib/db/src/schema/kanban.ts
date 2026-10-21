@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, date, timestamp, jsonb, boolean } from "drizzle-orm/pg-core";
+import {pgTable, serial, text, integer, date, timestamp, jsonb, boolean, index} from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { usuariosTable } from "./usuarios";
@@ -23,7 +23,9 @@ export const kanbanCardsTable = pgTable("kanban_cards", {
   responsavel_nome: text("responsavel_nome"),
   created_at: timestamp("created_at").defaultNow().notNull(),
   updated_at: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => [
+    index("kanban_cards_empresa_id_idx").on(table.empresa_id),
+]);
 
 export const kanbanComentariosTable = pgTable("kanban_comentarios", {
   id: serial("id").primaryKey(),

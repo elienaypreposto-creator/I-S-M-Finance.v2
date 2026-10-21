@@ -18,8 +18,6 @@ import {
     LineChart,
     Wallet,
     UserCheck,
-    Scale,
-    ListFilter,
 } from "lucide-react";
 import {
     Sidebar,
@@ -42,9 +40,9 @@ import {PERM} from "@/lib/permissoes";
 
 const navItems = [
     {title: "Home", url: "/", icon: Home},
-    {title: "Tarefas", url: "/kanban", icon: Columns},
+    {title: "Tarefas", url: "/kanban", icon: Columns, permission: PERM.KANBAN_LISTAR},
     {title: "Conciliação", url: "/conciliacao", icon: RefreshCw, permission: PERM.CONCILIACAO_ACESSAR},
-    {title: "Lançamentos", url: "/lancamentos", icon: FileText},
+    {title: "Lançamentos", url: "/lancamentos", icon: FileText, permission: PERM.LANCAMENTOS_LISTAR},
 ];
 
 const cadastrosItems: NavItem[] = [
@@ -53,26 +51,14 @@ const cadastrosItems: NavItem[] = [
     {title: "Plano de Contas", url: "/cadastros/plano-contas", icon: Briefcase},
     {title: "Metas Financeiras", url: "/cadastros/metas", icon: Target},
     {title: "Departamentos", url: "/cadastros/departamentos", icon: Building2},
-    {
-        title: "Regras de Conciliação",
-        url: "/cadastros/regras-conciliacao",
-        icon: ListFilter,
-        permission: PERM.CONCILIACAO_ACESSAR,
-    },
 ];
 
-const relatoriosItems = [
+const relatoriosItems: NavItem[] = [
     {title: "Fechamento Mensal", url: "/relatorios/fechamento-mensal", icon: Wallet},
     {title: "Contábil/Fiscal", url: "/relatorios/contabil-fiscal", icon: FileText},
     {title: "DRE Gerencial", url: "/relatorios/dre", icon: BarChart3},
     {title: "Fluxo de Caixa", url: "/relatorios/fluxo-caixa", icon: LineChart},
     {title: "Relatório de Metas", url: "/relatorios/metas", icon: Target},
-    {
-        title: "Conciliação Bancária",
-        url: "/relatorios/conciliacao",
-        icon: Scale,
-        permission: PERM.RELATORIOS_CONCILIACAO,
-    },
 ];
 
 const configItems = [
@@ -97,8 +83,9 @@ type MenuSection = {
 export function AppSidebar() {
     const [location] = useLocation();
     const {state} = useSidebar();
-    const {hasPermission} = useAuth();
-    const canListarEmpresas = hasPermission(PERM.ADMIN_EMPRESAS_LISTAR);
+    const {hasPermission, user} = useAuth();
+    const canListarEmpresas = user?.superadmin === true;
+    const canEditarPropriaEmpresa = !canListarEmpresas && hasPermission(PERM.ADMIN_EMPRESAS_EDITAR);
     const isCollapsed = state === "collapsed";
     const [expandedSections, setExpandedSections] = useState<string[]>(["Cadastros", "Relatórios", "Configurações"]);
 
@@ -113,6 +100,7 @@ export function AppSidebar() {
     );
     const visibleConfig = [
         ...(canListarEmpresas ? [{title: "Empresas", url: "/admin/empresas", icon: Building2}] : []),
+        ...(canEditarPropriaEmpresa ? [{title: "Minha empresa", url: "/admin/empresas", icon: Building2}] : []),
         ...configItems,
     ];
 

@@ -1,12 +1,12 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
 import {useEffect, useMemo, useRef, useState} from "react";
-import {createPortal} from "react-dom";
 import {useForm, useFieldArray, Controller, useWatch} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
-import {formatCurrency, formatDate, cn} from "@/lib/utils";
+import {formatDate, cn} from "@/lib/utils";
+import {useDinheiro} from "@/components/conta/saldos-visiveis";
 import {Checkbox} from "@/components/ui/checkbox";
 import {
     buildVincularFormSchema,
@@ -16,8 +16,10 @@ import {
 import {formatValorBrInput, brMoneyDisplayToApiString} from "@/validations/lancamentos.schema";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
-import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
-import {Loader2, X, Link2, AlertCircle, CheckCircle2, Pencil, Search} from "lucide-react";
+import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
+import {Modal, ModalFooter, ModalHeader, ModalSpinner, modalBtnPrimaryCls, modalBtnSecondaryCls} from "@/components/ui/modal-responsivo";
+import {SelectCampo} from "@/components/ui/select-campo";
+import {Loader2, Link2, AlertCircle, CheckCircle2, Pencil, Search} from "lucide-react";
 import {useAuth} from "@/hooks/use-auth";
 import {PERM} from "@/lib/permissoes";
 import {EditarLancamentoConciliacaoModal} from "@/components/conciliacao/editar-lancamento-modal";
@@ -26,27 +28,27 @@ import {invalidateRelated} from "@/App";
 import {LancamentoModal, type LancamentoPrefill} from "@/components/lancamentos/lancamento-modal";
 
 export type LancamentoCompativel = {
-    id: number;
-    tipo: string;
-    vencimento: string;
-    descricao: string | null;
-    valor: string | number;
+  id: number;
+  tipo: string;
+  vencimento: string;
+  descricao: string | null;
+  valor: string | number;
     /** Quitado antes deste vínculo. Sem isto, o Modo B calcula excedente
      *  em lançamentos que já estão pago / pago_parcial. */
     valor_quitado?: string | number | null;
-    status: string;
-    parceiro_id: number | null;
+  status: string;
+  parceiro_id: number | null;
     /** Nome do parceiro, usado na busca livre. */
     parceiro_nome?: string | null;
-    plano_conta_id: number | null;
+  plano_conta_id: number | null;
 };
 
 type VincularModalProps = {
-    open: boolean;
-    onClose: () => void;
-    extratoId: string;
-    linhaId: number;
-    valorExtratoAbs: string | number;
+  open: boolean;
+  onClose: () => void;
+  extratoId: string;
+  linhaId: number;
+  valorExtratoAbs: string | number;
     /** Regra de Ouro (Fase 8): chamado quando o usuário confirma o vínculo -
      *  em vez de persistir na hora, o modal só CALCULA (preview, mesma regra
      *  de negócio do backend) e devolve o resultado pro extrato.tsx guardar
@@ -73,7 +75,7 @@ type VincularModalProps = {
 
 export type VincularPayload = {
     lancamentos: Array<{ lancamento_id: number; desconto: string; juros_multa: string }>;
-    gerar_parcial: boolean;
+  gerar_parcial: boolean;
     residuo_lancamento_id?: number;
 };
 
@@ -118,11 +120,11 @@ function toMoney(cents: number): number {
 }
 
 function VincularFormBody({
-                              extratoId,
-                              linhaId,
-                              valorExtratoAbs,
-                              lancamentos,
-                              onClose,
+  extratoId,
+  linhaId,
+  valorExtratoAbs,
+  lancamentos,
+  onClose,
                               onDraftVincular,
                               jaVinculadoLocalCents,
                               quitadoLocalPorLancamento,
@@ -131,12 +133,12 @@ function VincularFormBody({
                               buscandoMais,
                               podeBuscarMais,
                               bindRequestClose,
-                          }: {
-    extratoId: string;
-    linhaId: number;
-    valorExtratoAbs: string | number;
-    lancamentos: LancamentoCompativel[];
-    onClose: () => void;
+}: {
+  extratoId: string;
+  linhaId: number;
+  valorExtratoAbs: string | number;
+  lancamentos: LancamentoCompativel[];
+  onClose: () => void;
     onDraftVincular: (draft: DraftVincular) => void;
     jaVinculadoLocalCents: number;
     quitadoLocalPorLancamento: Record<number, number>;
@@ -147,7 +149,8 @@ function VincularFormBody({
     bindRequestClose?: (fn: () => void) => void;
 }) {
     const {toast} = useToast();
-    const queryClient = useQueryClient();
+  const queryClient = useQueryClient();
+    const dinheiro = useDinheiro();
     const {hasPermission} = useAuth();
     const canVincular = hasPermission(PERM.CONCILIACAO_VINCULAR);
     const canEditarLancamento = hasPermission(PERM.LANCAMENTOS_EDITAR);
@@ -155,13 +158,13 @@ function VincularFormBody({
     /** Evita sobrescrever Juros/Multa se o usuário editou manualmente o valor. */
     const jurosManualRef = useRef<Set<number>>(new Set());
 
-    const lancamentosValorById = useMemo(() => {
-        const m = new Map<number, string | number>();
-        for (const l of lancamentos) {
-            m.set(l.id, l.valor);
-        }
-        return m;
-    }, [lancamentos]);
+  const lancamentosValorById = useMemo(() => {
+    const m = new Map<number, string | number>();
+    for (const l of lancamentos) {
+      m.set(l.id, l.valor);
+    }
+    return m;
+  }, [lancamentos]);
 
     // Bug (ver print anexo): um lançamento já "Pago"/"pago_parcial" tem
     // valor_quitado > 0. Sem considerar isso, o front calcula "quanto falta"
@@ -182,30 +185,30 @@ function VincularFormBody({
         return m;
     }, [lancamentos, quitadoLocalPorLancamento]);
 
-    const schema = useMemo(
+  const schema = useMemo(
         () => buildVincularFormSchema(valorExtratoAbs, lancamentosValorById, lancamentosQuitadoById),
         [valorExtratoAbs, lancamentosValorById, lancamentosQuitadoById],
-    );
+  );
 
-    const defaultItens = useMemo(
-        () =>
-            lancamentos.map((l) => ({
-                lancamento_id: l.id,
-                selecionado: false,
-                desconto: "",
+  const defaultItens = useMemo(
+    () =>
+      lancamentos.map((l) => ({
+        lancamento_id: l.id,
+        selecionado: false,
+        desconto: "",
                 juros_multa: "",
-            })),
+      })),
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [],
-    );
+  );
 
-    const form = useForm<VincularFormValues>({
-        resolver: zodResolver(schema),
-        defaultValues: {
-            gerar_parcial: false,
+  const form = useForm<VincularFormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: {
+      gerar_parcial: false,
             residuo_lancamento_id: null,
-            itens: defaultItens,
-        },
+      itens: defaultItens,
+    },
         mode: "onChange",
     });
 
@@ -262,10 +265,6 @@ function VincularFormBody({
             void handleRequestClose();
         });
     });
-
-    useEscapeClose(editarId == null && !ConfirmDialogProps.open, () => {
-        void handleRequestClose();
-    }, 60);
 
     // Mesma fórmula da validação (buildVincularFormSchema).
     const {deltaCents, somaBasesCents, somaJurosCents} = useMemo(
@@ -378,7 +377,7 @@ function VincularFormBody({
     // de dinheiro no front) e devolve pro extrato.tsx guardar como rascunho
     // em memória até o usuário clicar em Salvar/Conciliar.
     const previewVincularMutation = useMutation({
-        mutationFn: (payload: VincularPayload) =>
+    mutationFn: (payload: VincularPayload) =>
             fetchApiData<{
                 ramo: string;
                 delta: number;
@@ -387,7 +386,7 @@ function VincularFormBody({
                 itens: Array<{ lancamento_id: number; valor_vinculado: number; desconto: number; juros_multa: number }>;
                 residual: { lancamento_origem_id: number; valor: number } | null;
             }>(`/conciliacoes/linhas/${linhaId}/vincular`, {
-                method: "POST",
+        method: "POST",
                 body: JSON.stringify({
                     ...payload,
                     preview: true,
@@ -432,20 +431,20 @@ function VincularFormBody({
                 title: "Vínculo adicionado",
                 description: "Ainda não foi salvo - clique em Salvar/Conciliar no extrato para confirmar.",
             });
-            onClose();
-        },
-        onError: (e: unknown) => {
-            const msg = e instanceof Error ? e.message : "Não foi possível vincular.";
+      onClose();
+    },
+    onError: (e: unknown) => {
+      const msg = e instanceof Error ? e.message : "Não foi possível vincular.";
             toast({variant: "destructive", title: "Erro ao vincular", description: msg});
-        },
-    });
+    },
+  });
 
-    const onSubmit = (values: VincularFormValues) => {
-        const lancamentosPayload = values.itens
-            .filter((i) => i.selecionado)
-            .map((i) => ({
-                lancamento_id: i.lancamento_id,
-                desconto: brMoneyDisplayToApiString(i.desconto) || "0.00",
+  const onSubmit = (values: VincularFormValues) => {
+    const lancamentosPayload = values.itens
+      .filter((i) => i.selecionado)
+      .map((i) => ({
+        lancamento_id: i.lancamento_id,
+        desconto: brMoneyDisplayToApiString(i.desconto) || "0.00",
                 juros_multa: brMoneyDisplayToApiString(i.juros_multa) || "0.00",
             }));
         const payload: VincularPayload = {
@@ -475,81 +474,81 @@ function VincularFormBody({
         });
     };
 
-    const inputCls =
-        "w-full bg-[#1a1c23] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-primary/50";
-    const labelCls = "text-[10px] font-bold text-muted-foreground uppercase tracking-wider";
+  const inputCls =
+    "w-full bg-[#1a1c23] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-primary/50";
+    const labelCls = "text-xs font-bold text-muted-foreground uppercase tracking-wider";
 
-    const itensRootError =
-        typeof errors.itens === "object" && errors.itens !== null && "message" in errors.itens
-            ? String((errors.itens as { message?: string }).message)
-            : undefined;
+  const itensRootError =
+    typeof errors.itens === "object" && errors.itens !== null && "message" in errors.itens
+      ? String((errors.itens as { message?: string }).message)
+      : undefined;
 
-    return (
+  return (
         <form
             onSubmit={handleSubmit(onSubmit, (errs) => onInvalid(errs))}
             className="flex flex-col flex-1 min-h-0 overflow-hidden"
         >
             {/* Lista: único filho que cresce e rola - precisa de min-h-0 no flex. */}
-            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5">
-                <div className="space-y-2 py-4">
-                    {fields.map((field, index) => {
-                        const l = lancamentos.find((x) => x.id === field.lancamento_id);
-                        if (!l) return null;
+            <div data-modal-body="" className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-[1.6em]">
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-2 py-4 items-start">
+          {fields.map((field, index) => {
+            const l = lancamentos.find((x) => x.id === field.lancamento_id);
+            if (!l) return null;
                         const selected = watchedItens[index]?.selecionado ?? false;
                         // Inclui rascunho local (Regra de Ouro) - ver lancamentosQuitadoById.
                         const quitadoAnteriorCents = Math.round(
                             Math.abs(Number(lancamentosQuitadoById.get(l.id) ?? 0)) * 100,
                         );
-                        return (
-                            <div
-                                key={field.id}
-                                className={cn(
-                                    "rounded-xl border p-3 transition-colors",
-                                    selected ? "border-primary/40 bg-primary/5" : "border-white/10 bg-black/20",
-                                )}>
-                                <div className="flex flex-col sm:flex-row sm:items-start gap-3">
-                                    <Controller
-                                        name={`itens.${index}.selecionado`}
-                                        control={control}
+            return (
+              <div
+                key={field.id}
+                className={cn(
+                  "rounded-xl border p-3 transition-colors",
+                  selected ? "border-primary/40 bg-primary/5" : "border-white/10 bg-black/20",
+                )}>
+                <div className="flex flex-col sm:flex-row sm:items-start gap-3">
+                  <Controller
+                    name={`itens.${index}.selecionado`}
+                    control={control}
                                         render={({field: cb}) => (
-                                            <div className="flex items-start gap-3 flex-1 min-w-0">
-                                                <Checkbox
-                                                    checked={cb.value}
-                                                    onCheckedChange={(c) => cb.onChange(c === true)}
-                                                    className="mt-1 shrink-0"
-                                                />
-                                                <div className="min-w-0 flex-1">
-                                                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex items-start gap-3 flex-1 min-w-0">
+                        <Checkbox
+                          checked={cb.value}
+                          onCheckedChange={(c) => cb.onChange(c === true)}
+                          className="mt-1 shrink-0"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
                             <span
-                                className={cn(
-                                    "text-[10px] font-black px-1.5 py-0.5 rounded",
+                              className={cn(
+                                    "text-xs font-black px-1.5 py-0.5 rounded",
                                     l.tipo === "CR"
                                         ? "bg-emerald-500/20 text-emerald-300"
                                         : "bg-red-500/20 text-red-300",
-                                )}>
+                              )}>
                               {l.tipo}
                             </span>
-                                                        <span className="text-[10px] text-muted-foreground">
+                                                        <span className="text-xs text-muted-foreground">
                               {formatDate(l.vencimento)}
                             </span>
-                                                        <StatusBadge status={l.status} className="text-[10px] py-0"/>
-                                                    </div>
+                                                        <StatusBadge status={l.status} className="text-xs py-0"/>
+                          </div>
                                                     <p
                                                         className="text-sm text-white font-medium mt-1 truncate"
                                                         title={l.descricao ?? ""}>
                                                         {l.descricao ?? "-"}
                                                     </p>
                                                     {l.parceiro_nome && (
-                                                        <p className="text-[11px] text-muted-foreground truncate">
+                                                        <p className="text-xs text-muted-foreground truncate">
                                                             {l.parceiro_nome}
                                                         </p>
                                                     )}
                                                     {/* Valor de face e restante (já comprometido noutras conciliações). */}
                                                     <p className="text-sm font-bold text-primary mt-0.5">
-                                                        {formatCurrency(Number(l.valor))}
+                                                        {dinheiro(Number(l.valor))}
                                                         {quitadoAnteriorCents > 0 && (
-                                                            <span className="text-[11px] font-semibold text-amber-300/90">
-                                                                {" "}| Restante: {formatCurrency(
+                                                            <span className="text-xs font-semibold text-amber-300/90">
+                                                                {" "}| Restante: {dinheiro(
                                                                     toMoney(Math.max(0, Math.round(Math.abs(Number(l.valor)) * 100) - quitadoAnteriorCents)),
                                                                 )}
                                                             </span>
@@ -557,57 +556,57 @@ function VincularFormBody({
                                                     </p>
                                                     {/* Quitação anterior visível: juros/multa pode superar o valor de face. */}
                                                     {quitadoAnteriorCents > 0 && (
-                                                        <p className="text-[10px] text-amber-300/90 mt-0.5">
-                                                            Já quitado: {formatCurrency(toMoney(quitadoAnteriorCents))}
+                                                        <p className="text-xs text-amber-300/90 mt-0.5">
+                                                            Já quitado: {dinheiro(toMoney(quitadoAnteriorCents))}
                                                         </p>
                                                     )}
                                                     {canEditarLancamento && (
                                                         <button
                                                             type="button"
                                                             onClick={() => setEditarId(l.id)}
-                                                            className="mt-1 inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary"
+                                                            className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
                                                         >
                                                             <Pencil className="w-3 h-3"/>
                                                             Corrigir lançamento
                                                         </button>
                                                     )}
-                                                </div>
-                                            </div>
-                                        )}
-                                    />
+                        </div>
+                      </div>
+                    )}
+                  />
                                     <div
                                         className={cn(
                                             "flex gap-3 sm:w-52 shrink-0 transition-opacity",
                                             selected ? "opacity-100" : "opacity-40 pointer-events-none",
                                         )}>
-                                        <div className="flex-1">
-                                            <span className={labelCls}>Desconto</span>
-                                            <Controller
-                                                name={`itens.${index}.desconto`}
-                                                control={control}
+                    <div className="flex-1">
+                      <span className={labelCls}>Desconto</span>
+                      <Controller
+                        name={`itens.${index}.desconto`}
+                        control={control}
                                                 render={({field: inputField}) => (
-                                                    <input
-                                                        type="text"
-                                                        inputMode="numeric"
-                                                        className={inputCls}
-                                                        placeholder="0,00"
-                                                        value={inputField.value}
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            className={inputCls}
+                            placeholder="0,00"
+                            value={inputField.value}
                                                         onChange={(e) =>
                                                             inputField.onChange(formatValorBrInput(e.target.value))
                                                         }
-                                                    />
-                                                )}
-                                            />
-                                        </div>
-                                        <div className="flex-1">
+                          />
+                        )}
+                      />
+                    </div>
+                    <div className="flex-1">
                                             <span className={labelCls}>Juros/Multa</span>
-                                            <Controller
+                      <Controller
                                                 name={`itens.${index}.juros_multa`}
-                                                control={control}
+                        control={control}
                                                 render={({field: inputField}) => (
-                                                    <input
-                                                        type="text"
-                                                        inputMode="numeric"
+                          <input
+                            type="text"
+                            inputMode="numeric"
                                                         className={cn(
                                                             inputCls,
                                                             showExcedente &&
@@ -615,30 +614,30 @@ function VincularFormBody({
                                                             selectedItens.length === 1 &&
                                                             "border-amber-500/40 bg-amber-500/5",
                                                         )}
-                                                        placeholder="0,00"
-                                                        value={inputField.value}
+                            placeholder="0,00"
+                            value={inputField.value}
                                                         onChange={(e) => {
                                                             jurosManualRef.current.add(l.id);
                                                             inputField.onChange(formatValorBrInput(e.target.value));
                                                         }}
-                                                    />
-                                                )}
-                                            />
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        );
-                    })}
+                          />
+                        )}
+                      />
+                    </div>
+                  </div>
                 </div>
+              </div>
+            );
+          })}
+        </div>
             </div>
 
-            {itensRootError && (
-                <p className="shrink-0 text-[10px] text-destructive px-5 py-1 flex items-center gap-1">
+      {itensRootError && (
+                <p className="shrink-0 text-xs text-destructive px-5 py-1 flex items-center gap-1">
                     <AlertCircle className="w-3 h-3"/>
-                    {itensRootError}
-                </p>
-            )}
+          {itensRootError}
+        </p>
+      )}
 
             {/* Resumo em centavos, mesma fórmula do backend (calcDeltaVincularCents). */}
             <div className="shrink-0 border-t border-white/10 bg-black/40 px-5 py-3 space-y-3">
@@ -646,7 +645,7 @@ function VincularFormBody({
                     <div className="rounded-lg bg-white/5 px-2 py-2">
                         <p className={labelCls}>Referência</p>
                         <p className="text-sm font-bold text-white tabular-nums">
-                            {formatCurrency(toMoney(extratoCents))}
+                            {dinheiro(toMoney(extratoCents))}
                         </p>
                     </div>
                     <div className="rounded-lg bg-white/5 px-2 py-2">
@@ -656,13 +655,13 @@ function VincularFormBody({
                     <div className="rounded-lg bg-white/5 px-2 py-2">
                         <p className={labelCls}>Total lanç.</p>
                         <p className="text-sm font-bold text-white tabular-nums">
-                            {formatCurrency(toMoney(somaBasesCents))}
+                            {dinheiro(toMoney(somaBasesCents))}
                         </p>
                     </div>
                     <div className="rounded-lg bg-white/5 px-2 py-2">
                         <p className={labelCls}>Juros/Multa</p>
                         <p className="text-sm font-bold text-amber-200/90 tabular-nums">
-                            {formatCurrency(toMoney(somaJurosCents))}
+                            {dinheiro(toMoney(somaJurosCents))}
                         </p>
                     </div>
                     {/* Positivo = falta; negativo = excedente; zero = fecha. */}
@@ -691,7 +690,7 @@ function VincularFormBody({
                             )}>
                             {selectedItens.length === 0 || restanteCents === null
                                 ? "-"
-                                : formatCurrency(toMoney(Math.abs(restanteCents)))}
+                                : dinheiro(toMoney(Math.abs(restanteCents)))}
                         </p>
                     </div>
                 </div>
@@ -711,7 +710,7 @@ function VincularFormBody({
                 ) : showResidual ? (
                     <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2 space-y-2">
                         <p className="text-sm font-semibold text-red-200 text-center">
-                            Falta {formatCurrency(toMoney(Math.abs(restanteCents ?? 0)))} para
+                            Falta {dinheiro(toMoney(Math.abs(restanteCents ?? 0)))} para
                             fechar com o extrato
                         </p>
                         <Controller
@@ -728,9 +727,9 @@ function VincularFormBody({
                                         <span className="text-sm font-medium text-white group-hover:text-primary/90 transition-colors">
                                             Gerar movimentação residual
                                         </span>
-                                        <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+                                        <p className="text-xs text-muted-foreground mt-0.5 leading-snug">
                                             Cria lançamento pendente de{" "}
-                                            {formatCurrency(toMoney(Math.abs(restanteCents ?? 0)))}{" "}
+                                            {dinheiro(toMoney(Math.abs(restanteCents ?? 0)))}{" "}
                                             (pagamento parcial), com vencimento da origem - não
                                             editável.
                                         </p>
@@ -739,7 +738,7 @@ function VincularFormBody({
                             )}
                         />
                         {errors.itens?.message && (
-                            <p className="text-[10px] text-destructive text-center flex items-center justify-center gap-1">
+                            <p className="text-xs text-destructive text-center flex items-center justify-center gap-1">
                                 <AlertCircle className="w-3 h-3"/>
                                 {String(errors.itens.message)}
                             </p>
@@ -751,40 +750,29 @@ function VincularFormBody({
                                     name="residuo_lancamento_id"
                                     control={control}
                                     render={({field}) => (
-                                        <select
-                                            className={cn(inputCls, "mt-1")}
-                                            value={field.value ?? ""}
-                                            onChange={(e) =>
-                                                field.onChange(
-                                                    e.target.value ? Number(e.target.value) : null,
-                                                )
-                                            }>
-                                            <option value="">
-                                                Selecione o lançamento de origem…
-                                            </option>
-                                            {selectedItens.map((i) => {
-                                                const l = lancamentos.find(
-                                                    (x) => x.id === i.lancamento_id,
-                                                );
-                                                return (
-                                                    <option
-                                                        key={i.lancamento_id}
-                                                        value={i.lancamento_id}>
-                                                        #{i.lancamento_id} · {l?.descricao ?? "-"} ·{" "}
-                                                        {formatCurrency(Number(l?.valor ?? 0))}
-                                                    </option>
-                                                );
+                                        <SelectCampo
+                                            value={field.value == null ? "" : String(field.value)}
+                                            permitirVazio
+                                            placeholder="Selecione o lançamento de origem…"
+                                            className="mt-1"
+                                            onChange={(value) => field.onChange(value ? Number(value) : null)}
+                                            opcoes={selectedItens.map((i) => {
+                                                const l = lancamentos.find((x) => x.id === i.lancamento_id);
+                                                return {
+                                                    value: String(i.lancamento_id),
+                                                    label: `#${i.lancamento_id} · ${l?.descricao ?? "-"} · ${dinheiro(Number(l?.valor ?? 0))}`,
+                                                };
                                             })}
-                                        </select>
+                                        />
                                     )}
                                 />
                                 {errors.residuo_lancamento_id?.message && (
-                                    <p className="text-[10px] text-destructive mt-1">
+                                    <p className="text-xs text-destructive mt-1">
                                         {errors.residuo_lancamento_id.message}
                                     </p>
                                 )}
                                 {gerarParcial && !residuoIdSelecionado && (
-                                    <p className="text-[10px] text-amber-300 mt-1">
+                                    <p className="text-xs text-amber-300 mt-1">
                                         Escolha a origem do residual para liberar o botão.
                                     </p>
                                 )}
@@ -796,7 +784,7 @@ function VincularFormBody({
                         <p className="text-sm font-semibold text-amber-200 text-center">
                             {somaJurosCents > 0 && restanteCents === 0
                                 ? "Excedente alocado em Juros/Multa - valores batem"
-                                : `Falta ${formatCurrency(toMoney(restanteCents ?? 0))} para cobrir o extrato - você pode vincular agora e completar depois`}
+                                : `Falta ${dinheiro(toMoney(restanteCents ?? 0))} para cobrir o extrato - você pode vincular agora e completar depois`}
                         </p>
                         {selectedItens.length === 1 && restanteCents !== 0 && (
                             <label className="flex items-start gap-3 cursor-pointer group">
@@ -809,7 +797,7 @@ function VincularFormBody({
                                     <span className="text-sm font-medium text-white group-hover:text-primary/90 transition-colors">
                                         Alocar sobra em Juros/Multa
                                     </span>
-                                    <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+                                    <p className="text-xs text-muted-foreground mt-0.5 leading-snug">
                                         Fecha a linha agora tratando a diferença como juros (1:1 com
                                         taxas). Desmarcado = cobertura parcial (Modo A incremental).
                                     </p>
@@ -817,7 +805,7 @@ function VincularFormBody({
                             </label>
                         )}
                         {selectedItens.length > 1 && restanteCents !== 0 && (
-                            <p className="text-[11px] text-muted-foreground text-center">
+                            <p className="text-xs text-muted-foreground text-center">
                                 Pode confirmar agora (cobertura parcial) ou ajustar Juros/Multa até
                                 o restante zerar.
                             </p>
@@ -832,7 +820,7 @@ function VincularFormBody({
                             type="button"
                             onClick={onBuscarMais}
                             disabled={buscandoMais}
-                            className="text-[11px] font-semibold text-primary hover:text-primary/80 underline underline-offset-2 disabled:opacity-40 disabled:no-underline flex items-center gap-1.5">
+                            className="text-xs font-semibold text-primary hover:text-primary/80 underline underline-offset-2 disabled:opacity-40 disabled:no-underline flex items-center gap-1.5">
                             {buscandoMais ? (
                                 <Loader2 className="w-3 h-3 animate-spin"/>
                             ) : (
@@ -844,16 +832,16 @@ function VincularFormBody({
                 )}
             </div>
 
-            <div className="flex gap-3 p-5 border-t border-white/5 shrink-0">
-                <button
-                    type="button"
+            <ModalFooter hint="Esc fecha">
+        <button
+          type="button"
                     onClick={() => void handleRequestClose()}
-                    className="flex-1 py-2.5 rounded-xl border border-white/10 text-sm font-medium text-white hover:bg-white/5">
-                    Cancelar
-                </button>
+                    className={modalBtnSecondaryCls}>
+          Cancelar
+        </button>
                 {canVincular && (
-                    <button
-                        type="submit"
+        <button
+          type="submit"
                         disabled={
                             previewVincularMutation.isPending ||
                             lancamentos.length === 0 ||
@@ -861,16 +849,16 @@ function VincularFormBody({
                             !podeConcluir
                         }
                         title={!podeConcluir && selectedItens.length > 0 ? "O restante precisa zerar (ou gerar a movimentação residual) para concluir" : undefined}
-                        className="flex-1 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
+                        className={modalBtnPrimaryCls}>
                         {previewVincularMutation.isPending ? (
-                            <Loader2 className="w-4 h-4 animate-spin"/>
+                            <ModalSpinner label="Validando..."/>
                         ) : (
-                            <Link2 className="w-4 h-4"/>
+                            <Link2 aria-hidden="true" className="w-4 h-4"/>
                         )}
-                        Confirmar vínculo
-                    </button>
+          Confirmar vínculo
+        </button>
                 )}
-            </div>
+            </ModalFooter>
 
             <EditarLancamentoConciliacaoModal
                 open={editarId != null}
@@ -883,8 +871,8 @@ function VincularFormBody({
                 }}
             />
             <ConfirmDialog {...ConfirmDialogProps} />
-        </form>
-    );
+    </form>
+  );
 }
 
 export function VincularModal({
@@ -903,6 +891,7 @@ export function VincularModal({
                               }: VincularModalProps) {
     const queryClient = useQueryClient();
     const {toast} = useToast();
+    const dinheiro = useDinheiro();
 
     const [diasJanela, setDiasJanela] = useState(DIAS_JANELA_INICIAL);
     // Só aplica busca/valor/vencimento ao clicar em Buscar (não a cada tecla).
@@ -941,8 +930,8 @@ export function VincularModal({
             if (vencimentoAtivo) params.set("vencimento", vencimentoAtivo);
             return fetchApiData<LancamentoCompativel[]>(`/conciliacoes/buscar-lancamentos?${params.toString()}`);
         },
-        enabled: open && linhaId > 0,
-    });
+    enabled: open && linhaId > 0,
+  });
 
     // O lançamento nasce persistido; o vínculo fica em rascunho até Salvar/Conciliar.
     const vincularAutoMutation = useMutation({
@@ -1020,10 +1009,11 @@ export function VincularModal({
             }),
     });
 
+    // Esc, X e "Cancelar": com a lista na tela, passa pela confirmação de descarte do formulário.
     const showingFormBody = open && !isLoading && lancamentos.length > 0;
-    useEscapeClose(open && !novoLancamentoOpen && !showingFormBody, onClose, 60);
+    const handleModalClose = () => (showingFormBody ? requestCloseRef.current() : onClose());
 
-    if (!open) return null;
+  if (!open) return null;
 
     const podeBuscarMais = diasJanela < DIAS_JANELA_MAXIMA;
     const handleBuscarMais = () => {
@@ -1037,42 +1027,29 @@ export function VincularModal({
         setVencimentoAtivo(vencimentoTexto);
     };
 
-    return createPortal(
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/75 backdrop-blur-md"/>
-            <div
-                className="relative bg-[#121417] border border-white/10 rounded-2xl w-full max-w-2xl max-h-[90vh] min-h-0 shadow-2xl flex flex-col overflow-hidden">
-                {/* Cabeçalho com flex-wrap: em telas estreitas o bloco de ações
-                    (Novo + fechar) quebra para a linha de baixo em vez de
-                    espremer o título. */}
-                <div className="flex items-center justify-between gap-3 p-5 border-b border-white/5 shrink-0 flex-wrap">
-                    <div className="flex items-center gap-3 min-w-0">
+  return (
+        <Modal
+            onClose={handleModalClose}
+            // Foco inicial na busca (a lista ainda pode estar carregando).
+            initialFocus={(content) => content.querySelector<HTMLElement>("#vincular-busca")}
+        >
+                <ModalHeader
+                    icon={
                         <div className="w-10 h-10 rounded-xl bg-primary/15 flex items-center justify-center shrink-0">
                             <Link2 className="w-5 h-5 text-primary"/>
                         </div>
-                        <div className="min-w-0">
-                            <h2 className="text-lg font-bold text-white">Vincular lançamentos</h2>
-                            <p className="text-xs text-muted-foreground truncate">
-                                Linha #{linhaId} · Valor extrato {formatCurrency(Number(valorExtratoAbs))}
-                            </p>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                        <button
-                            type="button"
-                            title="Criar lançamento a partir desta linha"
-                            onClick={() => setNovoLancamentoOpen(true)}
-                            className="inline-flex items-center px-4 py-1.5 rounded-full bg-success hover:bg-success/90 text-white text-xs font-bold shadow-md shadow-success/20">
-                            Novo
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => (showingFormBody ? requestCloseRef.current() : onClose())}
-                            className="p-2 rounded-xl text-muted-foreground hover:bg-white/5 hover:text-white transition-colors">
-                            <X className="w-5 h-5"/>
-                        </button>
-                    </div>
-                </div>
+                    }
+                    title="Vincular lançamentos"
+                    description={`Linha #${linhaId} · Valor extrato ${dinheiro(Number(valorExtratoAbs))}`}
+                >
+                    <button
+                        type="button"
+                        title="Criar lançamento a partir desta linha"
+                        onClick={() => setNovoLancamentoOpen(true)}
+                        className="inline-flex items-center px-4 py-1.5 rounded-full bg-success hover:bg-success/90 text-white text-xs font-bold shadow-md shadow-success/20">
+                        Novo
+                    </button>
+                </ModalHeader>
 
                 {novoLancamentoOpen && (
                     <LancamentoModal
@@ -1095,27 +1072,31 @@ export function VincularModal({
                 )}
 
                 {/* Janela e filtros de busca (não só proximidade de data). */}
-                <div className="px-5 pt-4 pb-2 border-b border-white/5 shrink-0 space-y-2">
+                <div className="px-[1.6em] pt-4 pb-3 border-b border-white/5 shrink-0 space-y-2">
                     <div className="flex flex-wrap items-end gap-2">
                         <div className="flex flex-col gap-1">
-                            <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                            <label htmlFor="vincular-janela" className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
                                 Janela de busca
-                            </span>
-                            <select
-                                value={diasJanela}
-                                onChange={(e) => setDiasJanela(Number(e.target.value))}
-                                className="bg-[#1a1c23] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-primary/50">
-                                <option value={14}>± 14 dias</option>
-                                <option value={30}>± 30 dias</option>
-                                <option value={60}>± 60 dias</option>
-                                <option value={90}>± 90 dias</option>
-                            </select>
+                            </label>
+                            <SelectCampo
+                                id="vincular-janela"
+                                value={String(diasJanela)}
+                                onChange={(v) => setDiasJanela(Number(v))}
+                                className="w-[10em]"
+                                opcoes={[
+                                    {value: "14", label: "± 14 dias"},
+                                    {value: "30", label: "± 30 dias"},
+                                    {value: "60", label: "± 60 dias"},
+                                    {value: "90", label: "± 90 dias"},
+                                ]}
+                            />
                         </div>
                         <div className="flex flex-col gap-1 flex-1 min-w-[160px]">
-                            <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                            <label htmlFor="vincular-busca" className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
                                 Descrição ou parceiro
-                            </span>
+                            </label>
                             <input
+                                id="vincular-busca"
                                 type="text"
                                 value={buscaTexto}
                                 onChange={(e) => setBuscaTexto(e.target.value)}
@@ -1123,12 +1104,13 @@ export function VincularModal({
                                 placeholder="Ex.: aluguel, fornecedor…"
                                 className="bg-[#1a1c23] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-primary/50"
                             />
-                        </div>
+            </div>
                         <div className="flex flex-col gap-1 w-32">
-                            <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                            <label htmlFor="vincular-valor" className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
                                 Valor
-                            </span>
+                            </label>
                             <input
+                                id="vincular-valor"
                                 type="text"
                                 inputMode="numeric"
                                 value={valorTexto}
@@ -1137,38 +1119,39 @@ export function VincularModal({
                                 placeholder="0,00"
                                 className="bg-[#1a1c23] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-primary/50"
                             />
-                        </div>
+            </div>
                         <div className="flex flex-col gap-1 w-36">
-                            <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                            <label htmlFor="vincular-vencimento" className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
                                 Vencimento
-                            </span>
+                            </label>
                             <input
+                                id="vincular-vencimento"
                                 type="date"
                                 value={vencimentoTexto}
                                 onChange={(e) => setVencimentoTexto(e.target.value)}
                                 onKeyDown={(e) => e.key === "Enter" && handleAplicarBusca()}
                                 className="bg-[#1a1c23] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-primary/50"
                             />
-                        </div>
-                        <button
-                            type="button"
+          </div>
+          <button
+            type="button"
                             onClick={handleAplicarBusca}
                             disabled={isFetching}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/90 hover:bg-primary text-primary-foreground text-xs font-semibold disabled:opacity-50">
                             {isFetching ? <Loader2 className="w-3.5 h-3.5 animate-spin"/> :
                                 <Search className="w-3.5 h-3.5"/>}
                             Buscar
-                        </button>
+          </button>
                     </div>
-                </div>
+        </div>
 
-                {isLoading ? (
-                    <div className="py-16 flex flex-col items-center gap-2 text-muted-foreground">
+        {isLoading ? (
+          <div className="py-16 flex flex-col items-center gap-2 text-muted-foreground">
                         <Loader2 className="w-8 h-8 animate-spin text-primary"/>
-                        <span className="text-xs">Buscando lançamentos compatíveis…</span>
-                    </div>
-                ) : lancamentos.length === 0 ? (
-                    <div className="py-12 px-5 text-center text-xs text-muted-foreground">
+            <span className="text-xs">Buscando lançamentos compatíveis…</span>
+          </div>
+        ) : lancamentos.length === 0 ? (
+          <div className="py-12 px-5 text-center text-xs text-muted-foreground">
                         Nenhum lançamento compatível encontrado. Amplie a janela de datas ou busque por
                         descrição, parceiro, valor ou vencimento.
                         <div className="mt-4 flex items-center justify-center gap-3">
@@ -1186,22 +1169,22 @@ export function VincularModal({
                                     Ampliar janela de busca
                                 </button>
                             )}
-                            <button
-                                type="button"
-                                onClick={onClose}
-                                className="px-4 py-2 rounded-xl border border-white/10 text-sm text-white hover:bg-white/5">
-                                Fechar
-                            </button>
-                        </div>
-                    </div>
-                ) : (
-                    <VincularFormBody
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 rounded-xl border border-white/10 text-sm text-white hover:bg-white/5">
+                Fechar
+              </button>
+            </div>
+          </div>
+        ) : (
+          <VincularFormBody
                         key={String(linhaId)}
-                        extratoId={extratoId}
-                        linhaId={linhaId}
-                        valorExtratoAbs={valorExtratoAbs}
-                        lancamentos={lancamentos}
-                        onClose={onClose}
+            extratoId={extratoId}
+            linhaId={linhaId}
+            valorExtratoAbs={valorExtratoAbs}
+            lancamentos={lancamentos}
+            onClose={onClose}
                         bindRequestClose={(fn) => {
                             requestCloseRef.current = fn;
                         }}
@@ -1214,8 +1197,6 @@ export function VincularModal({
                         podeBuscarMais={podeBuscarMais}
                     />
                 )}
-            </div>
-        </div>,
-        document.body,
+        </Modal>
     );
 }

@@ -24,8 +24,8 @@
 import type {NextFunction, Request, Response} from "express";
 import {AppError} from "../utils/app-error";
 
-export const withPermission = (codigoPermissao: string) =>
-    (req: Request, _res: Response, next: NextFunction): void => {
+export const withPermission = (codigoPermissao: string) => {
+    const middleware = (req: Request, _res: Response, next: NextFunction): void => {
         if (!req.user) {
             return next(new AppError(401, "UNAUTHORIZED", "Usuário não autenticado."));
         }
@@ -44,6 +44,8 @@ export const withPermission = (codigoPermissao: string) =>
 
         next();
     };
+    return Object.assign(middleware, {codigoPermissao});
+};
 
 export const requirePermission = withPermission;
 

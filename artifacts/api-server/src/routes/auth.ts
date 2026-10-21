@@ -11,7 +11,6 @@
  * POST /auth/setup-password     - Define a senha permanente com setupToken
  * POST /auth/forgot-password    - Solicita recuperação de senha por e-mail
  * POST /auth/reset-password     - Redefine a senha com o resetToken
- * POST /auth/migrate-passwords  - [admin] Diagnóstico de hashes SHA-256 legados
  *
  * Sessão: o access token vai no body (o frontend o mantém só em memória); o refresh
  * token vai em cookie `rt` HttpOnly; Secure; SameSite=Strict; Path=/api/auth.
@@ -19,17 +18,19 @@
 
 import {Router, type Request, type Response} from "express";
 import bcrypt from "bcryptjs";
-import {and, eq, sql} from "drizzle-orm";
+import {and, eq} from "drizzle-orm";
 import {db} from "@workspace/db";
-import {permissoesTable, refreshTokensTable, usuarioEmpresasTable, usuariosTable} from "@workspace/db/schema";
+import {refreshTokensTable, usuariosTable} from "@workspace/db/schema";
 import {sendPasswordResetEmail} from "../services/email.service";
 import {revokeAllTokensForUser} from "../services/session.service";
 import {denylistUser} from "../services/denylist.service";
+import {sessoes, type MetaSessao} from "../services/sessoes.service";
+import {clientIp} from "../lib/client-ip";
 import {assertVinculoAtivo, listEmpresasAtivasDoUsuario} from "../services/tenant.service";
 import {invalidateTenantCache} from "../middlewares/tenant";
 import {withAuth} from "../middlewares/auth";
-import {withPermission} from "../middlewares/withPermission";
-import {authLimiter, loginEmailLimiter, loginLimiter} from "../middlewares/rate-limit";
+import {authLimiter, chaveIp, loginLimiter} from "../middlewares/rate-limit";
+import {loginLockout} from "../services/login-lockout.service";
 import {AppError} from "../utils/app-error";
 import {SENHA_RESET_REQUIRED, validatePasswordPolicy} from "../utils/password-policy";
 import {errorResponse, successResponse} from "../utils/response";
@@ -40,11 +41,9 @@ import {
     readRefreshToken,
     setRefreshCookie,
 } from "../utils/refresh-cookie";
-import {ADMIN_USUARIOS_AUTOMATICAS, PERMISSOES_ADMIN} from "../constants/permissoes";
+import {fetchPermissions} from "../services/permissions.service";
 import {
-    generateOtp,
     hashToken,
-    sha256Hash,
     signAccessToken,
     signPurposeToken,
     signRefreshToken,
@@ -55,48 +54,16 @@ import {
 const BCRYPT_SALT_ROUNDS = 12;
 const router = Router();
 
+// Hash descartável: usado para gastar o mesmo tempo de bcrypt quando o utilizador não existe
+// (ou está bloqueado), evitando que o tempo de resposta revele quais e-mails estão cadastrados.
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync("dummy-password-for-timing", BCRYPT_SALT_ROUNDS);
+
 // CSRF: o csrfGuard (X-Requested-With) é aplicado apenas nas rotas que consomem o cookie
 // do refresh token: /auth/refresh, /auth/switch-empresa e /auth/logout (ver refresh-cookie.ts).
 
-/**
- * Permissões da empresa ativa. Superadmin global recebe o catálogo completo
- * (não depende de linhas em `usuario_permissoes` por tenant) para o frontend
- * não esconder menus ao trocar de empresa. Admin de empresa soma
- * `ADMIN_USUARIOS_AUTOMATICAS` sem gravar wildcard.
- */
-const fetchPermissions = async (
-    usuarioId: number,
-    empresaId: number,
-    superadmin = false,
-): Promise<string[]> => {
-    if (superadmin) {
-        return [...PERMISSOES_ADMIN];
-    }
-
-    const [rows, vinculo] = await Promise.all([
-        db
-            .select({codigo_permissao: permissoesTable.codigo_permissao})
-            .from(permissoesTable)
-            .where(and(eq(permissoesTable.usuario_id, usuarioId), eq(permissoesTable.empresa_id, empresaId))),
-        db
-            .select({papel: usuarioEmpresasTable.papel})
-            .from(usuarioEmpresasTable)
-            .where(and(eq(usuarioEmpresasTable.usuario_id, usuarioId), eq(usuarioEmpresasTable.empresa_id, empresaId)))
-            .limit(1),
-    ]);
-
-    const permissoes = rows.map((r) => r.codigo_permissao);
-    if (vinculo[0]?.papel === "admin") {
-        for (const codigo of ADMIN_USUARIOS_AUTOMATICAS) {
-            if (!permissoes.includes(codigo)) permissoes.push(codigo);
-        }
-    }
-    return permissoes;
-};
-
 function attachTenantForAudit(
     req: Request,
-    usuario: {id: number; email: string; superadmin: boolean},
+    usuario: { id: number; email: string; superadmin: boolean },
     empresaId: number,
 ): void {
     req.tenant = {empresaId};
@@ -109,34 +76,54 @@ function attachTenantForAudit(
     };
 }
 
+function metaSessao(req: Request): MetaSessao {
+    const ua = req.headers["user-agent"];
+    return {
+        userAgent: Array.isArray(ua) ? (ua[0] ?? null) : (ua ?? null),
+        ip: clientIp(req),
+    };
+}
+
 async function emitSession(
-    usuario: {id: number; nome: string; email: string; superadmin: boolean},
+    usuario: { id: number; nome: string; email: string; superadmin: boolean },
     empresaId: number,
+    meta: MetaSessao,
+    sidExistente?: string,
 ) {
     await assertVinculoAtivo(usuario.id, empresaId);
     const permissions = await fetchPermissions(usuario.id, empresaId, usuario.superadmin);
-    const [accessToken, {token: refreshToken, tokenHash, expiresAt}] = await Promise.all([
-        signAccessToken({
-            sub: String(usuario.id),
-            email: usuario.email,
-            permissions,
-            empresa_id: empresaId,
-            superadmin: usuario.superadmin,
-        }),
-        signRefreshToken({sub: String(usuario.id), email: usuario.email, empresa_id: empresaId}),
-    ]);
+    const refresh = await signRefreshToken({sub: String(usuario.id), email: usuario.email, empresa_id: empresaId});
+    const sid = sidExistente
+        ?? await sessoes.abrir({usuarioId: usuario.id, tokenHash: refresh.tokenHash, meta});
+    if (sidExistente) {
+        await sessoes.girar(sidExistente, refresh.tokenHash, meta);
+    }
+    const accessToken = await signAccessToken({
+        sub: String(usuario.id),
+        email: usuario.email,
+        permissions,
+        empresa_id: empresaId,
+        superadmin: usuario.superadmin,
+        sid,
+    });
 
     await db.insert(refreshTokensTable).values({
         usuario_id: usuario.id,
-        token_hash: tokenHash,
-        expires_at: expiresAt,
+        token_hash: refresh.tokenHash,
+        expires_at: refresh.expiresAt,
         revogado: false,
     });
 
     return {
         accessToken,
-        refreshToken,
-        user: {id: usuario.id, nome: usuario.nome, email: usuario.email, empresa_id: empresaId, superadmin: usuario.superadmin},
+        refreshToken: refresh.token,
+        user: {
+            id: usuario.id,
+            nome: usuario.nome,
+            email: usuario.email,
+            empresa_id: empresaId,
+            superadmin: usuario.superadmin
+        },
         permissoes: permissions,
         empresa_id: empresaId,
     };
@@ -144,7 +131,7 @@ async function emitSession(
 
 /**
  * Envia a sessão: refresh token vai no cookie httpOnly; o body leva só o access token
- * (e, durante a transição, o refresh também — AUTH_LEGACY_REFRESH_BODY=true).
+ * (e, durante a transição, o refresh também - AUTH_LEGACY_REFRESH_BODY=true).
  */
 function sendSession(
     res: Response,
@@ -156,13 +143,25 @@ function sendSession(
     return successResponse(res, LEGACY_REFRESH_BODY ? session : publicSession, meta);
 }
 
-router.post("/auth/login", loginLimiter, loginEmailLimiter, async (req, res) => {
+const SESSION_META = {
+    tokenType: "Bearer",
+    accessTokenExpiresIn: "15m",
+    refreshTokenExpiresIn: "7d",
+} as const;
+
+router.post("/auth/login", loginLimiter, async (req, res) => {
     try {
         const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : null;
         const senha = typeof req.body?.senha === "string" ? req.body.senha : null;
 
         if (!email || !senha) {
             return errorResponse(res, 400, "VALIDATION_ERROR", "Campos obrigatórios: email e senha.");
+        }
+
+        // Bloqueio por conta (ISMF-7): mesmo 401 da senha errada, sem tocar no banco.
+        const ip = chaveIp(req);
+        if (await loginLockout.bloqueado(email, ip)) {
+            return errorResponse(res, 401, "INVALID_CREDENTIALS", "Email ou senha inválidos.");
         }
 
         const [usuario] = await db
@@ -181,12 +180,15 @@ router.post("/auth/login", loginLimiter, loginEmailLimiter, async (req, res) => 
             .limit(1);
 
         if (!usuario || usuario.bloqueado) {
+            // Gasta o mesmo tempo de um login real (anti-enumeração por timing).
+            await bcrypt.compare(senha, DUMMY_PASSWORD_HASH);
+            await loginLockout.registrarFalha(email, ip);
             return errorResponse(res, 401, "INVALID_CREDENTIALS", "Email ou senha inválidos.");
         }
 
-        // CORREÇÃO: usuário ainda não definiu senha permanente (fluxo de primeiro
-        // acesso via OTP não concluído) — sem isso, o bcrypt.compare abaixo lança
-        // exceção ao receber `senha_hash` nulo e derruba a rota com 500.
+        // Usuário ainda não definiu senha permanente (fluxo de primeiro acesso via OTP
+        // não concluído): sem esta checagem, o bcrypt.compare abaixo lançaria exceção
+        // com `senha_hash` nulo e derrubaria a rota com 500.
         if (!usuario.senha_hash) {
             return errorResponse(
                 res,
@@ -206,36 +208,22 @@ router.post("/auth/login", loginLimiter, loginEmailLimiter, async (req, res) => 
             );
         }
 
-        let senhaValida = await bcrypt.compare(senha, usuario.senha_hash);
-        let precisaMigrar = false;
-
-        if (!senhaValida && sha256Hash(senha) === usuario.senha_hash) {
-            senhaValida = true;
-            precisaMigrar = true;
-        }
+        const senhaValida = await bcrypt.compare(senha, usuario.senha_hash);
 
         if (!senhaValida) {
+            await loginLockout.registrarFalha(email, ip);
             return errorResponse(res, 401, "INVALID_CREDENTIALS", "Email ou senha inválidos.");
         }
-
-        // Migração SHA-256 -> bcrypt no primeiro login após a implantação
-        if (precisaMigrar) {
-            await db
-                .update(usuariosTable)
-                .set({senha_hash: await bcrypt.hash(senha, BCRYPT_SALT_ROUNDS), updated_at: new Date()})
-                .where(eq(usuariosTable.id, usuario.id));
-        }
+        await loginLockout.registrarSucesso(email, ip);
 
         // Detecção de primeiro acesso
         // Critério: nunca fez login antes (ultimo_acesso === null) E não passou pelo fluxo OTP/definir-senha (senha_unica_utilizada === false).
         const ehPrimeiroAcesso =
             !usuario.ultimo_acesso && !usuario.senha_unica_utilizada;
 
-        await db
-            .update(usuariosTable)
-            .set({ultimo_acesso: new Date()})
-            .where(eq(usuariosTable.id, usuario.id));
-
+        // No primeiro acesso, NÃO atualiza ultimo_acesso aqui: se o utilizador abandonar a
+        // tela de definir senha, o próximo login deve cair de novo no setup (senão a senha
+        // temporária viraria permanente). A conclusão é marcada em /auth/setup-password.
         if (ehPrimeiroAcesso) {
             const setupToken = await signPurposeToken({
                 sub: String(usuario.id),
@@ -249,6 +237,11 @@ router.post("/auth/login", loginLimiter, loginEmailLimiter, async (req, res) => 
                 {message: "Primeiro acesso detectado. Por favor, defina uma nova senha."},
             );
         }
+
+        await db
+            .update(usuariosTable)
+            .set({ultimo_acesso: new Date()})
+            .where(eq(usuariosTable.id, usuario.id));
 
         const empresas = await listEmpresasAtivasDoUsuario(usuario.id);
         if (empresas.length === 0) {
@@ -269,26 +262,22 @@ router.post("/auth/login", loginLimiter, loginEmailLimiter, async (req, res) => 
                     empresas,
                     user: {id: usuario.id, nome: usuario.nome, email: usuario.email},
                 },
-                {
-                    message: "Selecione a empresa para emitir a sessão.",
-                    ...(precisaMigrar ? {passwordMigrated: true} : {}),
-                },
+                {message: "Selecione a empresa para emitir a sessão."},
             );
         }
 
         const session = await emitSession(
             {id: usuario.id, nome: usuario.nome, email: usuario.email, superadmin: usuario.superadmin},
             empresas[0].id,
+            metaSessao(req),
         );
         attachTenantForAudit(req, usuario, empresas[0].id);
 
-        return sendSession(res, session, {
-            tokenType: "Bearer",
-            accessTokenExpiresIn: "15m",
-            refreshTokenExpiresIn: "7d",
-            ...(precisaMigrar ? {passwordMigrated: true} : {}),
-        });
+        return sendSession(res, session, SESSION_META);
     } catch (error: unknown) {
+        if (error instanceof AppError) {
+            return errorResponse(res, error.statusCode, error.code, error.message);
+        }
         console.error("Erro no login:", error);
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro no login.", error);
     }
@@ -328,7 +317,8 @@ router.post("/auth/refresh", csrfGuard, async (req, res) => {
             .where(eq(refreshTokensTable.token_hash, tokenHash))
             .limit(1);
 
-        if (!registro) {
+        // O registro precisa pertencer ao mesmo utilizador declarado no JWT.
+        if (!registro || registro.usuario_id !== usuarioId) {
             return reject("INVALID_TOKEN", "Refresh token inválido.");
         }
 
@@ -336,6 +326,7 @@ router.post("/auth/refresh", csrfGuard, async (req, res) => {
         if (registro.revogado) {
             await revokeAllTokensForUser(registro.usuario_id);
             await denylistUser(registro.usuario_id);
+            await sessoes.encerrarTodas(registro.usuario_id);
             console.warn(
                 `[SECURITY] Token reuse detectado - usuario_id=${registro.usuario_id}. Família revogada.`,
             );
@@ -365,6 +356,7 @@ router.post("/auth/refresh", csrfGuard, async (req, res) => {
         if (!usuario || usuario.bloqueado) {
             await revokeAllTokensForUser(usuarioId);
             await denylistUser(usuarioId);
+            await sessoes.encerrarTodas(usuarioId);
             return reject("UNAUTHORIZED", "Utilizador inválido ou bloqueado.");
         }
 
@@ -373,6 +365,7 @@ router.post("/auth/refresh", csrfGuard, async (req, res) => {
         } catch {
             await revokeAllTokensForUser(usuarioId);
             await denylistUser(usuarioId);
+            await sessoes.encerrarTodas(usuarioId);
             return reject("UNAUTHORIZED", "Vínculo com a empresa inativo. Faça login novamente.");
         }
 
@@ -393,38 +386,43 @@ router.post("/auth/refresh", csrfGuard, async (req, res) => {
 
         // Re-consulta permissões para propagar alterações feitas após o último login
         const permissions = await fetchPermissions(usuario.id, rtPayload.empresa_id, usuario.superadmin);
-
-        const [newAccessToken, {token: newRefreshToken, tokenHash: newHash, expiresAt}] =
-            await Promise.all([
-                signAccessToken({
-                    sub: String(usuario.id),
-                    email: usuario.email,
-                    permissions,
-                    empresa_id: rtPayload.empresa_id,
-                    superadmin: usuario.superadmin,
-                }),
-                signRefreshToken({
-                    sub: String(usuario.id),
-                    email: usuario.email,
-                    empresa_id: rtPayload.empresa_id,
-                }),
-            ]);
+        const meta = metaSessao(req);
+        const sidAnterior = await sessoes.idPorHash(tokenHash);
+        if (sidAnterior && await sessoes.revogada(sidAnterior)) {
+            return reject("SESSION_REVOKED", "Sessão revogada. Faça login novamente.");
+        }
+        const refreshNovo = await signRefreshToken({
+            sub: String(usuario.id),
+            email: usuario.email,
+            empresa_id: rtPayload.empresa_id,
+        });
+        const sid = sidAnterior
+            ?? await sessoes.abrir({usuarioId: usuario.id, tokenHash: refreshNovo.tokenHash, meta});
+        if (sidAnterior) await sessoes.girar(sidAnterior, refreshNovo.tokenHash, meta);
+        const newAccessToken = await signAccessToken({
+            sub: String(usuario.id),
+            email: usuario.email,
+            permissions,
+            empresa_id: rtPayload.empresa_id,
+            superadmin: usuario.superadmin,
+            sid,
+        });
 
         await db.insert(refreshTokensTable).values({
             usuario_id: usuario.id,
-            token_hash: newHash,
-            expires_at: expiresAt,
+            token_hash: refreshNovo.tokenHash,
+            expires_at: refreshNovo.expiresAt,
             revogado: false,
         });
 
-        setRefreshCookie(res, newRefreshToken);
+        setRefreshCookie(res, refreshNovo.token);
 
         return successResponse(
             res,
             LEGACY_REFRESH_BODY
-                ? {accessToken: newAccessToken, refreshToken: newRefreshToken}
+                ? {accessToken: newAccessToken, refreshToken: refreshNovo.token}
                 : {accessToken: newAccessToken},
-            {tokenType: "Bearer", accessTokenExpiresIn: "15m", refreshTokenExpiresIn: "7d"},
+            SESSION_META,
         );
     } catch (error: unknown) {
         console.error("Erro no refresh:", error);
@@ -466,13 +464,9 @@ router.post("/auth/select-empresa", loginLimiter, async (req, res) => {
             return errorResponse(res, 401, "UNAUTHORIZED", "Utilizador inválido ou bloqueado.");
         }
 
-        const session = await emitSession(usuario, empresaId);
+        const session = await emitSession(usuario, empresaId, metaSessao(req));
         attachTenantForAudit(req, usuario, empresaId);
-        return sendSession(res, session, {
-            tokenType: "Bearer",
-            accessTokenExpiresIn: "15m",
-            refreshTokenExpiresIn: "7d",
-        });
+        return sendSession(res, session, SESSION_META);
     } catch (error: unknown) {
         if (error instanceof AppError) {
             return errorResponse(res, error.statusCode, error.code, error.message);
@@ -508,6 +502,11 @@ router.post("/auth/switch-empresa", csrfGuard, withAuth, async (req, res) => {
             return errorResponse(res, 401, "UNAUTHORIZED", "Utilizador inválido ou bloqueado.");
         }
 
+        // Valida o vínculo ANTES de revogar: se a empresa for inválida, a sessão atual
+        // continua intacta em vez de o utilizador ficar sem refresh token.
+        await assertVinculoAtivo(usuario.id, empresaId);
+
+        const sidAtual = rawRefresh ? await sessoes.idPorHash(hashToken(rawRefresh)) : req.user?.sid;
         if (rawRefresh) {
             await db
                 .update(refreshTokensTable)
@@ -520,16 +519,13 @@ router.post("/auth/switch-empresa", csrfGuard, withAuth, async (req, res) => {
                 );
         } else {
             await revokeAllTokensForUser(usuario.id);
+            await sessoes.encerrarTodas(usuario.id);
         }
 
         invalidateTenantCache(usuario.id);
-        const session = await emitSession(usuario, empresaId);
+        const session = await emitSession(usuario, empresaId, metaSessao(req), sidAtual ?? undefined);
         attachTenantForAudit(req, usuario, empresaId);
-        return sendSession(res, session, {
-            tokenType: "Bearer",
-            accessTokenExpiresIn: "15m",
-            refreshTokenExpiresIn: "7d",
-        });
+        return sendSession(res, session, SESSION_META);
     } catch (error: unknown) {
         if (error instanceof AppError) {
             return errorResponse(res, error.statusCode, error.code, error.message);
@@ -543,10 +539,12 @@ router.post("/auth/logout", csrfGuard, async (req, res) => {
     try {
         const rawToken = readRefreshToken(req); // cookie (ou body, durante a transição)
         if (rawToken) {
+            const hash = hashToken(rawToken);
+            await sessoes.encerrarPorHash(hash);
             await db
                 .update(refreshTokensTable)
                 .set({revogado: true})
-                .where(eq(refreshTokensTable.token_hash, hashToken(rawToken)));
+                .where(eq(refreshTokensTable.token_hash, hash));
         }
         clearRefreshCookie(res);
         return successResponse(res, null, {message: "Logout realizado com sucesso."});
@@ -580,12 +578,10 @@ router.get("/auth/me", withAuth, async (req, res) => {
             return errorResponse(res, 404, "NOT_FOUND", "Utilizador não encontrado.");
         }
 
-        const empresas = await listEmpresasAtivasDoUsuario(usuario.id);
-        const permissoes = await fetchPermissions(
-            usuario.id,
-            req.user!.empresaId,
-            req.user!.superadmin,
-        );
+        const [empresas, permissoes] = await Promise.all([
+            listEmpresasAtivasDoUsuario(usuario.id),
+            fetchPermissions(usuario.id, req.user!.empresaId, req.user!.superadmin),
+        ]);
         return successResponse(res, {
             user: {...usuario, empresa_id: req.user!.empresaId, superadmin: req.user!.superadmin},
             permissoes,
@@ -619,11 +615,8 @@ router.post("/auth/verify-otp", authLimiter, async (req, res) => {
 
         // Resposta genérica para não revelar se o e-mail existe
         if (!usuario || !usuario.senha_unica_hash) {
+            await bcrypt.compare(otp, DUMMY_PASSWORD_HASH);
             return errorResponse(res, 400, "INVALID_OTP", "OTP inválido ou já utilizado.");
-        }
-
-        if (usuario.bloqueado) {
-            return errorResponse(res, 403, "FORBIDDEN", "Conta bloqueada. Contacte o administrador.");
         }
 
         // Bloqueia reutilização de OTP já consumido
@@ -634,6 +627,11 @@ router.post("/auth/verify-otp", authLimiter, async (req, res) => {
         const otpValido = await bcrypt.compare(otp, usuario.senha_unica_hash);
         if (!otpValido) {
             return errorResponse(res, 400, "INVALID_OTP", "OTP inválido ou já utilizado.");
+        }
+
+        // Só quem possui o OTP correto descobre que a conta está bloqueada.
+        if (usuario.bloqueado) {
+            return errorResponse(res, 403, "FORBIDDEN", "Conta bloqueada. Contacte o administrador.");
         }
 
         // Marca o OTP como utilizado - não pode ser reutilizado
@@ -683,12 +681,12 @@ router.post("/auth/setup-password", authLimiter, async (req, res) => {
         const usuarioId = parseInt(tokenPayload.sub, 10);
 
         const [usuario] = await db
-            .select({nome: usuariosTable.nome, email: usuariosTable.email})
+            .select({nome: usuariosTable.nome, email: usuariosTable.email, bloqueado: usuariosTable.bloqueado})
             .from(usuariosTable)
             .where(eq(usuariosTable.id, usuarioId))
             .limit(1);
 
-        if (!usuario) {
+        if (!usuario || usuario.bloqueado) {
             return errorResponse(res, 401, "INVALID_TOKEN", "setupToken inválido ou expirado.");
         }
 
@@ -704,9 +702,16 @@ router.post("/auth/setup-password", authLimiter, async (req, res) => {
             .set({
                 senha_hash: await bcrypt.hash(novaSenha, BCRYPT_SALT_ROUNDS),
                 senha_unica_hash: null,
+                // Marca o primeiro acesso como concluído; sem isso, quem entrou pelo fluxo
+                // de login (e não pelo OTP) cairia no setup de novo no próximo login.
+                senha_unica_utilizada: true,
                 updated_at: new Date(),
             })
             .where(eq(usuariosTable.id, usuarioId));
+        await loginLockout.liberar(usuario.email);
+
+        // Sessões emitidas com a senha temporária não devem sobreviver à troca.
+        await revokeAllTokensForUser(usuarioId);
 
         return successResponse(res, null, {message: "Senha definida com sucesso. Faça login."});
     } catch (error: unknown) {
@@ -747,7 +752,11 @@ router.post("/auth/forgot-password", authLimiter, async (req, res) => {
             purpose: "password_reset",
         });
 
-        await sendPasswordResetEmail(usuario.email, resetToken, frontendUrl);
+        // Não aguarda o envio: o tempo do SMTP faria a resposta para e-mails existentes
+        // ser visivelmente mais lenta que para inexistentes (enumeração por timing).
+        void sendPasswordResetEmail(usuario.email, resetToken, frontendUrl).catch((err: unknown) => {
+            console.error(`[${req.id}] Falha ao enviar e-mail de reset:`, err);
+        });
 
         return successResponse(res, null, GENERIC_OK);
     } catch (error: unknown) {
@@ -775,12 +784,12 @@ router.post("/auth/reset-password", authLimiter, async (req, res) => {
         const usuarioId = parseInt(tokenPayload.sub, 10);
 
         const [usuario] = await db
-            .select({nome: usuariosTable.nome, email: usuariosTable.email})
+            .select({nome: usuariosTable.nome, email: usuariosTable.email, bloqueado: usuariosTable.bloqueado})
             .from(usuariosTable)
             .where(eq(usuariosTable.id, usuarioId))
             .limit(1);
 
-        if (!usuario) {
+        if (!usuario || usuario.bloqueado) {
             return errorResponse(res, 401, "INVALID_TOKEN", "Token de recuperação inválido ou expirado.");
         }
 
@@ -789,14 +798,25 @@ router.post("/auth/reset-password", authLimiter, async (req, res) => {
             return errorResponse(res, 400, "WEAK_PASSWORD", violacao.message);
         }
 
+        // Primeiro troca a senha; só então revoga as sessões. Na ordem inversa, uma falha
+        // no update deixaria o utilizador deslogado sem ter a senha alterada.
+        await db
+            .update(usuariosTable)
+            .set({
+                senha_hash: await bcrypt.hash(novaSenha, BCRYPT_SALT_ROUNDS),
+                // Reset concluído também encerra qualquer pendência de primeiro acesso.
+                senha_unica_hash: null,
+                senha_unica_utilizada: true,
+                updated_at: new Date(),
+            })
+            .where(eq(usuariosTable.id, usuarioId));
+
         // Invalida todas as sessões activas - mudança de senha implica revogação obrigatória
         await revokeAllTokensForUser(usuarioId);
         clearRefreshCookie(res);
 
-        await db
-            .update(usuariosTable)
-            .set({senha_hash: await bcrypt.hash(novaSenha, BCRYPT_SALT_ROUNDS), updated_at: new Date()})
-            .where(eq(usuariosTable.id, usuarioId));
+        // Quem provou ser dono do e-mail sai do bloqueio por tentativas (ISMF-7).
+        await loginLockout.liberar(usuario.email);
 
         return successResponse(res, null, {message: "Senha redefinida com sucesso. Faça login."});
     } catch (error: unknown) {
@@ -804,46 +824,5 @@ router.post("/auth/reset-password", authLimiter, async (req, res) => {
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao redefinir senha.", error);
     }
 });
-
-router.post(
-    "/auth/migrate-passwords",
-    withAuth,
-    withPermission("admin:migrate-passwords"),
-    async (_req, res) => {
-        try {
-            const h = usuariosTable.senha_hash;
-
-            const [r] = await db
-                .select({
-                    nao_bcrypt: sql<number>`count(*) filter (where ${h} not like '$2%')`.mapWith(Number),
-                    sha256_legado: sql<number>`count(*) filter (where ${h} ~ '^[0-9a-f]{64}$')`.mapWith(Number),
-                    reset_pendente: sql<number>`count(*) filter (where ${h} = 'RESET_REQUIRED')`.mapWith(Number),
-                    reset_nao_avisado: sql<number>`
-                        count(*)
-                        filter (
-                            where ${h} = 'RESET_REQUIRED'
-                            and ${usuariosTable.senha_reset_notificado_em} is null
-                        )
-                    `.mapWith(Number),
-                })
-                .from(usuariosTable);
-
-            return successResponse(res, r, {
-                message:
-                    r.nao_bcrypt === 0
-                        ? "Todas as senhas estão em bcrypt."
-                        : "Ainda há senhas fora de bcrypt. reset_pendente = aguardando o utilizador redefinir.",
-            });
-        } catch (error: unknown) {
-            return errorResponse(
-                res,
-                500,
-                "INTERNAL_ERROR",
-                "Erro na verificação de migração.",
-                error,
-            );
-        }
-    },
-);
 
 export default router;

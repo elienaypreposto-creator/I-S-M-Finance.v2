@@ -1,9 +1,10 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { PageHeader } from "@/components/shared/page-header";
-import { Plus, Building2, ChevronDown, ChevronRight, Pencil, Trash2, Users, X, Loader2 } from "lucide-react";
+import { Plus, Building2, ChevronDown, ChevronRight, Users } from "lucide-react";
+import { BotaoEditar, BotaoExcluir } from "@/components/shared/botoes-acao";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { fetchApiData } from "@/lib/api-config";
@@ -11,8 +12,19 @@ import { departamentoFormSchema, type DepartamentoFormValues } from "@/validatio
 import { CardsSkeleton } from "@/components/shared/table-skeleton";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { useConfirm } from "@/hooks/use-confirm";
-import { DISCARD_PROMPT, useEscapeClose } from "@/hooks/use-escape-close";
-import { ViewportOverlay } from "@/components/shared/viewport-overlay";
+import { DISCARD_PROMPT } from "@/hooks/use-escape-close";
+import {
+  Modal,
+  ModalBody,
+  ModalFooter,
+  ModalForm,
+  ModalHeader,
+  ModalSpinner,
+  modalBtnPrimaryCls,
+  modalBtnSecondaryCls,
+  modalGridCls,
+} from "@/components/ui/modal-responsivo";
+import { CampoBusca, contemBusca, useParametrosUrl } from "@/components/shared/filtros";
 import {
   Empty,
   EmptyHeader,
@@ -66,71 +78,40 @@ function DeptModal({ onClose, initialData, isPending, onSave }: DeptModalProps) 
     onClose();
   }
 
-  useEscapeClose(!ConfirmDialogProps.open, () => {
-    void handleRequestClose();
-  });
-
   return (
-    <ViewportOverlay>
-      <div className="bg-card border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl">
-        <div className="flex items-center justify-between p-6 border-b border-white/5">
-          <h2 className="text-lg font-bold text-white">
-            {isEdit ? "Editar Departamento" : "Novo Departamento"}
-          </h2>
-          <button
-            type="button"
-            onClick={() => void handleRequestClose()}
-            className="p-1.5 hover:bg-white/5 rounded-lg transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <form
-          onSubmit={handleSubmit((v) => onSave(v, initialData?.id))}
-          className="p-6 space-y-4"
-        >
-          <div>
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
-              Nome do Departamento *
-            </label>
-            <input
-              {...register("nome")}
-              autoFocus
-              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
-              placeholder="Ex: Tecnologia"
-            />
-            {errors.nome && (
-              <p className="text-[11px] text-destructive mt-1">{errors.nome.message}</p>
-            )}
-          </div>
-
-          <div className="flex gap-3 pt-2">
-            <button
-              type="button"
-              onClick={() => void handleRequestClose()}
-              className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-medium transition-all"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={isPending}
-              className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium transition-all disabled:opacity-50"
-            >
-              {isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin mx-auto" />
-              ) : isEdit ? (
-                "Salvar"
-              ) : (
-                "Criar"
+    <Modal onClose={() => void handleRequestClose()}>
+      <ModalHeader title={isEdit ? "Editar Departamento" : "Novo Departamento"} />
+      <ModalForm onSubmit={handleSubmit((v) => onSave(v, initialData?.id))}>
+        <ModalBody>
+          <div className={modalGridCls}>
+            <div>
+              <label htmlFor="departamento-nome" className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                Nome do Departamento *
+              </label>
+              <input
+                id="departamento-nome"
+                {...register("nome")}
+                aria-invalid={!!errors.nome}
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+                placeholder="Ex: Tecnologia"
+              />
+              {errors.nome && (
+                <p className="text-xs text-destructive mt-1">{errors.nome.message}</p>
               )}
-            </button>
+            </div>
           </div>
-        </form>
-      </div>
+        </ModalBody>
+        <ModalFooter hint="* Campos obrigatórios · Esc fecha">
+          <button type="button" onClick={() => void handleRequestClose()} className={modalBtnSecondaryCls}>
+            Cancelar
+          </button>
+          <button type="submit" disabled={isPending} className={modalBtnPrimaryCls}>
+            {isPending ? <ModalSpinner /> : isEdit ? "Salvar" : "Criar"}
+          </button>
+        </ModalFooter>
+      </ModalForm>
       <ConfirmDialog {...ConfirmDialogProps} />
-    </ViewportOverlay>
+    </Modal>
   );
 }
 
@@ -209,6 +190,17 @@ export default function Departamentos() {
       });
     },
   });
+
+  // ── Busca por nome na URL (?q=), aplicada no navegador ──
+  const { ler, atualizar } = useParametrosUrl();
+  const busca = ler("q");
+  const departamentosFiltrados = useMemo(
+    () => departamentos.filter((d) => contemBusca(busca, d.nome)),
+    [departamentos, busca],
+  );
+  const anuncio = isLoading || !busca
+    ? ""
+    : `${departamentosFiltrados.length} ${departamentosFiltrados.length === 1 ? "departamento encontrado" : "departamentos encontrados"}`;
 
   const toggle = (id: number) =>
     setExpanded((prev) =>
@@ -294,6 +286,19 @@ export default function Departamentos() {
         ))}
       </div>
 
+      {/* Busca à direita (sem painel de filtros) */}
+      {!isLoading && departamentos.length > 0 && (
+        <div className="glass-panel rounded-2xl px-4 py-2.5 flex flex-wrap items-center justify-end gap-3 bg-black/10">
+          <CampoBusca
+            valor={busca}
+            onBuscar={(termo) => atualizar({ q: termo || null })}
+            placeholder="Buscar por nome…"
+            rotulo="Buscar departamentos por nome"
+          />
+        </div>
+      )}
+      <p className="sr-only" aria-live="polite" aria-atomic="true">{anuncio}</p>
+
       {/* Loading - skeleton de cards */}
       {isLoading && <CardsSkeleton cards={4} />}
 
@@ -323,10 +328,27 @@ export default function Departamentos() {
         </div>
       )}
 
+      {/* Busca sem resultado */}
+      {!isLoading && departamentos.length > 0 && departamentosFiltrados.length === 0 && (
+        <div className="glass-panel rounded-2xl border border-white/5">
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <Building2 className="text-muted-foreground/40" />
+              </EmptyMedia>
+              <EmptyTitle className="text-white">Nenhum resultado para a busca.</EmptyTitle>
+              <EmptyDescription>
+                Nenhum departamento com nome contendo &ldquo;{busca}&rdquo;.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </div>
+      )}
+
       {/* Lista */}
-      {!isLoading && departamentos.length > 0 && (
+      {!isLoading && departamentosFiltrados.length > 0 && (
         <div className="space-y-3">
-          {departamentos.map((dept) => {
+          {departamentosFiltrados.map((dept) => {
             const cor = getColor(dept.id);
             const isExpanded = expanded.includes(dept.id);
 
@@ -356,28 +378,12 @@ export default function Departamentos() {
                     </div>
                   </button>
 
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => openEdit(dept)}
-                      className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-                      title="Editar"
-                    >
-                      <Pencil className="w-4 h-4 text-muted-foreground" />
-                    </button>
-                    <button
-                      type="button"
+                  <div className="flex items-center gap-2 shrink-0">
+                    <BotaoEditar onClick={() => openEdit(dept)} />
+                    <BotaoExcluir
                       onClick={() => handleDelete(dept)}
                       disabled={deleteMutation.isPending}
-                      className="p-2 hover:bg-destructive/20 rounded-lg transition-colors disabled:opacity-50"
-                      title="Excluir"
-                    >
-                      {deleteMutation.isPending ? (
-                        <Loader2 className="w-4 h-4 animate-spin text-destructive" />
-                      ) : (
-                        <Trash2 className="w-4 h-4 text-muted-foreground" />
-                      )}
-                    </button>
+                    />
                     <button
                       type="button"
                       onClick={() => toggle(dept.id)}

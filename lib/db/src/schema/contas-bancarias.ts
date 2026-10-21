@@ -1,6 +1,5 @@
 
-import { integer, pgTable, serial, text, numeric, date, timestamp } from "drizzle-orm/pg-core";
-import { pgTable, serial, text, numeric, date, timestamp, integer } from "drizzle-orm/pg-core";
+import {integer, pgTable, serial, text, numeric, date, timestamp, index} from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { empresasTable } from "./empresas";
@@ -25,7 +24,9 @@ export const contasBancariasTable = pgTable("contas_bancarias", {
   cor: text("cor").default("#3BA8DC"),
   created_at: timestamp("created_at").defaultNow().notNull(),
   updated_at: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => [
+    index("contas_bancarias_empresa_id_idx").on(table.empresa_id),
+]);
 
 export const insertContaBancariaSchema = createInsertSchema(contasBancariasTable).omit({ id: true, created_at: true, updated_at: true, empresa_id: true });
 export type InsertContaBancaria = z.infer<typeof insertContaBancariaSchema>;

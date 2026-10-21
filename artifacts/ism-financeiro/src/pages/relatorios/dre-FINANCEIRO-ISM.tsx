@@ -1,17 +1,13 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { FOCO_VISIVEL, useParametrosUrl } from "@/components/shared/filtros";
 import { PageHeader } from "@/components/shared/page-header";
 import { Download, Loader2, TrendingUp, AlertCircle } from "lucide-react";
-import { formatCurrency, cn } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { useDinheiro } from "@/components/conta/saldos-visiveis";
 import { fetchApiData } from "@/lib/api-config";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import {SelectCampo} from "@/components/ui/select-campo";
 
 const monthKey = (m: number) => String(m).padStart(2, "0");
 
@@ -41,9 +37,15 @@ function valorMes(linha: DreLinhaApi, mes: number): number {
 }
 
 export default function DreGerencial() {
+  const dinheiro = useDinheiro();
   const currentYear = new Date().getFullYear();
-  const [ano, setAno] = useState(currentYear);
-  const [regime, setRegime] = useState<"competencia" | "caixa">("competencia");
+  // Ano e regime na URL (?ano=2026&regime=caixa) para sobreviver ao F5 e ao compartilhar o link.
+  const { ler, atualizar } = useParametrosUrl();
+  const anoUrl = ler("ano");
+  const ano = /^\d{4}$/.test(anoUrl) ? Number(anoUrl) : currentYear;
+  const regime: "competencia" | "caixa" = ler("regime") === "caixa" ? "caixa" : "competencia";
+  const setAno = (v: number) => atualizar({ ano: String(v) });
+  const setRegime = (v: "competencia" | "caixa") => atualizar({ regime: v === "caixa" ? v : null });
   const mesesPt = useMemo(() => mesesPtLong(), []);
 
   const { data, isLoading, isError, error, refetch } = useQuery({
@@ -75,8 +77,10 @@ export default function DreGerencial() {
   const anosOpcoes = useMemo(() => {
     const out: number[] = [];
     for (let y = currentYear + 1; y >= currentYear - 8; y--) out.push(y);
-    return out;
-  }, [currentYear]);
+    // Ano vindo da URL fora da faixa padrão continua selecionável.
+    if (!out.includes(ano)) out.push(ano);
+    return out.sort((a, b) => b - a);
+  }, [currentYear, ano]);
 
   const rowClass = (codigo: string) => {
     if (codigo === "7")
@@ -101,41 +105,6 @@ export default function DreGerencial() {
         description="Demonstração do resultado do exercício por mês (competência ou caixa)."
         actions={
           <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground whitespace-nowrap">Ano</span>
-              <Select value={String(ano)} onValueChange={(v) => setAno(Number(v))}>
-                <SelectTrigger className="w-[120px] h-9 bg-white/5 border-white/10 text-sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {anosOpcoes.map((y) => (
-                    <SelectItem key={y} value={String(y)}>
-                      {y}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex gap-1 p-1 bg-white/5 rounded-xl border border-white/10">
-              <button
-                type="button"
-                onClick={() => setRegime("competencia")}
-                className={cn(
-                  "px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
-                  regime === "competencia" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-white",
-                )}>
-                Competência
-              </button>
-              <button
-                type="button"
-                onClick={() => setRegime("caixa")}
-                className={cn(
-                  "px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
-                  regime === "caixa" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-white",
-                )}>
-                Caixa
-              </button>
-            </div>
             <button
               type="button"
               className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all opacity-60 cursor-not-allowed"
@@ -146,6 +115,44 @@ export default function DreGerencial() {
           </div>
         }
       />
+
+      {/* Barra padrão: período (ano) e regime à esquerda */}
+      <div className="glass-panel rounded-2xl border border-white/5 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span id="dre-ano-rotulo" className="text-xs text-muted-foreground whitespace-nowrap">Ano</span>
+          <SelectCampo
+            aria-labelledby="dre-ano-rotulo"
+            value={String(ano)}
+            onChange={(v) => setAno(Number(v))}
+            className="w-[8.5em]"
+            opcoes={anosOpcoes.map((y) => ({value: String(y), label: String(y)}))}
+          />
+          <div className="flex gap-1 p-0.5 bg-black/20 rounded-lg border border-white/5" role="group" aria-label="Regime">
+            <button
+              type="button"
+              aria-pressed={regime === "competencia"}
+              onClick={() => setRegime("competencia")}
+              className={cn(
+                "px-3 py-1 rounded-md text-xs font-bold transition-colors",
+                regime === "competencia" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-white",
+                FOCO_VISIVEL,
+              )}>
+              Competência
+            </button>
+            <button
+              type="button"
+              aria-pressed={regime === "caixa"}
+              onClick={() => setRegime("caixa")}
+              className={cn(
+                "px-3 py-1 rounded-md text-xs font-bold transition-colors",
+                regime === "caixa" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-white",
+                FOCO_VISIVEL,
+              )}>
+              Caixa
+            </button>
+          </div>
+        </div>
+      </div>
 
       {regime === "caixa" && (
         <div className="bg-amber-500/10 border border-amber-500/25 rounded-xl p-3 text-sm text-amber-200/95 flex gap-2 items-start">
@@ -183,7 +190,7 @@ export default function DreGerencial() {
                   <TrendingUp className={cn("w-4 h-4", item.color)} />
                   <p className="text-xs text-muted-foreground">{item.label}</p>
                 </div>
-                <p className={cn("text-xl font-bold tabular-nums", item.color)}>{formatCurrency(item.value)}</p>
+                <p className={cn("text-xl font-bold tabular-nums", item.color)}>{dinheiro(item.value)}</p>
               </div>
             ))}
           </div>
@@ -245,7 +252,7 @@ export default function DreGerencial() {
                               cellClass(linha.codigo, v),
                               futuro && "opacity-40",
                             )}>
-                            {v !== 0 ? formatCurrency(v) : "—"}
+                            {v !== 0 ? dinheiro(v) : "—"}
                           </td>
                         );
                       })}
@@ -255,7 +262,7 @@ export default function DreGerencial() {
                           cellClass(linha.codigo, Number(linha.total)),
                           linha.codigo === "7" ? "bg-emerald-500/10" : "bg-[#121417]/90",
                         )}>
-                        {Number(linha.total) !== 0 ? formatCurrency(Number(linha.total)) : "—"}
+                        {Number(linha.total) !== 0 ? dinheiro(Number(linha.total)) : "—"}
                       </td>
                     </tr>
                   ))}

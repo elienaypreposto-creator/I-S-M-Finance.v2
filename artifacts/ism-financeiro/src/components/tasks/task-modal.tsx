@@ -8,8 +8,9 @@ import {Button} from "@/components/ui/button";
 import {Input} from "@/components/ui/input";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
-import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
-import {ViewportOverlay} from "@/components/shared/viewport-overlay";
+import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
+import {Modal, ModalBody, ModalFooter, ModalHeader, modalBtnPrimaryCls, modalBtnSecondaryCls, modalGrid2Cls} from "@/components/ui/modal-responsivo";
+import {SelectCampo} from "@/components/ui/select-campo";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 type ChecklistItem = { id: string; texto: string; completed: boolean };
@@ -97,6 +98,8 @@ interface TaskModalProps {
     defaultColuna?: string;
     /** "create" (padrão) ou "edit" */
     mode?: "create" | "edit";
+    /** Esconde o botão de gravar quando a ação não é permitida. */
+    podeSalvar?: boolean;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -121,6 +124,7 @@ export function TaskModal({
                               initialData,
                               defaultColuna = "solicitado",
                               mode = "create",
+                              podeSalvar = true,
                           }: TaskModalProps) {
 
     // Estado do formulário - inicializado de forma lazy para evitar re-render desnecessário
@@ -203,10 +207,6 @@ export function TaskModal({
         onClose();
     }
 
-    useEscapeClose(open && !ConfirmDialogProps.open, () => {
-        void handleRequestClose();
-    });
-
     // ── Checklist ──────────────────────────────────────────────────────────────
     const handleAddChecklist = () => {
         if (!novoChecklist.trim()) return;
@@ -269,133 +269,121 @@ export function TaskModal({
 
     if (!open) return null;
 
+    const labelCls = "text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 block";
+    const fieldCls = "w-full bg-[#1A1A1A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-gray-600 focus:border-blue-500 focus:outline-none";
+
     return (
-        <ViewportOverlay className="bg-black/70 backdrop-blur-sm">
-            <div
-                className="bg-[#121212] border border-white/10 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
+        <Modal onClose={() => void handleRequestClose()}>
+            <ModalHeader title={modalTitle}/>
 
-                {/* Cabeçalho */}
-                <div className="flex items-center justify-between p-5 border-b border-white/10 bg-[#1A1A1A]">
-                    <h2 className="text-lg font-bold text-white">{modalTitle}</h2>
-                    <button onClick={() => void handleRequestClose()} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
-                        <X className="w-5 h-5 text-gray-400"/>
-                    </button>
-                </div>
-
-                {/* Corpo */}
-                <div className="flex flex-1 overflow-hidden">
+            <ModalBody>
+                <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_20em] gap-x-[1.8em] gap-y-[1.4em]">
 
                     {/* Coluna principal */}
-                    <div className="flex-1 p-6 overflow-y-auto space-y-6">
-
-                        {/* Título */}
-                        <div>
-                            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 block">
-                                Título da Tarefa
-                            </label>
-                            <input
-                                type="text"
-                                value={titulo}
-                                onChange={e => setTitulo(e.target.value)}
-                                placeholder="Digite o título da solicitação..."
-                                className="w-full bg-[#1A1A1A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-gray-600 focus:border-blue-500 focus:outline-none"
-                            />
-                        </div>
-
-                        {/* Descrição */}
-                        <div>
-                            <label
-                                className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 flex items-center justify-between">
-                                Descrição
-                                <div className="flex gap-1">
-                                    <button className="p-1 hover:bg-white/10 rounded"><Bold
-                                        className="w-4 h-4 text-gray-500"/></button>
-                                    <button className="p-1 hover:bg-white/10 rounded"><Italic
-                                        className="w-4 h-4 text-gray-500"/></button>
-                                    <button className="p-1 hover:bg-white/10 rounded"><List
-                                        className="w-4 h-4 text-gray-500"/></button>
-                                    <button className="p-1 hover:bg-white/10 rounded"><ListOrdered
-                                        className="w-4 h-4 text-gray-500"/></button>
-                                </div>
-                            </label>
-                            <textarea
-                                value={descricao}
-                                onChange={e => setDescricao(e.target.value)}
-                                placeholder="Adicione uma descrição detalhada..."
-                                rows={5}
-                                className="w-full bg-[#1A1A1A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-gray-600 focus:border-blue-500 focus:outline-none resize-none"
-                            />
-                        </div>
-
-                        {/* Prioridade */}
-                        <div>
-                            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 block">
-                                Prioridade
-                            </label>
-                            <div className="grid grid-cols-4 gap-3">
-                                {PRIORIDADES.map(p => (
-                                    <button
-                                        key={p.value}
-                                        type="button"
-                                        onClick={() => setPrioridade(p.value)}
-                                        className={cn(
-                                            "p-3 rounded-xl border transition-all text-center",
-                                            prioridade === p.value
-                                                ? `${p.bg} ${p.text} ${p.border} shadow-lg`
-                                                : "bg-[#1A1A1A] border-white/10 text-gray-400 hover:border-white/30"
-                                        )}
-                                    >
-                                        <div className="font-bold text-sm">{p.label}</div>
-                                        <div
-                                            className={cn("text-[10px] mt-1", prioridade === p.value ? "opacity-80" : "text-gray-500")}>
-                                            {p.desc}
-                                        </div>
-                                    </button>
-                                ))}
+                    <div className="min-w-0 space-y-6">
+                        <div className={modalGrid2Cls}>
+                            {/* Título */}
+                            <div className="col-span-full">
+                                <label htmlFor="tarefa-titulo" className={labelCls}>Título da Tarefa</label>
+                                <input
+                                    id="tarefa-titulo"
+                                    type="text"
+                                    value={titulo}
+                                    onChange={e => setTitulo(e.target.value)}
+                                    placeholder="Digite o título da solicitação..."
+                                    className={fieldCls}
+                                />
                             </div>
-                        </div>
 
-                        {/* Prazo + Coluna */}
-                        <div className="grid grid-cols-2 gap-4">
+                            {/* Descrição */}
+                            <div className="col-span-full">
+                                <div className="flex items-center justify-between mb-2">
+                                    <label htmlFor="tarefa-descricao" className={cn(labelCls, "mb-0")}>Descrição</label>
+                                    <div className="flex gap-1">
+                                        <button type="button" aria-label="Negrito" className="p-1 hover:bg-white/10 rounded"><Bold
+                                            aria-hidden="true" className="w-4 h-4 text-gray-500"/></button>
+                                        <button type="button" aria-label="Itálico" className="p-1 hover:bg-white/10 rounded"><Italic
+                                            aria-hidden="true" className="w-4 h-4 text-gray-500"/></button>
+                                        <button type="button" aria-label="Lista" className="p-1 hover:bg-white/10 rounded"><List
+                                            aria-hidden="true" className="w-4 h-4 text-gray-500"/></button>
+                                        <button type="button" aria-label="Lista numerada" className="p-1 hover:bg-white/10 rounded"><ListOrdered
+                                            aria-hidden="true" className="w-4 h-4 text-gray-500"/></button>
+                                    </div>
+                                </div>
+                                <textarea
+                                    id="tarefa-descricao"
+                                    value={descricao}
+                                    onChange={e => setDescricao(e.target.value)}
+                                    placeholder="Adicione uma descrição detalhada..."
+                                    rows={5}
+                                    className={cn(fieldCls, "resize-none")}
+                                />
+                            </div>
+
+                            {/* Prioridade */}
+                            <div className="col-span-full" role="group" aria-labelledby="tarefa-prioridade-label">
+                                <span id="tarefa-prioridade-label" className={cn(labelCls, "mb-3")}>Prioridade</span>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                    {PRIORIDADES.map(p => (
+                                        <button
+                                            key={p.value}
+                                            type="button"
+                                            aria-pressed={prioridade === p.value}
+                                            onClick={() => setPrioridade(p.value)}
+                                            className={cn(
+                                                "p-3 rounded-xl border transition-all text-center",
+                                                prioridade === p.value
+                                                    ? `${p.bg} ${p.text} ${p.border} shadow-lg`
+                                                    : "bg-[#1A1A1A] border-white/10 text-gray-400 hover:border-white/30"
+                                            )}
+                                        >
+                                            <div className="font-bold text-sm">{p.label}</div>
+                                            <div
+                                                className={cn("text-xs mt-1", prioridade === p.value ? "opacity-80" : "text-gray-500")}>
+                                                {p.desc}
+                                            </div>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Prazo + Coluna */}
                             <div>
-                                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 block">
-                                    <Clock className="w-3 h-3 inline mr-1"/>
+                                <label htmlFor="tarefa-prazo" className={labelCls}>
+                                    <Clock aria-hidden="true" className="w-3 h-3 inline mr-1"/>
                                     Data de Vencimento
                                 </label>
                                 <input
+                                    id="tarefa-prazo"
                                     type="date"
                                     value={prazo ?? ""}
                                     onChange={e => setPrazo(e.target.value)}
-                                    className="w-full bg-[#1A1A1A] border border-white/10 rounded-xl px-4 py-3 text-white focus:border-blue-500 focus:outline-none"
+                                    className={fieldCls}
                                 />
                             </div>
                             <div>
-                                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 block">
-                                    {colunaLabel}
-                                </label>
-                                <select
+                                <label htmlFor="tarefa-coluna" className={labelCls}>{colunaLabel}</label>
+                                <SelectCampo
+                                    id="tarefa-coluna"
                                     value={coluna}
-                                    onChange={e => setColuna(e.target.value)}
-                                    className="w-full bg-[#1A1A1A] border border-white/10 rounded-xl px-4 py-3 text-white focus:border-blue-500 focus:outline-none"
-                                >
-                                    {COLUNAS.map(c => (
-                                        <option key={c.value} value={c.value}>{c.label}</option>
-                                    ))}
-                                </select>
+                                    onChange={setColuna}
+                                    opcoes={COLUNAS.map((c) => ({value: c.value, label: c.label}))}
+                                />
                             </div>
                         </div>
 
                         {/* Departamentos + Tags */}
-                        <div>
-                            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 block">
-                                <Tag className="w-3 h-3 inline mr-1"/>
+                        <div role="group" aria-labelledby="tarefa-departamentos-label">
+                            <span id="tarefa-departamentos-label" className={cn(labelCls, "mb-3")}>
+                                <Tag aria-hidden="true" className="w-3 h-3 inline mr-1"/>
                                 Departamentos
-                            </label>
+                            </span>
                             <div className="flex flex-wrap gap-2">
                                 {DEPARTAMENTOS.map(d => (
                                     <button
                                         key={d.value}
                                         type="button"
+                                        aria-pressed={departamentos.includes(d.value)}
                                         onClick={() => toggleDepartamento(d.value)}
                                         className={cn(
                                             "px-4 py-2 rounded-lg border text-sm font-medium transition-all",
@@ -405,16 +393,17 @@ export function TaskModal({
                                         )}
                                     >
                                         {departamentos.includes(d.value) &&
-                                            <CheckSquare className="w-4 h-4 inline mr-2"/>}
+                                            <CheckSquare aria-hidden="true" className="w-4 h-4 inline mr-2"/>}
                                         {d.label}
                                     </button>
                                 ))}
                                 <button
                                     type="button"
+                                    aria-expanded={showNovaTag}
                                     onClick={() => setShowNovaTag(v => !v)}
                                     className="px-4 py-2 rounded-lg border border-dashed border-white/20 text-gray-400 hover:border-white/40 hover:text-white text-sm font-medium transition-all"
                                 >
-                                    <Plus className="w-4 h-4 inline mr-1"/>
+                                    <Plus aria-hidden="true" className="w-4 h-4 inline mr-1"/>
                                     Nova Tag
                                 </button>
                             </div>
@@ -426,9 +415,10 @@ export function TaskModal({
                                         onChange={e => setNovaTag(e.target.value)}
                                         onKeyDown={e => e.key === "Enter" && handleAddTag()}
                                         placeholder="Digite a nova tag..."
-                                        className="flex-1 bg-[#1A1A1A] border-white/10"
+                                        aria-label="Nova tag"
+                                        className="flex-1 bg-[#1A1A1A] border-white/10 h-auto py-2"
                                     />
-                                    <Button onClick={handleAddTag} size="sm" className="bg-blue-600 hover:bg-blue-700">
+                                    <Button onClick={handleAddTag} size="sm" className="bg-blue-600 hover:bg-blue-700 h-auto py-2">
                                         Adicionar
                                     </Button>
                                 </div>
@@ -439,9 +429,11 @@ export function TaskModal({
                                     {tags.map((tag, i) => (
                                         <span key={i}
                                               className="flex items-center gap-1 text-xs px-3 py-1 rounded-full bg-gray-700 text-gray-300">
-                      {tag}
-                                            <button onClick={() => removeTag(tag)}><X className="w-3 h-3"/></button>
-                    </span>
+                                            {tag}
+                                            <button type="button" aria-label={`Remover tag ${tag}`} onClick={() => removeTag(tag)}>
+                                                <X aria-hidden="true" className="w-3 h-3"/>
+                                            </button>
+                                        </span>
                                     ))}
                                 </div>
                             )}
@@ -449,31 +441,34 @@ export function TaskModal({
 
                         {/* Checklist */}
                         <div>
-                            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 block">
-                                <ListChecks className="w-3 h-3 inline mr-1"/>
+                            <span className={cn(labelCls, "mb-3")}>
+                                <ListChecks aria-hidden="true" className="w-3 h-3 inline mr-1"/>
                                 Checklist
-                            </label>
+                            </span>
                             <div className="space-y-2 mb-3">
                                 {checklist.map(item => (
                                     <div
                                         key={item.id}
                                         className="flex items-center gap-3 bg-[#1A1A1A] p-3 rounded-lg border border-white/5 group"
                                     >
-                                        <GripVertical className="w-4 h-4 text-gray-600 cursor-grab"/>
-                                        <button onClick={() => toggleChecklist(item.id)}>
+                                        <GripVertical aria-hidden="true" className="w-4 h-4 text-gray-600 cursor-grab"/>
+                                        <button type="button" role="checkbox" aria-checked={item.completed}
+                                                aria-label={item.texto} onClick={() => toggleChecklist(item.id)}>
                                             {item.completed
-                                                ? <CheckSquare className="w-5 h-5 text-green-500"/>
-                                                : <Square className="w-5 h-5 text-gray-500"/>}
+                                                ? <CheckSquare aria-hidden="true" className="w-5 h-5 text-green-500"/>
+                                                : <Square aria-hidden="true" className="w-5 h-5 text-gray-500"/>}
                                         </button>
                                         <span
                                             className={cn("flex-1 text-sm", item.completed && "line-through text-gray-500")}>
-                      {item.texto}
-                    </span>
+                                            {item.texto}
+                                        </span>
                                         <button
+                                            type="button"
+                                            aria-label={`Remover item ${item.texto}`}
                                             onClick={() => removeChecklist(item.id)}
-                                            className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500/20 rounded transition-all"
+                                            className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-1 hover:bg-red-500/20 rounded transition-all"
                                         >
-                                            <Trash2 className="w-4 h-4 text-red-500"/>
+                                            <Trash2 aria-hidden="true" className="w-4 h-4 text-red-500"/>
                                         </button>
                                     </div>
                                 ))}
@@ -484,28 +479,38 @@ export function TaskModal({
                                     onChange={e => setNovoChecklist(e.target.value)}
                                     onKeyDown={e => e.key === "Enter" && handleAddChecklist()}
                                     placeholder="Adicionar item ao checklist..."
-                                    className="flex-1 bg-[#1A1A1A] border-white/10"
+                                    aria-label="Novo item do checklist"
+                                    className="flex-1 bg-[#1A1A1A] border-white/10 h-auto py-2"
                                 />
-                                <Button onClick={handleAddChecklist} size="sm" variant="secondary">
-                                    <Plus className="w-4 h-4"/>
+                                <Button onClick={handleAddChecklist} size="sm" variant="secondary" aria-label="Adicionar item"
+                                        className="h-auto py-2">
+                                    <Plus aria-hidden="true" className="w-4 h-4"/>
                                 </Button>
                             </div>
                         </div>
-
                     </div>
                     {/* /coluna principal */}
 
                     {/* Coluna lateral */}
-                    <div className="w-72 p-6 border-l border-white/10 bg-[#1A1A1A]">
-                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 block">
-                            <Paperclip className="w-3 h-3 inline mr-1"/>
+                    <div className="min-w-0 p-6 rounded-xl border border-white/10 bg-[#1A1A1A] self-start">
+                        <span className={cn(labelCls, "mb-3")}>
+                            <Paperclip aria-hidden="true" className="w-3 h-3 inline mr-1"/>
                             Anexos
-                        </label>
+                        </span>
                         <div
+                            role="button"
+                            tabIndex={0}
+                            aria-label="Anexar arquivos"
                             onDrop={handleDrop}
                             onDragOver={handleDragOver}
                             onDragLeave={handleDragLeave}
                             onClick={() => fileInputRef.current?.click()}
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    fileInputRef.current?.click();
+                                }
+                            }}
                             className={cn(
                                 "border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all",
                                 isDraggingOver
@@ -513,7 +518,7 @@ export function TaskModal({
                                     : "border-white/20 hover:border-white/40"
                             )}
                         >
-                            <Upload className="w-8 h-8 text-gray-500 mx-auto mb-3"/>
+                            <Upload aria-hidden="true" className="w-8 h-8 text-gray-500 mx-auto mb-3"/>
                             <p className="text-sm text-gray-400 mb-1">Arraste arquivos aqui</p>
                             <p className="text-xs text-gray-600">ou clique para selecionar</p>
                         </div>
@@ -521,9 +526,7 @@ export function TaskModal({
 
                         {/* Resumo */}
                         <div className="mt-6">
-                            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 block">
-                                Resumo
-                            </label>
+                            <span className={cn(labelCls, "mb-3")}>Resumo</span>
                             <div className="space-y-2 text-sm">
                                 <div className="flex justify-between text-gray-400">
                                     <span>Departamentos:</span>
@@ -546,33 +549,27 @@ export function TaskModal({
                                             ? "bg-amber-500/20 text-amber-400"
                                             : "bg-blue-500/20 text-blue-400"
                                     )}>
-                    {mode === "edit" ? "Editando" : "Novo"}
-                  </span>
+                                        {mode === "edit" ? "Editando" : "Novo"}
+                                    </span>
                                 </div>
                             </div>
                         </div>
                     </div>
-
                 </div>
-                {/* /corpo */}
+            </ModalBody>
 
-                {/* Rodapé */}
-                <div className="flex items-center justify-end gap-3 p-5 border-t border-white/10 bg-[#1A1A1A]">
-                    <Button variant="ghost" onClick={() => void handleRequestClose()} className="text-gray-400 hover:text-white">
-                        Cancelar
-                    </Button>
-                    <Button
-                        onClick={handleSubmit}
-                        disabled={!titulo.trim()}
-                        className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
-                    >
-                        <Send className="w-4 h-4 mr-2"/>
-                        {submitLabel}
-                    </Button>
-                </div>
-
-            </div>
+            <ModalFooter hint="Esc fecha">
+                <button type="button" onClick={() => void handleRequestClose()} className={modalBtnSecondaryCls}>
+                    {podeSalvar ? "Cancelar" : "Fechar"}
+                </button>
+                {podeSalvar && (
+                <button type="button" onClick={handleSubmit} disabled={!titulo.trim()} className={modalBtnPrimaryCls}>
+                    <Send aria-hidden="true" className="w-4 h-4"/>
+                    {submitLabel}
+                </button>
+                )}
+            </ModalFooter>
             <ConfirmDialog {...ConfirmDialogProps} />
-        </ViewportOverlay>
+        </Modal>
     );
 }

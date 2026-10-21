@@ -1,5 +1,5 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
-import {useState, useMemo, useRef, useEffect} from "react";
+import {useState, useMemo} from "react";
 import {createPortal} from "react-dom";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {
@@ -12,10 +12,20 @@ import {
 import {useDroppable} from "@dnd-kit/core";
 import {SortableContext, verticalListSortingStrategy, useSortable} from "@dnd-kit/sortable";
 import {CSS} from "@dnd-kit/utilities";
-import {Plus, Search, Loader2, Pencil, Trash2, MoreHorizontal} from "lucide-react";
+import {Plus, Loader2} from "lucide-react";
+import {useAuth} from "@/hooks/use-auth";
+import {PERM} from "@/lib/permissoes";
+import {
+    CampoBusca,
+    contemBusca,
+    FiltrosAtivos,
+    FiltrosPopover,
+    useFiltrosNaUrl,
+    type DefinicaoFiltro,
+} from "@/components/shared/filtros";
+import {BotaoEditar, BotaoExcluir} from "@/components/shared/botoes-acao";
 import {cn} from "@/lib/utils";
 import {Button} from "@/components/ui/button";
-import {Input} from "@/components/ui/input";
 import {TaskCard} from "@/components/tasks/task-card";
 import {TaskModal} from "@/components/tasks/task-modal";
 import {SectionErrorFallback} from "@/components/error-boundary";
@@ -63,13 +73,21 @@ const COLUMNS = [
 // Prefixo para ids de coluna no DnD - evita colisão com ids numéricos de cards
 const COL_PREFIX = "col::";
 
-const QUICK_FILTERS = [
-    {id: "todas", label: "Todas"},
-    {id: "urgente", label: "Urgente"},
-    {id: "alta", label: "Alta"},
-    {id: "minha_equipe", label: "Minha Equipe"},
-    {id: "vencendo_hoje", label: "Vencendo Hoje"},
+// Filtros que a API de cards aceita (GET /kanban/cards?prioridade=&responsavel_id=&prazo=).
+const PRIORIDADE_OPCOES = [
+    {valor: "urgente", rotulo: "Urgente"},
+    {valor: "alta", rotulo: "Alta"},
+    {valor: "media", rotulo: "Média"},
+    {valor: "baixa", rotulo: "Baixa"},
 ];
+
+const PRAZO_OPCOES = [
+    {valor: "atrasado", rotulo: "Atrasado"},
+    {valor: "hoje", rotulo: "Vencendo hoje"},
+    {valor: "proximos", rotulo: "Próximos 7 dias"},
+];
+
+type UsuarioKanban = { id: number; nome: string };
 
 // Campos aceitos pelo backend no PATCH - qualquer campo extra causa 400
 const PATCH_FIELDS = [
@@ -89,67 +107,6 @@ function sanitizePatch(data: Record<string, any>): Record<string, any> {
     );
 }
 
-// ─── CardMenu ─────────────────────────────────────────────────────────────────
-function CardMenu({
-                      onEdit,
-                      onDelete,
-                  }: {
-    onEdit: (e: React.MouseEvent) => void;
-    onDelete: (e: React.MouseEvent) => void;
-}) {
-    const [open, setOpen] = useState(false);
-    const ref = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        if (!open) return;
-        const handler = (e: MouseEvent) => {
-            if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-        };
-        document.addEventListener("mousedown", handler);
-        return () => document.removeEventListener("mousedown", handler);
-    }, [open]);
-
-    return (
-        <div ref={ref} className="relative" onClick={e => e.stopPropagation()}>
-            <button
-                onClick={e => {
-                    e.stopPropagation();
-                    setOpen(v => !v);
-                }}
-                className="p-1 rounded hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
-            >
-                <MoreHorizontal className="w-4 h-4"/>
-            </button>
-
-            {open && (
-                <div
-                    className="absolute right-0 top-6 z-50 w-36 rounded-lg border border-white/10 bg-[#1E1E1E] shadow-xl py-1">
-                    <button
-                        onClick={e => {
-                            setOpen(false);
-                            onEdit(e);
-                        }}
-                        className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors"
-                    >
-                        <Pencil className="w-3.5 h-3.5"/>
-                        Editar
-                    </button>
-                    <button
-                        onClick={e => {
-                            setOpen(false);
-                            onDelete(e);
-                        }}
-                        className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors"
-                    >
-                        <Trash2 className="w-3.5 h-3.5"/>
-                        Excluir
-                    </button>
-                </div>
-            )}
-        </div>
-    );
-}
-
 // ─── SortableCard ─────────────────────────────────────────────────────────────
 function SortableCard({
                           card,
@@ -157,12 +114,16 @@ function SortableCard({
                           onEdit,
                           onDelete,
                           isDragging,
+                          canEditar,
+                          canExcluir,
                       }: {
     card: Card;
     onView: (card: Card) => void;
     onEdit: (card: Card) => void;
     onDelete: (card: Card) => void;
     isDragging: boolean;
+    canEditar: boolean;
+    canExcluir: boolean;
 }) {
     const {attributes, listeners, setNodeRef, transform, transition} = useSortable({id: card.id});
     const style = {transform: CSS.Transform.toString(transform), transition};
@@ -184,18 +145,26 @@ function SortableCard({
                 onClick={undefined}
                 isDragging={isDragging}
                 menuSlot={
-                    <div data-card-menu onPointerDown={e => e.stopPropagation()}>
-                        <CardMenu
-                            onEdit={e => {
+                    (canEditar || canExcluir) ? (
+                    <div data-card-menu className="flex items-center gap-2" onPointerDown={e => e.stopPropagation()}>
+                        {canEditar && (
+                        <BotaoEditar
+                            onClick={e => {
                                 e.stopPropagation();
                                 onEdit(card);
                             }}
-                            onDelete={e => {
+                        />
+                        )}
+                        {canExcluir && (
+                        <BotaoExcluir
+                            onClick={e => {
                                 e.stopPropagation();
                                 onDelete(card);
                             }}
                         />
+                        )}
                     </div>
+                    ) : null
                 }
             />
         </div>
@@ -220,7 +189,7 @@ function DroppableColumn({id, children}: { id: string; children: React.ReactNode
 
 // ─── KanbanColumn ─────────────────────────────────────────────────────────────
 function KanbanColumn({
-                          column, cards, onAddCard, onView, onEdit, onDelete, activeId,
+                          column, cards, onAddCard, onView, onEdit, onDelete, activeId, canCriar, canEditar, canExcluir,
                       }: {
     column: typeof COLUMNS[0];
     cards: Card[];
@@ -229,6 +198,9 @@ function KanbanColumn({
     onEdit: (card: Card) => void;
     onDelete: (card: Card) => void;
     activeId: number | null;
+    canCriar: boolean;
+    canEditar: boolean;
+    canExcluir: boolean;
 }) {
     return (
         <div
@@ -241,12 +213,14 @@ function KanbanColumn({
                     <h3 className="font-semibold text-sm text-white">{column.title}</h3>
                     <span className="bg-white/10 text-white text-xs py-0.5 px-2 rounded-full">{cards.length}</span>
                 </div>
+                {canCriar && (
                 <button
                     onClick={() => onAddCard(column.id)}
                     className="text-gray-400 hover:text-white p-1 rounded hover:bg-white/10 transition-colors"
                 >
                     <Plus className="w-4 h-4"/>
                 </button>
+                )}
             </div>
 
             <DroppableColumn id={column.id}>
@@ -259,6 +233,8 @@ function KanbanColumn({
                             onEdit={onEdit}
                             onDelete={onDelete}
                             isDragging={activeId === card.id}
+                            canEditar={canEditar}
+                            canExcluir={canExcluir}
                         />
                     ))}
                 </SortableContext>
@@ -281,14 +257,38 @@ export default function Kanban() {
     const [selectedCard, setSelectedCard] = useState<Card | null>(null);
     const [modalColuna, setModalColuna] = useState("solicitado");
     const [activeId, setActiveId] = useState<number | null>(null);
-    const [search, setSearch] = useState("");
-    const [activeFilter, setActiveFilter] = useState("todas");
+    const {user, hasPermission} = useAuth();
+    const canCriar = hasPermission(PERM.KANBAN_CRIAR);
+    const canEditar = hasPermission(PERM.KANBAN_EDITAR);
+    const canExcluir = hasPermission(PERM.KANBAN_EXCLUIR);
+
+    const {data: usuarios = []} = useQuery({
+        queryKey: tenantQueryKey("kanban-usuarios-filtro"),
+        queryFn: () => fetchApiData<UsuarioKanban[]>("/kanban/usuarios"),
+        staleTime: 60_000,
+    });
+
+    const definicoes: DefinicaoFiltro[] = useMemo(() => {
+        // "Minha Equipe" = tarefas atribuídas ao usuário logado (não há cadastro de equipe).
+        const eu = user ? [{valor: String(user.id), rotulo: `Minha equipe (eu, ${user.nome})`}] : [];
+        const outros = usuarios
+            .filter((u) => u.id !== user?.id)
+            .map((u) => ({valor: String(u.id), rotulo: u.nome}));
+        return [
+            {chave: "prioridade", rotulo: "Prioridade", tipo: "select", placeholder: "Todas", opcoes: PRIORIDADE_OPCOES},
+            {chave: "responsavel_id", rotulo: "Responsável", tipo: "select", placeholder: "Todos", opcoes: [...eu, ...outros]},
+            {chave: "prazo", rotulo: "Prazo", tipo: "select", placeholder: "Qualquer prazo", opcoes: PRAZO_OPCOES},
+        ];
+    }, [usuarios, user]);
+    const filtros = useFiltrosNaUrl(definicoes);
+    const search = filtros.ler("q");
+    const paramsCards = new URLSearchParams(filtros.valores).toString();
 
     const queryClient = useQueryClient();
 
     const {data: cardsData, isLoading, isError, error, refetch} = useQuery<Card[]>({
-        queryKey: tenantQueryKey("kanban-cards"),
-        queryFn: () => fetchApiData<Card[]>("/kanban/cards"),
+        queryKey: tenantQueryKey("kanban-cards", paramsCards),
+        queryFn: () => fetchApiData<Card[]>(`/kanban/cards${paramsCards ? `?${paramsCards}` : ""}`),
     });
 
     // ── Criar ─────────────────────────────────────────────────────────────────
@@ -394,35 +394,18 @@ export default function Kanban() {
 
     // ── Filtros ───────────────────────────────────────────────────────────────
     const filteredCards = useMemo(() => {
-        let result = cardsData ?? [];
-        if (search) {
-            const q = search.toLowerCase();
-            result = result.filter(c =>
-                c.titulo.toLowerCase().includes(q) || c.descricao?.toLowerCase().includes(q)
-            );
-        }
-        switch (activeFilter) {
-            case "urgente":
-                result = result.filter(c => c.prioridade === "urgente");
-                break;
-            case "alta":
-                result = result.filter(c => c.prioridade === "alta");
-                break;
-            case "vencendo_hoje": {
-                const hoje = new Date().toISOString().split("T")[0];
-                result = result.filter(c => c.prazo === hoje);
-                break;
-            }
-        }
-        return result;
-    }, [cardsData, search, activeFilter]);
+        // Prioridade, responsável e prazo já vêm filtrados da API; a busca é local.
+        const result = cardsData ?? [];
+        if (!search) return result;
+        return result.filter(c => contemBusca(search, c.titulo, c.descricao));
+    }, [cardsData, search]);
 
     // ── Drag ──────────────────────────────────────────────────────────────────
     const handleDragStart = ({active}: DragStartEvent) => setActiveId(active.id as number);
 
     const handleDragEnd = ({active, over}: DragEndEvent) => {
         setActiveId(null);
-        if (!over) return;
+        if (!canEditar || !over) return;
 
         const allCards = cardsData ?? [];
         const draggedCard = allCards.find(c => c.id === active.id);
@@ -477,9 +460,11 @@ export default function Kanban() {
 
     const handleSaveCard = (data: any) => {
         if (modalMode === "edit" && selectedCard) {
+            if (!canEditar) return;
             const payload = sanitizePatch(data);
             updateMutation.mutate({id: selectedCard.id, payload});
         } else {
+            if (!canCriar) return;
             const coluna = data.coluna && data.coluna !== "" ? data.coluna : modalColuna;
             createMutation.mutate({...data, coluna});
         }
@@ -498,6 +483,7 @@ export default function Kanban() {
                     <h1 className="text-xl font-bold text-white">Tarefas</h1>
                     <p className="text-sm text-gray-400">Gerencie suas tarefas e acompanhe o progresso</p>
                 </div>
+                {canCriar && (
                 <Button
                     onClick={() => {
                         setSelectedCard(null);
@@ -510,37 +496,32 @@ export default function Kanban() {
                     <Plus className="w-4 h-4 mr-2"/>
                     Nova Tarefa
                 </Button>
+                )}
             </div>
 
-            <div className="mb-4 px-1">
-                <div className="flex items-center gap-4 flex-wrap">
-                    <div className="relative flex-1 min-w-[200px] max-w-md">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500"/>
-                        <Input
-                            type="text"
-                            placeholder="Buscar tarefas..."
-                            value={search}
-                            onChange={e => setSearch(e.target.value)}
-                            className="pl-10 bg-[#1A1A1A] border-white/10 text-white placeholder:text-gray-500"
-                        />
-                    </div>
-                    <div className="flex gap-2 flex-wrap">
-                        {QUICK_FILTERS.map(f => (
-                            <button
-                                key={f.id}
-                                onClick={() => setActiveFilter(f.id)}
-                                className={cn(
-                                    "px-4 py-2 rounded-lg text-sm font-medium transition-all",
-                                    activeFilter === f.id
-                                        ? "bg-blue-600 text-white"
-                                        : "bg-[#1A1A1A] border border-white/10 text-gray-400 hover:text-white hover:border-white/30"
-                                )}
-                            >
-                                {f.label}
-                            </button>
-                        ))}
-                    </div>
+            <div className="mb-4 px-1 flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <FiltrosPopover
+                        definicoes={definicoes}
+                        valores={filtros.valores}
+                        contagem={filtros.contagem}
+                        onAplicar={filtros.aplicar}
+                    />
+                    <CampoBusca
+                        valor={search}
+                        onBuscar={(termo) => filtros.atualizar({q: termo || null})}
+                        placeholder="Buscar tarefas…"
+                        rotulo="Buscar tarefas pelo título ou descrição"
+                        atrasoMs={250}
+                    />
                 </div>
+                <FiltrosAtivos
+                    chips={filtros.chips}
+                    onRemover={filtros.remover}
+                    onLimparTodos={filtros.limpar}
+                    anuncio={isLoading ? "" : `${filteredCards.length} ${filteredCards.length === 1 ? "tarefa encontrada" : "tarefas encontradas"}`}
+                    className="px-0 border-b-0"
+                />
             </div>
 
             {isLoading ? (
@@ -574,6 +555,9 @@ export default function Kanban() {
                                     onEdit={handleEditCard}
                                     onDelete={handleDeleteCard}
                                     activeId={activeId}
+                                    canCriar={canCriar}
+                                    canEditar={canEditar}
+                                    canExcluir={canExcluir}
                                 />
                             ))}
                         </div>
@@ -604,6 +588,7 @@ export default function Kanban() {
                     setSelectedCard(null);
                 }}
                 onSave={handleSaveCard}
+                podeSalvar={modalMode === "edit" ? canEditar : canCriar}
                 initialData={
                     modalMode === "edit" && selectedCard
                         ? {

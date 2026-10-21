@@ -1,9 +1,10 @@
 import {useState} from "react";
 import {useLocation} from "wouter";
+import {ArrowLeft, Building2, ChevronRight, KeyRound, Loader2, Lock, Mail} from "lucide-react";
 import {fetchApi} from "@/lib/api-config";
 import {useAuth, type AuthUser, type EmpresaVinculo} from "@/hooks/use-auth";
 import {useToast} from "@/hooks/use-toast";
-import {ArrowLeft, Building2, ChevronRight, KeyRound, Loader2, Lock, Mail} from "lucide-react";
+import {paginaInicialDe} from "@/lib/preferencias-usuario";
 
 // O refresh token não vem mais no body: está no cookie httpOnly.
 type SessionPayload = {
@@ -74,7 +75,7 @@ export default function Login() {
             Array.isArray(permissoes) ? permissoes : [],
         );
         toast({title: "Sucesso", description: "Login realizado com sucesso!"});
-        setTimeout(() => setLocation("/"), 100);
+        setTimeout(() => setLocation(paginaInicialDe(user.id)), 100);
     }
 
     async function handleSubmit(e: React.FormEvent) {
@@ -126,7 +127,7 @@ export default function Login() {
         setEmpresaEmCurso(empresaId);
 
         try {
-            const res = await fetchApi<{data: SessionPayload}>("/auth/select-empresa", {
+            const res = await fetchApi<{ data: SessionPayload }>("/auth/select-empresa", {
                 method: "POST",
                 body: JSON.stringify({selectionToken, empresa_id: empresaId}),
             });
@@ -179,7 +180,8 @@ export default function Login() {
                                             onClick={() => void handleSelectEmpresa(empresa.id)}
                                             className="w-full text-left group flex items-center gap-3 bg-black/20 hover:bg-primary/10 border border-white/10 hover:border-primary/40 rounded-xl px-4 py-3.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                         >
-                                            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
+                                            <span
+                                                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
                                                 <Building2 className="w-5 h-5"/>
                                             </span>
                                             <span className="min-w-0 flex-1">
@@ -192,14 +194,16 @@ export default function Login() {
                                                         {empresa.razao_social}
                                                     </span>
                                                 ) : null}
-                                                <span className="mt-1 inline-flex text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                                                <span
+                                                    className="mt-1 inline-flex text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
                                                     {labelPapel(empresa.papel)}
                                                 </span>
                                             </span>
                                             {emCurso ? (
                                                 <Loader2 className="w-4 h-4 animate-spin text-primary shrink-0"/>
                                             ) : (
-                                                <ChevronRight className={`w-4 h-4 text-muted-foreground shrink-0 transition-transform ${bloqueado ? "" : "group-hover:translate-x-0.5 group-hover:text-primary"}`}/>
+                                                <ChevronRight
+                                                    className={`w-4 h-4 text-muted-foreground shrink-0 transition-transform ${bloqueado ? "" : "group-hover:translate-x-0.5 group-hover:text-primary"}`}/>
                                             )}
                                         </button>
                                     </li>

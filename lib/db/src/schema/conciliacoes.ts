@@ -48,6 +48,7 @@ export const extratosTable = pgTable("extratos", {
     index("extratos_empresa_id_idx").on(table.empresa_id),
     index("extratos_conta_id_idx").on(table.conta_id),
     index("extratos_arquivo_hash_idx").on(table.arquivo_hash),
+    index("extratos_retencao_idx").on(table.arquivado_em, table.periodo_fim),
 ]);
 
 export const extratoLinhasTable = pgTable("extrato_linhas", {

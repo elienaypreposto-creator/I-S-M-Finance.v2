@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { metasTable } from "@workspace/db/schema";
 import { tenantWhere, withEmpresaId } from "../../../lib/tenant-scope";
+import { assertRefsDaEmpresa } from "../../../lib/tenant-refs-guard";
 import type { ListMetasQuery, UpsertMetaBody } from "./schemas";
 
 export const metasService = {
@@ -11,6 +12,7 @@ export const metasService = {
   },
 
   async upsert(empresaId: number, payload: UpsertMetaBody) {
+    await assertRefsDaEmpresa(empresaId, { plano_conta_id: payload.plano_conta_id });
     return db.transaction(async (tx) => {
       const [existing] = await tx
         .select()

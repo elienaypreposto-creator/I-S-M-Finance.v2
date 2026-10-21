@@ -1,6 +1,6 @@
-import {useState} from "react";
+import {useEffect, useMemo, useState} from "react";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
-import {Building2, Loader2, Plus, Power} from "lucide-react";
+import {Building2, Loader2, Plus, Power, Save} from "lucide-react";
 import {PageHeader} from "@/components/shared/page-header";
 import {fetchApiData} from "@/lib/api-config";
 import {tenantQueryKey, nomeEmpresa} from "@/lib/tenant-query";
@@ -8,7 +8,18 @@ import {useToast} from "@/hooks/use-toast";
 import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {useAuth} from "@/hooks/use-auth";
 import {PERM} from "@/lib/permissoes";
-import {ViewportOverlay} from "@/components/shared/viewport-overlay";
+import {
+    Modal,
+    ModalBody,
+    ModalFooter,
+    ModalForm,
+    ModalHeader,
+    ModalSpinner,
+    modalBtnPrimaryCls,
+    modalBtnSecondaryCls,
+    modalGridCls,
+} from "@/components/ui/modal-responsivo";
+import {CampoBusca, contemBusca, useParametrosUrl} from "@/components/shared/filtros";
 
 type EmpresaRow = {
     id: number;
@@ -20,10 +31,102 @@ type EmpresaRow = {
     created_at: string;
 };
 
+const inputCls =
+    "w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 disabled:opacity-60";
+
+/**
+ * Admin com admin:empresas:editar: só a empresa da sessão, só dados cadastrais (ISMF-16).
+ * Ativar/desativar, slug e DPA seguem com o superadmin (a API recusa).
+ */
+function MinhaEmpresa() {
+    const {toast} = useToast();
+    const queryClient = useQueryClient();
+    const {data: empresa, isLoading} = useQuery({
+        queryKey: tenantQueryKey("empresa-atual"),
+        queryFn: () => fetchApiData<EmpresaRow>("/empresas/atual"),
+    });
+    const [razao, setRazao] = useState("");
+    const [fantasia, setFantasia] = useState("");
+    const [cnpj, setCnpj] = useState("");
+
+    useEffect(() => {
+        if (!empresa) return;
+        setRazao(empresa.razao_social);
+        setFantasia(empresa.nome_fantasia ?? "");
+        setCnpj(empresa.cnpj ?? "");
+    }, [empresa]);
+
+    const salvar = useMutation({
+        mutationFn: () =>
+            fetchApiData<EmpresaRow>(`/empresas/${empresa!.id}`, {
+                method: "PATCH",
+                body: JSON.stringify({
+                    razao_social: razao.trim(),
+                    nome_fantasia: fantasia.trim() || null,
+                    cnpj: cnpj.trim() || null,
+                }),
+            }),
+        onSuccess: () => {
+            void queryClient.invalidateQueries({queryKey: tenantQueryKey("empresa-atual")});
+            toast({title: "Dados da empresa salvos."});
+        },
+        onError: (err: Error) => toast({title: "Erro ao salvar", description: err.message, variant: "destructive"}),
+    });
+
+    return (
+        <div className="space-y-6">
+            <PageHeader title="Minha empresa" description="Dados cadastrais da empresa em uso nesta sessão"/>
+            {isLoading || !empresa ? (
+                <TableSkeleton rows={3} columns={2}/>
+            ) : (
+                <form
+                    className="glass-panel rounded-2xl p-6 space-y-4 max-w-xl"
+                    onSubmit={(e) => {
+                        e.preventDefault();
+                        salvar.mutate();
+                    }}
+                >
+                    <label className="block space-y-1">
+                        <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Razão social</span>
+                        <input value={razao} onChange={(e) => setRazao(e.target.value)} className={inputCls}/>
+                    </label>
+                    <label className="block space-y-1">
+                        <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Nome fantasia</span>
+                        <input value={fantasia} onChange={(e) => setFantasia(e.target.value)} className={inputCls}/>
+                    </label>
+                    <label className="block space-y-1">
+                        <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">CNPJ</span>
+                        <input value={cnpj} onChange={(e) => setCnpj(e.target.value)} className={inputCls}/>
+                    </label>
+                    <p className="text-xs text-muted-foreground">
+                        Identificador: <span className="font-mono">{empresa.slug}</span> · {empresa.ativa ? "Ativa" : "Inativa"}.
+                        Ativação e aceite do DPA são feitos pelo ISM.
+                    </p>
+                    <button
+                        type="submit"
+                        disabled={razao.trim().length < 2 || salvar.isPending}
+                        className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm bg-primary text-white disabled:opacity-50"
+                    >
+                        {salvar.isPending ? <Loader2 className="w-4 h-4 animate-spin"/> : <Save className="w-4 h-4"/>}
+                        Salvar
+                    </button>
+                </form>
+            )}
+        </div>
+    );
+}
+
 export default function AdminEmpresas() {
-    const {hasPermission} = useAuth();
-    const canCriar = hasPermission(PERM.ADMIN_EMPRESAS_CRIAR);
-    const canEditar = hasPermission(PERM.ADMIN_EMPRESAS_EDITAR);
+    const {user, hasPermission} = useAuth();
+    // Listar todas e criar: operação do ISM, só superadmin (ISMF-16).
+    const isSuperadmin = user?.superadmin === true;
+    if (!isSuperadmin && hasPermission(PERM.ADMIN_EMPRESAS_EDITAR)) return <MinhaEmpresa/>;
+    return <TodasEmpresas isSuperadmin={isSuperadmin}/>;
+}
+
+function TodasEmpresas({isSuperadmin}: {isSuperadmin: boolean}) {
+    const canCriar = isSuperadmin;
+    const canEditar = isSuperadmin;
     const {toast} = useToast();
     const queryClient = useQueryClient();
     const [showModal, setShowModal] = useState(false);
@@ -35,8 +138,19 @@ export default function AdminEmpresas() {
     const {data: empresas = [], isLoading} = useQuery({
         queryKey: tenantQueryKey("admin-empresas"),
         queryFn: () => fetchApiData<EmpresaRow[]>("/empresas"),
-        enabled: hasPermission(PERM.ADMIN_EMPRESAS_LISTAR),
+        enabled: isSuperadmin,
     });
+
+    // Busca por nome (?q=) filtrada no navegador: nome fantasia ou razão social.
+    const {ler, atualizar} = useParametrosUrl();
+    const busca = ler("q");
+    const empresasFiltradas = useMemo(
+        () => empresas.filter((e) => contemBusca(busca, e.nome_fantasia, e.razao_social)),
+        [empresas, busca],
+    );
+    const anuncio = isLoading || !busca
+        ? ""
+        : `${empresasFiltradas.length} ${empresasFiltradas.length === 1 ? "empresa encontrada" : "empresas encontradas"}`;
 
     const createMutation = useMutation({
         mutationFn: () =>
@@ -74,8 +188,11 @@ export default function AdminEmpresas() {
         onError: (err: Error) => toast({title: "Erro", description: err.message, variant: "destructive"}),
     });
 
-    if (!hasPermission(PERM.ADMIN_EMPRESAS_LISTAR)) {
-        return <p className="text-sm text-destructive">Sem permissão para listar empresas.</p>;
+    const podeCriar = razao.trim().length >= 2 && dpaRepresentante.trim().length >= 2 && !createMutation.isPending;
+    const labelCls = "text-xs uppercase tracking-widest text-muted-foreground font-bold mb-1.5 block";
+
+    if (!isSuperadmin) {
+        return <p className="text-sm text-destructive">Cadastro de empresas exige acesso de superadmin.</p>;
     }
 
     return (
@@ -101,6 +218,22 @@ export default function AdminEmpresas() {
                 <TableSkeleton rows={4} columns={5}/>
             ) : (
                 <div className="glass-panel rounded-2xl overflow-hidden">
+                    {/* Barra padrão: resumo à esquerda, busca à direita */}
+                    <div className="px-4 py-2.5 border-b border-white/5 flex flex-wrap items-center justify-between gap-3 bg-black/10">
+                        <p className="text-xs text-muted-foreground">
+                            {busca
+                                ? `${empresasFiltradas.length} de ${empresas.length} ${empresas.length === 1 ? "empresa" : "empresas"}`
+                                : `${empresas.length} ${empresas.length === 1 ? "empresa" : "empresas"}`}
+                        </p>
+                        <CampoBusca
+                            valor={busca}
+                            onBuscar={(termo) => atualizar({q: termo || null})}
+                            placeholder="Buscar por nome…"
+                            rotulo="Buscar empresas por nome"
+                        />
+                    </div>
+                    <p className="sr-only" aria-live="polite" aria-atomic="true">{anuncio}</p>
+                    <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead>
                             <tr className="text-left text-[10px] uppercase tracking-widest text-muted-foreground border-b border-white/5">
@@ -112,7 +245,16 @@ export default function AdminEmpresas() {
                             </tr>
                         </thead>
                         <tbody>
-                            {empresas.map((e) => (
+                            {empresasFiltradas.length === 0 && (
+                                <tr>
+                                    <td colSpan={5} className="px-5 py-8 text-center text-sm text-muted-foreground">
+                                        {busca
+                                            ? <>Nenhuma empresa encontrada para a busca “{busca}”.</>
+                                            : "Nenhuma empresa cadastrada."}
+                                    </td>
+                                </tr>
+                            )}
+                            {empresasFiltradas.map((e) => (
                                 <tr key={e.id} className="border-b border-white/5 last:border-0">
                                     <td className="px-5 py-4">
                                         <div className="flex items-center gap-3">
@@ -153,65 +295,72 @@ export default function AdminEmpresas() {
                             ))}
                         </tbody>
                     </table>
+                    </div>
                 </div>
             )}
 
             {showModal && (
-                <ViewportOverlay>
-                    <div className="glass-panel w-full max-w-md rounded-2xl p-6 space-y-4">
-                        <h2 className="text-lg font-bold text-white">Nova empresa</h2>
-                        <label className="block space-y-1">
-                            <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Razão social</span>
-                            <input
-                                value={razao}
-                                onChange={(e) => setRazao(e.target.value)}
-                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50"
-                            />
-                        </label>
-                        <label className="block space-y-1">
-                            <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Nome fantasia</span>
-                            <input
-                                value={fantasia}
-                                onChange={(e) => setFantasia(e.target.value)}
-                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50"
-                            />
-                        </label>
-                        <label className="block space-y-1">
-                            <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">CNPJ (opcional)</span>
-                            <input
-                                value={cnpj}
-                                onChange={(e) => setCnpj(e.target.value)}
-                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50"
-                            />
-                        </label>
-                        <label className="block space-y-1">
-                            <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-bold">Representante que aceita o DPA</span>
-                            <input
-                                value={dpaRepresentante}
-                                onChange={(e) => setDpaRepresentante(e.target.value)}
-                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50"
-                            />
-                        </label>
-                        <div className="flex gap-2 pt-2">
-                            <button
-                                type="button"
-                                onClick={() => setShowModal(false)}
-                                className="flex-1 py-2.5 rounded-xl text-sm bg-white/5 text-muted-foreground"
-                            >
+                <Modal onClose={() => setShowModal(false)}>
+                    <ModalHeader title="Nova empresa"/>
+                    <ModalForm
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            if (!podeCriar) return;
+                            createMutation.mutate();
+                        }}
+                    >
+                        <ModalBody>
+                            <div className={modalGridCls}>
+                                <div>
+                                    <label htmlFor="empresa-razao-social" className={labelCls}>Razão social *</label>
+                                    <input
+                                        id="empresa-razao-social"
+                                        value={razao}
+                                        onChange={(e) => setRazao(e.target.value)}
+                                        className={inputCls}
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="empresa-nome-fantasia" className={labelCls}>Nome fantasia</label>
+                                    <input
+                                        id="empresa-nome-fantasia"
+                                        value={fantasia}
+                                        onChange={(e) => setFantasia(e.target.value)}
+                                        className={inputCls}
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="empresa-cnpj" className={labelCls}>CNPJ (opcional)</label>
+                                    <input
+                                        id="empresa-cnpj"
+                                        value={cnpj}
+                                        onChange={(e) => setCnpj(e.target.value)}
+                                        className={inputCls}
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="empresa-dpa-representante" className={labelCls}>
+                                        Representante que aceita o DPA *
+                                    </label>
+                                    <input
+                                        id="empresa-dpa-representante"
+                                        value={dpaRepresentante}
+                                        onChange={(e) => setDpaRepresentante(e.target.value)}
+                                        className={inputCls}
+                                    />
+                                </div>
+                            </div>
+                        </ModalBody>
+                        <ModalFooter hint="* Campos obrigatórios · Esc fecha">
+                            <button type="button" onClick={() => setShowModal(false)} className={modalBtnSecondaryCls}>
                                 Cancelar
                             </button>
-                            <button
-                                type="button"
-                                disabled={razao.trim().length < 2 || dpaRepresentante.trim().length < 2 || createMutation.isPending}
-                                onClick={() => createMutation.mutate()}
-                                className="flex-1 py-2.5 rounded-xl text-sm bg-primary text-white disabled:opacity-50 inline-flex items-center justify-center gap-2"
-                            >
-                                {createMutation.isPending && <Loader2 className="w-4 h-4 animate-spin"/>}
-                                Criar
+                            <button type="submit" disabled={!podeCriar} className={modalBtnPrimaryCls}>
+                                {createMutation.isPending ? <ModalSpinner/> : "Criar"}
                             </button>
-                        </div>
-                    </div>
-                </ViewportOverlay>
+                        </ModalFooter>
+                    </ModalForm>
+                </Modal>
             )}
         </div>
     );

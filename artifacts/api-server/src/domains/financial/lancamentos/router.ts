@@ -12,6 +12,7 @@ import {
     type CreateLancamentoBody,
     type UpdateLancamentoBody,
     createLancamentoBodySchema,
+    exportLancamentosQuerySchema,
     lancamentoIdParamSchema,
     listLancamentosQuerySchema,
     updateLancamentoBodySchema,
@@ -21,9 +22,21 @@ const router = Router();
 
 router.get(
     "/lancamentos",
+    withPermission(PERM.LANCAMENTOS_LISTAR),
     asyncHandler(async (req, res) => {
         const query = listLancamentosQuerySchema.parse(req.query);
         const result = await lancamentosService.list(requireTenant(req).empresaId, query);
+        return successResponse(res, result.items, result.meta);
+    }),
+);
+
+// Antes de "/lancamentos/:id". Mesmos filtros da listagem, sem paginação (teto de 10 mil linhas).
+router.get(
+    "/lancamentos/export",
+    withPermission(PERM.LANCAMENTOS_LISTAR),
+    asyncHandler(async (req, res) => {
+        const filtros = exportLancamentosQuerySchema.parse(req.query);
+        const result = await lancamentosService.exportar(requireTenant(req).empresaId, filtros);
         return successResponse(res, result.items, result.meta);
     }),
 );
@@ -40,6 +53,7 @@ router.post(
 
 router.get(
     "/lancamentos/:id",
+    withPermission(PERM.LANCAMENTOS_LISTAR),
     asyncHandler(async (req, res) => {
         const {id} = lancamentoIdParamSchema.parse(req.params);
         const item = await lancamentosService.getById(requireTenant(req).empresaId, id);
@@ -67,7 +81,7 @@ router.put(
                 Number.isFinite(valorAtual) &&
                 Math.round(valorNovo * 100) !== Math.round(valorAtual * 100)
             ) {
-                if (!hasPermission(req.user, PERM.LANCAMENTOS_ALTERAR_VALOR)) {
+                if (!req.user?.superadmin && !hasPermission(req.user?.permissions, PERM.LANCAMENTOS_ALTERAR_VALOR)) {
                     throw new AppError(
                         403,
                         "FORBIDDEN",

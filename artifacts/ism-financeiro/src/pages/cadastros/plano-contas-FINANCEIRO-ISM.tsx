@@ -1,17 +1,52 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
-import {useState, useRef, useEffect} from "react";
-import {useForm} from "react-hook-form";
+import {useState, useRef, useEffect, useMemo} from "react";
+import {useForm, Controller} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {z} from "zod";
 import {PageHeader} from "@/components/shared/page-header";
-import {Plus, Edit, Trash2, Lock, ChevronDown, ChevronUp, X} from "lucide-react";
+import {Plus, Lock, ChevronDown, ChevronUp, X} from "lucide-react";
+import {BotaoEditar, BotaoExcluir} from "@/components/shared/botoes-acao";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
 import {fetchApi, fetchApiData} from "@/lib/api-config";
-import {DISCARD_PROMPT, useEscapeClose} from "@/hooks/use-escape-close";
-import {ViewportOverlay} from "@/components/shared/viewport-overlay";
+import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
+import {cn} from "@/lib/utils";
+import {SelectCampo} from "@/components/ui/select-campo";
+import {
+    Modal,
+    ModalBody,
+    ModalFooter,
+    ModalForm,
+    ModalHeader,
+    modalBtnPrimaryCls,
+    modalBtnSecondaryCls,
+    modalGridCls,
+} from "@/components/ui/modal-responsivo";
+import {
+    CampoBusca,
+    FiltrosAtivos,
+    FiltrosPopover,
+    casaMulti,
+    contemBusca,
+    useFiltrosNaUrl,
+    type DefinicaoFiltro,
+} from "@/components/shared/filtros";
+
+// Filtros da tela (ISMF-33): valores reais do campo `tipo` do plano de contas.
+const DEFINICOES_FILTROS: DefinicaoFiltro[] = [
+    {
+        chave: "tipo",
+        rotulo: "Tipo",
+        tipo: "multi",
+        opcoes: [
+            {valor: "receita", rotulo: "Receita"},
+            {valor: "custo", rotulo: "Custo"},
+            {valor: "despesa", rotulo: "Despesa"},
+        ],
+    },
+];
 
 type PlanoConta = {
     id: number;
@@ -58,6 +93,7 @@ function FormModal({
     const {confirm, ConfirmDialogProps} = useConfirm();
     const {
         register,
+        control,
         handleSubmit,
         formState: {errors, isDirty},
     } = useForm<PlanoContaFormValues>({
@@ -77,107 +113,122 @@ function FormModal({
         onClose();
     }
 
-    useEscapeClose(isOpen && !ConfirmDialogProps.open, () => {
-        void handleRequestClose();
-    });
-
     if (!isOpen) return null;
 
     return (
-        <ViewportOverlay>
-            <div className="bg-[#1a1c23] border border-white/10 rounded-2xl w-full max-w-md p-6 shadow-2xl">
-                <h2 className="text-lg font-bold text-white mb-4">
-                    {initialData?.id
-                        ? 'Editar Categoria'
-                        : lockedCategoria
-                            ? 'Nova Subcategoria'
-                            : 'Nova Categoria'}
-                </h2>
+        <Modal
+            onClose={() => void handleRequestClose()}
+            // Ao adicionar subcategoria (tipo e categoria travados), o foco vai direto para a subcategoria.
+            initialFocus={lockedCategoria
+                ? (content) => content.querySelector<HTMLElement>("#plano-conta-subcategoria")
+                : "first-field"}
+        >
+            <ModalHeader
+                title={initialData?.id
+                    ? 'Editar Categoria'
+                    : lockedCategoria
+                        ? 'Nova Subcategoria'
+                        : 'Nova Categoria'}
+            />
 
-                <form
-                    onSubmit={handleSubmit((values) => onSubmit({id: initialData?.id, ...values}))}
-                    className="space-y-4"
-                    noValidate
-                >
-                    {/* Tipo */}
-                    <div>
-                        <label className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
-                            Tipo
-                            {lockedTipo && <Lock className="w-3 h-3 text-red-400"/>}
-                        </label>
-                        <select
-                            {...register("tipo")}
-                            disabled={lockedTipo}
-                            className={`mt-1 w-full border rounded-lg p-2.5 outline-none focus:border-primary/50 transition-colors ${
-                                lockedTipo
-                                    ? 'bg-white/5 border-red-400/30 text-white/70 cursor-not-allowed'
-                                    : 'bg-black/20 border-white/10 text-white'
-                            }`}
-                        >
-                            <option value="receita" className="bg-[#1a1c23] text-white">Receita</option>
-                            <option value="custo" className="bg-[#1a1c23] text-white">Custo</option>
-                            <option value="despesa" className="bg-[#1a1c23] text-white">Despesa</option>
-                        </select>
-                        {lockedTipo && (
-                            <p className="text-xs text-red-400/80 mt-1">Tipo travado pelo grupo selecionado</p>
-                        )}
-                        {errors.tipo && (
-                            <p className="text-xs text-destructive mt-1">{errors.tipo.message}</p>
-                        )}
-                    </div>
+            <ModalForm
+                onSubmit={handleSubmit((values) => onSubmit({id: initialData?.id, ...values}))}
+                noValidate
+            >
+                <ModalBody>
+                    <div className={modalGridCls}>
+                        {/* Tipo */}
+                        <div>
+                            <label htmlFor="plano-conta-tipo"
+                                   className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                                Tipo
+                                {lockedTipo && <Lock aria-hidden="true" className="w-3 h-3 text-red-400"/>}
+                            </label>
+                            <Controller
+                                name="tipo"
+                                control={control}
+                                render={({field}) => (
+                                    <SelectCampo
+                                        id="plano-conta-tipo"
+                                        value={field.value}
+                                        disabled={lockedTipo}
+                                        aria-invalid={!!errors.tipo}
+                                        aria-describedby={lockedTipo ? "plano-conta-tipo-travado" : undefined}
+                                        className={cn("mt-1", lockedTipo && "border-red-400/30 text-white/70")}
+                                        onBlur={field.onBlur}
+                                        onChange={field.onChange}
+                                        opcoes={[
+                                            {value: "receita", label: "Receita"},
+                                            {value: "custo", label: "Custo"},
+                                            {value: "despesa", label: "Despesa"},
+                                        ]}
+                                    />
+                                )}
+                            />
+                            {lockedTipo && (
+                                <p id="plano-conta-tipo-travado" className="text-xs text-red-400/80 mt-1">Tipo travado pelo grupo selecionado</p>
+                            )}
+                            {errors.tipo && (
+                                <p className="text-xs text-destructive mt-1">{errors.tipo.message}</p>
+                            )}
+                        </div>
 
-                    {/* Categoria */}
-                    <div>
-                        <label className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
-                            Grupo Principal (Categoria)
-                            {lockedCategoria && <Lock className="w-3 h-3 text-red-400"/>}
-                        </label>
-                        <input
-                            type="text"
-                            {...register("categoria")}
-                            readOnly={lockedCategoria}
-                            className={`mt-1 w-full border rounded-lg p-2.5 outline-none focus:border-primary/50 transition-colors ${
-                                lockedCategoria
-                                    ? 'bg-white/5 border-red-400/30 text-white/70 cursor-not-allowed'
-                                    : errors.categoria
-                                        ? 'bg-black/20 border-destructive/60 text-white'
-                                        : 'bg-black/20 border-white/10 text-white'
-                            }`}
-                            placeholder="Ex: Despesas Administrativas"
-                        />
-                        {lockedCategoria && (
-                            <p className="text-xs text-red-400/80 mt-1">Categoria travada — você está adicionando uma
-                                subcategoria</p>
-                        )}
-                        {errors.categoria && (
-                            <p className="text-xs text-destructive mt-1">{errors.categoria.message}</p>
-                        )}
-                    </div>
+                        {/* Categoria */}
+                        <div>
+                            <label htmlFor="plano-conta-categoria"
+                                   className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                                Grupo Principal (Categoria)
+                                {lockedCategoria && <Lock aria-hidden="true" className="w-3 h-3 text-red-400"/>}
+                            </label>
+                            <input
+                                id="plano-conta-categoria"
+                                type="text"
+                                {...register("categoria")}
+                                readOnly={lockedCategoria}
+                                aria-invalid={!!errors.categoria}
+                                aria-describedby={lockedCategoria ? "plano-conta-categoria-travada" : undefined}
+                                className={`mt-1 w-full border rounded-lg p-2.5 outline-none focus:border-primary/50 transition-colors ${
+                                    lockedCategoria
+                                        ? 'bg-white/5 border-red-400/30 text-white/70 cursor-not-allowed'
+                                        : errors.categoria
+                                            ? 'bg-black/20 border-destructive/60 text-white'
+                                            : 'bg-black/20 border-white/10 text-white'
+                                }`}
+                                placeholder="Ex: Despesas Administrativas"
+                            />
+                            {lockedCategoria && (
+                                <p id="plano-conta-categoria-travada" className="text-xs text-red-400/80 mt-1">Categoria travada - você está adicionando uma
+                                    subcategoria</p>
+                            )}
+                            {errors.categoria && (
+                                <p className="text-xs text-destructive mt-1">{errors.categoria.message}</p>
+                            )}
+                        </div>
 
-                    {/* Subcategoria */}
-                    <div>
-                        <label className="text-sm font-medium text-muted-foreground">Subcategoria (Opcional)</label>
-                        <input
-                            type="text"
-                            {...register("subcategoria")}
-                            className="mt-1 w-full bg-black/20 border border-white/10 rounded-lg p-2.5 text-white outline-none focus:border-primary/50"
-                            placeholder="Ex: Aluguel"
-                            autoFocus={lockedCategoria}
-                        />
+                        {/* Subcategoria */}
+                        <div>
+                            <label htmlFor="plano-conta-subcategoria" className="text-sm font-medium text-muted-foreground">Subcategoria (Opcional)</label>
+                            <input
+                                id="plano-conta-subcategoria"
+                                type="text"
+                                {...register("subcategoria")}
+                                className="mt-1 w-full bg-black/20 border border-white/10 rounded-lg p-2.5 text-white outline-none focus:border-primary/50"
+                                placeholder="Ex: Aluguel"
+                            />
+                        </div>
                     </div>
-
-                    <div className="flex gap-3 pt-4">
-                        <button type="button" onClick={() => void handleRequestClose()}
-                                className="flex-1 py-2.5 rounded-xl border border-white/10 text-white hover:bg-white/5 transition-colors">Cancelar
-                        </button>
-                        <button type="submit"
-                                className="flex-1 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-medium transition-colors">Salvar
-                        </button>
-                    </div>
-                </form>
-            </div>
+                </ModalBody>
+                <ModalFooter hint="Esc fecha">
+                    <button type="button" onClick={() => void handleRequestClose()} className={modalBtnSecondaryCls}>
+                        Cancelar
+                    </button>
+                    <button type="submit" className={modalBtnPrimaryCls}>
+                        Salvar
+                    </button>
+                </ModalFooter>
+            </ModalForm>
             <ConfirmDialog {...ConfirmDialogProps} />
-        </ViewportOverlay>
+        </Modal>
     );
 }
 
@@ -351,9 +402,27 @@ export default function PlanoContas() {
         });
     };
 
-    const receitas = contas.filter(c => c.tipo === 'receita');
-    const custos = contas.filter(c => c.tipo === 'custo');
-    const despesas = contas.filter(c => c.tipo === 'despesa');
+    // ── Filtros na URL (?tipo=receita,custo&q=) aplicados no navegador ──
+    const filtros = useFiltrosNaUrl(DEFINICOES_FILTROS);
+    const busca = filtros.ler("q");
+    const filtroTipo = filtros.valores.tipo;
+    const tipoVisivel = (tipo: TipoPlano) => casaMulti(filtroTipo, tipo);
+
+    const contasFiltradas = useMemo(
+        () => contas.filter((c) => contemBusca(busca, c.categoria, c.subcategoria)),
+        [contas, busca],
+    );
+
+    const receitas = contasFiltradas.filter(c => c.tipo === 'receita');
+    const custos = contasFiltradas.filter(c => c.tipo === 'custo');
+    const despesas = contasFiltradas.filter(c => c.tipo === 'despesa');
+
+    const totalVisivel = contasFiltradas.filter((c) => casaMulti(filtroTipo, c.tipo)).length;
+    const temFiltroOuBusca = filtros.contagem > 0 || Boolean(busca);
+    const nenhumTipoVisivel = !(['receita', 'custo', 'despesa'] as TipoPlano[]).some(tipoVisivel);
+    const anuncio = isLoading
+        ? ''
+        : `${totalVisivel} ${totalVisivel === 1 ? 'item do plano de contas encontrado' : 'itens do plano de contas encontrados'}`;
 
     const isCatAberta = (tipo: string, categoria: string) =>
         catsAbertas[`${tipo}:${normalizeText(categoria)}`] !== false;
@@ -415,8 +484,9 @@ export default function PlanoContas() {
                     {isLoading ? (
                         <div className="text-sm text-muted-foreground animate-pulse p-2">Carregando...</div>
                     ) : groupedEntries.length === 0 ? (
-                        <div className="text-sm text-muted-foreground p-4 text-center">Nenhuma categoria
-                            cadastrada</div>
+                        <div className="text-sm text-muted-foreground p-4 text-center">
+                            {busca ? 'Nenhum resultado para os filtros aplicados.' : 'Nenhuma categoria cadastrada'}
+                        </div>
                     ) : (
                         groupedEntries.map(([categoria, subcontas]) => {
                             const catAberta = isCatAberta(tipoDef, categoria);
@@ -447,18 +517,12 @@ export default function PlanoContas() {
                                     <div key={cat.id}
                                          className="p-3 bg-white/5 rounded-lg border border-white/5 flex justify-between items-center hover:bg-white/10 transition-colors group">
                      <span className="text-sm font-medium text-white pl-4 capitalize truncate max-w-[200px]">
-                       {cat.subcategoria?.trim() || "—"}
+                       {cat.subcategoria?.trim() || "-"}
                      </span>
                                         <div
                                             className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button onClick={() => handleEdit(cat)}
-                                                    className="text-muted-foreground hover:text-white p-1">
-                                                <Edit className="w-4 h-4"/>
-                                            </button>
-                                            <button onClick={() => handleDelete(cat)}
-                                                    className="text-muted-foreground hover:text-rose-400 p-1">
-                                                <Trash2 className="w-4 h-4"/>
-                                            </button>
+                                            <BotaoEditar onClick={() => handleEdit(cat)}/>
+                                            <BotaoExcluir onClick={() => handleDelete(cat)}/>
                                         </div>
                                     </div>
                                 ))}
@@ -511,8 +575,41 @@ export default function PlanoContas() {
                 }
             />
 
+            {/* Barra de filtros: painel à esquerda, busca à direita */}
+            <div className="glass-panel rounded-2xl overflow-hidden">
+                <div className="px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 bg-black/10">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <FiltrosPopover
+                            definicoes={DEFINICOES_FILTROS}
+                            valores={filtros.valores}
+                            contagem={filtros.contagem}
+                            onAplicar={filtros.aplicar}
+                        />
+                    </div>
+                    <CampoBusca
+                        valor={busca}
+                        onBuscar={(termo) => filtros.atualizar({q: termo || null})}
+                        placeholder="Buscar por categoria ou subcategoria…"
+                        rotulo="Buscar no plano de contas por categoria ou subcategoria"
+                    />
+                </div>
+                <FiltrosAtivos
+                    chips={filtros.chips}
+                    onRemover={filtros.remover}
+                    onLimparTodos={filtros.limpar}
+                    anuncio={anuncio}
+                    className="border-b-0 border-t"
+                />
+            </div>
+
+            {nenhumTipoVisivel && temFiltroOuBusca && (
+                <div className="glass-panel rounded-2xl p-6 text-center text-sm text-muted-foreground">
+                    Nenhum resultado para os filtros aplicados.
+                </div>
+            )}
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {renderSection('Receitas (+)', '1.0', {
+                {tipoVisivel('receita') && renderSection('Receitas (+)', '1.0', {
                     border: 'border-teal-500/20',
                     bg: 'bg-teal-500/20',
                     borderHeader: 'border-teal-500/30',
@@ -521,7 +618,7 @@ export default function PlanoContas() {
                     textBadge: 'text-teal-300'
                 }, receitas, 'receita')}
 
-                {renderSection('Custos (-)', '2.0', {
+                {tipoVisivel('custo') && renderSection('Custos (-)', '2.0', {
                     border: 'border-blue-500/20',
                     bg: 'bg-blue-500/20',
                     borderHeader: 'border-blue-500/30',
@@ -530,7 +627,7 @@ export default function PlanoContas() {
                     textBadge: 'text-blue-300'
                 }, custos, 'custo')}
 
-                {renderSection('Despesas (-)', '3.0', {
+                {tipoVisivel('despesa') && renderSection('Despesas (-)', '3.0', {
                     border: 'border-orange-500/20',
                     bg: 'bg-orange-500/20',
                     borderHeader: 'border-orange-500/30',

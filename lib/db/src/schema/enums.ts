@@ -64,3 +64,14 @@ export const naturezaRegraConciliacaoEnum = pgEnum("natureza_regra_conciliacao",
     "entrada",
     "saida",
 ]);
+
+export const tipoDocumentoLancamentoEnum = pgEnum("tipo_documento_lancamento", [
+    "nota_fiscal",
+    "boleto",
+    "fatura",
+    "recibo",
+    "contrato",
+    "guia_imposto",
+    "folha",
+    "outros",
+]);

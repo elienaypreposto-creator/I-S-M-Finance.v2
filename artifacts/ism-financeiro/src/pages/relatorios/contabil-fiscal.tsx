@@ -4,16 +4,24 @@ import { PageHeader } from "@/components/shared/page-header";
 import {
   Download,
   FileText,
-  Filter,
   Loader2,
   AlertCircle,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { useDinheiro } from "@/components/conta/saldos-visiveis";
 import { useQuery } from "@tanstack/react-query";
 import { fetchApiData } from "@/lib/api-config";
 import { exportToExcel, exportToPDF, fmtBRL, fmtDate } from "@/lib/export";
+import { SelectCampo } from "@/components/ui/select-campo";
+import {
+  FiltrosAtivos,
+  FiltrosPopover,
+  FOCO_VISIVEL,
+  useFiltrosNaUrl,
+  type DefinicaoFiltro,
+} from "@/components/shared/filtros";
 
 // ─── Constantes ────────────────────────────────────────────────────────────────
 const MESES_LONGOS = [
@@ -38,6 +46,24 @@ type ContabilItem = {
 
 type TipoFiltro = "ambos" | "CR" | "CP";
 
+type ContaOpcao = { id: number; nome: string };
+
+/** Mês da URL (1–12); inválido ou ausente cai no mês atual. */
+function lerMes(valor: string): number {
+  const n = Number.parseInt(valor, 10);
+  return n >= 1 && n <= 12 ? n : new Date().getMonth() + 1;
+}
+
+/** Ano da URL (4 dígitos); inválido ou ausente cai no ano atual. */
+function lerAno(valor: string): number {
+  return /^\d{4}$/.test(valor) ? Number(valor) : CURRENT_YEAR;
+}
+
+/** Tipo da URL (?tipo=CR|CP); ausente = ambos. */
+function lerTipo(valor: string): TipoFiltro {
+  return valor === "CR" || valor === "CP" ? valor : "ambos";
+}
+
 // Aritmética inteira para evitar ponto flutuante ao agregar valores
 function toCents(v: number): number {
   return Math.round(v * 100);
@@ -50,20 +76,49 @@ function lastDayOfMonth(ano: number, mes: number): string {
 
 // ─── Página ────────────────────────────────────────────────────────────────────
 export default function ContabilFiscal() {
+  const dinheiro = useDinheiro();
   const [tab, setTab] = useState<"livro" | "impostos">("livro");
-  const [mesFiltro, setMesFiltro] = useState(new Date().getMonth() + 1);
-  const [anoFiltro, setAnoFiltro] = useState(CURRENT_YEAR);
-  const [tipoFiltro, setTipoFiltro] = useState<TipoFiltro>("ambos");
-  const [pagina, setPagina] = useState(1);
+
+  // Opções do filtro "Conta bancária" (mesma chave de cache da tela de lançamentos).
+  const { data: contas = [] } = useQuery({
+    queryKey: tenantQueryKey("contas-bancarias-filtro"),
+    queryFn: () => fetchApiData<ContaOpcao[]>("/contas-bancarias"),
+    staleTime: 60_000,
+  });
+
+  const definicoes: DefinicaoFiltro[] = useMemo(() => [
+    {
+      chave: "conta_id",
+      rotulo: "Conta bancária",
+      tipo: "select",
+      placeholder: "Todas as contas",
+      opcoes: contas.map((c) => ({ valor: String(c.id), rotulo: c.nome })),
+    },
+  ], [contas]);
+
+  // Período, tipo, conta e página na URL (?mes=10&ano=2026&tipo=CR&conta_id=3&pagina=2).
+  const filtros = useFiltrosNaUrl(definicoes);
+  const { ler, atualizar, pagina, irParaPagina } = filtros;
+  const mesFiltro = lerMes(ler("mes"));
+  const anoFiltro = lerAno(ler("ano"));
+  const tipoFiltro = lerTipo(ler("tipo"));
+  const contaId = filtros.valores.conta_id ?? "";
+  const contaNome = contaId ? contas.find((c) => String(c.id) === contaId)?.nome : undefined;
+
+  const anosOpcoes = useMemo(
+    () => (YEARS.includes(anoFiltro) ? YEARS : [...YEARS, anoFiltro].sort((a, b) => b - a)),
+    [anoFiltro],
+  );
 
   const dataInicio = `${anoFiltro}-${String(mesFiltro).padStart(2, "0")}-01`;
   const dataFim = lastDayOfMonth(anoFiltro, mesFiltro);
 
   const params = new URLSearchParams({ data_inicio: dataInicio, data_fim: dataFim });
   if (tipoFiltro !== "ambos") params.set("tipo", tipoFiltro);
+  if (contaId) params.set("conta_id", contaId);
 
   const { data: todos = [], isLoading, isError } = useQuery<ContabilItem[]>({
-    queryKey: tenantQueryKey("contabil-fiscal", dataInicio, dataFim, tipoFiltro),
+    queryKey: tenantQueryKey("contabil-fiscal", dataInicio, dataFim, tipoFiltro, contaId),
     queryFn: () =>
       fetchApiData<ContabilItem[]>(`/relatorios/contabil-fiscal?${params.toString()}`),
   });
@@ -85,10 +140,14 @@ export default function ContabilFiscal() {
   const paginaAtual = Math.min(pagina, totalPages);
   const paginados = todos.slice((paginaAtual - 1) * PAGE_SIZE, paginaAtual * PAGE_SIZE);
 
-  // Ao mudar filtro, volta para página 1
-  const handleMes = (v: number) => { setMesFiltro(v); setPagina(1); };
-  const handleAno = (v: number) => { setAnoFiltro(v); setPagina(1); };
-  const handleTipo = (v: TipoFiltro) => { setTipoFiltro(v); setPagina(1); };
+  // Ao mudar filtro, volta para página 1 (o atualizar da URL já remove ?pagina)
+  const mudarPeriodo = (mes: number, ano: number) =>
+    atualizar({ mes: String(mes), ano: String(ano) });
+  const handleTipo = (v: TipoFiltro) => atualizar({ tipo: v === "ambos" ? null : v });
+
+  const anuncio = isLoading
+    ? ""
+    : `${todos.length} ${todos.length === 1 ? "lançamento quitado encontrado" : "lançamentos quitados encontrados"}`;
 
   // ── Exportação ──────────────────────────────────────────────────────────────
   const EXPORT_COLUMNS = [
@@ -103,7 +162,7 @@ export default function ContabilFiscal() {
 
   const exportFilename = `Contabil_Fiscal_${MESES_LONGOS[mesFiltro - 1]}_${anoFiltro}`;
   const exportTitle    = `Relatório Contábil / Fiscal — ${MESES_LONGOS[mesFiltro - 1]} ${anoFiltro}`;
-  const exportSubtitle = `Filtro: ${tipoFiltro === "ambos" ? "Entradas e Saídas" : tipoFiltro === "CR" ? "Entradas (CR)" : "Saídas (CP)"}  |  ${todos.length} registos`;
+  const exportSubtitle = `Filtro: ${tipoFiltro === "ambos" ? "Entradas e Saídas" : tipoFiltro === "CR" ? "Entradas (CR)" : "Saídas (CP)"}${contaNome ? `  |  Conta: ${contaNome}` : ""}  |  ${todos.length} registos`;
 
   const exportData = todos as unknown as Record<string, unknown>[];
 
@@ -167,50 +226,62 @@ export default function ContabilFiscal() {
       {/* ── Tab: Extrato ── */}
       {tab === "livro" && (
         <>
-          {/* Filtros */}
-          <div className="flex flex-wrap gap-3 items-center">
-            <div className="flex items-center gap-2">
-              <Filter className="w-4 h-4 text-muted-foreground" />
-              <span className="text-xs text-muted-foreground">Filtros:</span>
+          {/* Barra padrão: período e Filtros à esquerda; tipo à direita */}
+          <div className="glass-panel rounded-2xl border border-white/5 overflow-hidden">
+            <div className="px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Período">
+                  <label htmlFor="contabil-mes" className="sr-only">Mês</label>
+                  <SelectCampo
+                    id="contabil-mes"
+                    value={String(mesFiltro)}
+                    onChange={(v) => mudarPeriodo(Number(v), anoFiltro)}
+                    className="w-[12em]"
+                    opcoes={MESES_LONGOS.map((m, i) => ({value: String(i + 1), label: m}))}
+                  />
+                  <label htmlFor="contabil-ano" className="sr-only">Ano</label>
+                  <SelectCampo
+                    id="contabil-ano"
+                    value={String(anoFiltro)}
+                    onChange={(v) => mudarPeriodo(mesFiltro, Number(v))}
+                    className="w-[8.5em]"
+                    opcoes={anosOpcoes.map((y) => ({value: String(y), label: String(y)}))}
+                  />
+                </div>
+                <FiltrosPopover
+                  definicoes={definicoes}
+                  valores={filtros.valores}
+                  contagem={filtros.contagem}
+                  onAplicar={filtros.aplicar}
+                />
+              </div>
+              <div className="flex gap-1 p-0.5 bg-black/20 rounded-lg border border-white/5" role="group" aria-label="Tipo de lançamento">
+                {(["ambos", "CR", "CP"] as TipoFiltro[]).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    aria-pressed={tipoFiltro === v}
+                    onClick={() => handleTipo(v)}
+                    className={cn(
+                      "px-3 py-1 rounded-md text-xs font-bold transition-colors",
+                      tipoFiltro === v
+                        ? "bg-primary text-white"
+                        : "text-muted-foreground hover:text-white",
+                      FOCO_VISIVEL,
+                    )}
+                  >
+                    {v === "ambos" ? "Todos" : v === "CR" ? "A Receber" : "A Pagar"}
+                  </button>
+                ))}
+              </div>
             </div>
-            <select
-              value={mesFiltro}
-              onChange={(e) => handleMes(Number(e.target.value))}
-              className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white outline-none cursor-pointer"
-            >
-              {MESES_LONGOS.map((m, i) => (
-                <option key={i} value={i + 1} className="bg-card text-white">
-                  {m}
-                </option>
-              ))}
-            </select>
-            <select
-              value={anoFiltro}
-              onChange={(e) => handleAno(Number(e.target.value))}
-              className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white outline-none cursor-pointer"
-            >
-              {YEARS.map((y) => (
-                <option key={y} value={y} className="bg-card text-white">
-                  {y}
-                </option>
-              ))}
-            </select>
-            <div className="flex gap-1 p-1 bg-white/5 rounded-xl">
-              {(["ambos", "CR", "CP"] as TipoFiltro[]).map((v) => (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => handleTipo(v)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                    tipoFiltro === v
-                      ? "bg-primary text-white"
-                      : "text-muted-foreground hover:text-white"
-                  }`}
-                >
-                  {v === "ambos" ? "Todos" : v === "CR" ? "A Receber" : "A Pagar"}
-                </button>
-              ))}
-            </div>
+            <FiltrosAtivos
+              chips={filtros.chips}
+              onRemover={filtros.remover}
+              onLimparTodos={filtros.limpar}
+              anuncio={anuncio}
+              className="border-b-0 border-t border-white/5"
+            />
           </div>
 
           {/* Loading */}
@@ -254,13 +325,13 @@ export default function ContabilFiscal() {
                   <div>
                     <p className="text-muted-foreground">Entradas</p>
                     <p className="font-bold text-teal-400">
-                      {formatCurrency(totalEntradas / 100)}
+                      {dinheiro(totalEntradas / 100)}
                     </p>
                   </div>
                   <div>
                     <p className="text-muted-foreground">Saídas</p>
                     <p className="font-bold text-destructive">
-                      {formatCurrency(totalSaidas / 100)}
+                      {dinheiro(totalSaidas / 100)}
                     </p>
                   </div>
                   <div>
@@ -272,7 +343,7 @@ export default function ContabilFiscal() {
                           : "text-destructive"
                       }`}
                     >
-                      {formatCurrency((totalEntradas - totalSaidas) / 100)}
+                      {dinheiro((totalEntradas - totalSaidas) / 100)}
                     </p>
                   </div>
                 </div>
@@ -282,8 +353,9 @@ export default function ContabilFiscal() {
                 <div className="py-14 text-center text-muted-foreground">
                   <FileText className="w-10 h-10 mx-auto mb-3 opacity-20" />
                   <p className="text-sm">
-                    Nenhum lançamento quitado em{" "}
-                    {MESES_LONGOS[mesFiltro - 1]} {anoFiltro}.
+                    {filtros.contagem > 0
+                      ? `Nenhum resultado para os filtros aplicados em ${MESES_LONGOS[mesFiltro - 1]} ${anoFiltro}.`
+                      : `Nenhum lançamento quitado em ${MESES_LONGOS[mesFiltro - 1]} ${anoFiltro}.`}
                   </p>
                   <p className="text-xs mt-1 opacity-70">
                     O filtro considera apenas lançamentos com status "pago" ou "recebido".
@@ -336,7 +408,7 @@ export default function ContabilFiscal() {
                               }`}
                             >
                               {l.tipo === "CR" ? "+" : "-"}
-                              {formatCurrency(l.valor)}
+                              {dinheiro(l.valor)}
                             </td>
                             <td className="px-4 py-3 text-xs text-muted-foreground">
                               {l.categoria}
@@ -354,10 +426,10 @@ export default function ContabilFiscal() {
                           </td>
                           <td className="px-4 py-3 text-right">
                             <div className="text-teal-400 font-bold text-xs">
-                              +{formatCurrency(totalEntradas / 100)}
+                              +{dinheiro(totalEntradas / 100)}
                             </div>
                             <div className="text-destructive font-bold text-xs">
-                              -{formatCurrency(totalSaidas / 100)}
+                              -{dinheiro(totalSaidas / 100)}
                             </div>
                           </td>
                           <td />
@@ -375,7 +447,7 @@ export default function ContabilFiscal() {
                       <div className="flex gap-2">
                         <button
                           type="button"
-                          onClick={() => setPagina((p) => Math.max(1, p - 1))}
+                          onClick={() => irParaPagina(Math.max(1, paginaAtual - 1))}
                           disabled={paginaAtual <= 1}
                           className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                           aria-label="Página anterior"
@@ -393,7 +465,7 @@ export default function ContabilFiscal() {
                             <button
                               key={p}
                               type="button"
-                              onClick={() => setPagina(p)}
+                              onClick={() => irParaPagina(p)}
                               className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors ${
                                 p === paginaAtual
                                   ? "bg-primary text-white"
@@ -406,7 +478,7 @@ export default function ContabilFiscal() {
                         })}
                         <button
                           type="button"
-                          onClick={() => setPagina((p) => Math.min(totalPages, p + 1))}
+                          onClick={() => irParaPagina(Math.min(totalPages, paginaAtual + 1))}
                           disabled={paginaAtual >= totalPages}
                           className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                           aria-label="Próxima página"
