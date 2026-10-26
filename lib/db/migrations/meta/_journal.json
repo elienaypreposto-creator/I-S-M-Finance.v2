@@ -218,6 +218,13 @@
       "when": 1790168100000,
       "tag": "0030_kanban_permissoes",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1790168300000,
+      "tag": "0032_plano_contas_grupo_dre",
+      "breakpoints": true
     }
   ]
 }

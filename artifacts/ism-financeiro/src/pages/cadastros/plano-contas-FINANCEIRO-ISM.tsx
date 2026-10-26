@@ -53,7 +53,25 @@ type PlanoConta = {
     tipo: string;
     categoria: string;
     subcategoria: string | null;
+    grupo_dre: string | null;
     ativo: boolean;
+};
+
+// Linha da DRE Gerencial onde a conta entra. Vazio = segue o tipo (receita, custo, despesa).
+const OPCOES_GRUPO_DRE = [
+    {value: "", label: "Automático (segue o tipo)"},
+    {value: "receita", label: "Receita bruta"},
+    {value: "deducao", label: "Dedução da receita (impostos sobre faturamento)"},
+    {value: "custo", label: "Custo dos serviços prestados"},
+    {value: "despesa", label: "Despesa operacional"},
+    {value: "fora", label: "Fora da DRE (empréstimo, aporte, investimento, retenção repassada)"},
+];
+const ROTULO_CURTO_GRUPO_DRE: Record<string, string> = {
+    receita: "Receita bruta",
+    deducao: "Dedução",
+    custo: "Custo",
+    despesa: "Despesa",
+    fora: "Fora da DRE",
 };
 
 // Comparador alfabético 
@@ -68,6 +86,7 @@ const planoContaFormSchema = z.object({
     }),
     categoria: z.string().trim().min(1, "Categoria é obrigatória."),
     subcategoria: z.string().trim().optional().default(""),
+    grupo_dre: z.enum(["", "receita", "deducao", "custo", "despesa", "fora"]).default(""),
 });
 
 type PlanoContaFormValues = z.infer<typeof planoContaFormSchema>;
@@ -102,6 +121,7 @@ function FormModal({
             tipo: (initialData?.tipo as PlanoContaFormValues["tipo"]) ?? "despesa",
             categoria: initialData?.categoria ?? "",
             subcategoria: initialData?.subcategoria ?? "",
+            grupo_dre: (initialData?.grupo_dre as PlanoContaFormValues["grupo_dre"]) ?? "",
         },
     });
 
@@ -215,6 +235,29 @@ function FormModal({
                                 className="mt-1 w-full bg-black/20 border border-white/10 rounded-lg p-2.5 text-white outline-none focus:border-primary/50"
                                 placeholder="Ex: Aluguel"
                             />
+                        </div>
+
+                        {/* Linha da DRE */}
+                        <div>
+                            <label htmlFor="plano-conta-grupo-dre" className="text-sm font-medium text-muted-foreground">Linha da DRE</label>
+                            <Controller
+                                name="grupo_dre"
+                                control={control}
+                                render={({field}) => (
+                                    <SelectCampo
+                                        id="plano-conta-grupo-dre"
+                                        value={field.value}
+                                        aria-describedby="plano-conta-grupo-dre-ajuda"
+                                        className="mt-1"
+                                        onBlur={field.onBlur}
+                                        onChange={field.onChange}
+                                        opcoes={OPCOES_GRUPO_DRE}
+                                    />
+                                )}
+                            />
+                            <p id="plano-conta-grupo-dre-ajuda" className="text-xs text-muted-foreground/80 mt-1">
+                                Em que linha a conta aparece na DRE Gerencial. Pode ser alterada mesmo com lançamentos.
+                            </p>
                         </div>
                     </div>
                 </ModalBody>
@@ -399,6 +442,7 @@ export default function PlanoContas() {
             ...data,
             categoria: categoriaTrim,
             subcategoria: data.subcategoria?.trim() || null,
+            grupo_dre: data.grupo_dre || null,
         });
     };
 
@@ -516,9 +560,18 @@ export default function PlanoContas() {
                                 {catAberta && subcontas.map(cat => (
                                     <div key={cat.id}
                                          className="p-3 bg-white/5 rounded-lg border border-white/5 flex justify-between items-center hover:bg-white/10 transition-colors group">
-                     <span className="text-sm font-medium text-white pl-4 capitalize truncate max-w-[200px]">
-                       {cat.subcategoria?.trim() || "-"}
-                     </span>
+                                        <span className="flex items-center gap-2 min-w-0 pl-4">
+                                            <span className="text-sm font-medium text-white capitalize truncate max-w-[200px]">
+                                                {cat.subcategoria?.trim() || "-"}
+                                            </span>
+                                            {cat.grupo_dre && ROTULO_CURTO_GRUPO_DRE[cat.grupo_dre] && (
+                                                <span
+                                                    className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-muted-foreground"
+                                                    title="Linha da DRE">
+                                                    DRE: {ROTULO_CURTO_GRUPO_DRE[cat.grupo_dre]}
+                                                </span>
+                                            )}
+                                        </span>
                                         <div
                                             className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                             <BotaoEditar onClick={() => handleEdit(cat)}/>

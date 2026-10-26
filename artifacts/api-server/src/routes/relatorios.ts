@@ -12,6 +12,7 @@ import {
 } from "@workspace/db/schema";
 import {errorResponse, successResponse} from "../utils/response";
 import {fromCents, realizadoSemJurosCents, toCents} from "../utils/money";
+import {grupoDreDoLancamento, valorNaLinhaDreCents, type GrupoDre} from "../utils/dre";
 import {sqlLancamentosDaConta} from "../utils/lancamentos-conta";
 import {contasBancariasService} from "../domains/financial/contas-bancarias/contas-bancarias.service";
 import {requireTenant, tenantWhere} from "../lib/tenant-scope";
@@ -27,6 +28,8 @@ const router = Router();
  */
 const STATUS_QUITADO_SQL = sql`${lancamentosTable.status}
 IN ('pago', 'recebido', 'pago_parcial')`;
+/** Transferência entre contas da própria empresa: mexe no caixa de cada conta, mas não é receita nem despesa. */
+const SEM_TRANSFERENCIA_SQL = sql`${lancamentosTable.transferencia_grupo_id} IS NULL`;
 const toNumber = (value: unknown) => Number(value ?? 0);
 const monthKey = (month: number) => String(month).padStart(2, "0");
 const MONTH_NAMES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
@@ -77,6 +80,7 @@ router.get("/relatorios/fechamento-mensal", withPermission(PERM.RELATORIOS_FECHA
                     gte(lancamentosTable.data_quitacao, dataInicio),
                     lte(lancamentosTable.data_quitacao, dataFim),
                     STATUS_QUITADO_SQL,
+                    SEM_TRANSFERENCIA_SQL,
                 ),
             );
 
@@ -129,8 +133,13 @@ router.get("/relatorios/fechamento-mensal", withPermission(PERM.RELATORIOS_FECHA
 // ---------------------------------------------------------------------------
 // GET /relatorios/dre
 //
-// Regime de competência -> data COALESCE(competencia, vencimento), todos exceto cancelados.
-// Regime de caixa -> data_quitacao, apenas status pago/recebido.
+// Regime de competência -> data COALESCE(competencia, vencimento), valor do título,
+//   todos exceto cancelados e resíduos de quitação parcial (o resíduo é o mesmo
+//   título da origem; somar os dois contaria a receita/despesa duas vezes).
+// Regime de caixa -> data_quitacao, o que foi efetivamente quitado sem juros
+//   (mesmo critério do fechamento e das metas, RN-G5).
+// Linha de cada título: grupo DRE da conta do plano (utils/dre.ts), nunca o texto
+// da categoria. Transferências entre contas ficam fora.
 // ---------------------------------------------------------------------------
 
 router.get("/relatorios/dre", withPermission(PERM.RELATORIOS_DRE), async (req, res) => {
@@ -157,40 +166,46 @@ router.get("/relatorios/dre", withPermission(PERM.RELATORIOS_DRE), async (req, r
                 =
                 ${ano}`;
 
-        const statusFilter = isCaixa
-            ? STATUS_QUITADO_SQL
-            : sql`${lancamentosTable.status}
-                != 'cancelado'`;
+        const filtrosRegime = isCaixa
+            ? [STATUS_QUITADO_SQL]
+            : [
+                sql`${lancamentosTable.status} != 'cancelado'`,
+                sql`${lancamentosTable.is_residuo_parcial} = false`,
+            ];
+        const valorExpr = isCaixa
+            ? sql`GREATEST(COALESCE(${lancamentosTable.valor_quitado}, ${lancamentosTable.valor}) - COALESCE(${lancamentosTable.juros}, 0), 0)`
+            : sql`${lancamentosTable.valor}`;
 
         const rows = await db
             .select({
                 mes: sql<number>`${mesExpr}`,
                 tipo: lancamentosTable.tipo,
-                categoria: planoContasTable.categoria,
-                total: sql<number>`COALESCE(SUM(
-                ${lancamentosTable.valor}
-                ),
-                0
-                )`,
+                tipo_plano: planoContasTable.tipo,
+                grupo_dre: planoContasTable.grupo_dre,
+                total: sql<number>`COALESCE(SUM(${valorExpr}), 0)`,
             })
             .from(lancamentosTable)
             .leftJoin(planoContasTable, eq(lancamentosTable.plano_conta_id, planoContasTable.id))
-            .where(tenantWhere(lancamentosTable, empresaId, anoFilter, statusFilter))
-            .groupBy(sql`${mesExpr}`, lancamentosTable.tipo, planoContasTable.categoria);
+            .where(tenantWhere(lancamentosTable, empresaId, anoFilter, SEM_TRANSFERENCIA_SQL, ...filtrosRegime))
+            .groupBy(sql`${mesExpr}`, lancamentosTable.tipo, planoContasTable.tipo, planoContasTable.grupo_dre);
 
-        const receitaBruta = new Map<number, number>();
-        const impostos = new Map<number, number>();
-        const custos = new Map<number, number>();
-        const despesas = new Map<number, number>();
+        const porGrupo: Record<Exclude<GrupoDre, "fora">, Map<number, number>> = {
+            receita: new Map(),
+            deducao: new Map(),
+            custo: new Map(),
+            despesa: new Map(),
+        };
 
         for (const row of rows) {
             const m = Number(row.mes);
-            const valorCents = toCents(row.total);
-            const categoria = (row.categoria ?? "").toLowerCase();
-            if (row.tipo === "CR") receitaBruta.set(m, (receitaBruta.get(m) ?? 0) + valorCents);
-            else if (categoria.includes("imposto")) impostos.set(m, (impostos.get(m) ?? 0) + valorCents);
-            else if (categoria.includes("custo")) custos.set(m, (custos.get(m) ?? 0) + valorCents);
-            else despesas.set(m, (despesas.get(m) ?? 0) + valorCents);
+            const grupo = grupoDreDoLancamento({
+                tipoLancamento: row.tipo,
+                grupoDre: row.grupo_dre,
+                tipoPlano: row.tipo_plano,
+            });
+            if (grupo === "fora") continue;
+            const cents = valorNaLinhaDreCents(grupo, row.tipo, toCents(row.total));
+            porGrupo[grupo].set(m, (porGrupo[grupo].get(m) ?? 0) + cents);
         }
 
         const montarLinha = (codigo: string, descricao: string, formula: (m: number) => number) => {
@@ -204,14 +219,14 @@ router.get("/relatorios/dre", withPermission(PERM.RELATORIOS_DRE), async (req, r
             return {codigo, descricao, valores, total: fromCents(totalCents)};
         };
 
-        const rb = (m: number) => receitaBruta.get(m) ?? 0;
-        const imp = (m: number) => impostos.get(m) ?? 0;
-        const cst = (m: number) => custos.get(m) ?? 0;
-        const dsp = (m: number) => despesas.get(m) ?? 0;
+        const rb = (m: number) => porGrupo.receita.get(m) ?? 0;
+        const imp = (m: number) => porGrupo.deducao.get(m) ?? 0;
+        const cst = (m: number) => porGrupo.custo.get(m) ?? 0;
+        const dsp = (m: number) => porGrupo.despesa.get(m) ?? 0;
 
         const linhas = [
             montarLinha("1", "RECEITA BRUTA DE SERVIÇOS", (m) => rb(m)),
-            montarLinha("2", "(-) IMPOSTOS", (m) => -imp(m)),
+            montarLinha("2", "(-) DEDUÇÕES (IMPOSTOS SOBRE A RECEITA)", (m) => -imp(m)),
             montarLinha("3", "RECEITA LÍQUIDA", (m) => rb(m) - imp(m)),
             montarLinha("4", "(-) CUSTO DOS SERVIÇOS PRESTADOS", (m) => -cst(m)),
             montarLinha("5", "MARGEM DE CONTRIBUIÇÃO", (m) => rb(m) - imp(m) - cst(m)),
@@ -366,6 +381,7 @@ router.get("/relatorios/metas", withPermission(PERM.RELATORIOS_METAS), async (re
                         IS NOT NULL`,
                         extractYearEq(lancamentosTable.data_quitacao, ano),
                         STATUS_QUITADO_SQL,
+                        SEM_TRANSFERENCIA_SQL,
                     ),
                 ),
         ]);
@@ -435,6 +451,9 @@ router.get("/relatorios/metas", withPermission(PERM.RELATORIOS_METAS), async (re
 
 // ---------------------------------------------------------------------------
 // GET /relatorios/contabil-fiscal
+//
+// Movimento para a contabilidade: `valor` é o valor do título; `valor_pago` é o
+// que saiu/entrou no banco (valor_quitado, que já traz juros/multa e desconto).
 // ---------------------------------------------------------------------------
 
 router.get("/relatorios/contabil-fiscal", withPermission(PERM.RELATORIOS_CONTABIL), async (req, res) => {
@@ -457,6 +476,10 @@ router.get("/relatorios/contabil-fiscal", withPermission(PERM.RELATORIOS_CONTABI
                 descricao: lancamentosTable.descricao,
                 nome_parceiro: parceirosTable.nome,
                 valor: lancamentosTable.valor,
+                desconto: lancamentosTable.desconto,
+                juros: lancamentosTable.juros,
+                multa: lancamentosTable.multa,
+                valor_pago: sql<string>`COALESCE(${lancamentosTable.valor_quitado}, ${lancamentosTable.valor})`,
                 categoria: sql<string>`COALESCE(
                 ${planoContasTable.subcategoria},
                 ${planoContasTable.categoria},
@@ -473,7 +496,14 @@ router.get("/relatorios/contabil-fiscal", withPermission(PERM.RELATORIOS_CONTABI
 
         return successResponse(
             res,
-            items.map((i) => ({...i, valor: toNumber(i.valor)})),
+            items.map((i) => ({
+                ...i,
+                valor: toNumber(i.valor),
+                desconto: toNumber(i.desconto),
+                juros: toNumber(i.juros),
+                multa: toNumber(i.multa),
+                valor_pago: toNumber(i.valor_pago),
+            })),
             {total: items.length},
         );
     } catch (e) {
