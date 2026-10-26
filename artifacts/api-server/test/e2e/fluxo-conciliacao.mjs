@@ -269,6 +269,18 @@ describe(`Fluxo conciliação → lançamentos (run ${RUN})`, {concurrency: fals
         assert.equal(v.residuo_pendente, null);
     });
 
+    caso("contábil/fiscal exporta bruto, retenções e valor pago do título com retenção", async () => {
+        const r = await api("GET", `/relatorios/contabil-fiscal?data_inicio=${D.d7}&data_fim=${D.d7}&tipo=CR`, {
+            token: ctx.token,
+        });
+        assert.equal(r.status, 200, JSON.stringify(r.json));
+        const linha = r.data.find((i) => num(i.valor) === 1000 && num(i.retencao_iss) === 38.5);
+        assert.ok(linha, "título com retenção não apareceu no contábil/fiscal");
+        assert.equal(num(linha.valor_pago), 900);
+        assert.equal(num(linha.retencao_ir), 15);
+        assert.equal(num(linha.desconto), 0);
+    });
+
     caso("retenções: soma acima do valor é rejeitada e título quitado não muda retenção", async () => {
         const r = await api("POST", "/lancamentos", {
             token: ctx.token,

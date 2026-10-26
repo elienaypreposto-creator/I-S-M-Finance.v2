@@ -44,7 +44,14 @@ type ContabilItem = {
   desconto: number;
   juros: number;
   multa: number;
-  /** O que de fato entrou/saiu do banco (já com juros, multa e desconto). */
+  /** Retenções na fonte (o tomador retém e paga o líquido). */
+  retencao_ir: number;
+  retencao_pis: number;
+  retencao_cofins: number;
+  retencao_csll: number;
+  retencao_inss: number;
+  retencao_iss: number;
+  /** O que de fato entrou/saiu do banco (já com juros, multa, desconto e retenções). */
   valor_pago: number;
   categoria: string;
   tipo: string; // "CR" | "CP"
@@ -74,6 +81,10 @@ function lerTipo(valor: string): TipoFiltro {
 function toCents(v: number): number {
   return Math.round(v * 100);
 }
+
+const totalRetencoesCents = (l: ContabilItem) =>
+  toCents(l.retencao_ir) + toCents(l.retencao_pis) + toCents(l.retencao_cofins) +
+  toCents(l.retencao_csll) + toCents(l.retencao_inss) + toCents(l.retencao_iss);
 
 // Último dia do mês (espelha a lógica do backend)
 function lastDayOfMonth(ano: number, mes: number): string {
@@ -164,6 +175,12 @@ export default function ContabilFiscal() {
     { header: "Categoria",    key: "categoria",      width: 28 },
     { header: "Conta",        key: "conta_bancaria", width: 24 },
     { header: "Valor do título (R$)", key: "valor",      width: 18, formatter: (v: unknown) => fmtBRL(v) },
+    { header: "IR retido (R$)",       key: "retencao_ir",     width: 14, formatter: (v: unknown) => fmtBRL(v) },
+    { header: "PIS retido (R$)",      key: "retencao_pis",    width: 14, formatter: (v: unknown) => fmtBRL(v) },
+    { header: "COFINS retido (R$)",   key: "retencao_cofins", width: 14, formatter: (v: unknown) => fmtBRL(v) },
+    { header: "CSLL retida (R$)",     key: "retencao_csll",   width: 14, formatter: (v: unknown) => fmtBRL(v) },
+    { header: "INSS retido (R$)",     key: "retencao_inss",   width: 14, formatter: (v: unknown) => fmtBRL(v) },
+    { header: "ISS retido (R$)",      key: "retencao_iss",    width: 14, formatter: (v: unknown) => fmtBRL(v) },
     { header: "Desconto (R$)",        key: "desconto",   width: 14, formatter: (v: unknown) => fmtBRL(v) },
     { header: "Juros (R$)",           key: "juros",      width: 14, formatter: (v: unknown) => fmtBRL(v) },
     { header: "Multa (R$)",           key: "multa",      width: 14, formatter: (v: unknown) => fmtBRL(v) },
@@ -393,6 +410,9 @@ export default function ContabilFiscal() {
                             Valor do título
                           </th>
                           <th className="px-4 py-3 text-right font-medium text-muted-foreground whitespace-nowrap text-xs">
+                            Retenções
+                          </th>
+                          <th className="px-4 py-3 text-right font-medium text-muted-foreground whitespace-nowrap text-xs">
                             Desconto
                           </th>
                           <th className="px-4 py-3 text-right font-medium text-muted-foreground whitespace-nowrap text-xs">
@@ -425,6 +445,9 @@ export default function ContabilFiscal() {
                               {dinheiro(l.valor)}
                             </td>
                             <td className="px-4 py-3 text-right text-xs text-muted-foreground whitespace-nowrap">
+                              {totalRetencoesCents(l) ? dinheiro(totalRetencoesCents(l) / 100) : "—"}
+                            </td>
+                            <td className="px-4 py-3 text-right text-xs text-muted-foreground whitespace-nowrap">
                               {l.desconto ? dinheiro(l.desconto) : "—"}
                             </td>
                             <td className="px-4 py-3 text-right text-xs text-muted-foreground whitespace-nowrap">
@@ -447,7 +470,7 @@ export default function ContabilFiscal() {
                       <tfoot className="bg-white/5 border-t border-white/10">
                         <tr>
                           <td
-                            colSpan={7}
+                            colSpan={8}
                             className="px-4 py-3 font-bold text-white text-sm"
                           >
                             TOTAIS

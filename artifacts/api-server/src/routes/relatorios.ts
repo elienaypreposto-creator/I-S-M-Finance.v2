@@ -30,6 +30,12 @@ const STATUS_QUITADO_SQL = sql`${lancamentosTable.status}
 IN ('pago', 'recebido', 'pago_parcial')`;
 /** Transferência entre contas da própria empresa: mexe no caixa de cada conta, mas não é receita nem despesa. */
 const SEM_TRANSFERENCIA_SQL = sql`${lancamentosTable.transferencia_grupo_id} IS NULL`;
+/**
+ * Retenções na fonte de título quitado: o banco só viu o líquido, mas a receita/despesa
+ * é o bruto da nota. Somadas ao realizado quando o título fecha (pago/recebido).
+ */
+const RETENCOES_QUITADAS_SQL = sql<string>`CASE WHEN ${lancamentosTable.status} IN ('pago', 'recebido')
+    THEN ${lancamentosTable.valor} - ${lancamentosTable.valor_liquido} ELSE 0 END`;
 const toNumber = (value: unknown) => Number(value ?? 0);
 const monthKey = (month: number) => String(month).padStart(2, "0");
 const MONTH_NAMES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
@@ -69,6 +75,7 @@ router.get("/relatorios/fechamento-mensal", withPermission(PERM.RELATORIOS_FECHA
                 valor_quitado: lancamentosTable.valor_quitado,
                 valor: lancamentosTable.valor,
                 juros: lancamentosTable.juros,
+                retencoes: RETENCOES_QUITADAS_SQL,
             })
             .from(lancamentosTable)
             .where(
@@ -90,7 +97,7 @@ router.get("/relatorios/fechamento-mensal", withPermission(PERM.RELATORIOS_FECHA
         for (const l of lancamentosMes) {
             const quitado = toCents(l.valor_quitado ?? l.valor ?? 0);
             const juros = toCents(l.juros ?? 0);
-            const parcela = realizadoSemJurosCents(quitado, juros);
+            const parcela = realizadoSemJurosCents(quitado, juros) + toCents(l.retencoes);
             jurosCents += juros;
             if (l.tipo === "CR") realizadoReceberCents += parcela;
             else realizadoGastarCents += parcela;
@@ -173,7 +180,7 @@ router.get("/relatorios/dre", withPermission(PERM.RELATORIOS_DRE), async (req, r
                 sql`${lancamentosTable.is_residuo_parcial} = false`,
             ];
         const valorExpr = isCaixa
-            ? sql`GREATEST(COALESCE(${lancamentosTable.valor_quitado}, ${lancamentosTable.valor}) - COALESCE(${lancamentosTable.juros}, 0), 0)`
+            ? sql`GREATEST(COALESCE(${lancamentosTable.valor_quitado}, ${lancamentosTable.valor}) - COALESCE(${lancamentosTable.juros}, 0), 0) + ${RETENCOES_QUITADAS_SQL}`
             : sql`${lancamentosTable.valor}`;
 
         const rows = await db
@@ -370,6 +377,7 @@ router.get("/relatorios/metas", withPermission(PERM.RELATORIOS_METAS), async (re
                     valor_quitado: lancamentosTable.valor_quitado,
                     valor: lancamentosTable.valor,
                     juros: lancamentosTable.juros,
+                    retencoes: RETENCOES_QUITADAS_SQL,
                 })
                 .from(lancamentosTable)
                 .leftJoin(planoContasTable, eq(lancamentosTable.plano_conta_id, planoContasTable.id))
@@ -388,7 +396,8 @@ router.get("/relatorios/metas", withPermission(PERM.RELATORIOS_METAS), async (re
 
         // Agrega em centavos (DEF-06 / FEAT-10).
         // valor_quitado inclui juros embutidos (ex.: 6838 + 1162 = 8000).
-        // Realizado da meta = parcela quitada SEM juros (RN-G5 / Card 62).
+        // Realizado da meta = parcela quitada SEM juros (RN-G5 / Card 62),
+        // mais as retenções na fonte do título já fechado (a meta é pelo bruto da nota).
         const realizadoMap = new Map<string, number>();
         const jurosMap = new Map<string, number>();
         const categoriaPorPlano = new Map<number, string | null>();
@@ -398,7 +407,7 @@ router.get("/relatorios/metas", withPermission(PERM.RELATORIOS_METAS), async (re
             const key = `${r.plano_conta_id}_${mesNum}`;
             const quitadoCents = toCents(r.valor_quitado ?? r.valor ?? 0);
             const jurosCents = toCents(r.juros ?? 0);
-            const parcelaCents = realizadoSemJurosCents(quitadoCents, jurosCents);
+            const parcelaCents = realizadoSemJurosCents(quitadoCents, jurosCents) + toCents(r.retencoes);
             realizadoMap.set(key, (realizadoMap.get(key) ?? 0) + parcelaCents);
             jurosMap.set(key, (jurosMap.get(key) ?? 0) + jurosCents);
             if (!categoriaPorPlano.has(r.plano_conta_id)) {
@@ -452,8 +461,9 @@ router.get("/relatorios/metas", withPermission(PERM.RELATORIOS_METAS), async (re
 // ---------------------------------------------------------------------------
 // GET /relatorios/contabil-fiscal
 //
-// Movimento para a contabilidade: `valor` é o valor do título; `valor_pago` é o
-// que saiu/entrou no banco (valor_quitado, que já traz juros/multa e desconto).
+// Movimento para a contabilidade: `valor` é o valor do título (bruto da nota);
+// `valor_pago` é o que saiu/entrou no banco (valor_quitado, que já traz juros/multa,
+// desconto e o abatimento das retenções na fonte, exportadas uma a uma).
 // ---------------------------------------------------------------------------
 
 router.get("/relatorios/contabil-fiscal", withPermission(PERM.RELATORIOS_CONTABIL), async (req, res) => {
@@ -479,6 +489,12 @@ router.get("/relatorios/contabil-fiscal", withPermission(PERM.RELATORIOS_CONTABI
                 desconto: lancamentosTable.desconto,
                 juros: lancamentosTable.juros,
                 multa: lancamentosTable.multa,
+                retencao_ir: lancamentosTable.retencao_ir,
+                retencao_pis: lancamentosTable.retencao_pis,
+                retencao_cofins: lancamentosTable.retencao_cofins,
+                retencao_csll: lancamentosTable.retencao_csll,
+                retencao_inss: lancamentosTable.retencao_inss,
+                retencao_iss: lancamentosTable.retencao_iss,
                 valor_pago: sql<string>`COALESCE(${lancamentosTable.valor_quitado}, ${lancamentosTable.valor})`,
                 categoria: sql<string>`COALESCE(
                 ${planoContasTable.subcategoria},
@@ -502,6 +518,12 @@ router.get("/relatorios/contabil-fiscal", withPermission(PERM.RELATORIOS_CONTABI
                 desconto: toNumber(i.desconto),
                 juros: toNumber(i.juros),
                 multa: toNumber(i.multa),
+                retencao_ir: toNumber(i.retencao_ir),
+                retencao_pis: toNumber(i.retencao_pis),
+                retencao_cofins: toNumber(i.retencao_cofins),
+                retencao_csll: toNumber(i.retencao_csll),
+                retencao_inss: toNumber(i.retencao_inss),
+                retencao_iss: toNumber(i.retencao_iss),
                 valor_pago: toNumber(i.valor_pago),
             })),
             {total: items.length},
