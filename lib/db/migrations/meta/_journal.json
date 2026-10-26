@@ -220,6 +220,13 @@
       "breakpoints": true
     },
     {
+      "idx": 31,
+      "version": "7",
+      "when": 1790168200000,
+      "tag": "0031_lancamento_retencoes",
+      "breakpoints": true
+    },
+    {
       "idx": 32,
       "version": "7",
       "when": 1790168300000,

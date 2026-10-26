@@ -13,6 +13,10 @@ const STATUS_QUITADO = ["pago", "recebido"] as const;
 
 const toNumber = (value: unknown) => Number(value ?? 0);
 
+// Em aberto, projeções e caixa usam `valor_liquido` (bruto − retenções na
+// fonte): é o que de fato entra/sai do banco. Entradas/saídas por plano de
+// contas (natureza da receita/despesa) seguem no bruto (`valor`).
+
 /** EXTRACT(MONTH FROM col) sem `::date` (Prettier-safe). */
 const extractMonth = (col: SQLWrapper) => sql<number>`EXTRACT(MONTH FROM
 ${col}
@@ -70,7 +74,7 @@ router.get("/dashboard/kpis", async (req, res) => {
                 'atrasado'
                 )
                 then
-                ${lancamentosTable.valor}
+                ${lancamentosTable.valor_liquido}
                 else
                 0
                 end
@@ -95,7 +99,7 @@ router.get("/dashboard/kpis", async (req, res) => {
                 'atrasado'
                 )
                 then
-                ${lancamentosTable.valor}
+                ${lancamentosTable.valor_liquido}
                 else
                 0
                 end
@@ -120,7 +124,7 @@ router.get("/dashboard/kpis", async (req, res) => {
                 'atrasado'
                 )
                 then
-                ${lancamentosTable.valor}
+                ${lancamentosTable.valor_liquido}
                 else
                 0
                 end
@@ -143,7 +147,7 @@ router.get("/dashboard/kpis", async (req, res) => {
                 'atrasado'
                 )
                 then
-                ${lancamentosTable.valor}
+                ${lancamentosTable.valor_liquido}
                 else
                 0
                 end
@@ -183,7 +187,7 @@ router.get("/dashboard/projecao-mes", async (req, res) => {
                 =
                 'CR'
                 then
-                ${lancamentosTable.valor}
+                ${lancamentosTable.valor_liquido}
                 else
                 0
                 end
@@ -195,7 +199,7 @@ router.get("/dashboard/projecao-mes", async (req, res) => {
                 =
                 'CP'
                 then
-                ${lancamentosTable.valor}
+                ${lancamentosTable.valor_liquido}
                 else
                 0
                 end
@@ -257,10 +261,10 @@ router.get("/dashboard/projecao-dias", async (req, res) => {
                     =
                     'CR'
                     then
-                    ${lancamentosTable.valor}
+                    ${lancamentosTable.valor_liquido}
                     else
                     -
-                    ${lancamentosTable.valor}
+                    ${lancamentosTable.valor_liquido}
                     end
                     ),
                     0
@@ -284,7 +288,7 @@ router.get("/dashboard/projecao-dias", async (req, res) => {
                     =
                     'CR'
                     then
-                    ${lancamentosTable.valor}
+                    ${lancamentosTable.valor_liquido}
                     else
                     0
                     end
@@ -296,7 +300,7 @@ router.get("/dashboard/projecao-dias", async (req, res) => {
                     =
                     'CP'
                     then
-                    ${lancamentosTable.valor}
+                    ${lancamentosTable.valor_liquido}
                     else
                     0
                     end
@@ -374,7 +378,7 @@ router.get("/dashboard/inadimplencia-clientes", async (req, res) => {
                 parceiro_id: parceirosTable.id,
                 nome: parceirosTable.nome,
                 total: sql<number>`coalesce(sum(
-                ${lancamentosTable.valor}
+                ${lancamentosTable.valor_liquido}
                 ),
                 0
                 )`,
@@ -406,7 +410,7 @@ router.get("/dashboard/inadimplencia-clientes", async (req, res) => {
             .where(tenantWhere(lancamentosTable, empresaId, whereClause))
             .groupBy(parceirosTable.id, parceirosTable.nome)
             .orderBy(desc(sql`coalesce(sum(
-            ${lancamentosTable.valor}
+            ${lancamentosTable.valor_liquido}
             ),
             0
             )`))
@@ -455,7 +459,7 @@ router.get("/dashboard/inadimplencia-fornecedores", async (req, res) => {
                 parceiro_id: parceirosTable.id,
                 nome: parceirosTable.nome,
                 total: sql<number>`coalesce(sum(
-                ${lancamentosTable.valor}
+                ${lancamentosTable.valor_liquido}
                 ),
                 0
                 )`,
@@ -487,7 +491,7 @@ router.get("/dashboard/inadimplencia-fornecedores", async (req, res) => {
             .where(tenantWhere(lancamentosTable, empresaId, whereClause))
             .groupBy(parceirosTable.id, parceirosTable.nome)
             .orderBy(desc(sql`coalesce(sum(
-            ${lancamentosTable.valor}
+            ${lancamentosTable.valor_liquido}
             ),
             0
             )`))
@@ -521,7 +525,7 @@ router.get("/dashboard/alertas-atraso", async (req, res) => {
                 id: lancamentosTable.id,
                 descricao: lancamentosTable.descricao,
                 vencimento: lancamentosTable.vencimento,
-                valor: lancamentosTable.valor,
+                valor: lancamentosTable.valor_liquido,
                 nome: parceirosTable.nome,
                 riscos: lancamentosTable.riscos,
             })
@@ -574,7 +578,7 @@ router.get("/dashboard/nivel-risco", async (req, res) => {
                 )`,
                 quantidade: sql<number>`count(*)`,
                 total: sql<number>`coalesce(sum(
-                ${lancamentosTable.valor}
+                ${lancamentosTable.valor_liquido}
                 ),
                 0
                 )`,
@@ -600,7 +604,7 @@ router.get("/dashboard/nivel-risco", async (req, res) => {
             ${lancamentosTable.riscos}
             )`)
             .orderBy(desc(sql`coalesce(sum(
-            ${lancamentosTable.valor}
+            ${lancamentosTable.valor_liquido}
             ),
             0
             )`));
@@ -630,7 +634,7 @@ router.get("/dashboard/fluxo-caixa-mensal", async (req, res) => {
                 mes: mesExpr,
                 tipo: lancamentosTable.tipo,
                 total: sql<number>`coalesce(sum(
-                ${lancamentosTable.valor}
+                ${lancamentosTable.valor_liquido}
                 ),
                 0
                 )`,

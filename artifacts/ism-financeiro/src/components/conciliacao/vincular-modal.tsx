@@ -26,6 +26,7 @@ import {EditarLancamentoConciliacaoModal} from "@/components/conciliacao/editar-
 import {StatusBadge} from "@/components/shared/status-badge";
 import {invalidateRelated} from "@/App";
 import {LancamentoModal, type LancamentoPrefill} from "@/components/lancamentos/lancamento-modal";
+import {valorLiquidoTitulo} from "@/lib/retencoes";
 
 export type LancamentoCompativel = {
   id: number;
@@ -33,6 +34,10 @@ export type LancamentoCompativel = {
   vencimento: string;
   descricao: string | null;
   valor: string | number;
+    /** Bruto − retenções na fonte: é o que chega no extrato (base da quitação). */
+    valor_liquido?: string | number | null;
+    /** Σ retenções na fonte (IR, PIS, COFINS, CSLL, INSS, ISS). */
+    total_retencoes?: string | number | null;
     /** Quitado antes deste vínculo. Sem isto, o Modo B calcula excedente
      *  em lançamentos que já estão pago / pago_parcial. */
     valor_quitado?: string | number | null;
@@ -161,7 +166,8 @@ function VincularFormBody({
   const lancamentosValorById = useMemo(() => {
     const m = new Map<number, string | number>();
     for (const l of lancamentos) {
-      m.set(l.id, l.valor);
+      // Base da comparação com o extrato = líquido (bruto − retenções).
+      m.set(l.id, valorLiquidoTitulo(l));
     }
     return m;
   }, [lancamentos]);
@@ -543,17 +549,22 @@ function VincularFormBody({
                                                             {l.parceiro_nome}
                                                         </p>
                                                     )}
-                                                    {/* Valor de face e restante (já comprometido noutras conciliações). */}
+                                                    {/* Valor esperado no extrato (líquido) e restante (já comprometido noutras conciliações). */}
                                                     <p className="text-sm font-bold text-primary mt-0.5">
-                                                        {dinheiro(Number(l.valor))}
+                                                        {dinheiro(valorLiquidoTitulo(l))}
                                                         {quitadoAnteriorCents > 0 && (
                                                             <span className="text-xs font-semibold text-amber-300/90">
                                                                 {" "}| Restante: {dinheiro(
-                                                                    toMoney(Math.max(0, Math.round(Math.abs(Number(l.valor)) * 100) - quitadoAnteriorCents)),
+                                                                    toMoney(Math.max(0, Math.round(Math.abs(valorLiquidoTitulo(l)) * 100) - quitadoAnteriorCents)),
                                                                 )}
                                                             </span>
                                                         )}
                                                     </p>
+                                                    {Number(l.total_retencoes ?? 0) > 0 && (
+                                                        <p className="text-[11px] text-muted-foreground tabular-nums">
+                                                            Bruto {dinheiro(Number(l.valor))} · Retenções {dinheiro(Number(l.total_retencoes))}
+                                                        </p>
+                                                    )}
                                                     {/* Quitação anterior visível: juros/multa pode superar o valor de face. */}
                                                     {quitadoAnteriorCents > 0 && (
                                                         <p className="text-xs text-amber-300/90 mt-0.5">
@@ -760,7 +771,7 @@ function VincularFormBody({
                                                 const l = lancamentos.find((x) => x.id === i.lancamento_id);
                                                 return {
                                                     value: String(i.lancamento_id),
-                                                    label: `#${i.lancamento_id} · ${l?.descricao ?? "-"} · ${dinheiro(Number(l?.valor ?? 0))}`,
+                                                    label: `#${i.lancamento_id} · ${l?.descricao ?? "-"} · ${dinheiro(l ? valorLiquidoTitulo(l) : 0)}`,
                                                 };
                                             })}
                                         />

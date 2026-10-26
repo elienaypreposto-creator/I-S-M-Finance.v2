@@ -14,7 +14,7 @@ import * as schema from "./schema";
 /** Tabelas mantidas só por SQL (fora do Drizzle). */
 const TABELAS_FORA_DO_SCHEMA = new Set(["logs_auditoria_arquivo"]);
 
-type ColunaBanco = {tabela: string; coluna: string; tipo: string; not_null: boolean};
+type ColunaBanco = {tabela: string; coluna: string; tipo: string; not_null: boolean; gerada: boolean};
 type IndiceBanco = {tabela: string; indice: string; de_constraint: boolean};
 
 /** Normaliza o tipo do Drizzle para o texto de `format_type` do Postgres. */
@@ -49,7 +49,8 @@ async function main(): Promise<void> {
     try {
         const {rows: colunas} = await client.query<ColunaBanco>(`
             SELECT c.relname AS tabela, a.attname AS coluna,
-                   format_type(a.atttypid, a.atttypmod) AS tipo, a.attnotnull AS not_null
+                   format_type(a.atttypid, a.atttypmod) AS tipo, a.attnotnull AS not_null,
+                   a.attgenerated = 's' AS gerada
             FROM pg_attribute a
                      JOIN pg_class c ON c.oid = a.attrelid
                      JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -96,6 +97,12 @@ async function main(): Promise<void> {
                 }
                 if (col.notNull !== b.not_null) {
                     erros.push(`NOT NULL divergente: ${cfg.name}.${col.name} schema=${col.notNull} banco=${b.not_null}`);
+                }
+                // Coluna gerada (GENERATED ALWAYS AS ... STORED) tem que estar
+                // declarada como gerada nos dois lados (`generatedAlwaysAs`).
+                const geradaSchema = col.generated?.type === "always";
+                if (geradaSchema !== b.gerada) {
+                    erros.push(`coluna gerada divergente: ${cfg.name}.${col.name} schema=${geradaSchema} banco=${b.gerada}`);
                 }
             }
             for (const nome of doBanco.keys()) {

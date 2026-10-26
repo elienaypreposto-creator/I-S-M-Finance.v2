@@ -1,4 +1,13 @@
 import {z} from "zod";
+import {centsToDecimalString, toCents} from "../../../utils/money";
+import {
+    CAMPOS_RETENCAO,
+    MSG_RETENCOES_ACIMA_DO_VALOR,
+    ROTULO_RETENCAO,
+    erroValorRetencao,
+    somaRetencoesCents,
+    type CampoRetencao,
+} from "../../../utils/retencoes";
 
 const nullableId = z.coerce.number().int().positive().nullable().optional();
 
@@ -116,6 +125,39 @@ export const lancamentoIdParamSchema = z.object({
     id: z.coerce.number().int().positive(),
 });
 
+/**
+ * Uma retenção na fonte: >= 0, no máximo 2 casas. Vazio/null = 0.
+ * Normaliza para string decimal com 2 casas (coluna numeric).
+ */
+function retencaoSchema(campo: CampoRetencao) {
+    return z
+        .union([z.string(), z.number(), z.null()])
+        .superRefine((v, ctx) => {
+            const erro = v == null ? null : erroValorRetencao(v);
+            if (erro) {
+                ctx.addIssue({code: z.ZodIssueCode.custom, message: `Retenção de ${ROTULO_RETENCAO[campo]} ${erro}`});
+            }
+        })
+        .transform((v) => centsToDecimalString(toCents(v)))
+        .optional();
+}
+
+export const retencoesShape = Object.fromEntries(CAMPOS_RETENCAO.map((c) => [c, retencaoSchema(c)])) as Record<
+    CampoRetencao,
+    ReturnType<typeof retencaoSchema>
+>;
+
+/** Σ retenções <= valor (bruto). Usado no create; o update valida no service com o título mesclado. */
+export function validarRetencoesAteValor(
+    body: {valor?: string} & Partial<Record<CampoRetencao, string | undefined>>,
+    ctx: z.RefinementCtx,
+) {
+    if (body.valor === undefined) return;
+    if (somaRetencoesCents(body) > toCents(body.valor)) {
+        ctx.addIssue({code: z.ZodIssueCode.custom, message: MSG_RETENCOES_ACIMA_DO_VALOR});
+    }
+}
+
 // Base schema (compartilhado entre create e update)
 
 const lancamentoBaseSchema = z.object({
@@ -152,9 +194,11 @@ const lancamentoBaseSchema = z.object({
     riscos: z.array(z.string()).optional(),
     forma_pagamento: z.enum(["PIX", "TED", "Boleto"]).nullable().optional(),
     dados_pagamento: dadosPagamentoSchema.nullable().optional(),
+    // Retenções na fonte (IR, PIS, COFINS, CSLL, INSS, ISS) - opcionais.
+    ...retencoesShape,
 });
 
-export const createLancamentoBodySchema = lancamentoBaseSchema;
+export const createLancamentoBodySchema = lancamentoBaseSchema.superRefine(validarRetencoesAteValor);
 
 export const updateLancamentoBodySchema = lancamentoBaseSchema.partial();
 

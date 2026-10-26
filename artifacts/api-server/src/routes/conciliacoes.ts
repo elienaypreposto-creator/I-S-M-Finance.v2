@@ -31,6 +31,8 @@ import {
     statusAposDesfazerVinculo,
     statusAposQuitacao,
 } from "../utils/conciliacao-vincular";
+import {MSG_RETENCOES_ACIMA_DO_VALOR, somaRetencoesCents, valorLiquidoCents} from "../utils/retencoes";
+import {retencoesShape} from "../domains/financial/lancamentos/schemas";
 import {hashLinhaExtrato} from "../utils/extrato-hash";
 import {encontrarRegraParaLinha, type RegraParaMatch} from "../utils/regras-match";
 import {hojeIsoLocal} from "../utils/date-civil";
@@ -244,6 +246,12 @@ const criarLancamentoBodySchema = z.object({
     departamento_id: z.coerce.number().int().positive().nullable().optional(),
     centro_custo_id: z.coerce.number().int().positive().nullable().optional(),
     forma_pagamento: z.enum(["PIX", "TED", "Boleto"]).nullable().optional(),
+    // Retenções na fonte: `valor` é o bruto; o LÍQUIDO é que tem que bater com a linha.
+    ...retencoesShape,
+}).superRefine((b, ctx) => {
+    if (somaRetencoesCents(b) > toCents(b.valor)) {
+        ctx.addIssue({code: z.ZodIssueCode.custom, message: MSG_RETENCOES_ACIMA_DO_VALOR});
+    }
 });
 type CriarLancamentoBody = z.infer<typeof criarLancamentoBodySchema>;
 
@@ -1419,11 +1427,19 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
 
         if (valorBusca !== null) {
             // Tolerância de 1 centavo para absorver arredondamento na digitação.
-            const valorAnd = and(
+            // Casa tanto o bruto (valor da nota) quanto o líquido (o que chega
+            // no extrato quando há retenção na fonte).
+            const valorOr = or(
+                and(
                     gte(lancamentosTable.valor, centsToDecimalString(valorBusca - 1)),
                     lte(lancamentosTable.valor, centsToDecimalString(valorBusca + 1)),
-                );
-            if (valorAnd) condicoes.push(valorAnd);
+                ),
+                and(
+                    gte(lancamentosTable.valor_liquido, centsToDecimalString(valorBusca - 1)),
+                    lte(lancamentosTable.valor_liquido, centsToDecimalString(valorBusca + 1)),
+                ),
+            );
+            if (valorOr) condicoes.push(valorOr);
         }
 
         // Incremental Modo A: não sugerir títulos já vinculados a esta linha.
@@ -1458,6 +1474,7 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
                 vencimento: lancamentosTable.vencimento,
                 descricao: lancamentosTable.descricao,
                 valor: lancamentosTable.valor,
+                valor_liquido: lancamentosTable.valor_liquido,
                 valor_quitado: lancamentosTable.valor_quitado,
                 status: lancamentosTable.status,
                 parceiro_id: lancamentosTable.parceiro_id,
@@ -1480,8 +1497,9 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
             const bModoB = idsEmUsoNoExtrato.has(b.id) ? 0 : 1;
             if (aModoB !== bModoB) return aModoB - bModoB;
 
-            const diffValorA = Math.abs(toCents(a.valor) - valorLinhaCents);
-            const diffValorB = Math.abs(toCents(b.valor) - valorLinhaCents);
+            // Líquido (bruto − retenções) é o que chega no extrato.
+            const diffValorA = Math.abs(valorLiquidoCents(a) - valorLinhaCents);
+            const diffValorB = Math.abs(valorLiquidoCents(b) - valorLinhaCents);
             if (diffValorA !== diffValorB) return diffValorA - diffValorB;
 
             const diffDataA = Math.abs(new Date(a.vencimento).getTime() - dataRefTime);
@@ -1496,10 +1514,13 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
                 // verdade em tempo real (persistirVinculo martela na hora do
                 // Salvar) - não há mais "rascunho" via ledger pra somar aqui.
                 const quitadoAcumuladoCents = toCents(l.valor_quitado);
-                const valorCents = toCents(l.valor);
+                const valorCents = valorLiquidoCents(l);
                 return {
                     ...l,
+                    // valor = bruto (nota); valor_liquido = o esperado no extrato.
                     valor: toDecimal(l.valor),
+                    valor_liquido: fromCents(valorCents),
+                    total_retencoes: fromCents(toCents(l.valor) - valorCents),
                     valor_quitado: l.valor_quitado != null ? toDecimal(l.valor_quitado) : null,
                     quitado_acumulado: fromCents(quitadoAcumuladoCents),
                     saldo_aberto_titulo: fromCents(Math.max(0, valorCents - quitadoAcumuladoCents)),
@@ -1600,6 +1621,8 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
                     lancamento_descricao: lancamentosTable.descricao,
                     lancamento_tipo: lancamentosTable.tipo,
                     lancamento_status: lancamentosTable.status,
+                    lancamento_valor: lancamentosTable.valor,
+                    lancamento_valor_liquido: lancamentosTable.valor_liquido,
                     // Vencimento do lançamento vinculado - usado pelo card para exibir/editar
                     // a data do residual parcial (RN-G3).
                     lancamento_vencimento: lancamentosTable.vencimento,
@@ -1639,6 +1662,7 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
                     lancamento_origem_id: lancamentosTable.lancamento_origem_id,
                     descricao: lancamentosTable.descricao,
                     valor: lancamentosTable.valor,
+                    valor_liquido: lancamentosTable.valor_liquido,
                     status: lancamentosTable.status,
                     vencimento: lancamentosTable.vencimento,
                 })
@@ -1684,6 +1708,13 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
                     tipo: v.lancamento_tipo,
                     status: v.lancamento_status,
                     is_residuo_parcial: Boolean(v.is_residuo_parcial),
+                    /** Bruto do título e líquido (bruto − retenções na fonte). */
+                    valor_titulo: toDecimal(v.lancamento_valor),
+                    valor_liquido_titulo: fromCents(valorLiquidoCents({valor: v.lancamento_valor, valor_liquido: v.lancamento_valor_liquido})),
+                    total_retencoes: fromCents(
+                        toCents(v.lancamento_valor) -
+                            valorLiquidoCents({valor: v.lancamento_valor, valor_liquido: v.lancamento_valor_liquido}),
+                    ),
                     valor_vinculado: toDecimal(v.valor_vinculado),
                     desconto: toDecimal(v.desconto),
                     juros_multa: toDecimal(v.juros_multa),
@@ -1694,7 +1725,7 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
                         const lista = residuosPorOrigem.get(v.lancamento_id) ?? [];
                         const alvoCents = v.residuo_valor_pendente != null ? toCents(v.residuo_valor_pendente) : null;
                         const jaGerado = alvoCents != null
-                            ? lista.some((x) => toCents(x.valor) === alvoCents)
+                            ? lista.some((x) => valorLiquidoCents(x) === alvoCents)
                             : lista.length === 1;
                         if (jaGerado) return null;
                         return v.eh_origem_residuo
@@ -1706,7 +1737,7 @@ router.get("/conciliacoes/:extrato_id", withPermission(PERM.CONCILIACAO_ACESSAR)
                         if (lista.length === 0) return null;
                         const alvoCents = v.residuo_valor_pendente != null ? toCents(v.residuo_valor_pendente) : null;
                         const r = alvoCents != null
-                            ? (lista.find((x) => toCents(x.valor) === alvoCents) ?? (lista.length === 1 ? lista[0] : undefined))
+                            ? (lista.find((x) => valorLiquidoCents(x) === alvoCents) ?? (lista.length === 1 ? lista[0] : undefined))
                             : (lista.length === 1 ? lista[0] : undefined);
                         if (!r) return null;
                         return {
@@ -1984,7 +2015,8 @@ async function calcularVinculo(
                 (quitadoLocalExtra[String(lancamento.id)] ?? 0);
             return {
                 lancamento_id: lancamento.id,
-                valorCents: toCents(lancamento.valor),
+                // Base da quitação = líquido (bruto − retenções na fonte).
+                valorCents: valorLiquidoCents(lancamento),
                 descontoCents: toCents(p?.desconto ?? 0),
                 jurosMultaCents: toCents(jurosMulta),
                 quitadoAnteriorCents,
@@ -2198,7 +2230,7 @@ async function persistirVinculo(
         const tipoExtratoLancamento = origem.tipo === "CR" ? "credito" : "debito";
         const novoStatus = statusAposQuitacao({
             tipoExtrato: tipoExtratoLancamento,
-            valorLancamentoCents: toCents(origem.valor),
+            valorLancamentoCents: valorLiquidoCents(origem),
             valorQuitadoAcumuladoCents: novoQuitadoCents,
             descontoAcumuladoCents: novoDescontoCents,
         });
@@ -2376,13 +2408,15 @@ router.post(
             }
 
             const valorCents = toCents(body.valor);
+            // Com retenção na fonte, o que chega no extrato é o líquido.
+            const liquidoCents = valorCents - somaRetencoesCents(body);
             const valorExtratoCents = toCents(item.valor_extrato);
-            if (valorCents !== valorExtratoCents) {
+            if (liquidoCents !== valorExtratoCents) {
                 return errorResponse(
                     res,
                     400,
                     "VALIDATION_ERROR",
-                    "O valor do lançamento deve ser igual ao valor da linha do extrato.",
+                    "O valor líquido do lançamento (valor − retenções) deve ser igual ao valor da linha do extrato.",
                 );
             }
 
@@ -2398,6 +2432,12 @@ router.post(
                         parceiro_id: body.parceiro_id ?? null,
                         descricao: body.descricao ?? linhaExtrato.descricao ?? null,
                         valor: centsToDecimalString(valorCents),
+                        retencao_ir: body.retencao_ir ?? "0",
+                        retencao_pis: body.retencao_pis ?? "0",
+                        retencao_cofins: body.retencao_cofins ?? "0",
+                        retencao_csll: body.retencao_csll ?? "0",
+                        retencao_inss: body.retencao_inss ?? "0",
+                        retencao_iss: body.retencao_iss ?? "0",
                         status: statusAberto,
                         origem: "conciliacao",
                         plano_conta_id: body.plano_conta_id ?? null,
@@ -2411,7 +2451,7 @@ router.post(
                 await tx.insert(itensConciliacaoLancamentosTable).values(withEmpresaId({
                     item_conciliacao_id: item.id,
                     lancamento_id: novoLancamento.id,
-                    valor_vinculado: centsToDecimalString(valorCents),
+                    valor_vinculado: centsToDecimalString(liquidoCents),
                     desconto: "0.00",
                     juros_multa: "0.00",
                 }, empresaId));
@@ -2420,7 +2460,7 @@ router.post(
                     .update(itensConciliacaoTable)
                     .set({
                         status: "vinculado",
-                        valor_vinculado_total: centsToDecimalString(valorCents),
+                        valor_vinculado_total: centsToDecimalString(liquidoCents),
                         valor_saldo: "0.00",
                         data_conciliacao: hojeIsoLocal(),
                         updated_at: new Date(),
@@ -2499,7 +2539,8 @@ router.patch(
             const novoJurosCents =
                 body.juros_multa !== undefined ? toCents(body.juros_multa) : jurosAnteriorCents;
 
-            const valorTituloCents = toCents(lancamento.valor);
+            // Teto do desconto = líquido (as retenções já saíram do bruto).
+            const valorTituloCents = valorLiquidoCents(lancamento);
             if (novoDescontoCents > valorTituloCents) {
                 return errorResponse(
                     res,
@@ -2669,6 +2710,7 @@ async function persistirFinalizacao(tx: any, empresaId: number, conciliacao: { i
                         data_compensacao: extratoLinhasTable.data_compensacao,
                         tipo: lancamentosTable.tipo,
                         valor: lancamentosTable.valor,
+                        valor_liquido: lancamentosTable.valor_liquido,
                         valor_quitado: lancamentosTable.valor_quitado,
                         juros: lancamentosTable.juros,
                         desconto: lancamentosTable.desconto,
@@ -2711,6 +2753,7 @@ async function persistirFinalizacao(tx: any, empresaId: number, conciliacao: { i
                 type AggQuitacao = {
                     tipo: string;
                     valor: unknown;
+                    valor_liquido: unknown;
                     valor_quitado_atual: unknown;
                     juros_atual: unknown;
                     desconto_atual: unknown;
@@ -2732,6 +2775,7 @@ async function persistirFinalizacao(tx: any, empresaId: number, conciliacao: { i
                         porLancamento.set(row.lancamento_id, {
                             tipo: row.tipo,
                             valor: row.valor,
+                            valor_liquido: row.valor_liquido,
                             valor_quitado_atual: row.valor_quitado,
                             juros_atual: row.juros,
                             desconto_atual: row.desconto,
@@ -2857,7 +2901,7 @@ async function persistirFinalizacao(tx: any, empresaId: number, conciliacao: { i
                     const tipoExtrato = agg.tipo === "CR" ? "credito" : "debito";
                     const novoStatus = statusAposQuitacao({
                         tipoExtrato,
-                        valorLancamentoCents: toCents(agg.valor),
+                        valorLancamentoCents: valorLiquidoCents(agg),
                         valorQuitadoAcumuladoCents: quitadoCents,
                         descontoAcumuladoCents: descontoCents,
                     });
@@ -3283,7 +3327,7 @@ router.delete(
                         const novoStatus = statusAposDesfazerVinculo({
                             statusAtual: lancamento.status,
                             tipoExtrato: lancamento.tipo === "CR" ? "credito" : "debito",
-                            valorLancamentoCents: toCents(lancamento.valor),
+                            valorLancamentoCents: valorLiquidoCents(lancamento),
                             valorQuitadoAcumuladoCents: quitadoNovo,
                             descontoAcumuladoCents: descontoNovo,
                             vencimento: lancamento.vencimento,
@@ -3468,7 +3512,7 @@ async function persistirDesfazer(tx: any, empresaId: number, ctx: DesfazerCtx, p
         const novoStatus = statusAposDesfazerVinculo({
             statusAtual: lanc.status,
             tipoExtrato: lanc.tipo === "CR" ? "credito" : "debito",
-            valorLancamentoCents: toCents(lanc.valor),
+            valorLancamentoCents: valorLiquidoCents(lanc),
             valorQuitadoAcumuladoCents: quitadoNovo,
             descontoAcumuladoCents: descontoNovo,
             vencimento: lanc.vencimento,

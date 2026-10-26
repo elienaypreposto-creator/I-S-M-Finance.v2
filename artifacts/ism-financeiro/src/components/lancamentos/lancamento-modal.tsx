@@ -20,6 +20,7 @@ import {format as formatBtn, parseISO} from "date-fns";
 import {ptBR} from "date-fns/locale";
 import {cn} from "@/lib/utils";
 import {TIPOS_DOCUMENTO_LANCAMENTO} from "@/lib/lancamento-documento";
+import {CAMPOS_RETENCAO, ROTULO_RETENCAO} from "@/lib/retencoes";
 import {SelectCampo} from "@/components/ui/select-campo";
 import {fetchApiData} from "@/lib/api-config";
 import {
@@ -63,6 +64,7 @@ import {
     CreditCard,
     Trash2,
     AlertTriangle,
+    ChevronDown,
 } from "lucide-react";
 import {NovoParceiroModal, type ParceiroRow} from "@/pages/cadastros/parceiros";
 import {ParceiroCombobox} from "@/components/shared/parceiro-combobox";
@@ -505,6 +507,22 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
         0
     );
 
+    // Retenções na fonte: o valor acima é o bruto; o líquido (bruto − retenções)
+    // é o que entra/sai do banco e o que a conciliação compara com o extrato.
+    const retencoesBr = useWatch({control, name: "retencoesBr"});
+    const totalRetencoesCents = CAMPOS_RETENCAO.reduce(
+        (acc, c) => acc + Math.round(parseValorBrToNumber(retencoesBr?.[c]) * 100),
+        0,
+    );
+    const valorLiquidoCents = Math.round(parseValorBrToNumber(valorBr) * 100) - totalRetencoesCents;
+    const temRetencao = totalRetencoesCents > 0;
+    // Recolhida por padrão; abre sozinha quando alguma retenção > 0 (ex.: ao
+    // abrir para edição um título que já tem retenção).
+    const [retencoesAbertas, setRetencoesAbertas] = useState(false);
+    useEffect(() => {
+        if (temRetencao) setRetencoesAbertas(true);
+    }, [temRetencao]);
+
     const {fields: pagamentosFields, append: appendPagamento, remove: removePagamento} = useFieldArray({
         control,
         name: "pagamentos",
@@ -708,6 +726,8 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
         minimumFractionDigits: 2,
         maximumFractionDigits: 2
     });
+    const reaisFmt = (cents: number) =>
+        (cents / 100).toLocaleString("pt-BR", {style: "currency", currency: "BRL"});
 
     return (
         // Clique fora não fecha (evita perder o que foi digitado): padrão do Modal.
@@ -1021,6 +1041,71 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                             </p>
                                         </div>
                                     )}
+
+                                    {/* Retenções na fonte (IR, PIS, COFINS, CSLL, INSS, ISS): o tomador
+                                        retém e paga o líquido. Recolhida por padrão. */}
+                                    <div className="rounded-[0.7em] border border-white/10 bg-white/[0.02]">
+                                        <button
+                                            type="button"
+                                            aria-expanded={retencoesAbertas}
+                                            aria-controls="lancamento-retencoes"
+                                            onClick={() => setRetencoesAbertas((v) => !v)}
+                                            className={cn(
+                                                "w-full flex items-center justify-between gap-[0.5em] px-[0.95em] py-[0.7em] rounded-[0.7em] text-left hover:bg-white/[0.03] transition-colors",
+                                                focusRingCls,
+                                            )}>
+                                            <span className="text-[0.75em] font-bold text-muted-foreground uppercase tracking-[0.06em]">
+                                                Retenções na fonte
+                                            </span>
+                                            <span className="flex items-center gap-[0.5em] text-[0.8em] text-muted-foreground tabular-nums">
+                                                {temRetencao && <span>− {reaisFmt(totalRetencoesCents)}</span>}
+                                                <ChevronDown aria-hidden="true"
+                                                             className={cn("w-[1.1em] h-[1.1em] transition-transform motion-reduce:transition-none", retencoesAbertas && "rotate-180")}/>
+                                            </span>
+                                        </button>
+                                        {retencoesAbertas && (
+                                            <div id="lancamento-retencoes" className="px-[0.95em] pb-[0.9em] space-y-[0.8em]">
+                                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-[0.6em]">
+                                                    {CAMPOS_RETENCAO.map((campo) => {
+                                                        const erro = errors.retencoesBr?.[campo]?.message;
+                                                        return (
+                                                            <div key={campo} className="min-w-0">
+                                                                <label htmlFor={`lancamento-${campo}`} className={labelCls}>
+                                                                    {ROTULO_RETENCAO[campo]} (R$)
+                                                                </label>
+                                                                <Controller name={`retencoesBr.${campo}`} control={control} render={({field}) => (
+                                                                    <input
+                                                                        id={`lancamento-${campo}`}
+                                                                        type="text"
+                                                                        inputMode="numeric"
+                                                                        autoComplete="off"
+                                                                        value={field.value ?? ""}
+                                                                        onChange={(e) => field.onChange(formatValorBrInput(e.target.value))}
+                                                                        onBlur={field.onBlur}
+                                                                        name={field.name}
+                                                                        ref={field.ref}
+                                                                        aria-invalid={!!erro}
+                                                                        className={cn(inputCls, "tabular-nums")}
+                                                                        placeholder="0,00"
+                                                                    />
+                                                                )}/>
+                                                                {erro && <p className={errorCls}>{erro}</p>}
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                                <p className="flex items-center justify-between gap-[0.5em] text-[0.85em] text-muted-foreground border-t border-white/[0.06] pt-[0.6em]">
+                                                    <span>Valor líquido</span>
+                                                    <span className={cn("font-black tabular-nums", valorLiquidoCents < 0 ? "text-destructive" : "text-primary")}>
+                                                        {reaisFmt(valorLiquidoCents)}
+                                                    </span>
+                                                </p>
+                                                {errors.retencoesBr?.message && (
+                                                    <p role="alert" className={errorCls}>{errors.retencoesBr.message}</p>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
 
                                     <div>
                                         <label className={labelCls} htmlFor="lancamento-departamento">
