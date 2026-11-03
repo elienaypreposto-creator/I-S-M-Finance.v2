@@ -78,6 +78,10 @@ type VinculacaoDetalhe = {
     tipo: string;
     status: string;
     is_residuo_parcial?: boolean;
+    /** Bruto do título, líquido (bruto − retenções) e Σ retenções na fonte. */
+    valor_titulo?: string | number;
+    valor_liquido_titulo?: string | number;
+    total_retencoes?: string | number;
     valor_vinculado: string | number;
     desconto: string | number;
     acrescimo?: string | number;
@@ -427,6 +431,12 @@ function CardLancamento({
                     descricao:
                         original.descricao ?? null,
                     valor: original.valor,
+                    retencao_ir: original.retencao_ir ?? 0,
+                    retencao_pis: original.retencao_pis ?? 0,
+                    retencao_cofins: original.retencao_cofins ?? 0,
+                    retencao_csll: original.retencao_csll ?? 0,
+                    retencao_inss: original.retencao_inss ?? 0,
+                    retencao_iss: original.retencao_iss ?? 0,
                     plano_conta_id:
                         original.plano_conta_id ?? null,
                     departamento_id:
@@ -786,6 +796,14 @@ function CardLancamento({
                     )}
                 </span>
             </div>
+
+            {/* Título com retenção na fonte: o extrato traz o líquido. */}
+            {Number(v.total_retencoes ?? 0) > 0 && (
+                <p className="text-[10px] text-muted-foreground tabular-nums mt-0.5">
+                    Bruto {dinheiro(Number(v.valor_titulo ?? 0))} · Retenções{" "}
+                    {dinheiro(Number(v.total_retencoes))}
+                </p>
+            )}
 
             {v.residuo_pendente && (
                 <div

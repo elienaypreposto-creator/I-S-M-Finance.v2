@@ -22,6 +22,8 @@ import {
 import {montarWhereLancamentos} from "./lancamentos.filtros";
 import {statusAbertoPorVencimento} from "../../../utils/conciliacao-vincular";
 import {hojeIsoLocal} from "../../../utils/date-civil";
+import {toCents} from "../../../utils/money";
+import {CAMPOS_RETENCAO, MSG_RETENCOES_ACIMA_DO_VALOR, somaRetencoesCents} from "../../../utils/retencoes";
 
 function formatPlanoContaPath(categoria: string | null, subcategoria: string | null): string | null {
     const pai = categoria?.trim() ?? "";
@@ -54,8 +56,25 @@ const resolveDepartamentoCentroByParceiro = async (empresaId: number, parceiroId
     };
 };
 
-/** Valor líquido exibido na lista: max(valor - desconto + juros, 0). */
-const valorLiquidoSql = sql`greatest(${lancamentosTable.valor} - coalesce(${lancamentosTable.desconto}, 0) + coalesce(${lancamentosTable.juros}, 0), 0)`;
+/**
+ * Total "a receber / a pagar" do resumo: o que de fato entra/sai do banco,
+ * ou seja max(valor_liquido - desconto + juros, 0). valor_liquido já desconta
+ * as retenções na fonte (a coluna de valor da lista segue no bruto).
+ */
+const valorLiquidoSql = sql`greatest(${lancamentosTable.valor_liquido} - coalesce(${lancamentosTable.desconto}, 0) + coalesce(${lancamentosTable.juros}, 0), 0)`;
+
+/** Retenções + líquido como número (borda HTTP). */
+function retencoesParaHttp(item: Partial<Record<(typeof CAMPOS_RETENCAO)[number] | "valor_liquido", unknown>>) {
+    return {
+        retencao_ir: Number(item.retencao_ir ?? 0),
+        retencao_pis: Number(item.retencao_pis ?? 0),
+        retencao_cofins: Number(item.retencao_cofins ?? 0),
+        retencao_csll: Number(item.retencao_csll ?? 0),
+        retencao_inss: Number(item.retencao_inss ?? 0),
+        retencao_iss: Number(item.retencao_iss ?? 0),
+        valor_liquido: Number(item.valor_liquido ?? 0),
+    };
+}
 
 async function buscarItens(where: SQL, limit: number, offset: number) {
     const items = await db
@@ -75,6 +94,13 @@ async function buscarItens(where: SQL, limit: number, offset: number) {
             valor: lancamentosTable.valor,
             desconto: lancamentosTable.desconto,
             juros: lancamentosTable.juros,
+            retencao_ir: lancamentosTable.retencao_ir,
+            retencao_pis: lancamentosTable.retencao_pis,
+            retencao_cofins: lancamentosTable.retencao_cofins,
+            retencao_csll: lancamentosTable.retencao_csll,
+            retencao_inss: lancamentosTable.retencao_inss,
+            retencao_iss: lancamentosTable.retencao_iss,
+            valor_liquido: lancamentosTable.valor_liquido,
             status: lancamentosTable.status,
             plano_conta_id: lancamentosTable.plano_conta_id,
             plano_conta_categoria: planoContasTable.categoria,
@@ -106,6 +132,7 @@ async function buscarItens(where: SQL, limit: number, offset: number) {
         const juros = Number(item.juros ?? 0);
         return {
             ...item,
+            ...retencoesParaHttp(item),
             plano_conta_nome: formatPlanoContaPath(item.plano_conta_categoria, item.plano_conta_subcategoria),
             valor: Math.max(valorBruto - desconto + juros, 0),
             valor_bruto: valorBruto,
@@ -196,6 +223,12 @@ export const lancamentosService = {
                         valor: payload.valor,
                         desconto: payload.desconto ?? "0",
                         juros: payload.juros ?? "0",
+                        retencao_ir: payload.retencao_ir ?? "0",
+                        retencao_pis: payload.retencao_pis ?? "0",
+                        retencao_cofins: payload.retencao_cofins ?? "0",
+                        retencao_csll: payload.retencao_csll ?? "0",
+                        retencao_inss: payload.retencao_inss ?? "0",
+                        retencao_iss: payload.retencao_iss ?? "0",
                         status:
                             payload.status === "pago" ||
                             payload.status === "recebido" ||
@@ -233,6 +266,7 @@ export const lancamentosService = {
         return {
             ...item,
             valor: Number(item.valor ?? 0),
+            ...retencoesParaHttp(item),
             riscos: Array.isArray(item.riscos) ? item.riscos : [],
         };
     },
@@ -248,6 +282,34 @@ export const lancamentosService = {
         const autoFill = await resolveDepartamentoCentroByParceiro(empresaId, payload.parceiro_id);
         const departamentoFinal = payload.departamento_id ?? autoFill.departamento_id;
         const centroCustoFinal = payload.centro_custo_id ?? autoFill.centro_custo_id;
+
+        // Σ retenções <= valor, com o título mesclado (o update é parcial).
+        if (payload.valor !== undefined || CAMPOS_RETENCAO.some((c) => payload[c] !== undefined)) {
+            const [atual] = await db
+                .select({
+                    valor: lancamentosTable.valor,
+                    retencao_ir: lancamentosTable.retencao_ir,
+                    retencao_pis: lancamentosTable.retencao_pis,
+                    retencao_cofins: lancamentosTable.retencao_cofins,
+                    retencao_csll: lancamentosTable.retencao_csll,
+                    retencao_inss: lancamentosTable.retencao_inss,
+                    retencao_iss: lancamentosTable.retencao_iss,
+                })
+                .from(lancamentosTable)
+                .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.id, id)))
+                .limit(1);
+            if (!atual) {
+                throw new AppError(404, "NOT_FOUND", "Lançamento não encontrado.");
+            }
+            const mesclado = {...atual};
+            if (payload.valor !== undefined) mesclado.valor = payload.valor;
+            for (const c of CAMPOS_RETENCAO) {
+                if (payload[c] !== undefined) mesclado[c] = payload[c];
+            }
+            if (somaRetencoesCents(mesclado) > toCents(mesclado.valor)) {
+                throw new AppError(400, "VALIDATION_ERROR", MSG_RETENCOES_ACIMA_DO_VALOR);
+            }
+        }
 
         const {empresa_id: _ignored, ...safePayload} = payload as UpdateLancamentoBody & { empresa_id?: unknown };
         const updateData = {

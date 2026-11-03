@@ -193,7 +193,7 @@ function caso(nome, opcoes, fn) {
 }
 
 describe(`Fluxo conciliação → lançamentos (run ${RUN})`, {concurrency: false}, () => {
-    const D = {d1: diaIso(-20), d2: diaIso(-18), d3: diaIso(-15), d4: diaIso(-12), d5: diaIso(-10), d6: diaIso(-8)};
+    const D = {d1: diaIso(-20), d2: diaIso(-18), d3: diaIso(-15), d4: diaIso(-12), d5: diaIso(-10), d6: diaIso(-8), d7: diaIso(-6)};
     const s = {};
 
     before(async () => {
@@ -202,6 +202,14 @@ describe(`Fluxo conciliação → lançamentos (run ${RUN})`, {concurrency: fals
         s.t1 = await criarTitulo({valor: "150.00", vencimento: D.d1, descricao: "fornecedor 150"});
         s.t3 = await criarTitulo({valor: "1000.00", vencimento: D.d3, descricao: "fornecedor 1000"});
         s.t6 = await criarTitulo({valor: "100.00", vencimento: D.d6, descricao: "fornecedor 100 com desconto"});
+        // NF de 1000 para órgão público com 100 retidos na fonte: o extrato traz 900.
+        s.t7 = await criarTitulo({
+            tipo: "CR",
+            valor: "1000.00",
+            vencimento: D.d7,
+            descricao: "NF 1000 com retenções",
+            extra: {retencao_ir: "15.00", retencao_pis: "6.50", retencao_cofins: "30.00", retencao_csll: "10.00", retencao_iss: "38.50"},
+        });
         s.imp = await importar(s.conta, [
             {fitid: "L1", data: D.d1, valor: -150, memo: "PAG FORNECEDOR 150"},
             {fitid: "L2", data: D.d2, valor: 980, memo: "RECEB CLIENTE 980"},
@@ -209,6 +217,7 @@ describe(`Fluxo conciliação → lançamentos (run ${RUN})`, {concurrency: fals
             {fitid: "L4", data: D.d4, valor: -200, memo: "PAG PARCIAL 200"},
             {fitid: "L5", data: D.d5, valor: -45.9, memo: "TARIFA"},
             {fitid: "L6", data: D.d6, valor: -90, memo: "PAG FORNECEDOR 100 COM DESCONTO"},
+            {fitid: "L7", data: D.d7, valor: 900, memo: "RECEB ORGAO PUBLICO LIQUIDO"},
         ]);
     });
 
@@ -227,6 +236,64 @@ describe(`Fluxo conciliação → lançamentos (run ${RUN})`, {concurrency: fals
         assert.equal(num(t.valor_quitado), 150);
         assert.equal(t.conta_id, s.conta);
         assert.equal(String(t.data_quitacao).slice(0, 10), D.d1);
+    });
+
+    caso("título com retenção na fonte é quitado pelo líquido, sem desconto", async () => {
+        const l7 = s.imp.linhas.L7;
+        const antes = await titulo(s.t7.id);
+        assert.equal(num(antes.valor), 1000);
+        assert.equal(num(antes.valor_liquido), 900);
+        assert.equal(num(antes.retencao_iss), 38.5);
+
+        const busca = await api("GET", `/conciliacoes/buscar-lancamentos?linha_id=${l7}&dias_janela=14`, {
+            token: ctx.token,
+        });
+        assert.equal(busca.status, 200);
+        const cand = busca.data.find((c) => c.id === s.t7.id);
+        assert.ok(cand, "título com retenção não apareceu como candidato");
+        assert.equal(num(cand.valor_liquido), 900);
+        assert.equal(num(cand.total_retencoes), 100);
+        assert.equal(num(cand.saldo_aberto_titulo), 900);
+
+        const r = await salvar(s.imp.extratoId, [vincular(l7, s.t7.id)]);
+        assert.equal(r.status, 200, JSON.stringify(r.json));
+        const t = await titulo(s.t7.id);
+        assert.equal(t.status, "recebido");
+        assert.equal(num(t.desconto), 0);
+        assert.equal(num(t.valor_quitado), 900);
+
+        const det = await extrato(s.imp.extratoId);
+        const v = det.linhas.find((x) => x.linha_id === l7).vinculacoes[0];
+        assert.equal(num(v.valor_vinculado), 900);
+        assert.equal(num(v.total_retencoes), 100);
+        assert.equal(v.residuo_pendente, null);
+    });
+
+    caso("contábil/fiscal exporta bruto, retenções e valor pago do título com retenção", async () => {
+        const r = await api("GET", `/relatorios/contabil-fiscal?data_inicio=${D.d7}&data_fim=${D.d7}&tipo=CR`, {
+            token: ctx.token,
+        });
+        assert.equal(r.status, 200, JSON.stringify(r.json));
+        const linha = r.data.find((i) => num(i.valor) === 1000 && num(i.retencao_iss) === 38.5);
+        assert.ok(linha, "título com retenção não apareceu no contábil/fiscal");
+        assert.equal(num(linha.valor_pago), 900);
+        assert.equal(num(linha.retencao_ir), 15);
+        assert.equal(num(linha.desconto), 0);
+    });
+
+    caso("retenções: soma acima do valor é rejeitada e título quitado não muda retenção", async () => {
+        const r = await api("POST", "/lancamentos", {
+            token: ctx.token,
+            body: {tipo: "CR", valor: "100.00", vencimento: D.d7, descricao: `E2E-${RUN} retenção demais`, retencao_ir: "60", retencao_iss: "40.01"},
+        });
+        assert.equal(r.status, 400, JSON.stringify(r.json));
+        const neg = await api("POST", "/lancamentos", {
+            token: ctx.token,
+            body: {tipo: "CR", valor: "100.00", vencimento: D.d7, descricao: `E2E-${RUN} retenção negativa`, retencao_ir: "-1"},
+        });
+        assert.equal(neg.status, 400, JSON.stringify(neg.json));
+        const put = await api("PUT", `/lancamentos/${s.t7.id}`, {token: ctx.token, body: {retencao_ir: "20.00"}});
+        assert.equal(put.status, 409, JSON.stringify(put.json));
     });
 
     caso("título criado pela linha do extrato já nasce recebido e aparece em Lançamentos", async () => {

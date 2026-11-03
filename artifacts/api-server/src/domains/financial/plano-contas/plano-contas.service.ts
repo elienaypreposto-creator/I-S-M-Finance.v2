@@ -24,6 +24,7 @@ export const planoContasService = {
                         categoria: payload.categoria,
                         subcategoria: payload.subcategoria ?? null,
                         codigo: payload.codigo ?? null,
+                        grupo_dre: payload.grupo_dre ?? null,
                         ativo: payload.ativo ?? true,
                     },
                     empresaId,
@@ -35,23 +36,44 @@ export const planoContasService = {
     },
 
     async update(empresaId: number, id: number, payload: UpdatePlanoContaBody) {
-        const [[{lancamentos}], [{metas}]] = await Promise.all([
-            db
-                .select({lancamentos: count()})
-                .from(lancamentosTable)
-                .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.plano_conta_id, id))),
-            db
-                .select({metas: count()})
-                .from(metasTable)
-                .where(tenantWhere(metasTable, empresaId, eq(metasTable.plano_conta_id, id))),
-        ]);
+        const [atual] = await db
+            .select()
+            .from(planoContasTable)
+            .where(tenantWhere(planoContasTable, empresaId, eq(planoContasTable.id, id)))
+            .limit(1);
+        if (!atual) {
+            throw new AppError(404, "NOT_FOUND", "Plano de contas não encontrado.");
+        }
 
-        if (Number(lancamentos) > 0 || Number(metas) > 0) {
-            throw new AppError(
-                409,
-                "CONFLICT",
-                "Não é possível editar este cadastro, pois já existem lançamentos ou conciliações registrados utilizando-o.",
-            );
+        // A linha da DRE é só classificação de relatório: pode mudar com a conta em uso.
+        // Tipo, categoria, subcategoria, código e ativo continuam travados.
+        const normalizar = (v: unknown) => (typeof v === "string" ? v.trim().replace(/\s+/g, " ") : v ?? null);
+        const mudaCadastro = (Object.keys(payload) as (keyof UpdatePlanoContaBody)[]).some(
+            (campo) =>
+                campo !== "grupo_dre" &&
+                payload[campo] !== undefined &&
+                normalizar(payload[campo]) !== normalizar(atual[campo]),
+        );
+
+        if (mudaCadastro) {
+            const [[{lancamentos}], [{metas}]] = await Promise.all([
+                db
+                    .select({lancamentos: count()})
+                    .from(lancamentosTable)
+                    .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.plano_conta_id, id))),
+                db
+                    .select({metas: count()})
+                    .from(metasTable)
+                    .where(tenantWhere(metasTable, empresaId, eq(metasTable.plano_conta_id, id))),
+            ]);
+
+            if (Number(lancamentos) > 0 || Number(metas) > 0) {
+                throw new AppError(
+                    409,
+                    "CONFLICT",
+                    "Não é possível editar este cadastro, pois já existem lançamentos ou conciliações registrados utilizando-o. Só a linha da DRE pode ser alterada.",
+                );
+            }
         }
 
         const [item] = await db

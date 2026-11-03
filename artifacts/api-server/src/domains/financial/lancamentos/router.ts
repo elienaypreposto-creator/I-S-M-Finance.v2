@@ -8,6 +8,8 @@ import {PERM} from "../../../constants/permissoes";
 import {hasPermission} from "../../../middlewares/withPermission";
 import {lancamentosService} from "./lancamentos.service";
 import {requireTenant} from "../../../lib/tenant-scope";
+import {toCents} from "../../../utils/money";
+import {retencoesAlteradas} from "../../../utils/retencoes";
 import {
     type CreateLancamentoBody,
     type UpdateLancamentoBody,
@@ -88,6 +90,25 @@ router.put(
                         `Acesso negado: permissão "${PERM.LANCAMENTOS_ALTERAR_VALOR}" necessária para alterar o valor.`,
                     );
                 }
+            }
+        }
+
+        // Retenções mudam o líquido (o que entra/sai do banco): mesma permissão
+        // de alterar valor e bloqueio se o título já tem quitação registrada.
+        if (retencoesAlteradas(atual, body)) {
+            if (!req.user?.superadmin && !hasPermission(req.user?.permissions, PERM.LANCAMENTOS_ALTERAR_VALOR)) {
+                throw new AppError(
+                    403,
+                    "FORBIDDEN",
+                    `Acesso negado: permissão "${PERM.LANCAMENTOS_ALTERAR_VALOR}" necessária para alterar as retenções.`,
+                );
+            }
+            if (toCents(atual.valor_quitado) > 0) {
+                throw new AppError(
+                    409,
+                    "CONFLICT",
+                    "Não é possível alterar as retenções de um lançamento que já tem quitação registrada. Desfaça a conciliação/baixa antes.",
+                );
             }
         }
 

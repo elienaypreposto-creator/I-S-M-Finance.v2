@@ -38,8 +38,21 @@ type ContabilItem = {
   data_pgto: string | null;
   descricao: string | null;
   nome_parceiro: string | null;
-  /** valor vem como number (já convertido pelo backend via toNumber) */
+  /** Valores vêm como number (já convertidos pelo backend via toNumber). */
+  /** Valor do título. */
   valor: number;
+  desconto: number;
+  juros: number;
+  multa: number;
+  /** Retenções na fonte (o tomador retém e paga o líquido). */
+  retencao_ir: number;
+  retencao_pis: number;
+  retencao_cofins: number;
+  retencao_csll: number;
+  retencao_inss: number;
+  retencao_iss: number;
+  /** O que de fato entrou/saiu do banco (já com juros, multa, desconto e retenções). */
+  valor_pago: number;
   categoria: string;
   tipo: string; // "CR" | "CP"
 };
@@ -68,6 +81,10 @@ function lerTipo(valor: string): TipoFiltro {
 function toCents(v: number): number {
   return Math.round(v * 100);
 }
+
+const totalRetencoesCents = (l: ContabilItem) =>
+  toCents(l.retencao_ir) + toCents(l.retencao_pis) + toCents(l.retencao_cofins) +
+  toCents(l.retencao_csll) + toCents(l.retencao_inss) + toCents(l.retencao_iss);
 
 // Último dia do mês (espelha a lógica do backend)
 function lastDayOfMonth(ano: number, mes: number): string {
@@ -123,13 +140,13 @@ export default function ContabilFiscal() {
       fetchApiData<ContabilItem[]>(`/relatorios/contabil-fiscal?${params.toString()}`),
   });
 
-  // ── Totais via toCents para precisão ────────────────────────────────────────
+  // ── Totais via toCents para precisão (pelo valor pago, que bate com o extrato) ──
   const { totalEntradas, totalSaidas } = useMemo(() => {
     let e = 0;
     let s = 0;
     for (const l of todos) {
-      if (l.tipo === "CR") e += toCents(l.valor);
-      else s += toCents(l.valor);
+      if (l.tipo === "CR") e += toCents(l.valor_pago);
+      else s += toCents(l.valor_pago);
     }
     return { totalEntradas: e, totalSaidas: s };
   }, [todos]);
@@ -157,7 +174,17 @@ export default function ContabilFiscal() {
     { header: "Parceiro",     key: "nome_parceiro",  width: 30 },
     { header: "Categoria",    key: "categoria",      width: 28 },
     { header: "Conta",        key: "conta_bancaria", width: 24 },
-    { header: "Valor (R$)",   key: "valor",          width: 18, formatter: (v: unknown) => fmtBRL(v) },
+    { header: "Valor do título (R$)", key: "valor",      width: 18, formatter: (v: unknown) => fmtBRL(v) },
+    { header: "IR retido (R$)",       key: "retencao_ir",     width: 14, formatter: (v: unknown) => fmtBRL(v) },
+    { header: "PIS retido (R$)",      key: "retencao_pis",    width: 14, formatter: (v: unknown) => fmtBRL(v) },
+    { header: "COFINS retido (R$)",   key: "retencao_cofins", width: 14, formatter: (v: unknown) => fmtBRL(v) },
+    { header: "CSLL retida (R$)",     key: "retencao_csll",   width: 14, formatter: (v: unknown) => fmtBRL(v) },
+    { header: "INSS retido (R$)",     key: "retencao_inss",   width: 14, formatter: (v: unknown) => fmtBRL(v) },
+    { header: "ISS retido (R$)",      key: "retencao_iss",    width: 14, formatter: (v: unknown) => fmtBRL(v) },
+    { header: "Desconto (R$)",        key: "desconto",   width: 14, formatter: (v: unknown) => fmtBRL(v) },
+    { header: "Juros (R$)",           key: "juros",      width: 14, formatter: (v: unknown) => fmtBRL(v) },
+    { header: "Multa (R$)",           key: "multa",      width: 14, formatter: (v: unknown) => fmtBRL(v) },
+    { header: "Valor pago (R$)",      key: "valor_pago", width: 18, formatter: (v: unknown) => fmtBRL(v) },
   ] as const;
 
   const exportFilename = `Contabil_Fiscal_${MESES_LONGOS[mesFiltro - 1]}_${anoFiltro}`;
@@ -379,8 +406,20 @@ export default function ContabilFiscal() {
                           <th className="px-4 py-3 text-left font-medium text-muted-foreground whitespace-nowrap text-xs">
                             Parceiro
                           </th>
-                          <th className="px-4 py-3 text-right font-medium text-muted-foreground text-xs">
-                            Valor
+                          <th className="px-4 py-3 text-right font-medium text-muted-foreground whitespace-nowrap text-xs">
+                            Valor do título
+                          </th>
+                          <th className="px-4 py-3 text-right font-medium text-muted-foreground whitespace-nowrap text-xs">
+                            Retenções
+                          </th>
+                          <th className="px-4 py-3 text-right font-medium text-muted-foreground whitespace-nowrap text-xs">
+                            Desconto
+                          </th>
+                          <th className="px-4 py-3 text-right font-medium text-muted-foreground whitespace-nowrap text-xs">
+                            Juros/Multa
+                          </th>
+                          <th className="px-4 py-3 text-right font-medium text-muted-foreground whitespace-nowrap text-xs">
+                            Valor pago
                           </th>
                           <th className="px-4 py-3 text-left font-medium text-muted-foreground text-xs">
                             Categoria
@@ -394,7 +433,7 @@ export default function ContabilFiscal() {
                               {l.conta_bancaria ?? "—"}
                             </td>
                             <td className="px-4 py-3 text-muted-foreground whitespace-nowrap text-xs">
-                              {l.data_pgto ?? "—"}
+                              {l.data_pgto ? fmtDate(l.data_pgto) : "—"}
                             </td>
                             <td className="px-4 py-3 text-white text-sm max-w-[200px] truncate">
                               {l.descricao ?? "—"}
@@ -402,13 +441,25 @@ export default function ContabilFiscal() {
                             <td className="px-4 py-3 text-white text-sm font-medium whitespace-nowrap">
                               {l.nome_parceiro ?? "—"}
                             </td>
+                            <td className="px-4 py-3 text-right text-sm text-white/80 whitespace-nowrap">
+                              {dinheiro(l.valor)}
+                            </td>
+                            <td className="px-4 py-3 text-right text-xs text-muted-foreground whitespace-nowrap">
+                              {totalRetencoesCents(l) ? dinheiro(totalRetencoesCents(l) / 100) : "—"}
+                            </td>
+                            <td className="px-4 py-3 text-right text-xs text-muted-foreground whitespace-nowrap">
+                              {l.desconto ? dinheiro(l.desconto) : "—"}
+                            </td>
+                            <td className="px-4 py-3 text-right text-xs text-muted-foreground whitespace-nowrap">
+                              {l.juros + l.multa ? dinheiro((toCents(l.juros) + toCents(l.multa)) / 100) : "—"}
+                            </td>
                             <td
-                              className={`px-4 py-3 text-right font-bold text-sm ${
+                              className={`px-4 py-3 text-right font-bold text-sm whitespace-nowrap ${
                                 l.tipo === "CR" ? "text-teal-400" : "text-destructive"
                               }`}
                             >
                               {l.tipo === "CR" ? "+" : "-"}
-                              {dinheiro(l.valor)}
+                              {dinheiro(l.valor_pago)}
                             </td>
                             <td className="px-4 py-3 text-xs text-muted-foreground">
                               {l.categoria}
@@ -419,7 +470,7 @@ export default function ContabilFiscal() {
                       <tfoot className="bg-white/5 border-t border-white/10">
                         <tr>
                           <td
-                            colSpan={4}
+                            colSpan={8}
                             className="px-4 py-3 font-bold text-white text-sm"
                           >
                             TOTAIS
