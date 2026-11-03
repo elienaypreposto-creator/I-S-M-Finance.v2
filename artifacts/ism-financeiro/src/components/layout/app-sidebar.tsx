@@ -1,4 +1,3 @@
-import {useState, useEffect} from "react";
 import {Link, useLocation} from "wouter";
 import {
     Home,
@@ -34,6 +33,13 @@ import {
     useSidebar,
 } from "@/components/ui/sidebar";
 import {Collapsible, CollapsibleContent, CollapsibleTrigger} from "@/components/ui/collapsible";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuLabel,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {cn} from "@/lib/utils";
 import {useAuth} from "@/hooks/use-auth";
 import {PERM} from "@/lib/permissoes";
@@ -82,12 +88,12 @@ type MenuSection = {
 
 export function AppSidebar() {
     const [location] = useLocation();
-    const {state} = useSidebar();
+    const {state, isMobile, setOpenMobile} = useSidebar();
     const {hasPermission, user} = useAuth();
     const canListarEmpresas = user?.superadmin === true;
     const canEditarPropriaEmpresa = !canListarEmpresas && hasPermission(PERM.ADMIN_EMPRESAS_EDITAR);
-    const isCollapsed = state === "collapsed";
-    const [expandedSections, setExpandedSections] = useState<string[]>(["Cadastros", "Relatórios", "Configurações"]);
+    // No celular o menu abre inteiro (sheet), independente do estado retraído do desktop.
+    const isCollapsed = state === "collapsed" && !isMobile;
 
     const visibleNav = navItems.filter(
         (item) => !("permission" in item && item.permission) || hasPermission((item as NavItem).permission!),
@@ -104,63 +110,67 @@ export function AppSidebar() {
         ...configItems,
     ];
 
-    useEffect(() => {
-        if (!isCollapsed) {
-            setExpandedSections(["Cadastros", "Relatórios", "Configurações"]);
-        }
-    }, [isCollapsed]);
-
-    const toggleSection = (title: string) => {
-        setExpandedSections(prev =>
-            prev.includes(title)
-                ? prev.filter(t => t !== title)
-                : [...prev, title]
-        );
-    };
-
-    const handleSectionClick = (title: string, hasSubItems: boolean) => {
-        if (isCollapsed && hasSubItems) {
-            toggleSection(title);
-        }
-    };
-
     const isActive = (url: string) => {
         if (url === "/" && location === "/") return true;
         if (url !== "/" && location.startsWith(url)) return true;
         return false;
     };
 
-    const renderCollapsibleSection = (section: MenuSection, defaultOpen: boolean = true) => {
-        const isExpanded = expandedSections.includes(section.title);
+    const fecharNoCelular = () => {
+        if (isMobile) setOpenMobile(false);
+    };
+
+    const renderCollapsibleSection = (section: MenuSection) => {
+        if (section.items.length === 0) return null;
+        const secaoAtiva = section.items.some((item) => isActive(item.url));
+
+        // Retraído: os itens abrem num menu flutuante ao lado do ícone.
+        if (isCollapsed) {
+            return (
+                <SidebarMenuItem>
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <SidebarMenuButton
+                                tooltip={section.title}
+                                isActive={secaoAtiva}
+                                className="transition-all hover:bg-white/5 data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
+                            >
+                                <section.icon className="w-5 h-5 shrink-0"/>
+                                <span>{section.title}</span>
+                            </SidebarMenuButton>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent side="right" align="start" sideOffset={8}
+                                             className="min-w-[200px] bg-sidebar border-white/10">
+                            <DropdownMenuLabel className="text-xs uppercase tracking-widest text-muted-foreground">
+                                {section.title}
+                            </DropdownMenuLabel>
+                            {section.items.map((subItem) => (
+                                <DropdownMenuItem key={subItem.title} asChild
+                                                  className={cn("cursor-pointer gap-2", isActive(subItem.url) && "bg-primary/10 text-primary")}>
+                                    <Link href={subItem.url}>
+                                        <subItem.icon className="w-4 h-4 opacity-70"/>
+                                        <span>{subItem.title}</span>
+                                    </Link>
+                                </DropdownMenuItem>
+                            ))}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                </SidebarMenuItem>
+            );
+        }
 
         return (
-            <Collapsible defaultOpen={defaultOpen && !isCollapsed} open={isCollapsed ? isExpanded : undefined}
-                         className="group/collapsible">
+            <Collapsible defaultOpen className="group/collapsible">
                 <SidebarMenuItem>
                     <CollapsibleTrigger asChild>
-                        <SidebarMenuButton
-                            tooltip={section.title}
-                            className={cn(
-                                "transition-all hover:bg-white/5",
-                                isCollapsed && "justify-center px-0"
-                            )}
-                            onClick={() => handleSectionClick(section.title, true)}
-                        >
+                        <SidebarMenuButton tooltip={section.title} className="transition-all hover:bg-white/5">
                             <section.icon className="w-5 h-5 shrink-0"/>
-                            <span
-                                className={cn("font-medium", isCollapsed ? "hidden" : undefined)}>{section.title}</span>
-                            {!isCollapsed && (
-                                <ChevronDown
-                                    className="ml-auto w-4 h-4 transition-transform group-data-[state=open]/collapsible:rotate-180"/>
-                            )}
-                            {isCollapsed && isExpanded && (
-                                <ChevronDown
-                                    className="ml-auto w-3 h-3 absolute right-1 top-1/2 -translate-y-1/2 rotate-180"/>
-                            )}
+                            <span className="font-medium">{section.title}</span>
+                            <ChevronDown
+                                className="ml-auto w-4 h-4 transition-transform group-data-[state=open]/collapsible:rotate-180"/>
                         </SidebarMenuButton>
                     </CollapsibleTrigger>
-                    <CollapsibleContent
-                        className={cn(isCollapsed && "absolute left-full ml-1 top-0 bg-sidebar border border-white/10 rounded-lg shadow-xl p-2 min-w-[180px] z-50")}>
+                    <CollapsibleContent>
                         <SidebarMenuSub className="border-white/10 pr-0 mr-0">
                             {section.items.map((subItem) => (
                                 <SidebarMenuSubItem key={subItem.title}>
@@ -169,7 +179,7 @@ export function AppSidebar() {
                                         isActive={isActive(subItem.url)}
                                         className="transition-all hover:bg-white/5 data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
                                     >
-                                        <Link href={subItem.url} className="flex items-center gap-2">
+                                        <Link href={subItem.url} onClick={fecharNoCelular} className="flex items-center gap-2">
                                             <subItem.icon className="w-4 h-4 opacity-70"/>
                                             <span>{subItem.title}</span>
                                         </Link>
@@ -186,57 +196,44 @@ export function AppSidebar() {
     return (
         <Sidebar collapsible="icon" variant="inset" className="border-r border-white/10 bg-sidebar">
             <SidebarHeader className="h-20 flex items-center justify-center border-b border-white/5">
-                <div className="flex items-center justify-center w-full px-2">
+                <div className={cn("flex items-center w-full gap-3", isCollapsed ? "justify-center" : "px-2")}>
                     <img
-                        src="/logo-ism.png"
-                        alt="ISM Tecnologia"
-                        className={cn(
-                            "object-contain shrink-0 transition-all",
-                            isCollapsed ? "h-10 w-10" : "h-12"
-                        )}
+                        src="/logo.png"
+                        alt=""
+                        aria-hidden="true"
+                        className={cn("object-contain shrink-0 transition-all", isCollapsed ? "h-9 w-9" : "h-10 w-10")}
                     />
+                    {!isCollapsed && (
+                        <div className="min-w-0 leading-tight">
+                            <span className="block text-base font-bold tracking-tight text-foreground">Financeiro</span>
+                            <span className="block text-[11px] text-muted-foreground">Gestão financeira</span>
+                        </div>
+                    )}
                 </div>
             </SidebarHeader>
             <SidebarContent className="p-2 gap-1">
-                <SidebarGroup>
+                <SidebarGroup className={cn(isCollapsed && "px-0")}>
                     <SidebarGroupContent>
-                        <SidebarMenu className="space-y-1">
+                        <SidebarMenu className={cn("space-y-1", isCollapsed && "items-center")}>
                             {visibleNav.map((item) => (
                                 <SidebarMenuItem key={item.title}>
                                     <SidebarMenuButton
                                         asChild
                                         isActive={isActive(item.url)}
                                         tooltip={item.title}
-                                        className={cn(
-                                            "transition-all hover:bg-white/5 data-[active=true]:bg-primary/10 data-[active=true]:text-primary text-sm font-medium",
-                                            isCollapsed && "justify-center px-0"
-                                        )}
+                                        className="transition-all hover:bg-white/5 data-[active=true]:bg-primary/10 data-[active=true]:text-primary text-sm font-medium"
                                     >
-                                        <Link href={item.url}
-                                              className={cn("flex items-center gap-3", isCollapsed && "justify-center")}>
+                                        <Link href={item.url} onClick={fecharNoCelular} className="flex items-center gap-3">
                                             <item.icon className="w-5 h-5 shrink-0"/>
-                                            <span className={isCollapsed ? "hidden" : undefined}>{item.title}</span>
+                                            <span>{item.title}</span>
                                         </Link>
                                     </SidebarMenuButton>
                                 </SidebarMenuItem>
                             ))}
 
-                            {renderCollapsibleSection({
-                                title: "Cadastros",
-                                icon: FolderOpen,
-                                items: visibleCadastros
-                            }, true)}
-                            {renderCollapsibleSection({
-                                title: "Relatórios",
-                                icon: BarChart3,
-                                items: visibleRelatorios
-                            }, true)}
-                            {renderCollapsibleSection({
-                                title: "Configurações",
-                                icon: Settings,
-                                items: visibleConfig
-                            }, true)}
-
+                            {renderCollapsibleSection({title: "Cadastros", icon: FolderOpen, items: visibleCadastros})}
+                            {renderCollapsibleSection({title: "Relatórios", icon: BarChart3, items: visibleRelatorios})}
+                            {renderCollapsibleSection({title: "Configurações", icon: Settings, items: visibleConfig})}
                         </SidebarMenu>
                     </SidebarGroupContent>
                 </SidebarGroup>
