@@ -1,3 +1,9 @@
-<svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
-<rect width="180" height="180" rx="36" fill="#FF3C00"/>
+<svg width="180" height="180" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+<defs><linearGradient id="g" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse"><stop stop-color="#5bb4e5"/><stop offset="1" stop-color="#2a5fc4"/></linearGradient></defs>
+<rect width="512" height="512" rx="112" fill="url(#g)"/>
+<rect x="112" y="300" width="72" height="112" rx="14" fill="#fff" fill-opacity="0.38"/>
+<rect x="220" y="236" width="72" height="176" rx="14" fill="#fff" fill-opacity="0.38"/>
+<rect x="328" y="168" width="72" height="244" rx="14" fill="#fff" fill-opacity="0.38"/>
+<polyline points="120,262 232,186 292,222 380,128" stroke="#fff" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+<polygon points="403.2,103.2 397.1,174.1 332.8,114.0" fill="#fff"/>
 </svg>
