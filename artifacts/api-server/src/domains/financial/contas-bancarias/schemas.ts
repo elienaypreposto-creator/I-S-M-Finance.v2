@@ -19,7 +19,13 @@ export const createContaBancariaBodySchema = z.object({
     errorMap: () => ({ message: `Tipo de conta inválido. Use: ${TIPOS_CONTA_BANCARIA.join(", ")}.` }),
   }),
   banco: z.string().nullable().optional(),
-  agencia: z.string().nullable().optional(),
+  /** Até 4 dígitos e, opcionalmente, o dígito verificador (1234 ou 1234-5; BB usa X). */
+  agencia: z
+    .string()
+    .trim()
+    .regex(/^(\d{1,4}(-[\dXx])?)?$/, "Agência inválida: use até 4 dígitos e, se houver, o dígito (ex.: 1234-5).")
+    .nullable()
+    .optional(),
   digito_agencia: z.string().nullable().optional(),
   conta: z.string().nullable().optional(),
   digito_conta: z.string().nullable().optional(),
@@ -28,7 +34,8 @@ export const createContaBancariaBodySchema = z.object({
   /** Legado: o campo de texto da conta foi renomeado de `empresa` para `titular`. */
   empresa: z.string().nullable().optional(),
   saldo_inicial: saldoMonetarioSchema.optional(),
-  data_inicio: z.string().trim().min(1),
+  /** Data no futuro é recusada no serviço (contas-bancarias.validacoes.ts), comparando com a já gravada. */
+  data_inicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Data de início inválida. Use AAAA-MM-DD."),
   status: z.string().trim().min(1).optional(),
   cor: z.string().trim().min(1).optional(),
 });

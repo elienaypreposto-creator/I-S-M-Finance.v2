@@ -7,6 +7,24 @@
  * "fora" = movimento que não é resultado (empréstimo, aporte, investimento,
  * retenção de terceiros repassada) e não entra na DRE.
  */
+import {sql, type SQL} from "drizzle-orm";
+import {lancamentosTable} from "@workspace/db/schema";
+
+/**
+ * Valor de cada título quitado na DRE pelo caixa: o que entrou/saiu no banco
+ * (`valor_quitado`, ou `valor` se vier nulo), a mesma base do Fluxo de Caixa e do
+ * Contábil, mais as retenções na fonte do título fechado (`retencoes`: a receita/despesa
+ * é o bruto da nota). Soma por título, pela `data_quitacao`.
+ *
+ * Antes descontava `juros` do quitado (regra do realizado das metas): os juros pagos
+ * sumiam da DRE (não há linha de despesa financeira) e um título com `juros` igual ao
+ * quitado (R$ 9,00 de tarifa em 16/07/2026 no clone) entrava como zero, abrindo
+ * diferença com o Fluxo de Caixa.
+ */
+export function sqlValorDreCaixa(retencoes: SQL): SQL {
+    return sql`COALESCE(${lancamentosTable.valor_quitado}, ${lancamentosTable.valor}) + ${retencoes}`;
+}
+
 export const GRUPOS_DRE = ["receita", "deducao", "custo", "despesa", "fora"] as const;
 export type GrupoDre = (typeof GRUPOS_DRE)[number];
 

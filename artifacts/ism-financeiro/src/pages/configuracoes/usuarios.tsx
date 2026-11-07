@@ -28,6 +28,7 @@ import {
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
 import {PERM} from "@/lib/permissoes";
+import {contarVisiveis, perfisBase, permissoesGranulares, todasPermissoes} from "@/lib/perfis-acesso";
 import {useAuth} from "@/hooks/use-auth";
 import {UsuarioEmpresasModal} from "./usuario-empresas-modal";
 import {SelectCampo} from "@/components/ui/select-campo";
@@ -126,168 +127,7 @@ const inputCls = (hasError?: boolean) =>
 
 const userLabelCls = "text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block";
 
-// ─── Permissões (estáticas) ────────────────────────────────────────────────────
-const permissoesGranulares = [
-    {
-        grupo: "Dashboard & Relatórios",
-        itens: [
-            {nome: "Dashboard", codigo: "dashboard:ver"},
-            {nome: "Demonstrativo de Resultado", codigo: "relatorios:dre"},
-            {nome: "Fluxo de Caixa Diário", codigo: "relatorios:fluxo-caixa-diario"},
-            {nome: "Fluxo de Caixa Mensal", codigo: "relatorios:fluxo-caixa-mensal"},
-            {nome: "Relatório Econômico", codigo: "relatorios:economico"},
-            {nome: "Relatório Financeiro", codigo: "relatorios:financeiro"},
-            {nome: "Relatório por Vencimento", codigo: "relatorios:vencimento"},
-            {nome: "Extrato Financeiro", codigo: "relatorios:extrato"},
-            {nome: "Análise de Metas", codigo: "relatorios:metas"},
-            {nome: "Relatório de Conciliação", codigo: "relatorios:conciliacao"},
-        ],
-    },
-    {
-        grupo: "Contas a Pagar",
-        itens: [
-            {nome: "Cadastro de Contas a Pagar", codigo: "financeiro:contas-pagar:criar"},
-            {nome: "Consulta de Contas a Pagar", codigo: "financeiro:contas-pagar:listar"},
-            {nome: "Baixa de Contas a Pagar", codigo: "financeiro:contas-pagar:baixar"},
-            {nome: "Cancelamento de Contas a Pagar", codigo: "financeiro:contas-pagar:cancelar"},
-            {nome: "Importar CR e CP", codigo: "financeiro:importar"},
-        ],
-    },
-    {
-        grupo: "Contas a Receber",
-        itens: [
-            {nome: "Cadastro de Contas a Receber", codigo: "financeiro:contas-receber:criar"},
-            {nome: "Consulta de Contas a Receber", codigo: "financeiro:contas-receber:listar"},
-            {nome: "Baixa de Contas a Receber", codigo: "financeiro:contas-receber:baixar"},
-            {nome: "Cancelamento de Contas a Receber", codigo: "financeiro:contas-receber:cancelar"},
-            {nome: "Exportar Contas a Receber", codigo: "financeiro:contas-receber:exportar"},
-        ],
-    },
-    {
-        grupo: "Conciliação Bancária",
-        itens: [
-            {nome: "Conciliação Bancária", codigo: "financeiro:conciliacao:acessar"},
-            {nome: "Conciliação - Importar Extrato", codigo: "financeiro:conciliacao:importar"},
-            {nome: "Conciliação - Vincular", codigo: "financeiro:conciliacao:vincular"},
-            {nome: "Conciliação - Ignorar", codigo: "financeiro:conciliacao:ignorar"},
-            {nome: "Conciliação - Desfazer / Reverter", codigo: "financeiro:conciliacao:desfazer"},
-            {nome: "Conciliação - Concluir / Finalizar", codigo: "financeiro:conciliacao:concluir"},
-            {nome: "Conciliação - Configurar / Jobs", codigo: "financeiro:conciliacao:configurar"},
-        ],
-    },
-    {
-        grupo: "Cadastro de Contas",
-        itens: [
-            {nome: "Cadastro de Contas", codigo: "configuracoes:contas-bancarias:criar"},
-            {nome: "Consulta de Contas", codigo: "configuracoes:contas-bancarias:listar"},
-            {nome: "Exclusão de Contas", codigo: "configuracoes:contas-bancarias:deletar"},
-        ],
-    },
-    {
-        grupo: "Cadastro de Pessoas",
-        itens: [
-            {nome: "Cadastro de Pessoa", codigo: "financeiro:parceiros:criar"},
-            {nome: "Consulta de Pessoa", codigo: "financeiro:parceiros:listar"},
-            {nome: "Exclusão de Pessoa", codigo: "financeiro:parceiros:deletar"},
-        ],
-    },
-    {
-        grupo: "Plano de Contas",
-        itens: [
-            {nome: "Cadastro de Plano de Contas", codigo: "configuracoes:plano-contas:criar"},
-            {nome: "Consulta de Plano de Contas", codigo: "configuracoes:plano-contas:listar"},
-            {nome: "Exclusão de Plano de Contas", codigo: "configuracoes:plano-contas:deletar"},
-            {nome: "Exportar Plano de Contas", codigo: "configuracoes:plano-contas:exportar"},
-            {nome: "Cadastro de Categoria do Plano de Contas", codigo: "configuracoes:categorias:criar"},
-            {nome: "Consulta de Categoria do Plano de Contas", codigo: "configuracoes:categorias:listar"},
-            {nome: "Exclusão de Categoria do Plano de Contas", codigo: "configuracoes:categorias:deletar"},
-        ],
-    },
-    {
-        grupo: "Metas & Fechamentos",
-        itens: [
-            {nome: "Cadastro de Metas", codigo: "financeiro:metas:criar"},
-            {nome: "Consulta de Metas", codigo: "financeiro:metas:listar"},
-            {nome: "Exclusão de Metas", codigo: "financeiro:metas:deletar"},
-            {nome: "Cadastro de Fechamentos Financeiros", codigo: "financeiro:fechamentos:criar"},
-            {nome: "Consulta de Fechamentos Financeiros", codigo: "financeiro:fechamentos:listar"},
-            {nome: "Exclusão de Fechamentos Financeiros", codigo: "financeiro:fechamentos:deletar"},
-        ],
-    },
-    {
-        grupo: "Tarefas",
-        itens: [
-            {nome: "Consulta de Tarefas", codigo: "kanban:tarefas:listar"},
-            {nome: "Cadastro de Tarefas", codigo: "kanban:tarefas:criar"},
-            {nome: "Edição de Tarefas", codigo: "kanban:tarefas:editar"},
-            {nome: "Exclusão de Tarefas", codigo: "kanban:tarefas:excluir"},
-        ],
-    },
-    {
-        grupo: "Movimentações",
-        itens: [
-            {nome: "Cadastro de Movimentação Financeira", codigo: "financeiro:lancamentos:criar"},
-            {nome: "Consulta de Movimentação Financeira", codigo: "financeiro:lancamentos:listar"},
-            {nome: "Edição de Movimentação Financeira", codigo: "financeiro:lancamentos:editar"},
-            {nome: "Alterar valor de lançamento", codigo: "financeiro:lancamentos:alterar_valor"},
-            {nome: "Exclusão de Movimentação Financeira", codigo: "financeiro:lancamentos:deletar"},
-        ],
-    },
-    {
-        grupo: "Configurações do Sistema",
-        itens: [
-            {nome: "Cadastro de Usuários", codigo: "admin:usuarios:criar"},
-            {nome: "Consulta de Usuários", codigo: "admin:usuarios:listar"},
-            {nome: "Edição de Usuários", codigo: "admin:usuarios:editar"},
-            {nome: "Exclusão de Usuários", codigo: "admin:usuarios:deletar"},
-            {nome: "Conceder permissões a utilizadores", codigo: "admin:permissoes:conceder"},
-            {nome: "Edição dos dados da própria empresa", codigo: "admin:empresas:editar"},
-            {nome: "Cadastro de Token de API", codigo: "admin:tokens-api:criar"},
-            {nome: "Consulta de Tokens de API", codigo: "admin:tokens-api:listar"},
-            {nome: "Exclusão de Token de API", codigo: "admin:tokens-api:deletar"},
-        ],
-    },
-];
-
-const todasPermissoes = permissoesGranulares.flatMap((g) => g.itens.map((i) => i.codigo));
-
-const tarefasKanban = [
-    "kanban:tarefas:listar",
-    "kanban:tarefas:criar",
-    "kanban:tarefas:editar",
-    "kanban:tarefas:excluir",
-];
-
-const perfisBase: Record<string, string[]> = {
-    Admin: todasPermissoes,
-    Financeiro: [
-        "dashboard:ver", "relatorios:extrato", "relatorios:fluxo-caixa-mensal", "relatorios:dre",
-        "financeiro:contas-pagar:criar", "financeiro:contas-pagar:listar", "financeiro:contas-pagar:baixar",
-        "financeiro:contas-receber:criar", "financeiro:contas-receber:listar", "financeiro:contas-receber:baixar",
-        "financeiro:conciliacao:acessar",
-        "financeiro:conciliacao:importar",
-        "financeiro:conciliacao:vincular",
-        "financeiro:conciliacao:ignorar",
-        "financeiro:conciliacao:desfazer",
-        "financeiro:conciliacao:concluir",
-        "configuracoes:contas-bancarias:listar", "financeiro:parceiros:listar", "configuracoes:plano-contas:listar",
-        "financeiro:lancamentos:criar", "financeiro:lancamentos:listar", "financeiro:lancamentos:editar",
-        "financeiro:metas:criar", "financeiro:metas:listar",
-        ...tarefasKanban,
-    ],
-    Gestor: [
-        "dashboard:ver", "relatorios:dre", "relatorios:fluxo-caixa-mensal", "relatorios:metas",
-        "financeiro:contas-pagar:listar", "financeiro:contas-receber:listar",
-        "configuracoes:contas-bancarias:listar", "financeiro:parceiros:listar", "configuracoes:plano-contas:listar",
-        "financeiro:lancamentos:listar", "financeiro:metas:listar",
-        ...tarefasKanban,
-    ],
-    Visualizador: [
-        "dashboard:ver", "financeiro:contas-pagar:listar", "financeiro:contas-receber:listar", "financeiro:metas:listar",
-        "financeiro:lancamentos:listar",
-        ...tarefasKanban,
-    ],
-};
+// Catálogo de permissões e perfis padrão: ver @/lib/perfis-acesso.
 
 function getInitials(nome: string): string {
     return nome.trim().split(/\s+/).slice(0, 2).map((p) => p[0]?.toUpperCase() ?? "").join("");
@@ -370,7 +210,7 @@ function PermissoesModal({usuario, onClose}: { usuario: UsuarioRow; onClose: () 
         >
             <ModalHeader
                 title={`Permissões - ${usuario.nome}`}
-                description={`${selecionadas.length} de ${todasPermissoes.length} permissões ativas`}
+                description={`${contarVisiveis(selecionadas)} de ${todasPermissoes.length} permissões ativas`}
             />
             <ModalBody className="space-y-4">
                 <div className="flex flex-col md:flex-row md:items-center gap-3">

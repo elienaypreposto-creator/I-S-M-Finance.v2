@@ -10,7 +10,8 @@ function escaparLike(termo: string): string {
 
 /**
  * Filtros da listagem de parceiros (sem paginação nem a regra `excluir_com_usuario`).
- * - search: nome ou CPF/CNPJ (comparando só os dígitos, então "123.456" acha "123456...").
+ * - search: nome ou CPF/CNPJ sem máscara (então "123.456" acha "123456..." e "12.abc" acha
+ *   o CNPJ alfanumérico "12ABC...").
  * - status: "inativo" casa só inativos; "ativo" casa o resto (mesma regra da tela).
  * - tipo: elemento do array jsonb `tipos` (ex.: "Fornecedor").
  * - tipo_pessoa: PF | PJ.
@@ -19,14 +20,15 @@ export function condicoesParceiros(
     filtros: Pick<ListParceirosQuery, "search" | "status" | "tipo" | "tipo_pessoa">,
 ): Array<SQL | undefined> {
     const {search, status, tipo, tipo_pessoa} = filtros;
-    const digitos = search ? search.replace(/\D/g, "") : "";
+    // Documento sem máscara e em maiúsculas (CNPJ alfanumérico); só busca por documento se houver dígito.
+    const documento = search && /\d/.test(search) ? search.toUpperCase().replace(/[^0-9A-Z]/g, "") : "";
 
     return [
         search
             ? or(
                 ilike(parceirosTable.nome, `%${escaparLike(search)}%`),
-                digitos
-                    ? sql`regexp_replace(coalesce(${parceirosTable.cpf_cnpj}, ''), '\\D', '', 'g') like ${`%${digitos}%`}`
+                documento
+                    ? sql`regexp_replace(upper(coalesce(${parceirosTable.cpf_cnpj}, '')), '[^0-9A-Z]', '', 'g') like ${`%${documento}%`}`
                     : undefined,
             )
             : undefined,

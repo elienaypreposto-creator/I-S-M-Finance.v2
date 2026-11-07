@@ -232,6 +232,13 @@
       "when": 1790168300000,
       "tag": "0032_plano_contas_grupo_dre",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1790168400000,
+      "tag": "0033_visualizador_kanban_somente_leitura",
+      "breakpoints": true
     }
   ]
 }

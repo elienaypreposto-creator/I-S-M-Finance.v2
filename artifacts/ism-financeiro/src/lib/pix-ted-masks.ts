@@ -2,7 +2,37 @@
  * Utilitários de máscara para campos PIX e TED (banco/agência/conta).
  */
 
+import {mascararCnpj} from "./documento";
+
 export type TipoChavePix = "cpf" | "cnpj" | "email" | "telefone" | "aleatoria";
+
+const ROTULO_TIPO_CHAVE: Record<TipoChavePix, string> = {
+    cpf: "CPF",
+    cnpj: "CNPJ",
+    email: "E-mail",
+    telefone: "Telefone",
+    aleatoria: "Chave aleatória",
+};
+
+/** Chave PIX de documento do titular: CPF para pessoa física, CNPJ para jurídica. */
+export function tipoChaveDocumento(tipoPessoa: "PF" | "PJ"): TipoChavePix {
+    return tipoPessoa === "PF" ? "cpf" : "cnpj";
+}
+
+/**
+ * Tipos de chave PIX oferecidos conforme o tipo de pessoa do parceiro: PF não tem chave
+ * CNPJ e PJ não tem chave CPF. Um tipo já gravado fora da regra continua na lista para
+ * a edição não apagar o dado sem o usuário ver.
+ */
+export function opcoesTipoChavePix(
+    tipoPessoa: "PF" | "PJ",
+    atual?: string,
+): { value: TipoChavePix; label: string }[] {
+    const doc = tipoChaveDocumento(tipoPessoa);
+    const tipos: TipoChavePix[] = [doc, "email", "telefone", "aleatoria"];
+    if ((atual === "cpf" || atual === "cnpj") && atual !== doc) tipos.splice(1, 0, atual);
+    return tipos.map((value) => ({value, label: ROTULO_TIPO_CHAVE[value]}));
+}
 
 // Aplica a máscara correspondente ao tipo de chave PIX em tempo real no input
 export function maskChavePix(value: string, tipo: string): string {
@@ -14,14 +44,9 @@ export function maskChavePix(value: string, tipo: string): string {
                 .replace(/(\d{3})(\d)/, "$1.$2")
                 .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
         }
-        case "cnpj": {
-            const n = value.replace(/\D/g, "").slice(0, 14);
-            return n
-                .replace(/(\d{2})(\d)/, "$1.$2")
-                .replace(/(\d{3})(\d)/, "$1.$2")
-                .replace(/(\d{3})(\d)/, "$1/$2")
-                .replace(/(\d{4})(\d{1,2})$/, "$1-$2");
-        }
+        case "cnpj":
+            // Numérico ou alfanumérico (IN RFB 2.229/2024): mesma máscara do cadastro.
+            return mascararCnpj(value);
         case "telefone": {
             const n = value.replace(/\D/g, "").slice(0, 11);
             return n

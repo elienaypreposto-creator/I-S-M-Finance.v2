@@ -22,6 +22,7 @@ import {
     ChevronRight,
 } from "lucide-react";
 import {BotaoExcluir} from "@/components/shared/botoes-acao";
+import {invalidateRelated} from "@/App";
 import {
     FiltrosAtivos,
     FiltrosPopover,
@@ -116,6 +117,8 @@ function formatAgenciaConta(row: ConciliacaoListItem): string {
     return `Agência:${agencia} | Conta:${conta}`;
 }
 
+const MSG_EXCLUIR_FINALIZADO = "Excluir indisponível: extrato conciliado. Reabra a conciliação para excluir.";
+
 /** "Pendente" na tela inclui o estado intermediário "parcial" (ver statusLabel). */
 const STATUS_FILTRO = [
     {valor: "pendente", rotulo: "Pendente"},
@@ -186,12 +189,26 @@ export default function ConciliacaoList() {
 
     const deleteMutation = useMutation({
         mutationFn: (extratoId: number) =>
-            fetchApiData<{ deleted: boolean }>(`/conciliacoes/${extratoId}`, {method: "DELETE"}),
-        onSuccess: () => {
+            fetchApiData<{
+                deleted: boolean;
+                titulos_reabertos?: number;
+                lancamentos_excluidos?: number;
+                residuais_excluidos?: number;
+            }>(`/conciliacoes/${extratoId}`, {method: "DELETE"}),
+        onSuccess: (r) => {
             void queryClient.invalidateQueries({queryKey: tenantQueryKey("conciliacoes")});
+            // Excluir mexe nos títulos (quitação desfeita / lançamentos removidos).
+            invalidateRelated(queryClient, "lancamentos");
+            const partes = [
+                r.titulos_reabertos ? `${r.titulos_reabertos} lançamento(s) voltaram a ficar em aberto` : null,
+                r.lancamentos_excluidos ? `${r.lancamentos_excluidos} lançamento(s) criado(s) pelo extrato foram excluídos` : null,
+                r.residuais_excluidos ? `${r.residuais_excluidos} residual(is) removido(s)` : null,
+            ].filter(Boolean);
             toast({
                 title: "Extrato excluído",
-                description: "O extrato e a conciliação associada foram removidos.",
+                description: partes.length > 0
+                    ? `${partes.join("; ")}.`
+                    : "O extrato e a conciliação associada foram removidos.",
             });
         },
         onError: (e: unknown) => {
@@ -208,7 +225,14 @@ export default function ConciliacaoList() {
         e.preventDefault();
         const ok = await confirm({
             title: "Excluir extrato?",
-            description: `Remover "${row.arquivo_nome ?? `extrato #${row.extrato_id}`}" e a conciliação associada? Esta ação não pode ser desfeita.`,
+            description:
+                `Remover "${row.arquivo_nome ?? `extrato #${row.extrato_id}`}" e a conciliação associada? ` +
+                (num(row.resumo_conciliados) > 0
+                    ? `Os vínculos salvos nas ${num(row.resumo_conciliados)} linha(s) vinculada(s) serão desfeitos: ` +
+                      "os lançamentos quitados por este extrato voltam a ficar em aberto, os residuais gerados " +
+                      "são removidos e os lançamentos criados pelo próprio extrato (regra de conciliação, botão + ou \"Novo\" do Vincular) são excluídos. "
+                    : "") +
+                "Esta ação não pode ser desfeita.",
             confirmLabel: "Excluir",
             variant: "destructive",
         });
@@ -287,6 +311,7 @@ export default function ConciliacaoList() {
                     <table className="w-full text-left text-xs">
                         <thead className="bg-black/25 text-muted-foreground border-b border-white/5 sticky top-0 z-10">
                         <tr>
+                            <th className="px-4 py-3 font-semibold" title="Número do extrato">#</th>
                             <th className="px-4 py-3 font-semibold">STATUS</th>
                             <th className="px-4 py-3 font-semibold">IMPORTADO EM</th>
                             <th className="px-4 py-3 font-semibold">BANCO</th>
@@ -301,14 +326,14 @@ export default function ConciliacaoList() {
                         <tbody className="divide-y divide-white/5">
                         {isLoading ? (
                             <tr>
-                                <td colSpan={9} className="py-16 text-center text-muted-foreground">
+                                <td colSpan={10} className="py-16 text-center text-muted-foreground">
                                     <Loader2 className="w-8 h-8 animate-spin mx-auto text-primary"/>
                                     <p className="mt-2 text-xs">Carregando extratos…</p>
                                 </td>
                             </tr>
                         ) : isError ? (
                             <tr>
-                                <td colSpan={9} className="py-16 text-center">
+                                <td colSpan={10} className="py-16 text-center">
                                     <div className="flex flex-col items-center gap-2 text-destructive">
                                         <AlertCircle className="w-7 h-7"/>
                                         <span className="text-xs">Não foi possível carregar as conciliações.</span>
@@ -324,7 +349,7 @@ export default function ConciliacaoList() {
                             </tr>
                         ) : items.length === 0 ? (
                             <tr>
-                                <td colSpan={9} className="py-16 text-center text-muted-foreground text-xs">
+                                <td colSpan={10} className="py-16 text-center text-muted-foreground text-xs">
                                     Nenhum extrato encontrado. Ajuste o período/filtros ou importe um OFX.
                                 </td>
                             </tr>
@@ -343,6 +368,10 @@ export default function ConciliacaoList() {
                                     }}
                                     className="hover:bg-white/[0.06] cursor-pointer transition-colors focus-visible:outline-none focus-visible:bg-white/[0.06]"
                                 >
+                                    {/* Número do extrato: o mesmo #N citado nos avisos do Vincular. */}
+                                    <td className="px-4 py-3 text-white/80 font-semibold tabular-nums whitespace-nowrap">
+                                        #{row.extrato_id}
+                                    </td>
                                     <td className="px-4 py-3">
                                         <span
                                             className={cn(
@@ -382,7 +411,20 @@ export default function ConciliacaoList() {
                                         {num(row.resumo_total)}
                                     </td>
                                     <td className="px-3 py-3 text-center">
-                                        {canDelete && row.status !== "conciliado" ? (
+                                        {canDelete && row.status === "conciliado" ? (
+                                            // Finalizado = travado: excluir só depois de reabrir.
+                                            // O span leva a dica (botão desabilitado não mostra title)
+                                            // e segura o clique para não abrir o extrato.
+                                            <span
+                                                title={MSG_EXCLUIR_FINALIZADO}
+                                                onClick={(e) => e.stopPropagation()}
+                                                className="inline-flex cursor-not-allowed"
+                                            >
+                                                <span className="pointer-events-none">
+                                                    <BotaoExcluir disabled title={MSG_EXCLUIR_FINALIZADO} onClick={() => undefined}/>
+                                                </span>
+                                            </span>
+                                        ) : canDelete ? (
                                             <BotaoExcluir
                                                 disabled={deleteMutation.isPending}
                                                 onClick={(e) => void handleDelete(row, e)}

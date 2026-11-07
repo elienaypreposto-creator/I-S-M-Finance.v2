@@ -2,8 +2,16 @@ import assert from "node:assert/strict";
 import {describe, it} from "node:test";
 import {centsToDecimalString, toCents} from "./money.js";
 import {
+    cobertoPorVinculos,
     decidirVincular,
-    martelarQuitacaoNoFinalizar,
+    descreverResiduoParcial,
+    mensagemJaQuitado,
+    mensagemJaVinculadoEmOutroExtrato,
+    principalVinculadoCents,
+    quitacaoNoFinalizar,
+    quitadoPorInteiro,
+    mensagemQuitadoEmOutraConta,
+    quitadosEmOutraConta,
     statusAbertoPorVencimento,
     statusAposDesfazerVinculo,
     statusAposQuitacao,
@@ -390,98 +398,139 @@ describe("ciclo de vida - status adiado até finalizar", () => {
     });
 });
 
-describe("martelarQuitacaoNoFinalizar — anti double-count", () => {
-    const z = {
-        sumJurosDestaCents: 0,
-        sumDescontoDestaCents: 0,
-        sumJurosFinalizadosCents: 0,
-        sumDescontoFinalizadosCents: 0,
-        sumJurosRascunhosCents: 0,
-        sumDescontoRascunhosCents: 0,
-        jurosTituloCents: 0,
-        descontoTituloCents: 0,
-    };
+describe("quitacaoNoFinalizar — razão de quitação, sem somar duas vezes", () => {
+    const z = {jurosTituloCents: 0, descontoTituloCents: 0, sumJurosCents: 0, sumDescontoCents: 0};
 
-    it("ciclo novo: título sem quitado + rascunho X → grava X (não 0)", () => {
-        const x = toCents(5000);
-        const r = martelarQuitacaoNoFinalizar({
-            ...z,
-            valorQuitadoTituloCents: 0,
-            sumVinculadoDestaCents: x,
-            sumVinculadoFinalizadosCents: 0,
-            sumVinculadoRascunhosCents: x,
-        });
-        assert.equal(r.quitadoCents, x);
-    });
-
-    it("legado: título já tem X e auxiliar tem X → resultado X (não 2X)", () => {
+    it("vínculo salvo já quitou o título: finalizar não muda nada", () => {
         const x = toCents(8000);
-        const r = martelarQuitacaoNoFinalizar({
-            ...z,
-            valorQuitadoTituloCents: x,
-            sumVinculadoDestaCents: x,
-            sumVinculadoFinalizadosCents: 0,
-            sumVinculadoRascunhosCents: x,
-        });
+        const r = quitacaoNoFinalizar({...z, valorQuitadoTituloCents: x, sumVinculadoCents: x});
         assert.equal(r.quitadoCents, x);
     });
 
-    it("criar-lancamento/auto legado: mesmo padrão X+X → X", () => {
-        const x = toCents(1234.56);
-        const r = martelarQuitacaoNoFinalizar({
-            ...z,
-            valorQuitadoTituloCents: x,
-            sumVinculadoDestaCents: x,
-            sumVinculadoFinalizadosCents: 0,
-            sumVinculadoRascunhosCents: x,
-        });
+    it("legado: vínculo de regra/[+] que não quitou o título → grava a soma dos vínculos", () => {
+        // Extrato #15 do clone: título nasceu pendente, vínculo de 40,00 na linha.
+        const x = toCents(40);
+        const r = quitacaoNoFinalizar({...z, valorQuitadoTituloCents: 0, sumVinculadoCents: x});
         assert.equal(r.quitadoCents, x);
     });
 
-    it("pós-finalize anterior + novo rascunho: Y commitado + X rascunho → Y+X", () => {
+    it("Modo B com dois extratos abertos: finalizar o 1º mantém X1+X2 já quitados", () => {
+        // Antes: o finalizar gravava só X1 e o desfazer posterior de X2 zerava o título.
+        const x1 = toCents(1000);
+        const x2 = toCents(1000);
+        const r = quitacaoNoFinalizar({...z, valorQuitadoTituloCents: x1 + x2, sumVinculadoCents: x1 + x2});
+        assert.equal(r.quitadoCents, x1 + x2);
+    });
+
+    it("título já finalizado em outro extrato + vínculo legado deste → soma dos vínculos", () => {
         const y = toCents(4000);
         const x = toCents(1000);
-        const r = martelarQuitacaoNoFinalizar({
-            ...z,
-            valorQuitadoTituloCents: y,
-            sumVinculadoDestaCents: x,
-            sumVinculadoFinalizadosCents: y,
-            sumVinculadoRascunhosCents: x,
-        });
+        const r = quitacaoNoFinalizar({...z, valorQuitadoTituloCents: y, sumVinculadoCents: y + x});
         assert.equal(r.quitadoCents, y + x);
     });
 
-    it("Modo B legado 2 extratos abertos: finalize 1º de X1+X2 embutidos → só X1", () => {
-        const x1 = toCents(1000);
-        const x2 = toCents(1000);
-        const r = martelarQuitacaoNoFinalizar({
-            ...z,
-            valorQuitadoTituloCents: x1 + x2,
-            sumVinculadoDestaCents: x1,
-            sumVinculadoFinalizadosCents: 0,
-            sumVinculadoRascunhosCents: x1 + x2,
+    it("juros e desconto já gravados não dobram", () => {
+        const r = quitacaoNoFinalizar({
+            valorQuitadoTituloCents: toCents(8000),
+            jurosTituloCents: toCents(1162),
+            descontoTituloCents: toCents(10),
+            sumVinculadoCents: toCents(8000),
+            sumJurosCents: toCents(1162),
+            sumDescontoCents: toCents(10),
         });
-        assert.equal(r.quitadoCents, x1);
+        assert.deepEqual(r, {quitadoCents: toCents(8000), jurosCents: toCents(1162), descontoCents: toCents(10)});
+    });
+});
+
+describe("quitadosEmOutraConta: um título movimenta uma conta só", () => {
+    it("título já pago em outra conta é barrado", () => {
+        // Caso do clone: "DEBITO PIX (pagamento parcial)" com 27.000 quitados no
+        // Bradesco (9) e vínculo novo num extrato do BRB (8).
+        const ids = quitadosEmOutraConta([{id: 10, conta_id: 9, quitadoCents: 2_700_000}], 8);
+        assert.deepEqual(ids, [10]);
+        assert.match(mensagemQuitadoEmOutraConta(ids), /^O lançamento #10 já tem pagamento registrado em outra conta bancária/);
     });
 
-    it("juros legados embutidos não dobram", () => {
-        const quitado = toCents(8000);
-        const juros = toCents(1162);
-        const r = martelarQuitacaoNoFinalizar({
-            valorQuitadoTituloCents: quitado,
-            jurosTituloCents: juros,
-            descontoTituloCents: 0,
-            sumVinculadoDestaCents: quitado,
-            sumJurosDestaCents: juros,
-            sumDescontoDestaCents: 0,
-            sumVinculadoFinalizadosCents: 0,
-            sumJurosFinalizadosCents: 0,
-            sumDescontoFinalizadosCents: 0,
-            sumVinculadoRascunhosCents: quitado,
-            sumJurosRascunhosCents: juros,
-            sumDescontoRascunhosCents: 0,
-        });
-        assert.equal(r.quitadoCents, quitado);
-        assert.equal(r.jurosCents, juros);
+    it("sem quitação, a conta prevista no cadastro não impede (a conciliação grava a conta do extrato)", () => {
+        assert.deepEqual(quitadosEmOutraConta([{id: 1, conta_id: 9, quitadoCents: 0}], 8), []);
+    });
+
+    it("quitação na mesma conta segue livre (Modo B: restante em outra linha do mesmo banco)", () => {
+        assert.deepEqual(quitadosEmOutraConta([{id: 1, conta_id: 8, quitadoCents: 30_000}], 8), []);
+    });
+
+    it("título sem conta não é barrado", () => {
+        assert.deepEqual(quitadosEmOutraConta([{id: 1, conta_id: null, quitadoCents: 30_000}], 8), []);
+    });
+
+    it("lista só os barrados, no plural", () => {
+        const ids = quitadosEmOutraConta(
+            [
+                {id: 1, conta_id: 9, quitadoCents: 100},
+                {id: 2, conta_id: 8, quitadoCents: 100},
+                {id: 3, conta_id: 7, quitadoCents: 100},
+            ],
+            8,
+        );
+        assert.deepEqual(ids, [1, 3]);
+        assert.match(mensagemQuitadoEmOutraConta(ids), /^Os lançamentos #1, #3 já têm pagamento/);
+    });
+});
+
+describe("título já vinculado em outro extrato (não pagar duas vezes)", () => {
+    it("principal vinculado desconta juros/multa e soma desconto", () => {
+        assert.equal(
+            principalVinculadoCents([
+                {valorVinculadoCents: 10_500, jurosCents: 500, descontoCents: 0},
+                {valorVinculadoCents: 4_000, jurosCents: 0, descontoCents: 1_000},
+            ]),
+            15_000,
+        );
+        assert.equal(principalVinculadoCents([]), 0);
+    });
+
+    it("coberto só quando os vínculos alcançam o líquido do título", () => {
+        assert.equal(cobertoPorVinculos(15_000, 15_000), true);
+        assert.equal(cobertoPorVinculos(15_000, 14_999), false);
+        assert.equal(cobertoPorVinculos(0, 0), false);
+    });
+
+    it("mensagem aponta o extrato e manda desfazer o vínculo anterior", () => {
+        assert.match(mensagemJaVinculadoEmOutroExtrato(7, [15]), /#7 já está vinculado ao extrato #15 pelo valor todo/);
+        assert.match(mensagemJaVinculadoEmOutroExtrato(7, [15, 16]), /aos extratos #15, #16/);
+        assert.match(mensagemJaVinculadoEmOutroExtrato(7, []), /a outra linha de extrato/);
+        assert.match(mensagemJaVinculadoEmOutroExtrato(7, [15]), /desfaça o vínculo anterior/);
+    });
+});
+
+describe("título já quitado pelo valor todo (inclusive rascunho da tela)", () => {
+    it("quitado alcança o líquido menos o desconto concedido", () => {
+        assert.equal(quitadoPorInteiro({valorLiquidoCents: 40_000, quitadoCents: 40_000}), true);
+        assert.equal(quitadoPorInteiro({valorLiquidoCents: 40_000, quitadoCents: 39_999}), false);
+        assert.equal(quitadoPorInteiro({valorLiquidoCents: 10_000, descontoCents: 1_000, quitadoCents: 9_000}), true);
+        assert.equal(quitadoPorInteiro({valorLiquidoCents: 0, quitadoCents: 0}), false);
+    });
+
+    it("mensagem distingue vínculo em rascunho de quitação gravada", () => {
+        assert.match(mensagemJaQuitado(9, true), /#9 já está vinculado pelo valor todo em outra linha deste extrato/);
+        assert.match(mensagemJaQuitado(9, false), /#9 já está quitado pelo valor todo/);
+    });
+});
+
+describe("descrição do residual", () => {
+    const base = {valorCents: 7_000_000, vencimento: "2026-11-05", parceiroNome: "Acme", parcelaAtual: null, totalParcelas: null};
+
+    it("aponta o título de origem; CP é Pagamento", () => {
+        assert.equal(
+            descreverResiduoParcial({...base, origemId: 42, tipo: "CP"}),
+            "Residual do lançamento #42 - Pagamento DO(A) ACME NO VALOR R$ 70.000,00 (PARCELA UNICA NO DIA 5)",
+        );
+    });
+
+    it("CR é Recebimento, com a parcela", () => {
+        assert.equal(
+            descreverResiduoParcial({...base, origemId: 7, tipo: "CR", parcelaAtual: 2, totalParcelas: 3, valorCents: 12_345}),
+            "Residual do lançamento #7 - Recebimento DO(A) ACME NO VALOR R$ 123,45 (PARCELA 2/3 NO DIA 5)",
+        );
     });
 });

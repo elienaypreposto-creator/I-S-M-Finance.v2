@@ -7,7 +7,7 @@ import {z} from "zod";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
 import {Upload, FileSpreadsheet} from "lucide-react";
-import {cn} from "@/lib/utils";
+import {cn, formatDate} from "@/lib/utils";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
 import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
@@ -263,7 +263,7 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
                             )}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                            Período {preAnalise.periodo_inicio} - {preAnalise.periodo_fim}
+                            Período {formatDate(preAnalise.periodo_inicio)} a {formatDate(preAnalise.periodo_fim)}
                         </p>
                     </ModalBody>
                     <ModalFooter hint="Esc fecha">
@@ -279,14 +279,21 @@ export function ImportExtratoModal({open, onClose, onImported}: ImportExtratoMod
                             className={modalBtnSecondaryCls}>
                             Voltar
                         </button>
-                        <button
-                            type="button"
-                            disabled={pending || preAnalise.novas === 0}
-                            onClick={confirmarImportarNovas}
-                            className={cn(modalBtnPrimaryCls, "col-span-2")}>
-                            {importMutation.isPending ? <ModalSpinner label="Importando..."/> : null}
-                            Importar apenas as {preAnalise.novas} novas
-                        </button>
+                        {/* Sem linha nova não há o que importar: só Voltar/Cancelar. */}
+                        {preAnalise.novas > 0 && (
+                            <button
+                                type="button"
+                                disabled={pending}
+                                onClick={confirmarImportarNovas}
+                                className={cn(modalBtnPrimaryCls, "col-span-2")}>
+                                {importMutation.isPending ? <ModalSpinner label="Importando..."/> : null}
+                                {preAnalise.ja_existentes === 0
+                                    ? `Importar ${preAnalise.novas} ${preAnalise.novas === 1 ? "linha" : "linhas"}`
+                                    : preAnalise.novas === 1
+                                        ? "Importar apenas a linha nova"
+                                        : `Importar apenas as ${preAnalise.novas} novas`}
+                            </button>
+                        )}
                     </ModalFooter>
                 </>
             )}

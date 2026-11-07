@@ -10,6 +10,9 @@ import {lancamentosService} from "./lancamentos.service";
 import {requireTenant} from "../../../lib/tenant-scope";
 import {toCents} from "../../../utils/money";
 import {retencoesAlteradas} from "../../../utils/retencoes";
+import {identidadeAuditoria} from "../../../lib/api-token-identity";
+import {decidirStatusNaEdicao} from "./status-manual";
+import {camposTravadosAlterados, mensagemCamposTravados, origemQueTrava} from "./edicao-quitado";
 import {
     type CreateLancamentoBody,
     type UpdateLancamentoBody,
@@ -32,6 +35,17 @@ router.get(
     }),
 );
 
+// Antes de "/lancamentos/:id". Resumo (quantidade, em aberto e quitado por tipo) com os filtros da listagem.
+router.get(
+    "/lancamentos/resumo",
+    withPermission(PERM.LANCAMENTOS_LISTAR),
+    asyncHandler(async (req, res) => {
+        const filtros = exportLancamentosQuerySchema.parse(req.query);
+        const result = await lancamentosService.resumo(requireTenant(req).empresaId, filtros);
+        return successResponse(res, result);
+    }),
+);
+
 // Antes de "/lancamentos/:id". Mesmos filtros da listagem, sem paginação (teto de 10 mil linhas).
 router.get(
     "/lancamentos/export",
@@ -48,7 +62,9 @@ router.post(
     withPermission("financeiro:lancamentos:criar"),
     validateBody(createLancamentoBodySchema),
     asyncHandler(async (req, res) => {
-        const item = await lancamentosService.create(requireTenant(req).empresaId, req.body as CreateLancamentoBody);
+        // Quem criou: o mesmo usuário que a auditoria registra (token de API fica null).
+        const {usuario_id} = identidadeAuditoria(req);
+        const item = await lancamentosService.create(requireTenant(req).empresaId, req.body as CreateLancamentoBody, usuario_id);
         return successResponse(res, item, null, 201);
     }),
 );
@@ -73,6 +89,32 @@ router.put(
         const empresaId = requireTenant(req).empresaId;
         const atual = await lancamentosService.getById(empresaId, id);
         req.auditAntes = atual;
+
+        // Status de quitação não se escolhe aqui (vem da conciliação/transferência);
+        // reabrir/cancelar título quitado por elas é recusado.
+        const decisao = decidirStatusNaEdicao({
+            statusPedido: body.status,
+            statusAtual: atual.status,
+            quitadoAtualCents: toCents(atual.valor_quitado),
+            temVinculoConciliacao: atual.tem_conciliacao,
+            ehTransferencia: atual.transferencia_grupo_id != null,
+        });
+        if (!decisao.ok) {
+            throw new AppError(409, "CONFLICT", decisao.mensagem);
+        }
+
+        // Título quitado: o que define o dinheiro (valor, tipo, conta, desconto,
+        // juros, retenções) fica travado; campos descritivos seguem editáveis.
+        const origemTrava = origemQueTrava({
+            temVinculoConciliacao: atual.tem_conciliacao,
+            ehTransferencia: atual.transferencia_grupo_id != null,
+            quitadoCents: toCents(atual.valor_quitado),
+            reabrindo: decisao.limparQuitacao,
+        });
+        const alteradosTravaveis = camposTravadosAlterados(atual, body);
+        if (origemTrava && alteradosTravaveis.length > 0) {
+            throw new AppError(409, "CONFLICT", mensagemCamposTravados(origemTrava, alteradosTravaveis));
+        }
 
         // Alterar valor exige permissão dedicada (negada ao usuário comum).
         if (body.valor !== undefined) {
@@ -112,7 +154,23 @@ router.put(
             }
         }
 
-        const item = await lancamentosService.update(empresaId, id, body);
+        // A conta de um título quitado é onde o dinheiro passou (saldo da conta e
+        // conciliação): trocar a conta moveria o pagamento para outro banco.
+        if (body.conta_id !== undefined && (body.conta_id ?? null) !== (atual.conta_id ?? null) && toCents(atual.valor_quitado) > 0) {
+            throw new AppError(
+                409,
+                "CONFLICT",
+                "Não é possível trocar a conta bancária de um lançamento que já tem pagamento registrado. Desfaça a conciliação/baixa antes.",
+            );
+        }
+
+        const item = await lancamentosService.update(empresaId, id, body, {
+            status: decisao.status,
+            limparQuitacao: decisao.limparQuitacao,
+            // Vínculo criado entre a leitura e a escrita também trava esses campos.
+            conflitoSeVinculado:
+                alteradosTravaveis.length > 0 ? mensagemCamposTravados("conciliacao", alteradosTravaveis) : undefined,
+        });
         return successResponse(res, item);
     }),
 );

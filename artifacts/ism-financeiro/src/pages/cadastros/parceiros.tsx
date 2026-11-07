@@ -1,5 +1,5 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
-import {useEffect, useMemo, useRef, useState} from "react";
+import {useEffect, useMemo, useState} from "react";
 import {
     useForm,
     useWatch,
@@ -40,9 +40,13 @@ import {
     mascararCodigoBanco,
     mascararAgencia,
     mascararConta,
+    opcoesTipoChavePix,
     pixKeyMaxLength,
-    pixKeyPlaceholder
+    pixKeyPlaceholder,
+    tipoChaveDocumento,
 } from "@/lib/pix-ted-masks.ts";
+import {mascararDocumento, normalizarDocumento, somenteDigitos} from "@/lib/documento";
+import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
 import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
@@ -86,22 +90,12 @@ function getTipoStyle(tipo: string) {
     return TIPO_PARCEIRO_STYLE[tipo] ?? {bg: "bg-white/10", text: "text-white/70", border: "border-white/10"};
 }
 
-function mascararDocumento(valor: string, tipo: "PJ" | "PF") {
-    const n = valor.replace(/\D/g, "");
-    if (tipo === "PF") {
-        return n.slice(0, 11).replace(/(\d{3})(\d)/, "$1.$2").replace(/(\d{3})(\d)/, "$1.$2").replace(/(\d{3})(\d{1,2})$/, "$1-$2");
-    }
-    return n.slice(0, 14).replace(/(\d{2})(\d)/, "$1.$2").replace(/(\d{3})(\d)/, "$1.$2").replace(/(\d{3})(\d)/, "$1/$2").replace(/(\d{4})(\d{1,2})$/, "$1-$2");
-}
-
 function mascararTelefone(valor: string) {
     const n = valor.replace(/\D/g, "");
     return n.slice(0, 11).replace(/(\d{2})(\d)/, "($1) $2").replace(/(\d{5})(\d{1,4})$/, "$1-$2");
 }
 
-function docNumeros(s: string) {
-    return s.replace(/\D/g, "");
-}
+const docNumeros = somenteDigitos;
 
 type DepartamentoRow = { id: number; nome: string };
 
@@ -148,7 +142,7 @@ function dadosBancariosFromApi(
         for (const item of dbanc) {
             if (item.tipo === "PIX") {
                 pix.push({
-                    tipo_chave: (item.tipo_chave as PixKeyFormItem["tipo_chave"]) ?? "cnpj",
+                    tipo_chave: (item.tipo_chave as PixKeyFormItem["tipo_chave"]) ?? tipoChaveDocumento(tipoPessoa),
                     chave: String(item.chave ?? ""),
                 });
             } else if (item.tipo === "TED") {
@@ -175,7 +169,7 @@ function dadosBancariosFromApi(
         const cpix = chaves_pix as Array<{ tipo: string; chave: string }> | null;
         if (cpix && Array.isArray(cpix) && cpix.length > 0) {
             pix.push({
-                tipo_chave: tipoPessoa === "PJ" ? "cnpj" : "cpf",
+                tipo_chave: tipoChaveDocumento(tipoPessoa),
                 chave: cpix[0].chave,
             });
         }
@@ -192,7 +186,7 @@ function dadosBancariosFromApi(
 
 function parceiroRowToFormValues(p: ParceiroRow): ParceiroFormValues {
     const tipo = (p.tipo_pessoa === "PF" ? "PF" : "PJ") as "PF" | "PJ";
-    const rawDoc = docNumeros(String(p.cpf_cnpj ?? ""));
+    const rawDoc = normalizarDocumento(p.cpf_cnpj, tipo);
 
     return {
         tipoPessoa: tipo,
@@ -213,7 +207,7 @@ function parceiroRowToFormValues(p: ParceiroRow): ParceiroFormValues {
 // registro quando estamos editando, para que salvar o cadastro nunca
 // reative/desbloqueie um parceiro sem que o usuário tenha pedido isso.
 function parceiroFormToApiBody(values: ParceiroFormValues, statusAtual?: { ativo: boolean; bloqueado: boolean }) {
-    const dig = docNumeros(values.documento);
+    const dig = normalizarDocumento(values.documento, values.tipoPessoa as "PF" | "PJ");
     const deptRaw = values.departamento_id?.trim() ?? "";
 
     const dados_bancarios = values.dadosBancarios.flatMap((grupo) => {
@@ -260,19 +254,13 @@ const defaultParceiroForm: ParceiroFormValues = {
     dadosBancarios: [],
 };
 
-const defaultContaBancaria: ContaBancariaFormItem = {
-    formasPagamento: ["PIX"],
-    pix: [{tipo_chave: "cnpj", chave: ""}],
-    ted: [],
-};
-
-const PIX_TIPO_CHAVE_OPTIONS: { value: PixKeyFormItem["tipo_chave"] & string; label: string }[] = [
-    {value: "cpf", label: "CPF"},
-    {value: "cnpj", label: "CNPJ"},
-    {value: "email", label: "E-mail"},
-    {value: "telefone", label: "Telefone"},
-    {value: "aleatoria", label: "Chave Aleatória"},
-];
+function novaContaBancaria(tipoPessoa: "PF" | "PJ"): ContaBancariaFormItem {
+    return {
+        formasPagamento: ["PIX"],
+        pix: [{tipo_chave: tipoChaveDocumento(tipoPessoa), chave: ""}],
+        ted: [],
+    };
+}
 
 // Helpers de estilo reutilizados pelos sub-componentes
 const innerFieldCls = (hasError?: boolean) =>
@@ -293,6 +281,7 @@ function PixKeyRow({contaIndex, pixIndex, control, setValue, remove, canRemove, 
     errs?: ErrRecord;
 }) {
     const tipoChave = useWatch({control, name: `dadosBancarios.${contaIndex}.pix.${pixIndex}.tipo_chave`}) ?? "";
+    const tipoPessoa = useWatch({control, name: "tipoPessoa"}) ?? "PJ";
 
     return (
         <tr className="border-t border-white/5">
@@ -306,10 +295,14 @@ function PixKeyRow({contaIndex, pixIndex, control, setValue, remove, canRemove, 
                             aria-label="Tipo de chave PIX"
                             onBlur={field.onBlur}
                             onChange={(value) => {
+                                // Ao trocar PF/PJ o valor e a lista mudam em renders diferentes; o
+                                // Select emite "" quando o valor some da lista. Ignorar evita apagar o tipo.
+                                if (!value) return;
                                 field.onChange(value);
                                 setValue(`dadosBancarios.${contaIndex}.pix.${pixIndex}.chave`, "", {shouldDirty: true});
                             }}
-                            opcoes={PIX_TIPO_CHAVE_OPTIONS.map((o) => ({value: o.value, label: o.label}))}
+                            // Lista calculada com o valor do próprio Controller: o tipo atual sempre aparece.
+                            opcoes={opcoesTipoChavePix(tipoPessoa, field.value)}
                         />
                     )}
                 />
@@ -329,6 +322,8 @@ function PixKeyRow({contaIndex, pixIndex, control, setValue, remove, canRemove, 
                             ref={field.ref}
                             maxLength={pixKeyMaxLength(tipoChave)}
                             placeholder={pixKeyPlaceholder(tipoChave)}
+                            aria-label="Chave PIX"
+                            aria-invalid={!!errs?.chave}
                             className={innerFieldCls(!!errs?.chave)}
                         />
                     )}
@@ -341,8 +336,9 @@ function PixKeyRow({contaIndex, pixIndex, control, setValue, remove, canRemove, 
                 {canRemove && (
                     <button type="button" onClick={() => remove(pixIndex)}
                             className="p-1 hover:bg-destructive/20 rounded text-muted-foreground hover:text-destructive transition-colors"
-                            title="Remover chave">
-                        <Trash2 className="w-3.5 h-3.5"/>
+                            title="Remover chave PIX"
+                            aria-label="Remover chave PIX">
+                        <Trash2 aria-hidden="true" className="w-3.5 h-3.5"/>
                     </button>
                 )}
             </td>
@@ -376,6 +372,7 @@ function TedContaRow({contaIndex, tedIndex, control, register, remove, canRemove
                             onBlur={field.onBlur}
                             ref={field.ref}
                             inputMode="numeric"
+                            aria-label="Código do banco"
                             className={innerFieldCls(!!errs?.banco_codigo)}
                             placeholder="033"
                         />
@@ -388,8 +385,9 @@ function TedContaRow({contaIndex, tedIndex, control, register, remove, canRemove
             <td className="px-3 py-2 align-top">
                 <input
                     {...register(`dadosBancarios.${contaIndex}.ted.${tedIndex}.banco_nome`)}
+                    aria-label="Nome do banco"
                     className={innerFieldCls(!!errs?.banco_nome)}
-                    placeholder="Ex: Santander"
+                    placeholder="Ex.: Santander"
                 />
                 {errs?.banco_nome?.message && (
                     <p className="text-xs text-destructive mt-1">{errs.banco_nome.message}</p>
@@ -406,6 +404,7 @@ function TedContaRow({contaIndex, tedIndex, control, register, remove, canRemove
                             onBlur={field.onBlur}
                             ref={field.ref}
                             inputMode="numeric"
+                            aria-label="Agência"
                             className={innerFieldCls(!!errs?.agencia)}
                             placeholder="0000-0"
                         />
@@ -426,6 +425,7 @@ function TedContaRow({contaIndex, tedIndex, control, register, remove, canRemove
                             onBlur={field.onBlur}
                             ref={field.ref}
                             inputMode="numeric"
+                            aria-label="Conta"
                             className={innerFieldCls(!!errs?.conta)}
                             placeholder="00000-0"
                         />
@@ -439,8 +439,9 @@ function TedContaRow({contaIndex, tedIndex, control, register, remove, canRemove
                 {canRemove && (
                     <button type="button" onClick={() => remove(tedIndex)}
                             className="p-1 hover:bg-destructive/20 rounded text-muted-foreground hover:text-destructive transition-colors"
-                            title="Remover conta TED">
-                        <Trash2 className="w-3.5 h-3.5"/>
+                            title="Remover conta TED"
+                            aria-label="Remover conta TED">
+                        <Trash2 aria-hidden="true" className="w-3.5 h-3.5"/>
                     </button>
                 )}
             </td>
@@ -464,6 +465,8 @@ function ContaBancariaGroup({index, control, register, setValue, remove, errors}
         control,
         name: `dadosBancarios.${index}.formasPagamento`
     }) ?? []) as ("PIX" | "TED")[];
+    const tipoPessoa = useWatch({control, name: "tipoPessoa"}) ?? "PJ";
+    const novaChavePix = () => ({tipo_chave: tipoChaveDocumento(tipoPessoa), chave: ""});
 
     const {fields: pixFields, append: appendPix, remove: removePix} = useFieldArray({
         control,
@@ -491,7 +494,7 @@ function ContaBancariaGroup({index, control, register, setValue, remove, errors}
 
         if (!checked) {
             // Ao habilitar a forma, garante ao menos um valor pronto para preencher
-            if (forma === "PIX" && pixFields.length === 0) appendPix({tipo_chave: "cnpj", chave: ""});
+            if (forma === "PIX" && pixFields.length === 0) appendPix(novaChavePix());
             if (forma === "TED" && tedFields.length === 0) appendTed({
                 banco_codigo: "",
                 banco_nome: "",
@@ -514,16 +517,17 @@ function ContaBancariaGroup({index, control, register, setValue, remove, errors}
                     type="button"
                     onClick={() => remove(index)}
                     className="p-1 hover:bg-destructive/20 rounded text-muted-foreground hover:text-destructive transition-colors"
-                    title="Remover conta"
+                    title={`Remover conta ${index + 1}`}
+                    aria-label={`Remover conta ${index + 1}`}
                 >
-                    <Trash2 className="w-3.5 h-3.5"/>
+                    <Trash2 aria-hidden="true" className="w-3.5 h-3.5"/>
                 </button>
             </div>
 
             {/* Formas de pagamento - multi-seleção (PIX e TED podem ficar ativos juntos) */}
             <div>
-                <label className="text-xs text-muted-foreground mb-1.5 block">Formas de Pagamento</label>
-                <div className="flex gap-2">
+                <span id={`parceiro-conta-${index}-formas`} className="text-xs text-muted-foreground mb-1.5 block">Formas de Pagamento</span>
+                <div className="flex gap-2" role="group" aria-labelledby={`parceiro-conta-${index}-formas`}>
                     {(["PIX", "TED"] as const).map((f) => {
                         const checked = formasPagamento.includes(f);
                         return (
@@ -553,13 +557,13 @@ function ContaBancariaGroup({index, control, register, setValue, remove, errors}
             {formasPagamento.includes("PIX") && (
                 <div>
                     <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs text-muted-foreground">Tipo de Chave PIX</span>
+                        <span className="text-xs text-muted-foreground">Chaves PIX</span>
                         <button
                             type="button"
-                            onClick={() => appendPix({tipo_chave: "cnpj", chave: ""})}
+                            onClick={() => appendPix(novaChavePix())}
                             className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-semibold"
                         >
-                            <Plus className="w-3 h-3"/> Adicionar Chave
+                            <Plus aria-hidden="true" className="w-3 h-3"/> Adicionar Chave PIX
                         </button>
                     </div>
                     <div className="bg-black/10 border border-white/10 rounded-lg overflow-hidden">
@@ -602,14 +606,14 @@ function ContaBancariaGroup({index, control, register, setValue, remove, errors}
                             onClick={() => appendTed({banco_codigo: "", banco_nome: "", agencia: "", conta: ""})}
                             className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-semibold"
                         >
-                            <Plus className="w-3 h-3"/> Adicionar Conta TED
+                            <Plus aria-hidden="true" className="w-3 h-3"/> Adicionar Conta TED
                         </button>
                     </div>
                     <div className="bg-black/10 border border-white/10 rounded-lg overflow-hidden">
                         <table className="w-full text-left text-sm">
                             <thead className="bg-black/20">
                             <tr>
-                                <th className="px-3 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Cód.</th>
+                                <th className="px-3 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Código</th>
                                 <th className="px-3 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Nome
                                     do Banco
                                 </th>
@@ -675,7 +679,8 @@ export function NovoParceiroModal({onClose, initialData, onSaved, returnFocusTo}
         watch,
         setValue,
         reset,
-        trigger,
+        getValues,
+        clearErrors,
         formState: {errors, isDirty},
     } = form;
 
@@ -690,17 +695,23 @@ export function NovoParceiroModal({onClose, initialData, onSaved, returnFocusTo}
     const tipoPessoa = watch("tipoPessoa");
     const tiposParceiro = watch("tiposParceiro");
 
-    // Revalida o documento ao trocar PF/PJ, mas nunca na primeira renderização:
-    // caso contrário, um formulário novo (documento vazio) já nasceria mostrando
-    // "CPF é obrigatório" antes mesmo do usuário tocar no campo.
-    const isFirstRenderRef = useRef(true);
-    useEffect(() => {
-        if (isFirstRenderRef.current) {
-            isFirstRenderRef.current = false;
-            return;
-        }
-        void trigger("documento");
-    }, [tipoPessoa, trigger]);
+    // Trocar PF/PJ limpa o documento (CPF e CNPJ têm formatos diferentes) e troca as
+    // chaves PIX de documento para o tipo da nova pessoa: PF usa CPF, PJ usa CNPJ.
+    const trocarTipoPessoa = (novo: "PF" | "PJ") => {
+        if (novo === getValues("tipoPessoa")) return;
+        setValue("tipoPessoa", novo, {shouldDirty: true});
+        setValue("documento", "", {shouldDirty: true});
+        clearErrors("documento");
+        const chaveDoc = tipoChaveDocumento(novo);
+        getValues("dadosBancarios").forEach((grupo, gi) => {
+            grupo.pix.forEach((p, pi) => {
+                if ((p.tipo_chave === "cpf" || p.tipo_chave === "cnpj") && p.tipo_chave !== chaveDoc) {
+                    setValue(`dadosBancarios.${gi}.pix.${pi}.tipo_chave`, chaveDoc, {shouldDirty: true});
+                    setValue(`dadosBancarios.${gi}.pix.${pi}.chave`, "", {shouldDirty: true});
+                }
+            });
+        });
+    };
 
     const saveMutation = useMutation({
         mutationFn: (values: ParceiroFormValues) => {
@@ -756,7 +767,7 @@ export function NovoParceiroModal({onClose, initialData, onSaved, returnFocusTo}
 
     return (
         <Modal onClose={handleCancel} returnFocusTo={returnFocusTo}>
-            <ModalHeader title={`${isEdit ? "Editar Cadastro" : "Novo Cadastro"} - Clientes/Fornecedores`}/>
+            <ModalHeader title={`${isEdit ? "Editar Cadastro" : "Novo Cadastro"} — Clientes / Fornecedores`}/>
 
             <ModalForm onSubmit={handleSubmit((v) => saveMutation.mutate(v))} noValidate>
                 <ModalBody>
@@ -772,10 +783,7 @@ export function NovoParceiroModal({onClose, initialData, onSaved, returnFocusTo}
                                         {(["PF", "PJ"] as const).map((t) => (
                                             <button key={t} type="button"
                                                     aria-pressed={field.value === t}
-                                                    onClick={() => {
-                                                        field.onChange(t);
-                                                        setValue("documento", "", {shouldDirty: true});
-                                                    }}
+                                                    onClick={() => trocarTipoPessoa(t)}
                                                     className={`flex-1 py-3 rounded-xl text-sm font-medium transition-all border ${
                                                         field.value === t ? "bg-primary text-white border-primary" : "bg-white/5 text-muted-foreground border-white/10 hover:border-white/20"
                                                     }`}>
@@ -790,11 +798,11 @@ export function NovoParceiroModal({onClose, initialData, onSaved, returnFocusTo}
                         {/* Nome / Razão social */}
                         <div>
                             <label htmlFor="parceiro-nome" className={labelCls}>
-                                {tipoPessoa === "PF" ? "Nome Completo *" : "Razão Social / Nome Fantasia *"}
+                                {tipoPessoa === "PF" ? "Nome Completo *" : "Razão Social *"}
                             </label>
                             <input id="parceiro-nome" {...register("nomeRazao")} className={fieldCls(!!errors.nomeRazao)}
                                    aria-invalid={!!errors.nomeRazao}
-                                   placeholder={tipoPessoa === "PF" ? "Ex: João da Silva" : "Ex: Tech Solutions S.A."}/>
+                                   placeholder={tipoPessoa === "PF" ? "Ex.: João da Silva" : "Ex.: Tech Solutions S.A."}/>
                             {errors.nomeRazao &&
                                 <p className="text-xs text-destructive mt-1">{errors.nomeRazao.message}</p>}
                         </div>
@@ -824,7 +832,7 @@ export function NovoParceiroModal({onClose, initialData, onSaved, returnFocusTo}
                                     id="parceiro-fantasia"
                                     {...register("nomeFantasia")}
                                     className={fieldCls(!!errors.nomeFantasia)}
-                                    placeholder="Ex: Soluções Tech"
+                                    placeholder="Ex.: Soluções Tech"
                                 />
                                 {errors.nomeFantasia && (
                                     <p className="text-xs text-destructive mt-1">{errors.nomeFantasia.message}</p>
@@ -858,7 +866,7 @@ export function NovoParceiroModal({onClose, initialData, onSaved, returnFocusTo}
 
                         {/* Departamento */}
                         <div>
-                            <label htmlFor="parceiro-departamento" className={labelCls}>Lotação / Departamento</label>
+                            <label htmlFor="parceiro-departamento" className={labelCls}>Departamento</label>
                             <Controller
                                 name="departamento_id"
                                 control={control}
@@ -917,7 +925,7 @@ export function NovoParceiroModal({onClose, initialData, onSaved, returnFocusTo}
                                 </span>
                                 <button
                                     type="button"
-                                    onClick={() => append({...defaultContaBancaria})}
+                                    onClick={() => append(novaContaBancaria(tipoPessoa))}
                                     className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-semibold transition-colors"
                                 >
                                     <Plus aria-hidden="true" className="w-3.5 h-3.5"/> Adicionar Conta
@@ -928,7 +936,7 @@ export function NovoParceiroModal({onClose, initialData, onSaved, returnFocusTo}
                                 <div className="border border-dashed border-white/10 rounded-xl p-5 text-center">
                                     <Landmark aria-hidden="true" className="w-6 h-6 text-muted-foreground/40 mx-auto mb-2"/>
                                     <p className="text-xs text-muted-foreground">Nenhuma conta cadastrada. Clique em
-                                        "Adicionar Conta" para incluir PIX e/ou TED.</p>
+                                        “Adicionar Conta” para incluir PIX e/ou TED.</p>
                                 </div>
                             ) : (
                                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 items-start">
@@ -960,10 +968,10 @@ export function NovoParceiroModal({onClose, initialData, onSaved, returnFocusTo}
             {/* Confirmação curta (AlertDialog compacto, acima do modal). */}
             <ConfirmDialog
                 open={showConfirmCancel}
-                title="Cancelar cadastro?"
-                description="As informações preenchidas serão perdidas. Deseja realmente cancelar?"
-                confirmLabel="Sim, cancelar"
-                cancelLabel="Não, continuar"
+                title={DISCARD_PROMPT.title}
+                description={DISCARD_PROMPT.description}
+                confirmLabel={DISCARD_PROMPT.confirmLabel}
+                cancelLabel={DISCARD_PROMPT.cancelLabel}
                 variant="destructive"
                 icon={AlertTriangle}
                 onCancel={() => setShowConfirmCancel(false)}
@@ -997,12 +1005,12 @@ const DEFINICOES_FILTRO_PARCEIROS: DefinicaoFiltro[] = [
     },
     {
         chave: "tipo_pessoa",
-        rotulo: "Pessoa",
+        rotulo: "Tipo de pessoa",
         tipo: "select",
         placeholder: "PF e PJ",
         opcoes: [
-            {valor: "PF", rotulo: "Pessoa física (PF)"},
-            {valor: "PJ", rotulo: "Pessoa jurídica (PJ)"},
+            {valor: "PF", rotulo: "Pessoa Física (PF)"},
+            {valor: "PJ", rotulo: "Pessoa Jurídica (PJ)"},
         ],
     },
 ];
@@ -1096,7 +1104,7 @@ export default function Parceiros() {
 
     const handleEdit = async (p: ParceiroRow) => {
         const ok = await confirm({
-            title: `Editar "${p.nome.toUpperCase()}"?`,
+            title: `Editar "${p.nome}"?`,
             description: "Você será direcionado ao formulário de edição deste cadastro.",
             confirmLabel: "Editar",
             cancelLabel: "Cancelar",
@@ -1124,14 +1132,14 @@ export default function Parceiros() {
     const getDocDisplay = (p: ParceiroRow) => {
         if (!p.cpf_cnpj) return "-";
         const tipo = (p.tipo_pessoa === "PF" ? "PF" : "PJ") as "PF" | "PJ";
-        return mascararDocumento(String(p.cpf_cnpj).replace(/\D/g, ""), tipo);
+        return mascararDocumento(String(p.cpf_cnpj), tipo);
     };
 
     const EXPORT_COLUMNS_PARCEIROS = [
-        {header: "Tipo Pessoa", key: "tipo_pessoa", width: 12},
-        {header: "Nome / Razão", key: "nome", width: 40},
+        {header: "Tipo de Pessoa", key: "tipo_pessoa", width: 14},
+        {header: "Nome / Razão Social", key: "nome", width: 40},
         {header: "CPF / CNPJ", key: "cpf_cnpj_fmt", width: 22},
-        {header: "Tipos Parceiro", key: "tipos_fmt", width: 34},
+        {header: "Tipo de Parceiro", key: "tipos_fmt", width: 34},
         {header: "Departamento", key: "dept_nome", width: 26},
         {header: "Status", key: "status_fmt", width: 12},
     ];
@@ -1197,7 +1205,7 @@ export default function Parceiros() {
                             onAplicar={filtros.aplicar}
                         />
                         <span className="text-xs text-muted-foreground">
-                            {isLoading ? "…" : `${parceirosLista.length} cadastros`}
+                            {isLoading ? "…" : `${parceirosLista.length} ${parceirosLista.length === 1 ? "cadastro" : "cadastros"}`}
                         </span>
                     </div>
                     <CampoBusca
@@ -1250,36 +1258,46 @@ export default function Parceiros() {
                 )}
 
                 {!isLoading && parceirosLista.length > 0 && (
+                    // Em telas médias (1024px com o menu aberto) a coluna Departamento vai para
+                    // baixo do nome e nome/tipos quebram linha, para a tabela caber sem cortar.
                     <div className="overflow-x-auto">
-                        <table className="w-full text-left text-sm whitespace-nowrap">
+                        <table className="w-full text-left text-sm">
                             <thead className="bg-black/20 text-muted-foreground">
                             <tr>
-                                <th className="px-5 py-3 font-medium w-16 text-center">Tipo</th>
-                                <th className="px-5 py-3 font-medium">Nome / Razão Social</th>
-                                <th className="px-5 py-3 font-medium">CPF / CNPJ</th>
-                                <th className="px-5 py-3 font-medium">Tipo de Parceiro</th>
-                                <th className="px-5 py-3 font-medium">Lotação</th>
-                                <th className="px-5 py-3 font-medium text-center">Status</th>
-                                <th className="px-5 py-3 font-medium text-right">Ações</th>
+                                <th scope="col" className="px-3 xl:px-5 py-3 font-medium w-14 text-center">Pessoa</th>
+                                <th scope="col" className="px-3 xl:px-5 py-3 font-medium">Nome / Razão Social</th>
+                                <th scope="col" className="px-3 xl:px-5 py-3 font-medium whitespace-nowrap">CPF / CNPJ</th>
+                                <th scope="col" className="px-3 xl:px-5 py-3 font-medium">Tipo de Parceiro</th>
+                                <th scope="col" className="hidden xl:table-cell px-5 py-3 font-medium">Departamento</th>
+                                <th scope="col" className="px-3 xl:px-5 py-3 font-medium text-center">Status</th>
+                                <th scope="col" className="px-3 xl:px-5 py-3 font-medium text-right">Ações</th>
                             </tr>
                             </thead>
                             <tbody className="divide-y divide-white/5">
                             {parceirosLista.map((p) => {
                                 const tipoUi = p.tipo_pessoa === "PJ" ? "PJ" : "PF";
                                 const isAtivo = resolveStatus(p) === "ativo";
-                                const lotacao = p.departamento_id ? deptNomeById.get(p.departamento_id) ?? "-" : "-";
+                                const departamento = p.departamento_id ? deptNomeById.get(p.departamento_id) ?? "-" : "-";
                                 const tipos = tiposArray(p.tipos);
                                 return (
                                     <tr key={p.id} className="hover:bg-white/5 transition-colors group">
-                                        <td className="px-5 py-4 text-center">
-                        <span
-                            className={`text-xs font-bold px-2 py-1 rounded ${tipoUi === "PJ" ? "bg-primary/20 text-primary" : "bg-teal-500/20 text-teal-400"}`}>
-                          {tipoUi}
-                        </span>
+                                        <td className="px-3 xl:px-5 py-4 text-center">
+                                            <span
+                                                title={tipoUi === "PJ" ? "Pessoa Jurídica" : "Pessoa Física"}
+                                                className={`text-xs font-bold px-2 py-1 rounded ${tipoUi === "PJ" ? "bg-primary/20 text-primary" : "bg-teal-500/20 text-teal-400"}`}>
+                                                {tipoUi}
+                                            </span>
                                         </td>
-                                        <td className="px-5 py-4 font-semibold text-white">{p.nome}</td>
-                                        <td className="px-5 py-4 text-muted-foreground font-mono text-xs">{getDocDisplay(p)}</td>
-                                        <td className="px-5 py-4">
+                                        <td className="px-3 xl:px-5 py-4 min-w-[160px] max-w-[280px]">
+                                            <p className="font-semibold text-white break-words">{p.nome}</p>
+                                            {departamento !== "-" && (
+                                                <p className="xl:hidden text-xs text-muted-foreground mt-0.5 break-words">
+                                                    {departamento}
+                                                </p>
+                                            )}
+                                        </td>
+                                        <td className="px-3 xl:px-5 py-4 text-muted-foreground font-mono text-xs whitespace-nowrap">{getDocDisplay(p)}</td>
+                                        <td className="px-3 xl:px-5 py-4 min-w-[140px]">
                                             <div className="flex gap-1 flex-wrap">
                                                 {tipos.length === 0 ? (
                                                     <span className="text-muted-foreground text-xs">-</span>
@@ -1288,30 +1306,30 @@ export default function Parceiros() {
                                                         const s = getTipoStyle(t);
                                                         return (
                                                             <span key={t}
-                                                                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${s.bg} ${s.text} ${s.border}`}>
-                                  {t}
-                                </span>
+                                                                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border whitespace-nowrap ${s.bg} ${s.text} ${s.border}`}>
+                                                                {t}
+                                                            </span>
                                                         );
                                                     })
                                                 )}
                                             </div>
                                         </td>
-                                        <td className="px-5 py-4 text-muted-foreground text-sm">{lotacao}</td>
-                                        <td className="px-5 py-4 text-center">
-                        <span
-                            className={`text-xs px-2.5 py-1 rounded-full font-medium ${isAtivo ? "bg-success/20 text-success" : "bg-destructive/20 text-destructive"}`}>
-                          {isAtivo ? "Ativo" : "Inativo"}
-                        </span>
+                                        <td className="hidden xl:table-cell px-5 py-4 text-muted-foreground text-sm">{departamento}</td>
+                                        <td className="px-3 xl:px-5 py-4 text-center">
+                                            <span
+                                                className={`text-xs px-2.5 py-1 rounded-full font-medium ${isAtivo ? "bg-success/20 text-success" : "bg-destructive/20 text-destructive"}`}>
+                                                {isAtivo ? "Ativo" : "Inativo"}
+                                            </span>
                                         </td>
-                                        <td className="px-5 py-4">
+                                        <td className="px-3 xl:px-5 py-4">
                                             <div className="flex items-center justify-end gap-2">
-                                                <BotaoEditar onClick={() => handleEdit(p)}/>
+                                                <BotaoEditar onClick={() => handleEdit(p)} title={`Editar ${p.nome}`}/>
                                                 <BotaoBloquear
                                                     bloqueado={!isAtivo}
-                                                    title={isAtivo ? "Inativar" : "Ativar"}
+                                                    title={`${isAtivo ? "Inativar" : "Ativar"} ${p.nome}`}
                                                     onClick={() => handleToggleAtivo(p)}
                                                 />
-                                                <BotaoExcluir onClick={() => handleDelete(p)}/>
+                                                <BotaoExcluir onClick={() => handleDelete(p)} title={`Excluir ${p.nome}`}/>
                                             </div>
                                         </td>
                                     </tr>

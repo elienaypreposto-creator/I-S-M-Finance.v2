@@ -3,8 +3,9 @@ import {useMemo, useState, useEffect, useRef} from "react";
 import {useLocation} from "wouter";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
-import {fetchApiData} from "@/lib/api-config";
+import {ApiError, fetchApiData} from "@/lib/api-config";
 import {formatDate, cn} from "@/lib/utils";
+import {rotuloStatus} from "@/lib/status-label";
 import {useDinheiro} from "@/components/conta/saldos-visiveis";
 import {VincularModal, type DraftVincular} from "@/components/conciliacao/vincular-modal";
 import {IgnorarLinhaModal, type MotivoIgnorarPayload} from "@/components/conciliacao/ignorar-linha-modal";
@@ -31,6 +32,7 @@ import {
     RefreshCw,
     Download,
     ChevronDown,
+    X,
 } from "lucide-react";
 import {invalidateRelated} from "@/App";
 import {formatValorBrInput, brMoneyDisplayToApiString} from "@/validations/lancamentos.schema";
@@ -64,6 +66,9 @@ type ExtratoDetalheExtrato = {
 type ConciliacaoResumo = {
     id: number;
     status: string;
+    /** true = finalizada pelo Conciliar (travada até reabrir). */
+    finalizada?: boolean;
+    data_conciliacao?: string | null;
     resumo_conciliados: number;
     resumo_ignorados: number;
     resumo_pendentes: number;
@@ -196,6 +201,12 @@ function normalizarTextoBusca(texto: string): string {
         .replace(/[\u0300-\u036f]/g, "")
         .toLowerCase()
         .trim();
+}
+
+/** O Salvar prefixa a recusa de cada ação com "Linha N: " - separa a linha da mensagem. */
+function separarLinhaDoErro(mensagem: string): { linhaId: number | null; texto: string } {
+    const m = /^Linha (\d+): ([\s\S]*)$/.exec(mensagem);
+    return m ? {linhaId: Number(m[1]), texto: m[2]!} : {linhaId: null, texto: mensagem};
 }
 
 function centsFromReais(v: string | number | null | undefined): number {
@@ -378,6 +389,7 @@ function CardLancamento({
                             extratoId,
                             linhaId,
                             canEditarLancamento,
+                            canEditarVinculo,
                             canDesfazer,
                             onEditarLancamento,
                             onRemoverVinculo,
@@ -386,6 +398,8 @@ function CardLancamento({
     extratoId: string;
     linhaId: number;
     canEditarLancamento: boolean;
+    /** Desconto/juros do vínculo: exige permissão de vincular e extrato aberto. */
+    canEditarVinculo: boolean;
     canDesfazer: boolean;
     onEditarLancamento: () => void;
     onRemoverVinculo: () => void;
@@ -407,8 +421,9 @@ function CardLancamento({
     const isResidual = Boolean(v.is_residuo_parcial);
     const isLocal = Boolean(v._local);
 
+    // Extrato finalizado = travado: nada de editar desconto/juros (a API recusa).
     const podeEditarEsteVinculo =
-        canEditarLancamento && !isLocal;
+        canEditarVinculo && !isLocal;
 
     const duplicarMutation = useMutation({
         mutationFn: async () => {
@@ -634,7 +649,7 @@ function CardLancamento({
                         Desconto
                     </span>
 
-                    {editando === "desconto" ? (
+                    {editando === "desconto" && podeEditarEsteVinculo ? (
                         <div className="flex items-center gap-1 mt-0.5">
                             <input
                                 autoFocus
@@ -705,7 +720,7 @@ function CardLancamento({
                         Juros/Multa
                     </span>
 
-                    {editando === "juros_multa" ? (
+                    {editando === "juros_multa" && podeEditarEsteVinculo ? (
                         <div className="flex items-center gap-1 mt-0.5">
                             <input
                                 autoFocus
@@ -780,8 +795,8 @@ function CardLancamento({
                             : "vencimento da origem"}
                     </span>
                 ) : (
-                    <span className="uppercase text-[9px]">
-                        {v.status}
+                    <span className="text-[10px]">
+                        {rotuloStatus(v.status, v.tipo)}
                     </span>
                 )}
 
@@ -840,8 +855,8 @@ function CardLancamento({
                                 )
                                 : "-"}{" "}
                             ·{" "}
-                            <span className="uppercase text-[9px]">
-                                {v.residuo_gerado.status}
+                            <span className="text-[10px]">
+                                {rotuloStatus(v.residuo_gerado.status, v.tipo)}
                             </span>
                         </span>
 
@@ -877,15 +892,17 @@ export default function ConciliacaoExtratoDetalhe({
     const {hasPermission} = useAuth();
     const dinheiro = useDinheiro();
 
-    const canVincular = hasPermission(
+    // Ações nas linhas também dependem do extrato não estar finalizado
+    // (canVincular/canIgnorar/canDesfazer são definidos após carregar o extrato).
+    const permVincular = hasPermission(
         PERM.CONCILIACAO_VINCULAR,
     );
 
-    const canIgnorar = hasPermission(
+    const permIgnorar = hasPermission(
         PERM.CONCILIACAO_IGNORAR,
     );
 
-    const canDesfazer = hasPermission(
+    const permDesfazer = hasPermission(
         PERM.CONCILIACAO_DESFAZER,
     );
 
@@ -939,6 +956,11 @@ export default function ConciliacaoExtratoDetalhe({
     ] = useState(false);
 
     const [
+        reabrirOpen,
+        setReabrirOpen,
+    ] = useState(false);
+
+    const [
         editarLancamentoId,
         setEditarLancamentoId,
     ] = useState<number | null>(null);
@@ -954,6 +976,24 @@ export default function ConciliacaoExtratoDetalhe({
         regraLinha,
         setRegraLinha,
     ] = useState<LinhaDetalhe | null>(null);
+
+    /** Recusa do Salvar (409 etc.), com a linha apontada pelo backend. */
+    const [
+        erroSalvar,
+        setErroSalvar,
+    ] = useState<{ titulo: string; texto: string; linhaId: number | null } | null>(null);
+
+    /** Confirmação de aplicar as regras nas linhas pendentes (após criar regra). */
+    const [
+        aplicarRegras,
+        setAplicarRegras,
+    ] = useState<{ casadas: number; comLancamento: number; excluidas: number } | null>(null);
+
+    /** Linha a rolar até a vista ("Ir para a linha" do aviso de erro). */
+    const [
+        linhaAlvo,
+        setLinhaAlvo,
+    ] = useState<number | null>(null);
 
     // Filtros na URL (tipo, status e busca), aplicados no navegador sobre as linhas carregadas.
     const definicoesFiltro: DefinicaoFiltro[] = useMemo(() => [
@@ -1035,6 +1075,17 @@ export default function ConciliacaoExtratoDetalhe({
     const extrato = data?.extrato;
     const conc = data?.conciliacao;
     const linhas = data?.linhas ?? [];
+
+    // Finalizado (Conciliar) = travado: alterar exige "Reabrir conciliação".
+    // Extrato antigo marcado "conciliado" sem ter sido finalizado vem com
+    // finalizada=false e status "parcial" - pode ser revisto e finalizado aqui.
+    const extratoFinalizado =
+        conc?.finalizada ??
+        extrato?.status === "conciliado";
+
+    const canVincular = permVincular && !extratoFinalizado;
+    const canIgnorar = permIgnorar && !extratoFinalizado;
+    const canDesfazer = permDesfazer && !extratoFinalizado;
 
     const linhasEfetivas =
         useMemo<LinhaEfetiva[]>(
@@ -1359,6 +1410,10 @@ export default function ConciliacaoExtratoDetalhe({
                         payload.gerar_parcial,
                         residuo_lancamento_id:
                         payload.residuo_lancamento_id,
+                        // "Novo" do Vincular: excluir o extrato remove o título junto.
+                        ...(acao.draft.criadoPeloExtrato
+                            ? {criado_pelo_extrato: true}
+                            : {}),
                     });
                 } else if (
                     acao.tipo === "ignorar"
@@ -1413,6 +1468,8 @@ export default function ConciliacaoExtratoDetalhe({
                     },
                 ),
 
+            onMutate: () => setErroSalvar(null),
+
             onSuccess: (
                 resultado,
             ) => {
@@ -1461,6 +1518,25 @@ export default function ConciliacaoExtratoDetalhe({
                         ? e.message
                         : "Não foi possível salvar as alterações.";
 
+                setFinalizarOpen(false);
+
+                // Recusa de regra de negócio (ex.: título já vinculado em outra
+                // linha): aviso fixo na tela apontando a linha, como no Vincular.
+                if (e instanceof ApiError && e.status === 409) {
+                    const {linhaId, texto} = separarLinhaDoErro(msg);
+                    const ehVinculo =
+                        linhaId != null &&
+                        (draftsPorLinha[linhaId] ?? []).some((a) => a.tipo === "vincular");
+                    const titulo = ehVinculo ? "Vínculo não permitido" : "Não foi possível salvar";
+                    setErroSalvar({titulo, texto, linhaId});
+                    toast({
+                        variant: "destructive",
+                        title: titulo,
+                        description: linhaId != null ? `Linha #${linhaId}: ${texto}` : texto,
+                    });
+                    return;
+                }
+
                 toast({
                     variant:
                         "destructive",
@@ -1470,6 +1546,115 @@ export default function ConciliacaoExtratoDetalhe({
                 });
             },
         });
+
+    const reabrirMutation =
+        useMutation({
+            mutationFn: () =>
+                fetchApiData<{ reaberta: boolean }>(
+                    `/conciliacoes/${conc?.id}/reabrir`,
+                    {method: "POST", body: JSON.stringify({})},
+                ),
+
+            onSuccess: () => {
+                setReabrirOpen(false);
+                invalidateRelated(queryClient, "conciliacao");
+                void queryClient.invalidateQueries({
+                    queryKey: tenantQueryKey("conciliacao-extrato", extratoId),
+                });
+                void queryClient.invalidateQueries({
+                    queryKey: tenantQueryKey("conciliacoes-pendencias-mes"),
+                });
+                toast({
+                    title: "Conciliação reaberta",
+                    description: "As linhas podem ser alteradas. Clique em Conciliar para fechar de novo.",
+                });
+            },
+
+            onError: (e: unknown) => {
+                setReabrirOpen(false);
+                toast({
+                    variant: "destructive",
+                    title: "Não foi possível reabrir",
+                    description: e instanceof Error ? e.message : String(e),
+                });
+            },
+        });
+
+    // Regra criada a partir de uma linha: oferece aplicá-la nas linhas pendentes
+    // deste extrato (o que a importação faria). Linhas com rascunho ficam de fora.
+    type AplicarRegrasResp = {
+        linhas_casadas: number;
+        linhas_com_lancamento: number;
+        linhas_vinculadas: number;
+    };
+
+    const aplicarRegrasMutation =
+        useMutation({
+            mutationFn: (preview: boolean) =>
+                fetchApiData<AplicarRegrasResp>(
+                    `/conciliacoes/${extratoId}/aplicar-regras`,
+                    {
+                        method: "POST",
+                        body: JSON.stringify({
+                            preview,
+                            excluir_linhas: Object.keys(draftsPorLinha).map(Number),
+                        }),
+                    },
+                ),
+
+            onSuccess: (r, preview) => {
+                if (preview) {
+                    if (r.linhas_casadas > 0) {
+                        setAplicarRegras({
+                            casadas: r.linhas_casadas,
+                            comLancamento: r.linhas_com_lancamento,
+                            excluidas: Object.keys(draftsPorLinha).length,
+                        });
+                    } else {
+                        toast({
+                            title: "Regra salva",
+                            description: "Nenhuma linha pendente deste extrato casa com as regras.",
+                        });
+                    }
+                    return;
+                }
+
+                setAplicarRegras(null);
+                invalidateRelated(queryClient, "conciliacao");
+                invalidateRelated(queryClient, "lancamentos");
+                void queryClient.invalidateQueries({
+                    queryKey: tenantQueryKey("conciliacao-extrato", extratoId),
+                });
+                toast({
+                    title: "Regra aplicada",
+                    description:
+                        r.linhas_vinculadas > 0
+                            ? `${r.linhas_casadas} linha(s) classificada(s); ${r.linhas_vinculadas} com lançamento criado e vinculado. Revise e clique em Conciliar.`
+                            : `${r.linhas_casadas} linha(s) classificada(s) pela regra.`,
+                });
+            },
+
+            onError: (e: unknown) => {
+                setAplicarRegras(null);
+                toast({
+                    variant: "destructive",
+                    title: "Não foi possível aplicar a regra",
+                    description: e instanceof Error ? e.message : String(e),
+                });
+            },
+        });
+
+    function aposSalvarRegra() {
+        setRegraLinha(null);
+        if (extratoFinalizado) {
+            toast({
+                title: "Regra salva",
+                description: "Este extrato está conciliado: reabra a conciliação para aplicar a regra nas linhas dele.",
+            });
+            return;
+        }
+        if (canVincular) aplicarRegrasMutation.mutate(true);
+    }
 
     const pendentesEfetivos =
         useMemo(
@@ -1560,6 +1745,32 @@ export default function ConciliacaoExtratoDetalhe({
     const restantesParaCarregar =
         linhasFiltradas.length -
         linhasVisiveis.length;
+
+    // "Ir para a linha": tira filtros que a escondem, carrega até ela e rola.
+    function irParaLinha(linhaId: number) {
+        if (!linhasFiltradas.some((l) => l.linha_id === linhaId)) {
+            filtrosUrl.atualizar({tipo: null, status: null, q: null});
+        }
+        setLinhaAlvo(linhaId);
+    }
+
+    useEffect(() => {
+        if (linhaAlvo == null) return;
+        const idx = linhasFiltradas.findIndex((l) => l.linha_id === linhaAlvo);
+        if (idx < 0) return;
+        const el = document.getElementById(`linha-extrato-${linhaAlvo}`);
+        if (!el) {
+            if (idx >= linhasVisiveisCount) setLinhasVisiveisCount(idx + 1);
+            return;
+        }
+        el.scrollIntoView({behavior: "smooth", block: "center"});
+        setLinhaAlvo(null);
+    }, [linhaAlvo, linhasFiltradas, linhasVisiveisCount]);
+
+    const linhaDoErro =
+        erroSalvar?.linhaId != null
+            ? linhasEfetivas.find((l) => l.linha_id === erroSalvar.linhaId) ?? null
+            : null;
 
     return (
         <div className="flex flex-col gap-4 h-full w-full px-0 py-2">
@@ -1657,8 +1868,34 @@ export default function ConciliacaoExtratoDetalhe({
                             null,
                         )
                     }
+                    onSuccess={aposSalvarRegra}
                 />
             )}
+
+            <ConfirmDialog
+                open={aplicarRegras != null}
+                title="Aplicar a regra neste extrato?"
+                description={
+                    aplicarRegras
+                        ? `${aplicarRegras.casadas} linha(s) pendente(s) deste extrato casam com as regras de conciliação. ` +
+                          (aplicarRegras.comLancamento > 0
+                              ? `Em ${aplicarRegras.comLancamento}, o lançamento será criado e quitado agora, como na importação (desfazer a linha devolve). `
+                              : "Elas serão marcadas como classificadas pela regra. ") +
+                          (aplicarRegras.excluidas > 0
+                              ? "Linhas com alterações ainda não salvas ficam de fora."
+                              : "")
+                        : ""
+                }
+                confirmLabel="Aplicar"
+                variant="default"
+                icon={Sparkles}
+                confirmDisabled={aplicarRegrasMutation.isPending}
+                onCancel={() => setAplicarRegras(null)}
+                onConfirm={() => {
+                    if (aplicarRegrasMutation.isPending) return;
+                    aplicarRegrasMutation.mutate(false);
+                }}
+            />
 
             <IgnorarLinhaModal
                 open={
@@ -1904,7 +2141,7 @@ export default function ConciliacaoExtratoDetalhe({
             <ConfirmDialog
                 open={finalizarOpen}
                 title="Conciliar extrato?"
-                description="Não pode haver linhas pendentes. Após conciliar, o extrato será marcado como conciliado."
+                description="Não pode haver linhas pendentes. Após conciliar, o extrato fica marcado como conciliado e travado: para alterar alguma linha depois, será preciso reabrir a conciliação."
                 confirmLabel="Conciliar"
                 variant="default"
                 icon={CheckCircle2}
@@ -1919,6 +2156,21 @@ export default function ConciliacaoExtratoDetalhe({
                     salvarMutation.mutate({
                         finalizar: true,
                     });
+                }}
+            />
+
+            <ConfirmDialog
+                open={reabrirOpen}
+                title="Reabrir conciliação?"
+                description="O extrato volta a ficar pendente de conciliação e as linhas podem ser alteradas (desfazer, ignorar, vincular). Os lançamentos continuam quitados enquanto os vínculos existirem. Para fechar de novo, clique em Conciliar."
+                confirmLabel="Reabrir"
+                variant="warning"
+                icon={RotateCcw}
+                confirmDisabled={reabrirMutation.isPending}
+                onCancel={() => setReabrirOpen(false)}
+                onConfirm={() => {
+                    if (reabrirMutation.isPending) return;
+                    reabrirMutation.mutate();
                 }}
             />
 
@@ -2045,13 +2297,53 @@ export default function ConciliacaoExtratoDetalhe({
                             className="px-3.5"
                         />
 
+                        {erroSalvar && (
+                            <div
+                                role="alert"
+                                className="mx-3.5 my-2 flex items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2"
+                            >
+                                <AlertCircle aria-hidden="true" className="w-4 h-4 mt-0.5 shrink-0 text-red-300"/>
+                                <div className="min-w-0 flex-1">
+                                    <p className="text-sm font-semibold text-red-200">
+                                        {erroSalvar.titulo}
+                                        {erroSalvar.linhaId != null && ` · Linha #${erroSalvar.linhaId}`}
+                                    </p>
+                                    {linhaDoErro && (
+                                        <p className="text-[11px] text-red-100/70 truncate">
+                                            {linhaDoErro.data_movimento ? `${formatDate(linhaDoErro.data_movimento)} · ` : ""}
+                                            {linhaDoErro.descricao ?? "-"} · {dinheiro(Math.abs(Number(linhaDoErro.valor)))}
+                                        </p>
+                                    )}
+                                    <p className="text-xs text-red-100/90 leading-snug mt-0.5">{erroSalvar.texto}</p>
+                                    <p className="text-[11px] text-red-100/70 mt-0.5">Nada foi salvo. Corrija a linha e salve de novo.</p>
+                                </div>
+                                {erroSalvar.linhaId != null && linhaDoErro && (
+                                    <button
+                                        type="button"
+                                        onClick={() => irParaLinha(erroSalvar.linhaId!)}
+                                        className={cn("shrink-0 px-2.5 py-1 rounded-lg border border-red-400/40 text-[11px] font-semibold text-red-100 hover:bg-red-500/15", FOCO_VISIVEL)}
+                                    >
+                                        Ir para a linha
+                                    </button>
+                                )}
+                                <button
+                                    type="button"
+                                    aria-label="Fechar aviso"
+                                    onClick={() => setErroSalvar(null)}
+                                    className={cn("shrink-0 p-1 rounded hover:bg-red-500/15 text-red-200", FOCO_VISIVEL)}
+                                >
+                                    <X aria-hidden="true" className="w-3.5 h-3.5"/>
+                                </button>
+                            </div>
+                        )}
+
                         <div
                             className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_36px_minmax(0,1fr)] border-b border-white/5 bg-black/20">
                             <div className="px-3.5 py-2.5 flex items-center justify-center gap-2 flex-wrap">
                                 <Download className="w-3.5 h-3.5 text-primary shrink-0"/>
 
                                 <h2 className="text-sm font-bold text-white uppercase tracking-wide">
-                                    Extrato
+                                    Extrato #{extrato.id}
                                 </h2>
 
                                 {extrato.periodo_inicio &&
@@ -2076,8 +2368,11 @@ export default function ConciliacaoExtratoDetalhe({
                                 <Unlink className="w-3.5 h-3.5 text-primary shrink-0"/>
 
                                 <h2 className="text-sm font-bold text-white uppercase tracking-wide">
-                                    Movimentações
-                                    não conciliadas
+                                    {extratoFinalizado
+                                        ? "Movimentações conciliadas"
+                                        : pendentesEfetivos > 0
+                                            ? "Movimentações não conciliadas"
+                                            : "Movimentações a conciliar"}
                                 </h2>
                             </div>
                         </div>
@@ -2140,10 +2435,13 @@ export default function ConciliacaoExtratoDetalhe({
                                                 key={
                                                     linha.linha_id
                                                 }
+                                                id={`linha-extrato-${linha.linha_id}`}
                                                 className={cn(
                                                     "grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_36px_minmax(0,1fr)] divide-y xl:divide-y-0 xl:divide-x divide-white/5",
                                                     isIgnorado &&
                                                     "opacity-45 grayscale-[0.35] bg-white/[0.015]",
+                                                    erroSalvar?.linhaId === linha.linha_id &&
+                                                    "ring-2 ring-inset ring-red-500/60 bg-red-500/[0.04]",
                                                 )}
                                             >
                                                 <div className="p-3 space-y-1.5 min-w-0">
@@ -2151,15 +2449,13 @@ export default function ConciliacaoExtratoDetalhe({
                                                         <div className="flex items-center gap-2 min-w-0">
                           <span
                               className={cn(
-                                  "text-[10px] font-black px-1.5 py-0.5 rounded border uppercase shrink-0",
+                                  "text-[10px] font-black px-1.5 py-0.5 rounded border shrink-0",
                                   corNaturezaBadge(
                                       isCredito,
                                   ),
                               )}
                           >
-                                                                {
-                                                                    linha.tipo_movimento
-                                                                }
+                                                                {isCredito ? "Crédito" : "Débito"}
                           </span>
 
                                                             {linha.data_movimento && (
@@ -2352,7 +2648,11 @@ export default function ConciliacaoExtratoDetalhe({
                                                                                 linha.linha_id
                                                                             }
                                                                             canEditarLancamento={
-                                                                                canEditarLancamento
+                                                                                canEditarLancamento &&
+                                                                                !extratoFinalizado
+                                                                            }
+                                                                            canEditarVinculo={
+                                                                                canVincular
                                                                             }
                                                                             canDesfazer={
                                                                                 canDesfazer
@@ -2473,12 +2773,42 @@ export default function ConciliacaoExtratoDetalhe({
                                 </span>
                             )}
 
+                            {extratoFinalizado && (
+                                <span className="text-[11px] text-emerald-300/90 flex items-center gap-1.5">
+                                    <CheckCircle2 className="w-3.5 h-3.5"/>
+                                    Extrato conciliado. Para alterar, reabra a conciliação.
+                                </span>
+                            )}
+
+                            {!extratoFinalizado && podeFinalizar && !hasPendingChanges && !semPermissaoFinalizar && (
+                                <span className="text-[11px] text-amber-300/90 flex items-center gap-1.5">
+                                    <AlertCircle className="w-3.5 h-3.5"/>
+                                    Todas as linhas tratadas. Revise e clique em Conciliar para finalizar.
+                                </span>
+                            )}
+
+                            {extratoFinalizado && canConcluir && (
+                                <button
+                                    type="button"
+                                    disabled={reabrirMutation.isPending || !conc}
+                                    onClick={() => setReabrirOpen(true)}
+                                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-bold disabled:opacity-40"
+                                >
+                                    {reabrirMutation.isPending ? (
+                                        <Loader2 className="w-4 h-4 animate-spin"/>
+                                    ) : (
+                                        <RotateCcw className="w-4 h-4"/>
+                                    )}
+                                    Reabrir conciliação
+                                </button>
+                            )}
+
                             {semPermissaoFinalizar && hasPendingChanges && (
                                 <button
                                     type="button"
                                     disabled={
                                         salvarMutation.isPending ||
-                                        extrato.status === "conciliado"
+                                        extratoFinalizado
                                     }
                                     onClick={() => {
                                         if (salvarMutation.isPending) return;
@@ -2501,9 +2831,12 @@ export default function ConciliacaoExtratoDetalhe({
                                 type="button"
                                 disabled={
                                     semPermissaoFinalizar ||
-                                    !hasPendingChanges ||
+                                    // Sem rascunho, ainda dá para Conciliar quando tudo
+                                    // já foi tratado e falta só finalizar (ex.: linhas
+                                    // classificadas por regra na importação).
+                                    (!hasPendingChanges && !podeFinalizar) ||
                                     salvarMutation.isPending ||
-                                    extrato.status === "conciliado"
+                                    extratoFinalizado
                                 }
                                 onClick={() => {
                                     if (salvarMutation.isPending || semPermissaoFinalizar) {

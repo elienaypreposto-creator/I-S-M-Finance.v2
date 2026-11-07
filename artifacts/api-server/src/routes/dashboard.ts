@@ -1,11 +1,14 @@
 import {Router} from "express";
-import {and, desc, eq, gte, inArray, lt, lte, sql, type SQLWrapper} from "drizzle-orm";
+import {and, desc, eq, gte, inArray, isNull, lt, lte, sql, type SQL, type SQLWrapper} from "drizzle-orm";
 import {db} from "@workspace/db";
-import {contasBancariasTable, lancamentosTable, parceirosTable, planoContasTable} from "@workspace/db/schema";
+import {lancamentosTable, parceirosTable, planoContasTable} from "@workspace/db/schema";
 import {errorResponse, successResponse} from "../utils/response";
 import {hojeIsoLocal} from "../utils/date-civil";
 import {fromCents, toCents} from "../utils/money";
+import {projetarSaldoDiario} from "../utils/projecao-saldo";
+import {contasBancariasService} from "../domains/financial/contas-bancarias/contas-bancarias.service";
 import {requireTenant, tenantWhere} from "../lib/tenant-scope";
+import {emAbertoLiquidoSql, emAbertoNoPainelWhere} from "../domains/financial/lancamentos/em-aberto";
 
 const router = Router();
 const STATUS_ABERTO = ["pendente", "atrasado"] as const;
@@ -56,112 +59,22 @@ router.get("/dashboard/kpis", async (req, res) => {
         const hoje = hojeIsoLocal();
         const {inicio, fim} = boundsMesCivil(hoje);
 
+        // Em aberto = pendente/atrasado pelo líquido + o restante do pago parcial
+        // (ver em-aberto.ts); "atraso" = vencidos até ontem.
+        const somaEmAberto = (tipo: "CR" | "CP", periodo: SQL) =>
+            sql<number>`coalesce(sum(case when ${lancamentosTable.tipo} = ${tipo} and ${periodo} then ${emAbertoLiquidoSql} else 0 end), 0)`;
+        const vencido = sql`${lancamentosTable.vencimento} < ${hoje}`;
+        const doMes = sql`${lancamentosTable.vencimento} between ${inicio} and ${fim}`;
+
         const [totais] = await db
             .select({
-                contas_receber_atraso: sql<number>`coalesce(sum(case when
-                ${lancamentosTable.tipo}
-                =
-                'CR'
-                and
-                ${lancamentosTable.vencimento}
-                <
-                ${hoje}
-                and
-                ${lancamentosTable.status}
-                in
-                (
-                'pendente',
-                'atrasado'
-                )
-                then
-                ${lancamentosTable.valor_liquido}
-                else
-                0
-                end
-                ),
-                0
-                )`,
-                contas_receber_aberto_mes: sql<number>`coalesce(sum(case when
-                ${lancamentosTable.tipo}
-                =
-                'CR'
-                and
-                ${lancamentosTable.vencimento}
-                between
-                ${inicio}
-                and
-                ${fim}
-                and
-                ${lancamentosTable.status}
-                in
-                (
-                'pendente',
-                'atrasado'
-                )
-                then
-                ${lancamentosTable.valor_liquido}
-                else
-                0
-                end
-                ),
-                0
-                )`,
-                contas_pagar_aberto_mes: sql<number>`coalesce(sum(case when
-                ${lancamentosTable.tipo}
-                =
-                'CP'
-                and
-                ${lancamentosTable.vencimento}
-                between
-                ${inicio}
-                and
-                ${fim}
-                and
-                ${lancamentosTable.status}
-                in
-                (
-                'pendente',
-                'atrasado'
-                )
-                then
-                ${lancamentosTable.valor_liquido}
-                else
-                0
-                end
-                ),
-                0
-                )`,
-                contas_pagar_atraso: sql<number>`coalesce(sum(case when
-                ${lancamentosTable.tipo}
-                =
-                'CP'
-                and
-                ${lancamentosTable.vencimento}
-                <
-                ${hoje}
-                and
-                ${lancamentosTable.status}
-                in
-                (
-                'pendente',
-                'atrasado'
-                )
-                then
-                ${lancamentosTable.valor_liquido}
-                else
-                0
-                end
-                ),
-                0
-                )`,
+                contas_receber_atraso: somaEmAberto("CR", vencido),
+                contas_receber_aberto_mes: somaEmAberto("CR", doMes),
+                contas_pagar_aberto_mes: somaEmAberto("CP", doMes),
+                contas_pagar_atraso: somaEmAberto("CP", vencido),
             })
             .from(lancamentosTable)
-            .where(tenantWhere(
-                lancamentosTable,
-                empresaId,
-                sql`${lancamentosTable.status}
-            != 'cancelado'`,
-            ));
+            .where(tenantWhere(lancamentosTable, empresaId, emAbertoNoPainelWhere));
 
         return successResponse(res, {
             contasReceberAtraso: toNumber(totais?.contas_receber_atraso),
@@ -216,6 +129,9 @@ router.get("/dashboard/projecao-mes", async (req, res) => {
                     lte(lancamentosTable.vencimento, fim),
                     sql`${lancamentosTable.status}
                     != 'cancelado'`,
+                    // O título de origem já entra pelo valor cheio; o residual é a
+                    // parte dele que falta (mesmo vencimento) - somar os dois dobrava.
+                    sql`${lancamentosTable.is_residuo_parcial} = false`,
                 ),
             );
 
@@ -234,117 +150,53 @@ router.get("/dashboard/projecao-mes", async (req, res) => {
     }
 });
 
+// Projeção de saldo dos próximos dias. Ponto de partida = saldo geral: soma do saldo
+// atual das contas ATIVAS pela regra única do saldo da conta (contasBancariasService,
+// a mesma do card "Saldo geral" e do cadastro de contas). Antes somava o saldo_inicial
+// de todas as contas com todos os quitados pelo líquido, sem olhar conta nem data de
+// início, e não batia com o saldo geral. Daí em diante: + a receber e − a pagar em
+// aberto (pendente/atrasado) pelo vencimento, valor líquido; transferências entre
+// contas da empresa ficam fora (não mudam o saldo geral). Ver utils/projecao-saldo.ts.
 router.get("/dashboard/projecao-dias", async (req, res) => {
     try {
         const {empresaId} = requireTenant(req);
         const dias = Math.min(365, Math.max(1, parseInt(req.query.dias as string) || 30));
         const hojeStr = hojeIsoLocal();
-        const fimStr = addDaysIso(hojeStr, dias);
+        const ultimoDia = addDaysIso(hojeStr, dias - 1);
 
-        const [[{saldosIniciais}], [{historicoLiquidado}], movimentos] = await Promise.all([
-            db
-                .select({
-                    saldosIniciais: sql<number>`coalesce(sum(
-                    ${contasBancariasTable.saldo_inicial}
-                    ),
-                    0
-                    )`,
-                })
-                .from(contasBancariasTable)
-                .where(tenantWhere(contasBancariasTable, empresaId, eq(contasBancariasTable.status, "ativo"))),
-
-            db
-                .select({
-                    historicoLiquidado: sql<number>`coalesce(sum(
-            case when
-                    ${lancamentosTable.tipo}
-                    =
-                    'CR'
-                    then
-                    ${lancamentosTable.valor_liquido}
-                    else
-                    -
-                    ${lancamentosTable.valor_liquido}
-                    end
-                    ),
-                    0
-                    )`,
-                })
-                .from(lancamentosTable)
-                .where(
-                    tenantWhere(
-                        lancamentosTable,
-                        empresaId,
-                        inArray(lancamentosTable.status, STATUS_QUITADO),
-                        lt(lancamentosTable.data_quitacao, hojeStr),
-                    ),
-                ),
-
+        const [contas, previstos] = await Promise.all([
+            contasBancariasService.list(empresaId),
             db
                 .select({
                     data: lancamentosTable.vencimento,
-                    receber: sql<number>`coalesce(sum(case when
-                    ${lancamentosTable.tipo}
-                    =
-                    'CR'
-                    then
-                    ${lancamentosTable.valor_liquido}
-                    else
-                    0
-                    end
-                    ),
-                    0
-                    )`,
-                    pagar: sql<number>`coalesce(sum(case when
-                    ${lancamentosTable.tipo}
-                    =
-                    'CP'
-                    then
-                    ${lancamentosTable.valor_liquido}
-                    else
-                    0
-                    end
-                    ),
-                    0
-                    )`,
+                    receber: sql<string>`coalesce(sum(case when ${lancamentosTable.tipo} = 'CR' then ${lancamentosTable.valor_liquido} else 0 end), 0)`,
+                    pagar: sql<string>`coalesce(sum(case when ${lancamentosTable.tipo} = 'CP' then ${lancamentosTable.valor_liquido} else 0 end), 0)`,
                 })
                 .from(lancamentosTable)
                 .where(
                     tenantWhere(
                         lancamentosTable,
                         empresaId,
+                        inArray(lancamentosTable.status, STATUS_ABERTO),
                         gte(lancamentosTable.vencimento, hojeStr),
-                        lte(lancamentosTable.vencimento, fimStr),
-                        sql`${lancamentosTable.status}
-                        != 'cancelado'`,
+                        lte(lancamentosTable.vencimento, ultimoDia),
+                        isNull(lancamentosTable.transferencia_grupo_id),
                     ),
                 )
                 .groupBy(lancamentosTable.vencimento)
                 .orderBy(lancamentosTable.vencimento),
         ]);
 
-        const saldoAtualCents = toCents(saldosIniciais) + toCents(historicoLiquidado);
-        const movimentosMap = new Map(movimentos.map((m) => [String(m.data).slice(0, 10), m]));
+        // Mesmas contas do card "Saldo geral" (lib/saldo-geral.ts no front): só as ativas.
+        const saldoGeralCents = contas
+            .filter((c) => c.status === "ativo")
+            .reduce((soma, c) => soma + toCents(c.saldo_atual), 0);
+        const {pontos, saldoFinalCents} = projetarSaldoDiario(saldoGeralCents, previstos, hojeStr, dias);
 
-        const resultado = [];
-        let saldoAcumuladoCents = saldoAtualCents;
-        for (let i = 0; i < dias; i++) {
-            const data = addDaysIso(hojeStr, i);
-            const mov = movimentosMap.get(data);
-            const receberCents = toCents(mov?.receber);
-            const pagarCents = toCents(mov?.pagar);
-            saldoAcumuladoCents += receberCents - pagarCents;
-            resultado.push({
-                data,
-                saldo: fromCents(saldoAcumuladoCents),
-                receber: fromCents(receberCents),
-                pagar: fromCents(pagarCents),
-            });
-        }
-
-        return successResponse(res, resultado, {
+        return successResponse(res, pontos, {
             dias,
-            saldo_atual: fromCents(saldoAtualCents),
+            saldo_atual: fromCents(saldoGeralCents),
+            saldo_final: fromCents(saldoFinalCents),
         });
     } catch (e) {
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao calcular projeção diária.", e);
@@ -363,13 +215,13 @@ router.get("/dashboard/inadimplencia-clientes", async (req, res) => {
             tab === "proximos_vencer"
                 ? and(
                     eq(lancamentosTable.tipo, "CR"),
-                    inArray(lancamentosTable.status, STATUS_ABERTO),
+                    emAbertoNoPainelWhere,
                     gte(lancamentosTable.vencimento, hoje),
                     lte(lancamentosTable.vencimento, janela),
                 )
                 : and(
                     eq(lancamentosTable.tipo, "CR"),
-                    inArray(lancamentosTable.status, STATUS_ABERTO),
+                    emAbertoNoPainelWhere,
                     lt(lancamentosTable.vencimento, hoje),
                 );
 
@@ -377,11 +229,7 @@ router.get("/dashboard/inadimplencia-clientes", async (req, res) => {
             .select({
                 parceiro_id: parceirosTable.id,
                 nome: parceirosTable.nome,
-                total: sql<number>`coalesce(sum(
-                ${lancamentosTable.valor_liquido}
-                ),
-                0
-                )`,
+                total: sql<number>`coalesce(sum(${emAbertoLiquidoSql}), 0)`,
                 maior_dias_atraso: sql<number>`coalesce(max(case when
                 ${lancamentosTable.vencimento}
                 <
@@ -409,11 +257,7 @@ router.get("/dashboard/inadimplencia-clientes", async (req, res) => {
             .leftJoin(parceirosTable, eq(lancamentosTable.parceiro_id, parceirosTable.id))
             .where(tenantWhere(lancamentosTable, empresaId, whereClause))
             .groupBy(parceirosTable.id, parceirosTable.nome)
-            .orderBy(desc(sql`coalesce(sum(
-            ${lancamentosTable.valor_liquido}
-            ),
-            0
-            )`))
+            .orderBy(desc(sql`coalesce(sum(${emAbertoLiquidoSql}), 0)`))
             .limit(limite);
 
         return successResponse(
@@ -444,13 +288,13 @@ router.get("/dashboard/inadimplencia-fornecedores", async (req, res) => {
             tab === "proximos_vencer"
                 ? and(
                     eq(lancamentosTable.tipo, "CP"),
-                    inArray(lancamentosTable.status, STATUS_ABERTO),
+                    emAbertoNoPainelWhere,
                     gte(lancamentosTable.vencimento, hoje),
                     lte(lancamentosTable.vencimento, janela),
                 )
                 : and(
                     eq(lancamentosTable.tipo, "CP"),
-                    inArray(lancamentosTable.status, STATUS_ABERTO),
+                    emAbertoNoPainelWhere,
                     lt(lancamentosTable.vencimento, hoje),
                 );
 
@@ -458,11 +302,7 @@ router.get("/dashboard/inadimplencia-fornecedores", async (req, res) => {
             .select({
                 parceiro_id: parceirosTable.id,
                 nome: parceirosTable.nome,
-                total: sql<number>`coalesce(sum(
-                ${lancamentosTable.valor_liquido}
-                ),
-                0
-                )`,
+                total: sql<number>`coalesce(sum(${emAbertoLiquidoSql}), 0)`,
                 maior_dias_atraso: sql<number>`coalesce(max(case when
                 ${lancamentosTable.vencimento}
                 <
@@ -490,11 +330,7 @@ router.get("/dashboard/inadimplencia-fornecedores", async (req, res) => {
             .leftJoin(parceirosTable, eq(lancamentosTable.parceiro_id, parceirosTable.id))
             .where(tenantWhere(lancamentosTable, empresaId, whereClause))
             .groupBy(parceirosTable.id, parceirosTable.nome)
-            .orderBy(desc(sql`coalesce(sum(
-            ${lancamentosTable.valor_liquido}
-            ),
-            0
-            )`))
+            .orderBy(desc(sql`coalesce(sum(${emAbertoLiquidoSql}), 0)`))
             .limit(limite);
 
         return successResponse(
@@ -525,7 +361,8 @@ router.get("/dashboard/alertas-atraso", async (req, res) => {
                 id: lancamentosTable.id,
                 descricao: lancamentosTable.descricao,
                 vencimento: lancamentosTable.vencimento,
-                valor: lancamentosTable.valor_liquido,
+                // Pago parcial entra pelo que falta pagar.
+                valor: emAbertoLiquidoSql,
                 nome: parceirosTable.nome,
                 riscos: lancamentosTable.riscos,
             })
@@ -536,7 +373,7 @@ router.get("/dashboard/alertas-atraso", async (req, res) => {
                     lancamentosTable,
                     empresaId,
                     eq(lancamentosTable.tipo, "CP"),
-                    inArray(lancamentosTable.status, STATUS_ABERTO),
+                    emAbertoNoPainelWhere,
                     lt(lancamentosTable.vencimento, hoje),
                     risco ? sql`${lancamentosTable.riscos}
                     ?
@@ -577,11 +414,7 @@ router.get("/dashboard/nivel-risco", async (req, res) => {
                 ${lancamentosTable.riscos}
                 )`,
                 quantidade: sql<number>`count(*)`,
-                total: sql<number>`coalesce(sum(
-                ${lancamentosTable.valor_liquido}
-                ),
-                0
-                )`,
+                total: sql<number>`coalesce(sum(${emAbertoLiquidoSql}), 0)`,
             })
             .from(lancamentosTable)
             .where(
@@ -590,7 +423,7 @@ router.get("/dashboard/nivel-risco", async (req, res) => {
                     empresaId,
                     lt(lancamentosTable.vencimento, hoje),
                     eq(lancamentosTable.tipo, "CP"),
-                    inArray(lancamentosTable.status, STATUS_ABERTO),
+                    emAbertoNoPainelWhere,
                     sql`jsonb_array_length
                     (
                     ${lancamentosTable.riscos}
@@ -603,11 +436,7 @@ router.get("/dashboard/nivel-risco", async (req, res) => {
             (
             ${lancamentosTable.riscos}
             )`)
-            .orderBy(desc(sql`coalesce(sum(
-            ${lancamentosTable.valor_liquido}
-            ),
-            0
-            )`));
+            .orderBy(desc(sql`coalesce(sum(${emAbertoLiquidoSql}), 0)`));
 
         return successResponse(
             res,

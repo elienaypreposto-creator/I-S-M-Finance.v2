@@ -38,6 +38,7 @@ import {
     sendAdminCreatedAccountEmail,
 } from "../services/email.service";
 import {revokeAllTokensForUser} from "../services/session.service";
+import {frontendUrlDefinida, logFrontendUrlAusente} from "../lib/frontend-url";
 import {denylistUser} from "../services/denylist.service";
 import {generateOtp} from "../services/token.service";
 import {
@@ -229,12 +230,11 @@ router.post(
                 senha,
             } = req.body as CreateUsuarioBody;
 
-            const frontendUrl = process.env.FRONTEND_URL;
+            const frontendUrl = frontendUrlDefinida();
 
             if (!frontendUrl) {
-                console.error(
-                    "[CONFIG] FRONTEND_URL não definido - criação de utilizador bloqueada.",
-                );
+                // O cliente recebe só a mensagem genérica; quem opera vê no log o que falta.
+                console.error(logFrontendUrlAusente("criação de usuário (POST /usuarios)", req.id));
 
                 return errorResponse(
                     res,

@@ -15,9 +15,8 @@ import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {Popover, PopoverContent, PopoverTrigger} from "@/components/ui/popover";
 import {Modal, ModalBody, ModalFooter, ModalForm, ModalHeader, ModalSpinner, modalBtnPrimaryCls, modalBtnSecondaryCls} from "@/components/ui/modal-responsivo";
-import {Calendar as CalendarPicker} from "@/components/ui/calendar";
+import {DatePicker} from "@/components/ui/date-picker";
 import {format as formatBtn, parseISO} from "date-fns";
-import {ptBR} from "date-fns/locale";
 import {cn} from "@/lib/utils";
 import {TIPOS_DOCUMENTO_LANCAMENTO} from "@/lib/lancamento-documento";
 import {CAMPOS_RETENCAO, ROTULO_RETENCAO} from "@/lib/retencoes";
@@ -46,6 +45,9 @@ import {
     pagamentoItemDefault,
     apiValorToValorBr,
     brMoneyDisplayToApiString,
+    ehStatusQuitacao,
+    naturezaCombinaComTipo,
+    planoContasDoTipo,
     type LancamentoApiBody,
     type LancamentoEditItem,
     type LancamentoModalFormValues,
@@ -499,6 +501,30 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     const exigirDescricao = watch("exigir_descricao");
     const isCP = tipo === "CP";
 
+    // Quitação vem da conciliação (ou da transferência): no formulário o status
+    // de um título quitado é só leitura, com conta, data e valor pago.
+    const statusQuitado = ehStatusQuitacao(status);
+    const quitadoCents = Math.round(Number(editItemFull?.valor_quitado ?? 0) * 100);
+    const quitacaoRegistrada = quitadoCents > 0;
+    const ehTransferencia = !!editItemFull?.transferencia_grupo_id;
+    // Quitado sem vínculo de extrato nem transferência (caminho antigo): não há onde
+    // desfazer, então o status fica editável para reabrir (a API limpa a quitação).
+    const quitacaoReversivelAqui = !!editItemFull && statusQuitado && !editItemFull.tem_conciliacao && !ehTransferencia;
+    // "Pago" gravado pelo formulário antigo sem pagamento: fora do saldo e dos relatórios.
+    const quitadoSemRegistro = quitacaoReversivelAqui && !quitacaoRegistrada;
+    const statusSoLeitura = statusQuitado && !quitacaoReversivelAqui;
+    const rotuloStatusQuitado = status === "pago_parcial" ? "Pago parcial" : tipo === "CR" ? "Recebido (Liquidado)" : "Pago (Liquidado)";
+    // Com quitação registrada, o que define o dinheiro (tipo, valor, desconto,
+    // juros e retenções; a conta nem aparece aqui) fica só leitura: a API recusa
+    // com 409. Sem vínculo nem transferência, voltar para Pendente libera.
+    const valoresTravados = !!editItemFull && (!!editItemFull.tem_conciliacao || ehTransferencia || (quitacaoRegistrada && statusQuitado));
+    const travadoCls = valoresTravados ? "cursor-not-allowed opacity-70" : "";
+    const origemQuitacao = editItemFull?.transferencia_grupo_id
+        ? "Transferência entre contas"
+        : editItemFull?.tem_conciliacao
+            ? "Conciliação bancária"
+            : "Registro sem vínculo de extrato";
+
     const valorBr = watch("valorBr");
     const descontoBr = watch("descontoBr") ?? "";
     const jurosBr = watch("jurosBr") ?? "";
@@ -636,6 +662,16 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
         queryKey: tenantQueryKey("plano-contas-modal"),
         queryFn: () => fetchApiData<PlanoConta[]>("/plano-contas"),
     });
+
+    // Só categorias da natureza do lançamento (a receber -> receita; a pagar ->
+    // custo/despesa), mantendo a já salva e a selecionada mesmo fora do filtro.
+    const planoContaId = watch("plano_conta_id");
+    const planoContasDoLancamento = planoContasDoTipo(planoContas, tipo, [
+        planoContaId,
+        editItemFull?.plano_conta_id ?? editItem?.plano_conta_id,
+    ]);
+    const planoSelecionado = planoContas.find((p) => String(p.id) === planoContaId);
+    const planoForaDoTipo = planoSelecionado?.tipo && !naturezaCombinaComTipo(planoSelecionado.tipo, tipo) ? planoSelecionado : null;
 
     const {data: departamentos = []} = useQuery<Departamento[]>({
         queryKey: tenantQueryKey("departamentos-modal"),
@@ -779,6 +815,8 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                                     key={v}
                                                     type="button"
                                                     aria-pressed={tipo === v}
+                                                    disabled={valoresTravados}
+                                                    aria-describedby={valoresTravados ? "lancamento-status-hint" : undefined}
                                                     onClick={() => {
                                                         setValue("tipo", v, {shouldValidate: true, shouldDirty: true});
                                                         // Limpeza síncrona: CR não tem formas de pagamento
@@ -787,6 +825,7 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                                     className={cn(
                                                         "h-[3.4em] md:h-[2.9em] px-[0.5em] rounded-[0.7em] text-[0.93em] font-bold border transition-colors",
                                                         tipo === v ? `${color} shadow-lg` : "border-white/10 bg-white/5 text-muted-foreground hover:border-white/20 hover:text-white",
+                                                        "disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-white/10",
                                                         focusRingCls,
                                                     )}>
                                                     {label}
@@ -801,26 +840,13 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                         <div className="min-w-0">
                                             <label htmlFor="lancamento-vencimento" className={labelCls}>Vencimento *</label>
                                             <Controller name="vencimento" control={control} render={({field}) => (
-                                                <Popover>
-                                                    <PopoverTrigger asChild>
-                                                        <button type="button" id="lancamento-vencimento"
-                                                                className={cn(inputCls, "flex items-center justify-between text-left", !field.value && "text-muted-foreground/70")}>
-                                                            {field.value ? formatBtn(parseISO(field.value), "dd/MM/yyyy") : "Selecione..."}
-                                                            <Calendar aria-hidden="true"
-                                                                      className="w-[1.05em] h-[1.05em] text-muted-foreground shrink-0"/>
-                                                        </button>
-                                                    </PopoverTrigger>
-                                                    <PopoverContent className="w-auto p-0 border border-white/10"
-                                                                    align="start">
-                                                        <CalendarPicker
-                                                            mode="single"
-                                                            selected={field.value ? parseISO(field.value) : undefined}
-                                                            onSelect={(date) => field.onChange(date ? formatBtn(date, "yyyy-MM-dd") : "")}
-                                                            locale={ptBR}
-                                                            initialFocus
-                                                        />
-                                                    </PopoverContent>
-                                                </Popover>
+                                                <DatePicker
+                                                    id="lancamento-vencimento"
+                                                    value={field.value ?? ""}
+                                                    onChange={field.onChange}
+                                                    className={inputCls}
+                                                    aria-invalid={!!errors.vencimento}
+                                                />
                                             )}/>
                                             {errors.vencimento && <p className={errorCls}>{errors.vencimento.message}</p>}
                                         </div>
@@ -940,11 +966,17 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                             <PlanoContaCombobox
                                                 value={field.value}
                                                 onChange={field.onChange}
-                                                planoContas={planoContas}
+                                                planoContas={planoContasDoLancamento}
                                                 error={errors.plano_conta_id?.message}
                                                 className={comboTriggerCls}
                                             />
                                         )}/>
+                                        {planoForaDoTipo && (
+                                            <p className="text-[0.75em] text-yellow-300 mt-[0.3em]">
+                                                Categoria de {planoForaDoTipo.tipo} num lançamento a {tipo === "CR" ? "receber" : "pagar"}:
+                                                o normal é {tipo === "CR" ? "uma receita" : "um custo ou despesa"}.
+                                            </p>
+                                        )}
                                     </div>
 
                                     {/* Valor + Status */}
@@ -962,7 +994,10 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                                     onBlur={field.onBlur}
                                                     name={field.name}
                                                     ref={field.ref}
-                                                    className={cn(inputCls, "text-[1em] font-bold text-primary tabular-nums")}
+                                                    readOnly={valoresTravados}
+                                                    aria-readonly={valoresTravados || undefined}
+                                                    aria-describedby={valoresTravados ? "lancamento-status-hint" : undefined}
+                                                    className={cn(inputCls, "text-[1em] font-bold text-primary tabular-nums", travadoCls)}
                                                     placeholder="0,00"
                                                 />
                                             )}/>
@@ -970,26 +1005,83 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                         </div>
                                         <div className="min-w-0">
                                             <label htmlFor="lancamento-status" className={labelCls}>Status</label>
-                                            <SelectCampo
-                                                id="lancamento-status"
-                                                value={status ?? ""}
-                                                onChange={(value) => setValue("status", value as typeof status, {
-                                                    shouldDirty: true,
-                                                    shouldValidate: true,
-                                                })}
-                                                opcoes={[
-                                                    {value: "pendente", label: "Pendente"},
-                                                    tipo === "CR"
-                                                        ? {value: "recebido", label: "Recebido (Liquidado)"}
-                                                        : {value: "pago", label: "Pago (Liquidado)"},
-                                                    {value: "pago_parcial", label: "Pago parcial"},
-                                                    {value: "atrasado", label: "Atrasado"},
-                                                    {value: "cancelado", label: "Cancelado"},
-                                                ]}
-                                            />
+                                            {statusSoLeitura ? (
+                                                <input
+                                                    id="lancamento-status"
+                                                    type="text"
+                                                    readOnly
+                                                    value={rotuloStatusQuitado}
+                                                    aria-describedby="lancamento-status-hint"
+                                                    className={cn(inputCls, "cursor-default text-success font-bold")}
+                                                />
+                                            ) : (
+                                                <SelectCampo
+                                                    id="lancamento-status"
+                                                    value={status ?? ""}
+                                                    aria-describedby="lancamento-status-hint"
+                                                    onChange={(value) => setValue("status", value as typeof status, {
+                                                        shouldDirty: true,
+                                                        shouldValidate: true,
+                                                    })}
+                                                    opcoes={[
+                                                        ...(quitacaoReversivelAqui
+                                                            ? [{value: status, label: quitadoSemRegistro ? `${rotuloStatusQuitado} - sem pagamento` : rotuloStatusQuitado}]
+                                                            : []),
+                                                        {value: "pendente", label: "Pendente"},
+                                                        {value: "atrasado", label: "Atrasado"},
+                                                        {value: "cancelado", label: "Cancelado"},
+                                                    ]}
+                                                />
+                                            )}
                                             {errors.status && <p className={errorCls}>{errors.status.message}</p>}
                                         </div>
                                     </div>
+                                    <p id="lancamento-status-hint" className="-mt-[0.5em] text-[0.75em] text-muted-foreground">
+                                        {statusSoLeitura
+                                            ? ehTransferencia
+                                                ? "Quitação da transferência entre contas: tipo, valor, desconto, juros e retenções ficam só leitura. Para desfazer ou corrigir, edite ou exclua a transferência."
+                                                : "Quitação registrada pela conciliação: tipo, valor, desconto, juros e retenções ficam só leitura. Para reabrir ou corrigir, desfaça o vínculo na tela de Conciliação."
+                                            : quitacaoReversivelAqui && quitacaoRegistrada
+                                                ? valoresTravados
+                                                    ? "Pagamento sem vínculo de extrato: tipo, valor, desconto, juros e retenções ficam só leitura. Voltar para Pendente tira o pagamento do saldo da conta e libera a edição."
+                                                    : "Pagamento sem vínculo de extrato: voltar para Pendente tira o pagamento do saldo da conta."
+                                                : `${tipo === "CR" ? "Recebido" : "Pago"} é marcado na Conciliação bancária, ao vincular o título ao extrato.`}
+                                    </p>
+
+                                    {/* Quitação (só leitura): o que entrou no saldo da conta e nos relatórios. */}
+                                    {statusQuitado && quitacaoRegistrada && editItemFull && (
+                                        <dl aria-label="Quitação"
+                                            className="grid grid-cols-2 gap-x-[0.8em] gap-y-[0.6em] rounded-[0.7em] border border-success/30 bg-success/[0.06] px-[0.95em] py-[0.8em] text-[0.85em]">
+                                            <div className="col-span-2">
+                                                <dt className="text-[0.85em] font-bold text-muted-foreground uppercase tracking-[0.06em]">Conta bancária</dt>
+                                                <dd className="text-white font-semibold">{editItemFull.conta_nome ?? "-"}</dd>
+                                            </div>
+                                            <div>
+                                                <dt className="text-[0.85em] font-bold text-muted-foreground uppercase tracking-[0.06em]">
+                                                    Data do {tipo === "CR" ? "recebimento" : "pagamento"}
+                                                </dt>
+                                                <dd className="text-white tabular-nums">
+                                                    {editItemFull.data_quitacao ? formatBtn(parseISO(String(editItemFull.data_quitacao).slice(0, 10)), "dd/MM/yyyy") : "-"}
+                                                </dd>
+                                            </div>
+                                            <div>
+                                                <dt className="text-[0.85em] font-bold text-muted-foreground uppercase tracking-[0.06em]">
+                                                    Valor {tipo === "CR" ? "recebido" : "pago"}
+                                                </dt>
+                                                <dd className="text-success font-black tabular-nums">{reaisFmt(quitadoCents)}</dd>
+                                            </div>
+                                            <p className="col-span-2 text-[0.85em] text-muted-foreground">Origem: {origemQuitacao}</p>
+                                        </dl>
+                                    )}
+
+                                    {quitadoSemRegistro && (
+                                        <p role="alert"
+                                           className="flex gap-[0.5em] rounded-[0.7em] border border-yellow-500/30 bg-yellow-500/[0.08] px-[0.95em] py-[0.7em] text-[0.8em] text-yellow-300">
+                                            <AlertTriangle aria-hidden="true" className="w-[1.2em] h-[1.2em] shrink-0"/>
+                                            Marcado como {tipo === "CR" ? "recebido" : "pago"} sem pagamento registrado: não entra no saldo
+                                            da conta nem nos relatórios. Volte para Pendente e quite pela Conciliação bancária.
+                                        </p>
+                                    )}
 
                                     {/* Desconto / Juros - só na EDIÇÃO de um lançamento já existente.
                                         Ajustam o valor líquido do título (Valor Atual, exibido no
@@ -1009,7 +1101,10 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                                         onBlur={field.onBlur}
                                                         name={field.name}
                                                         ref={field.ref}
-                                                        className={cn(inputCls, "text-green-400 tabular-nums")}
+                                                        readOnly={valoresTravados}
+                                                        aria-readonly={valoresTravados || undefined}
+                                                        aria-describedby={valoresTravados ? "lancamento-status-hint" : undefined}
+                                                        className={cn(inputCls, "text-green-400 tabular-nums", travadoCls)}
                                                         placeholder="0,00"
                                                     />
                                                 )}/>
@@ -1029,7 +1124,10 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                                         onBlur={field.onBlur}
                                                         name={field.name}
                                                         ref={field.ref}
-                                                        className={cn(inputCls, "text-red-400 tabular-nums")}
+                                                        readOnly={valoresTravados}
+                                                        aria-readonly={valoresTravados || undefined}
+                                                        aria-describedby={valoresTravados ? "lancamento-status-hint" : undefined}
+                                                        className={cn(inputCls, "text-red-400 tabular-nums", travadoCls)}
                                                         placeholder="0,00"
                                                     />
                                                 )}/>
@@ -1085,7 +1183,9 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                                                         name={field.name}
                                                                         ref={field.ref}
                                                                         aria-invalid={!!erro}
-                                                                        className={cn(inputCls, "tabular-nums")}
+                                                                        readOnly={valoresTravados}
+                                                                        aria-readonly={valoresTravados || undefined}
+                                                                        className={cn(inputCls, "tabular-nums", travadoCls)}
                                                                         placeholder="0,00"
                                                                     />
                                                                 )}/>

@@ -1,4 +1,5 @@
 import {z} from "zod";
+import {cnpjValido, cpfValido, erroDocumento, tipoPorDocumento} from "../../../utils/documento";
 
 const nullableId = z.coerce.number().int().positive().nullable().optional();
 
@@ -44,9 +45,10 @@ export const parceiroIdParamSchema = z.object({
     id: z.coerce.number().int().positive(),
 });
 
-export const createParceiroBodySchema = z.object({
+const parceiroBodySchema = z.object({
     tipo_pessoa: z.string().trim().min(1),
-    cpf_cnpj: z.string().trim().min(1).nullable(),
+    // CNPJ alfanumérico é gravado em maiúsculas (mesma forma que o front envia).
+    cpf_cnpj: z.string().trim().toUpperCase().min(1).nullable(),
     nome: z.string().trim().min(1),
     nome_fantasia: z.string().trim().min(1).nullable().optional(),
     email: z.string().trim().nullable().optional(),
@@ -61,7 +63,34 @@ export const createParceiroBodySchema = z.object({
     dados_bancarios: z.array(dadoBancarioSchema).optional(),
 });
 
-export const updateParceiroBodySchema = createParceiroBodySchema.partial();
+type ParceiroBodyParcial = Partial<z.infer<typeof parceiroBodySchema>>;
+
+/**
+ * CPF/CNPJ do parceiro e chaves PIX do tipo CPF/CNPJ precisam ter dígito verificador válido.
+ * Sem tipo_pessoa (edição parcial): com letra é CNPJ alfanumérico; senão 11 dígitos é CPF, 14 é CNPJ.
+ */
+function validarDocumentos(data: ParceiroBodyParcial, ctx: z.RefinementCtx) {
+    const doc = data.cpf_cnpj?.trim();
+    if (doc) {
+        const tipo = data.tipo_pessoa === "PF" || data.tipo_pessoa === "PJ"
+            ? data.tipo_pessoa
+            : tipoPorDocumento(doc);
+        const erro = erroDocumento(doc, tipo);
+        if (erro) ctx.addIssue({code: z.ZodIssueCode.custom, message: erro, path: ["cpf_cnpj"]});
+    }
+    data.dados_bancarios?.forEach((item, i) => {
+        if (item.tipo !== "PIX") return;
+        if (item.tipo_chave === "cpf" && !cpfValido(item.chave)) {
+            ctx.addIssue({code: z.ZodIssueCode.custom, message: "Chave PIX: CPF inválido.", path: ["dados_bancarios", i, "chave"]});
+        } else if (item.tipo_chave === "cnpj" && !cnpjValido(item.chave)) {
+            ctx.addIssue({code: z.ZodIssueCode.custom, message: "Chave PIX: CNPJ inválido.", path: ["dados_bancarios", i, "chave"]});
+        }
+    });
+}
+
+export const createParceiroBodySchema = parceiroBodySchema.superRefine(validarDocumentos);
+
+export const updateParceiroBodySchema = parceiroBodySchema.partial().superRefine(validarDocumentos);
 
 export type ListParceirosQuery = z.infer<typeof listParceirosQuerySchema>;
 export type CreateParceiroBody = z.infer<typeof createParceiroBodySchema>;

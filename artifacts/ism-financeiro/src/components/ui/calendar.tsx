@@ -7,6 +7,7 @@ import {
   ChevronRightIcon,
 } from "lucide-react"
 import { DayButton, DayPicker, getDefaultClassNames } from "react-day-picker"
+import { ptBR } from "react-day-picker/locale"
 
 import { cn } from "@/lib/utils"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -19,14 +20,27 @@ function Calendar({
   buttonVariant = "ghost",
   formatters,
   components,
+  locale,
   ...props
 }: React.ComponentProps<typeof DayPicker> & {
   buttonVariant?: React.ComponentProps<typeof Button>["variant"]
 }) {
   const defaultClassNames = getDefaultClassNames()
+  // pt-BR por padrão, com os rótulos de acessibilidade do react-day-picker
+  // ("Ir para o mês anterior", "Hoje, ...", "selecionado"). Um locale do
+  // date-fns passado pelo chamador não traz `labels` e cairia no inglês.
+  const localeFinal = React.useMemo(
+    () => ({
+      ...ptBR,
+      ...locale,
+      labels: { ...ptBR.labels, ...locale?.labels },
+    }),
+    [locale]
+  )
 
   return (
     <DayPicker
+      locale={localeFinal}
       showOutsideDays={showOutsideDays}
       className={cn(
         "bg-background group/calendar p-3 [--cell-size:2rem] [[data-slot=card-content]_&]:bg-transparent [[data-slot=popover-content]_&]:bg-transparent",
@@ -37,7 +51,7 @@ function Calendar({
       captionLayout={captionLayout}
       formatters={{
         formatMonthDropdown: (date) =>
-          date.toLocaleString("default", { month: "short" }),
+          date.toLocaleString("pt-BR", { month: "short" }),
         ...formatters,
       }}
       classNames={{

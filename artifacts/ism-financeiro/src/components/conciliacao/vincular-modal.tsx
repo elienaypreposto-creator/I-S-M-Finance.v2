@@ -4,7 +4,7 @@ import {useForm, useFieldArray, Controller, useWatch} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
-import {fetchApiData} from "@/lib/api-config";
+import {ApiError, fetchApiData} from "@/lib/api-config";
 import {formatDate, cn} from "@/lib/utils";
 import {useDinheiro} from "@/components/conta/saldos-visiveis";
 import {Checkbox} from "@/components/ui/checkbox";
@@ -46,7 +46,50 @@ export type LancamentoCompativel = {
     /** Nome do parceiro, usado na busca livre. */
     parceiro_nome?: string | null;
   plano_conta_id: number | null;
+    /** Conta onde o título já tem quitação registrada (se houver). */
+    conta_id?: number | null;
+    conta_nome?: string | null;
+    /** Já tem pagamento em outra conta: só o residual pode ser vinculado aqui. */
+    quitado_em_outra_conta?: boolean;
+    /** Valor todo já coberto por vínculos de outras linhas/extratos. */
+    coberto_por_outros_vinculos?: boolean;
+    /** Outros extratos em que o título já tem vínculo. */
+    outros_extratos?: number[];
 };
+
+/** Por que o título não pode ser vinculado a esta linha (o backend recusa com 409). */
+export function motivoBloqueioVinculo(l: LancamentoCompativel): string | null {
+    if (l.quitado_em_outra_conta) {
+        const conta = l.conta_nome ? ` (${l.conta_nome})` : "";
+        return `Já tem pagamento em outra conta${conta}. Para quitar o restante por esta conta, vincule a parcela residual do pagamento parcial.`;
+    }
+    if (l.coberto_por_outros_vinculos) {
+        const extratos = l.outros_extratos ?? [];
+        const onde = extratos.length > 0
+            ? `${extratos.length > 1 ? "aos extratos" : "ao extrato"} ${extratos.map((id) => `#${id}`).join(", ")}`
+            : "a outra linha deste extrato";
+        return `Já vinculado ${onde} pelo valor todo. Desfaça aquele vínculo antes de vincular aqui.`;
+    }
+    return null;
+}
+
+/**
+ * Título sem restante: o já quitado (gravado + vínculos em rascunho de outras
+ * linhas deste extrato) alcança o líquido. O backend recusa com 409; aqui o
+ * título já aparece bloqueado, com o motivo.
+ */
+export function motivoJaQuitado(
+    l: LancamentoCompativel,
+    quitadoAnteriorCents: number,
+    quitadoRascunhoCents: number,
+): string | null {
+    const liquidoCents = Math.round(Math.abs(valorLiquidoTitulo(l)) * 100);
+    if (liquidoCents <= 0 || quitadoAnteriorCents < liquidoCents) return null;
+    if (quitadoRascunhoCents > 0 && quitadoAnteriorCents - quitadoRascunhoCents < liquidoCents) {
+        return "Já vinculado pelo valor todo em outra linha deste extrato (ainda não salvo). Remova aquele vínculo antes de vincular aqui.";
+    }
+    return "Já quitado pelo valor todo (restante R$ 0,00). Desfaça a quitação anterior antes de vincular aqui.";
+}
 
 type VincularModalProps = {
   open: boolean;
@@ -107,6 +150,8 @@ export type DraftVincular = {
     valorSaldo: number;
     itens: DraftVincularItem[];
     residual: { lancamentoOrigemId: number; valor: number } | null;
+    /** Título criado pelo "Novo" deste modal: a exclusão do extrato o remove junto. */
+    criadoPeloExtrato?: boolean;
 };
 
 const DIAS_JANELA_INICIAL = 14;
@@ -160,6 +205,8 @@ function VincularFormBody({
     const canVincular = hasPermission(PERM.CONCILIACAO_VINCULAR);
     const canEditarLancamento = hasPermission(PERM.LANCAMENTOS_EDITAR);
     const [editarId, setEditarId] = useState<number | null>(null);
+    /** Mensagem do último 409 do vincular (regra de negócio), exibida no modal. */
+    const [erroVinculo, setErroVinculo] = useState<string | null>(null);
     /** Evita sobrescrever Juros/Multa se o usuário editou manualmente o valor. */
     const jurosManualRef = useRef<Set<number>>(new Set());
 
@@ -441,6 +488,13 @@ function VincularFormBody({
     },
     onError: (e: unknown) => {
       const msg = e instanceof Error ? e.message : "Não foi possível vincular.";
+            // 409 = regra de negócio (pago em outra conta, já vinculado em
+            // outro extrato...): a mensagem diz o que fazer, fica visível no modal.
+            if (e instanceof ApiError && e.status === 409) {
+                setErroVinculo(msg);
+                toast({variant: "destructive", title: "Vínculo não permitido", description: msg});
+                return;
+            }
             toast({variant: "destructive", title: "Erro ao vincular", description: msg});
     },
   });
@@ -460,6 +514,7 @@ function VincularFormBody({
         if (payload.gerar_parcial && values.residuo_lancamento_id) {
             payload.residuo_lancamento_id = values.residuo_lancamento_id;
         }
+        setErroVinculo(null);
         previewVincularMutation.mutate(payload);
     };
 
@@ -505,12 +560,17 @@ function VincularFormBody({
                         const quitadoAnteriorCents = Math.round(
                             Math.abs(Number(lancamentosQuitadoById.get(l.id) ?? 0)) * 100,
                         );
+                        const motivoBloqueio =
+                            motivoBloqueioVinculo(l) ??
+                            motivoJaQuitado(l, quitadoAnteriorCents, quitadoLocalPorLancamento[l.id] ?? 0);
+                        const outrosExtratos = l.outros_extratos ?? [];
             return (
               <div
                 key={field.id}
                 className={cn(
                   "rounded-xl border p-3 transition-colors",
                   selected ? "border-primary/40 bg-primary/5" : "border-white/10 bg-black/20",
+                  motivoBloqueio && "opacity-70",
                 )}>
                 <div className="flex flex-col sm:flex-row sm:items-start gap-3">
                   <Controller
@@ -520,7 +580,16 @@ function VincularFormBody({
                       <div className="flex items-start gap-3 flex-1 min-w-0">
                         <Checkbox
                           checked={cb.value}
-                          onCheckedChange={(c) => cb.onChange(c === true)}
+                          disabled={Boolean(motivoBloqueio) && !cb.value}
+                          aria-label={
+                              `Selecionar lançamento #${l.id} ${l.tipo}, ${l.descricao ?? "sem descrição"}, ` +
+                              `vencimento ${formatDate(l.vencimento)}, ${dinheiro(valorLiquidoTitulo(l))}` +
+                              (motivoBloqueio ? `. Bloqueado: ${motivoBloqueio}` : "")
+                          }
+                          onCheckedChange={(c) => {
+                              setErroVinculo(null);
+                              cb.onChange(c === true);
+                          }}
                           className="mt-1 shrink-0"
                         />
                         <div className="min-w-0 flex-1">
@@ -537,7 +606,7 @@ function VincularFormBody({
                                                         <span className="text-xs text-muted-foreground">
                               {formatDate(l.vencimento)}
                             </span>
-                                                        <StatusBadge status={l.status} className="text-xs py-0"/>
+                                                        <StatusBadge status={l.status} tipo={l.tipo} className="text-xs py-0"/>
                           </div>
                                                     <p
                                                         className="text-sm text-white font-medium mt-1 truncate"
@@ -571,6 +640,17 @@ function VincularFormBody({
                                                             Já quitado: {dinheiro(toMoney(quitadoAnteriorCents))}
                                                         </p>
                                                     )}
+                                                    {motivoBloqueio ? (
+                                                        <p className="mt-1 flex items-start gap-1 text-xs text-red-300">
+                                                            <AlertCircle className="w-3 h-3 mt-0.5 shrink-0"/>
+                                                            <span>{motivoBloqueio}</span>
+                                                        </p>
+                                                    ) : outrosExtratos.length > 0 ? (
+                                                        <p className="mt-1 text-xs text-sky-300/90">
+                                                            Também vinculado {outrosExtratos.length > 1 ? "aos extratos" : "ao extrato"}{" "}
+                                                            {outrosExtratos.map((id) => `#${id}`).join(", ")} (parte do valor).
+                                                        </p>
+                                                    ) : null}
                                                     {canEditarLancamento && (
                                                         <button
                                                             type="button"
@@ -642,6 +722,16 @@ function VincularFormBody({
           })}
         </div>
             </div>
+
+      {erroVinculo && (
+                <div role="alert" className="shrink-0 mx-5 my-2 flex items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2">
+                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-300"/>
+                    <div className="min-w-0">
+                        <p className="text-sm font-semibold text-red-200">Vínculo não permitido</p>
+                        <p className="text-xs text-red-100/90 leading-snug">{erroVinculo}</p>
+                    </div>
+                </div>
+      )}
 
       {itensRootError && (
                 <p className="shrink-0 text-xs text-destructive px-5 py-1 flex items-center gap-1">
@@ -720,9 +810,13 @@ function VincularFormBody({
                     </div>
                 ) : showResidual ? (
                     <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2 space-y-2">
+                        {/* Δ < 0: o(s) título(s) passam do valor da linha - fica saldo em aberto no título. */}
                         <p className="text-sm font-semibold text-red-200 text-center">
-                            Falta {dinheiro(toMoney(Math.abs(restanteCents ?? 0)))} para
-                            fechar com o extrato
+                            {emQuitacaoMultiLinha
+                                ? `Ainda faltam ${dinheiro(toMoney(Math.abs(restanteCents ?? 0)))} para quitar o lançamento`
+                                : selectedItens.length > 1
+                                    ? `Os lançamentos excedem o extrato em ${dinheiro(toMoney(Math.abs(restanteCents ?? 0)))}`
+                                    : `O lançamento excede o extrato em ${dinheiro(toMoney(Math.abs(restanteCents ?? 0)))} (fica em aberto no título)`}
                         </p>
                         <Controller
                             name="gerar_parcial"
@@ -1001,6 +1095,7 @@ export function VincularModal({
                 residual: resultado.residual
                     ? {lancamentoOrigemId: resultado.residual.lancamento_origem_id, valor: Number(resultado.residual.valor)}
                     : null,
+                criadoPeloExtrato: true,
             });
             invalidateRelated(queryClient, "lancamentos");
             toast({

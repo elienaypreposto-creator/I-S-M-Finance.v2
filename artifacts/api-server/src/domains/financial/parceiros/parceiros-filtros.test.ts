@@ -33,8 +33,13 @@ describe("montarWhereParceiros (ISMF-33)", () => {
     it("busca por nome ou pelos dígitos do CPF/CNPJ", () => {
         const {sql, params} = compilar({search: "12.345.678/0001"});
         assert.match(sql, /"parceiros"\."nome" ilike \$2/);
-        assert.match(sql, /regexp_replace\(coalesce\("parceiros"\."cpf_cnpj", ''\), '\\D', '', 'g'\) like \$3/);
+        assert.match(sql, /regexp_replace\(upper\(coalesce\("parceiros"\."cpf_cnpj", ''\)\), '\[\^0-9A-Z\]', '', 'g'\) like \$3/);
         assert.deepEqual(params, [5, "%12.345.678/0001%", "%123456780001%"]);
+    });
+
+    it("busca pelo CNPJ alfanumérico ignora máscara e caixa", () => {
+        const {params} = compilar({search: "12.abc.345/01"});
+        assert.deepEqual(params, [5, "%12.abc.345/01%", "%12ABC34501%"]);
     });
 
     it("busca só de texto não compara CPF/CNPJ", () => {
