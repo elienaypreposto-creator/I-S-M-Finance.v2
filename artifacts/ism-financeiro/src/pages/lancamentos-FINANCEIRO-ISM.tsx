@@ -20,7 +20,7 @@ import {BotaoEditar, BotaoExcluir} from "@/components/shared/botoes-acao";
 import {useDinheiro} from "@/components/conta/saldos-visiveis";
 import {ApiEnvelope, fetchApi, fetchApiData} from "@/lib/api-config";
 import {LancamentoModal} from "@/components/lancamentos/lancamento-modal";
-import {exportToExcel, fmtBRL, fmtDate as fmtDateExport} from "@/lib/export";
+import {exportToExcel, fmtDate as fmtDateExport} from "@/lib/export";
 import {prefixoDescricaoLista, rotuloTipoDocumento, type TipoDocumentoLancamento} from "@/lib/lancamento-documento";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
@@ -42,7 +42,14 @@ type Lancamento = {
     tipo_documento?: TipoDocumentoLancamento | null;
     numero_documento?: string | null;
     observacao?: string | null;
+    /** Valor da linha: bruto − desconto + juros (antes das retenções). */
     valor: string | number;
+    /** O que falta quitar (mesma regra do resumo "A receber / A pagar"). */
+    valor_em_aberto?: number;
+    /** Pago parcial cujo restante foi para um residual (em aberto = 0 aqui). */
+    tem_residual_ativo?: boolean;
+    /** Já quitado pela conciliação/transferência. */
+    valor_quitado?: number;
     status: string;
     plano_conta_id: number | null;
     plano_conta_nome: string | null;
@@ -135,6 +142,9 @@ function getBankBadge(contaNome: string | null) {
     return {abbr: firstWord, color: "#94A3B8", bg: "rgba(148,163,184,0.15)"};
 }
 
+/** Ações sempre visíveis: em telas estreitas a tabela rola por baixo desta coluna. */
+const COLUNA_ACOES_FIXA = "sticky right-0 z-[1] shadow-[-10px_0_12px_-10px_rgba(0,0,0,0.7)]";
+
 function podeExcluirLancamento(status: string): boolean {
     return status === "pendente" || status === "atrasado";
 }
@@ -162,7 +172,14 @@ type PlanoContaOpcao = { id: number; categoria: string; subcategoria: string | n
 type DepartamentoOpcao = { id: number; nome: string };
 type CentroCustoOpcao = { id: number; nome: string; departamento_id: number | null };
 
-type LancamentosMeta = { total?: number; totais?: { receber: number; pagar: number } };
+/** receber/pagar = só em aberto (critério da coluna de valor); recebido/pago = já quitado. */
+type TotaisLancamentos = { receber: number; pagar: number; recebido?: number; pago?: number };
+type LancamentosMeta = { total?: number; totais?: TotaisLancamentos };
+
+const AJUDA_RESUMO =
+    "A receber / A pagar: só títulos em aberto (pendentes, atrasados e o que falta dos pagos parcialmente), " +
+    "pelo valor bruto da coluna R$ Valor (com desconto e juros, antes das retenções). Pagos, recebidos e cancelados não entram. " +
+    "Recebido / Pago: o que a conciliação já quitou nos títulos do filtro.";
 type ExportMeta = { total: number; exportados: number; truncado: boolean; limite: number };
 
 const TABS = [
@@ -323,17 +340,8 @@ export default function Lancamentos() {
         if (ok) deleteMutation.mutate(l.id);
     };
 
-    const handleEdit = async (l: Lancamento) => {
-        const label = l.descricao ? `"${l.descricao.toUpperCase()}"` : `lançamento #${l.id}`;
-        const ok = await confirm({
-            title: `Editar ${label}?`,
-            description: "Você será direcionado ao formulário de edição deste lançamento.",
-            confirmLabel: "Editar",
-            cancelLabel: "Cancelar",
-            variant: "default",
-        });
-        if (ok) setEditItem(l);
-    };
+    // Editar abre o formulário direto: nada muda até salvar (e sair com alterações pede confirmação).
+    const handleEdit = (l: Lancamento) => setEditItem(l);
 
     const lancamentos = data?.items ?? [];
     const total = data?.total ?? 0;
@@ -346,7 +354,7 @@ export default function Lancamentos() {
 
     const EXPORT_COLUMNS_LANC = [
         {header: "Tipo", key: "tipo", width: 8},
-        {header: "Vencimento", key: "vencimento", width: 14, formatter: (v: unknown) => fmtDateExport(v)},
+        {header: "Vencimento", key: "vencimento", width: 14, tipo: "data" as const, formatter: (v: unknown) => fmtDateExport(v)},
         {header: "Parceiro", key: "parceiro_nome", width: 32},
         {header: "Descrição", key: "descricao", width: 38},
         {header: "Tipo de documento", key: "tipo_documento_fmt", width: 28},
@@ -354,7 +362,9 @@ export default function Lancamentos() {
         {header: "Observação", key: "observacao", width: 40},
         {header: "Categoria", key: "plano_conta_nome", width: 28},
         {header: "Conta", key: "conta_nome", width: 24},
-        {header: "Valor (R$)", key: "valor_fmt", width: 18},
+        {header: "Valor bruto (R$)", key: "valor", width: 18, tipo: "moeda" as const},
+        {header: "Em aberto (R$)", key: "valor_em_aberto", width: 16, tipo: "moeda" as const},
+        {header: "Quitado (R$)", key: "valor_quitado", width: 16, tipo: "moeda" as const},
         {header: "Status", key: "status", width: 14},
         {header: "Riscos", key: "riscos_fmt", width: 30},
     ];
@@ -367,7 +377,6 @@ export default function Lancamentos() {
             const meta = envelope.meta as ExportMeta | null;
             const rows = envelope.data.map((l) => ({
                 ...l,
-                valor_fmt: fmtBRL(Number(l.valor)),
                 tipo_documento_fmt: rotuloTipoDocumento(l.tipo_documento) || "-",
                 numero_documento: l.numero_documento || "-",
                 observacao: l.observacao || "-",
@@ -494,12 +503,34 @@ export default function Lancamentos() {
                             <span>
                                 {total.toLocaleString("pt-BR")} {total === 1 ? "lançamento" : "lançamentos"}
                                 {data.totais && (
-                                    <>
-                                        {" · "}A receber{" "}
-                                        <strong className="text-teal-300">{dinheiro(data.totais.receber)}</strong>
-                                        {" · "}A pagar{" "}
-                                        <strong className="text-orange-300">{dinheiro(data.totais.pagar)}</strong>
-                                    </>
+                                    <span title={AJUDA_RESUMO}>
+                                        {tipo !== "CP" && (
+                                            <>
+                                                {" · "}A receber{" "}
+                                                <strong className="text-teal-300">{dinheiro(data.totais.receber)}</strong>
+                                            </>
+                                        )}
+                                        {tipo !== "CR" && (
+                                            <>
+                                                {" · "}A pagar{" "}
+                                                <strong className="text-orange-300">{dinheiro(data.totais.pagar)}</strong>
+                                            </>
+                                        )}
+                                        <span className="text-white/40">{" (em aberto, bruto)"}</span>
+                                        {tipo !== "CP" && (data.totais.recebido ?? 0) > 0 && (
+                                            <>
+                                                {" · "}Recebido{" "}
+                                                <strong className="text-white/80">{dinheiro(data.totais.recebido ?? 0)}</strong>
+                                            </>
+                                        )}
+                                        {tipo !== "CR" && (data.totais.pago ?? 0) > 0 && (
+                                            <>
+                                                {" · "}Pago{" "}
+                                                <strong className="text-white/80">{dinheiro(data.totais.pago ?? 0)}</strong>
+                                            </>
+                                        )}
+                                        <span className="sr-only">. {AJUDA_RESUMO}</span>
+                                    </span>
                                 )}
                             </span>
                         ) : undefined
@@ -518,9 +549,12 @@ export default function Lancamentos() {
                             <th className="px-3 py-3 font-semibold">Descrição</th>
                             <th className="px-3 py-3 font-semibold">Categoria</th>
                             <th className="px-3 py-3 font-semibold">Riscos</th>
-                            <th className="px-3 py-3 font-semibold text-right">R$ Valor</th>
+                            <th className="px-3 py-3 font-semibold text-right"
+                                title="Valor bruto do título: com desconto e juros, antes das retenções na fonte">
+                                R$ Valor (bruto)
+                            </th>
                             <th className="px-3 py-3 font-semibold text-center">Status</th>
-                            <th className="px-3 py-3 font-semibold text-right">Ações</th>
+                            <th className={cn("px-3 py-3 font-semibold text-right", COLUNA_ACOES_FIXA, "bg-[hsl(240_20%_17%)]")}>Ações</th>
                         </tr>
                         </thead>
                         <tbody className="divide-y divide-white/5">
@@ -572,14 +606,14 @@ export default function Lancamentos() {
                                         </div>
                                     </td>
 
-                                    {/* Banco - ícone/badge */}
-                                    <td className="px-3 py-2.5">
-                      <span
-                          title={l.conta_nome || "A identificar"}
-                          className="inline-flex items-center justify-center w-9 h-6 rounded text-[10px] font-black leading-none cursor-default"
-                          style={{color: bank.color, background: bank.bg, border: `1px solid ${bank.color}40`}}>
-                        {bank.abbr}
-                      </span>
+                                    {/* Banco: nome da conta (a sigla não distinguia contas do mesmo banco) */}
+                                    <td className="px-3 py-2.5 max-w-[150px]">
+                                        <span
+                                            title={l.conta_nome || "Conta a identificar"}
+                                            className="inline-flex max-w-full items-center gap-1.5 rounded px-1.5 py-0.5 text-[11px] font-semibold leading-tight cursor-default"
+                                            style={{color: bank.color, background: bank.bg, border: `1px solid ${bank.color}40`}}>
+                                            <span className="truncate">{l.conta_nome || "A identificar"}</span>
+                                        </span>
                                     </td>
 
                                     {/* Parceiro */}
@@ -633,6 +667,18 @@ export default function Lancamentos() {
                                     <td className={`px-3 py-2.5 text-right font-bold ${isCR ? "text-teal-300" : "text-white/90"}`}>
                                         {isCR ? "" : "- "}
                                         {dinheiro(Number(l.valor)).replace("R$", "").trim()}
+                                        {/* Pago parcial: o resumo "A receber / A pagar" soma só o que falta. */}
+                                        {/* Com residual, o que falta está na linha do residual (não conta duas vezes). */}
+                                        {l.status === "pago_parcial" && l.tem_residual_ativo && (
+                                            <span className="block text-[10px] font-medium text-muted-foreground">
+                                                restante no residual
+                                            </span>
+                                        )}
+                                        {l.status === "pago_parcial" && !l.tem_residual_ativo && l.valor_em_aberto != null && (
+                                            <span className="block text-[10px] font-medium text-muted-foreground">
+                                                resta {dinheiro(l.valor_em_aberto).replace("R$", "").trim()}
+                                            </span>
+                                        )}
                                     </td>
 
                                     {/* Status */}
@@ -640,8 +686,9 @@ export default function Lancamentos() {
                                         <StatusBadge status={l.status}/>
                                     </td>
 
-                                    <td className="px-3 py-2.5">
-                                        <div className="flex items-center justify-end gap-2">
+                                    <td className={cn("px-3 py-2.5", COLUNA_ACOES_FIXA, "bg-card group-hover:bg-[hsl(240_17%_23%)]")}>
+                                        {/* Largura fixa: sem ela, a tabela larga espreme a coluna fixa e o ícone some (svg max-width 100%). */}
+                                        <div className="flex w-[4.5rem] shrink-0 items-center justify-end gap-2 [&>button]:shrink-0">
                                             <BotaoEditar onClick={() => handleEdit(l)}/>
                                             <RequiresPermission permission={PERM.LANCAMENTOS_DELETAR}>
                                                 <BotaoExcluir

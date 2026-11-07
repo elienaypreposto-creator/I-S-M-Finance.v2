@@ -36,6 +36,8 @@ import EsqueciSenha from "./pages/auth/esqueci-senha";
 import RedefinirSenha from "./pages/auth/redefinir-senha";
 import {authStorage} from "./lib/api-config";
 import {PERM} from "./lib/permissoes";
+import {permissaoDaTela} from "./lib/telas-permissoes";
+import {AcessoNegado} from "./components/auth/acesso-negado";
 import AdminEmpresas from "./pages/admin/empresas";
 
 export {queryClient, invalidateRelated};
@@ -48,12 +50,14 @@ function PrivateRoute({
                       }: {
     component: any;
     path: string;
+    /** Sem `permission`, vale a da tela em @/lib/telas-permissoes (a mesma do menu). */
     permission?: string;
     /** Operação do ISM (ex.: cadastro de empresas): só `user.superadmin`. */
     superadminOnly?: boolean;
 }) {
     const token = authStorage.getToken();
     const {hasPermission, loading, user} = useAuth();
+    const permissaoExigida = permission ?? permissaoDaTela(path);
 
     // No F5 o access token (só em memória) ainda não voltou do refresh: espera a sessão
     // antes de mandar para o login, senão a URL (e os filtros nela) se perde.
@@ -73,16 +77,14 @@ function PrivateRoute({
         );
     }
 
-    if (permission || superadminOnly) {
-        const permitido = superadminOnly ? user?.superadmin === true : hasPermission(permission!);
+    if (permissaoExigida || superadminOnly) {
+        const permitido = superadminOnly ? user?.superadmin === true : hasPermission(permissaoExigida!);
         if (!permitido) {
             return (
                 <Route path={path}>
                     {() => (
                         <AppLayout>
-                            <div className="p-8 text-sm text-destructive">
-                                Sem permissão para acessar este módulo.
-                            </div>
+                            <AcessoNegado permissao={permissaoExigida} superadminOnly={superadminOnly}/>
                         </AppLayout>
                     )}
                 </Route>
@@ -111,9 +113,10 @@ function Router() {
             <Route path="/redefinir-senha" component={RedefinirSenha}/>
             <PrivateRoute path="/" component={Dashboard}/>
 
-            <PrivateRoute path="/kanban" component={Kanban} permission={PERM.KANBAN_LISTAR}/>
-            <PrivateRoute path="/lancamentos" component={Lancamentos} permission={PERM.LANCAMENTOS_LISTAR}/>
-            <PrivateRoute path="/conciliacao" component={ConciliacaoList} permission={PERM.CONCILIACAO_ACESSAR}/>
+            {/* Permissão de cada tela: @/lib/telas-permissoes (a mesma do menu lateral). */}
+            <PrivateRoute path="/kanban" component={Kanban}/>
+            <PrivateRoute path="/lancamentos" component={Lancamentos}/>
+            <PrivateRoute path="/conciliacao" component={ConciliacaoList}/>
             <PrivateRoute
                 path="/conciliacao/extrato/:extratoId"
                 component={ConciliacaoExtratoDetalhe}
@@ -135,7 +138,7 @@ function Router() {
             <Route path="/relatorios/conciliacao"><Redirect to="/conciliacao" replace/></Route>
 
             <PrivateRoute path="/configuracoes/usuarios" component={Usuarios}/>
-            <PrivateRoute path="/admin/usuarios" component={Usuarios}/>
+            <PrivateRoute path="/admin/usuarios" component={Usuarios} permission={PERM.ADMIN_USUARIOS_LISTAR}/>
             <PrivateRoute path="/configuracoes/filiais" component={Filiais}/>
             <PrivateRoute path="/configuracoes/tokens-api" component={TokensApi}/>
             {/* Superadmin vê todas; admin com admin:empresas:editar vê só a empresa da sessão. */}

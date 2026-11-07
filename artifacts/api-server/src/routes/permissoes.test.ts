@@ -133,10 +133,11 @@ describe("ISMF-40 catálogo e rotas reais", () => {
         }
     });
 
-    it("GET de lançamentos exige listar; não existe GET /lancamentos/resumo", () => {
+    it("GET de lançamentos (lista, resumo, export e detalhe) exige listar", () => {
         const rotas = rotasDoRouter(lancamentosRouter as never);
         const espera: Rota[] = [
             {method: "GET", path: "/lancamentos", permissao: PERM.LANCAMENTOS_LISTAR},
+            {method: "GET", path: "/lancamentos/resumo", permissao: PERM.LANCAMENTOS_LISTAR},
             {method: "GET", path: "/lancamentos/export", permissao: PERM.LANCAMENTOS_LISTAR},
             {method: "GET", path: "/lancamentos/:id", permissao: PERM.LANCAMENTOS_LISTAR},
         ];
@@ -146,7 +147,10 @@ describe("ISMF-40 catálogo e rotas reais", () => {
                 `faltou ${item.method} ${item.path} = ${item.permissao}; stack=${JSON.stringify(rotas)}`,
             );
         }
-        assert.equal(rotas.some((rota) => rota.path.includes("resumo")), false);
+        // /resumo e /export antes de /:id (senão "resumo" cairia no detalhe como id inválido).
+        const ordem = rotas.map((rota) => rota.path);
+        assert.ok(ordem.indexOf("/lancamentos/resumo") < ordem.indexOf("/lancamentos/:id"), JSON.stringify(ordem));
+        assert.ok(ordem.indexOf("/lancamentos/export") < ordem.indexOf("/lancamentos/:id"), JSON.stringify(ordem));
     });
 
     it("cada rota do Kanban exige a ação correspondente (mover usa editar)", () => {

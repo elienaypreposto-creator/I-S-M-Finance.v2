@@ -17,6 +17,43 @@ export const lancamentoStatusEnum = z.enum([
     "pago_parcial",
 ]);
 
+export type LancamentoStatus = z.infer<typeof lancamentoStatusEnum>;
+
+/**
+ * Status de quitação: derivados da conciliação bancária (ou da transferência
+ * entre contas), que grava junto conta, data e valor pago. Não são escolhidos
+ * no formulário de Lançamentos nem enviados no PUT (a API os ignora).
+ */
+export const STATUS_QUITACAO: readonly LancamentoStatus[] = ["pago", "recebido", "pago_parcial"];
+
+export function ehStatusQuitacao(status: string | null | undefined): boolean {
+    return (STATUS_QUITACAO as readonly string[]).includes(status ?? "");
+}
+
+/**
+ * Natureza do plano de contas (`tipo`: receita, custo, despesa) que combina com
+ * o lançamento: a receber -> receita; a pagar -> custo ou despesa. Plano sem
+ * natureza informada não é escondido.
+ */
+export function naturezaCombinaComTipo(natureza: string | null | undefined, tipo: "CP" | "CR"): boolean {
+    const n = (natureza ?? "").trim().toLowerCase();
+    if (!n) return true;
+    return tipo === "CR" ? n === "receita" : n === "custo" || n === "despesa";
+}
+
+/**
+ * Categorias oferecidas no formulário: só as da natureza do lançamento, mais as
+ * de `manterIds` (a já salva no título e a selecionada agora), para que uma
+ * categoria fora do filtro continue aparecendo em vez de sumir do campo.
+ */
+export function planoContasDoTipo<T extends {id: number; tipo?: string | null}>(
+    itens: readonly T[],
+    tipo: "CP" | "CR",
+    manterIds: ReadonlyArray<string | number | null | undefined>,
+): T[] {
+    const manter = new Set(manterIds.filter((v) => v != null && v !== "").map(String));
+    return itens.filter((p) => naturezaCombinaComTipo(p.tipo, tipo) || manter.has(String(p.id)));
+}
 
 const dadosPagamentoPixApiSchema = z.object({
     tipo: z.literal("PIX"),
@@ -404,6 +441,12 @@ export type LancamentoEditItem = {
     retencao_iss?: string | number | null;
     valor_liquido?: string | number | null;
     valor_quitado?: string | number | null;
+    /** Quitação (só leitura): data do pagamento e conta onde o dinheiro passou. */
+    data_quitacao?: string | null;
+    conta_nome?: string | null;
+    /** Vinculado a linha de extrato (quitação feita pela conciliação). */
+    tem_conciliacao?: boolean;
+    transferencia_grupo_id?: string | null;
     status: string;
     plano_conta_id: number | null;
     departamento_id?: number | null;
@@ -648,7 +691,8 @@ export function mapModalFormToApiBody(values: LancamentoModalFormValues): Lancam
         desconto: brMoneyDisplayToApiString(values.descontoBr ?? "") || "0.00",
         juros: brMoneyDisplayToApiString(values.jurosBr ?? "") || "0.00",
         ...retencoesBrParaApi(values.retencoesBr),
-        status: values.status,
+        // Quitação não sai do formulário: o status de um título quitado é só leitura.
+        status: ehStatusQuitacao(values.status) ? undefined : values.status,
         plano_conta_id: values.plano_conta_id === "" ? null : Number(values.plano_conta_id),
         departamento_id: values.departamento_id === "" ? null : Number(values.departamento_id),
         centro_custo_id: values.centro_custo_id === "" ? null : Number(values.centro_custo_id),

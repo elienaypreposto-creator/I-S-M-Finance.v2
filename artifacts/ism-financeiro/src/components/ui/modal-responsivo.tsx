@@ -111,6 +111,9 @@ export const Modal = React.forwardRef<React.ElementRef<typeof DialogPrimitive.Co
                     />
                     <DialogPrimitive.Content
                         ref={setRefs}
+                        // O Radix põe role="dialog" e aria-labelledby (título), mas não aria-modal;
+                        // o modal prende o foco e esconde o fundo, então é modal de fato.
+                        aria-modal="true"
                         // Sem descrição, o Radix não deve apontar aria-describedby para um id inexistente.
                         {...(temDescricao ? {} : {"aria-describedby": undefined})}
                         {...props}

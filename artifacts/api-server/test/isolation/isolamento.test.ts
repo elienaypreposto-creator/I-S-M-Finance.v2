@@ -100,6 +100,7 @@ describe("escrita entre empresas", () => {
             [`/plano-contas/${B.ids.planoConta}`, {categoria: "HACK"}],
             [`/filiais/${B.ids.filial}`, {nome: "HACK"}],
             [`/departamentos/${B.ids.departamento}`, {nome: "HACK"}],
+            [`/centros-custos/${B.ids.centroCusto}`, {nome: "HACK"}],
         ];
         for (const [rota, corpo] of alvos) {
             const put = await h.as(A, A).put(rota, corpo);

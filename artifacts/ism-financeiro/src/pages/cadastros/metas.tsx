@@ -1,16 +1,24 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
 import {Fragment, useEffect, useMemo, useRef, useState} from "react";
 import {PageHeader} from "@/components/shared/page-header";
-import {Download, Target, TrendingUp, TrendingDown, Loader2, ChevronDown, ChevronRight} from "lucide-react";
+import {Download, Target, TrendingUp, TrendingDown, Loader2, ChevronDown, ChevronRight, Eye, EyeOff} from "lucide-react";
 import {useDinheiro, useSaldosVisiveis} from "@/components/conta/saldos-visiveis";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
+import {ToastAction} from "@/components/ui/toast";
 import {fetchApiData} from "@/lib/api-config";
+import {formatCurrency} from "@/lib/utils";
+import {formatValorBrInput, apiValorToValorBr} from "@/validations/lancamentos.schema";
 import {
-    formatValorBrInput,
-    brMoneyDisplayToApiString,
-    apiValorToValorBr,
-} from "@/validations/lancamentos.schema";
+    MESES_CURTOS as MESES,
+    MESES_EXTENSO,
+    acaoAoSalvarCelula,
+    entradaMetaParaApi,
+    resumirCadastroMetas,
+    rotuloCelulaMeta,
+    rotuloPeriodoMetas,
+    valorMeta,
+} from "@/lib/metas-cadastro";
 import {invalidateRelated} from "@/App";
 import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription} from "@/components/ui/empty";
@@ -48,16 +56,11 @@ type ActiveCell = {
 };
 
 // ─── Constantes 
-const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 const CURRENT_YEAR = new Date().getFullYear();
 const YEARS = Array.from({length: 7}, (_, i) => CURRENT_YEAR + 3 - i);
 const TODOS_MESES = Array.from({length: 12}, (_, i) => i + 1);
 
 // ─── Filtros (ISMF-33) — estado na URL: ?ano=2026&plano_conta_id=12&mes=1,2,3
-const MESES_EXTENSO = [
-    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
-];
 const OPCOES_MES: OpcaoFiltro[] = MESES_EXTENSO.map((rotulo, i) => ({valor: String(i + 1), rotulo}));
 const TIPO_ROTULO_CURTO: Record<string, string> = {receita: "Receitas", custo: "Custos", despesa: "Despesas"};
 const collator = new Intl.Collator("pt-BR", {sensitivity: "base"});
@@ -97,6 +100,11 @@ function compactBrl(valor: string | undefined): string {
     const n = parseFloat(valor);
     if (!n) return "—";
     return n.toLocaleString("pt-BR", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
+/** Nome da linha para leitores de tela e avisos: "Categoria / Subcategoria". */
+function nomeLinha(pc: Pick<PlanoConta, "categoria" | "subcategoria">): string {
+    return pc.subcategoria ? `${pc.categoria} / ${pc.subcategoria}` : pc.categoria;
 }
 
 // ─── Exportação CSV ────────────────────────────────────────────────────────────
@@ -162,6 +170,9 @@ function exportarCSV(
 interface MetaCellProps {
     plano_conta_id: number;
     mes: number;
+    ano: number;
+    /** "Categoria / Subcategoria" — compõe o aria-label da célula. */
+    linha: string;
     currentValue: string;
     activeCell: ActiveCell | null;
     onActivate: (cell: ActiveCell) => void;
@@ -173,6 +184,8 @@ interface MetaCellProps {
 function MetaCell({
                       plano_conta_id,
                       mes,
+                      ano,
+                      linha,
                       currentValue,
                       activeCell,
                       onActivate,
@@ -193,6 +206,10 @@ function MetaCell({
         return (
             <input
                 ref={inputRef}
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                aria-label={`Meta de ${linha} em ${MESES_EXTENSO[mes - 1]} de ${ano} (R$). Deixe vazio para ficar sem meta`}
                 value={activeCell.value}
                 onChange={(e) => onChange(formatValorBrInput(e.target.value))}
                 onBlur={() => onSave(plano_conta_id, mes)}
@@ -206,16 +223,20 @@ function MetaCell({
                         onCancel();
                     }
                 }}
-                className="w-full text-right bg-primary/15 border border-primary/50 rounded px-1.5 py-0.5 text-xs text-white outline-none font-mono"
+                className="w-full text-right bg-primary/15 border border-primary/50 rounded px-1.5 py-0.5 text-xs text-white outline-none font-mono tabular-nums"
                 placeholder="0,00"
             />
         );
     }
 
-    const hasValue = currentValue && parseFloat(currentValue) > 0;
+    const hasValue = valorMeta(currentValue) > 0;
+    const valorFalado = hasValue
+        ? (saldos.visivel ? formatCurrency(valorMeta(currentValue)) : "valor oculto")
+        : null;
     return (
         <button
             type="button"
+            aria-label={rotuloCelulaMeta(linha, mes, ano, valorFalado)}
             onClick={() =>
                 onActivate({
                     plano_conta_id,
@@ -235,6 +256,7 @@ function MetaCell({
 // ─── Página ────────────────────────────────────────────────────────────────────
 export default function Metas() {
     const dinheiro = useDinheiro();
+    const saldos = useSaldosVisiveis();
     const queryClient = useQueryClient();
     const {toast} = useToast();
 
@@ -310,11 +332,14 @@ export default function Metas() {
                 body: JSON.stringify(payload),
             }),
 
+        // Chave do cache = a da query (com empresa) e do ano do payload — o "Desfazer"
+        // pode chegar depois de o usuário trocar de ano.
         onMutate: async (payload) => {
-            await queryClient.cancelQueries({queryKey: tenantQueryKey("metas", ano)});
-            const previous = queryClient.getQueryData<MetaRow[]>(["metas", ano]);
+            const key = tenantQueryKey("metas", payload.ano);
+            await queryClient.cancelQueries({queryKey: key});
+            const previous = queryClient.getQueryData<MetaRow[]>(key);
 
-            queryClient.setQueryData<MetaRow[]>(["metas", ano], (old = []) => {
+            queryClient.setQueryData<MetaRow[]>(key, (old = []) => {
                 const exists = old.find(
                     (m) => m.plano_conta_id === payload.plano_conta_id && m.mes === payload.mes,
                 );
@@ -340,9 +365,9 @@ export default function Metas() {
             return {previous};
         },
 
-        onError: (_e, _payload, context) => {
+        onError: (_e, payload, context) => {
             if (context?.previous) {
-                queryClient.setQueryData(["metas", ano], context.previous);
+                queryClient.setQueryData(tenantQueryKey("metas", payload.ano), context.previous);
             }
             toast({
                 variant: "destructive",
@@ -405,43 +430,69 @@ export default function Metas() {
     }, [groupedVisivel]);
 
     // ── Stats ──────────────────────────────────────────────────────────────────
-    const stats = useMemo(() => {
-        const byTipo: Record<string, number> = {receita: 0, custo: 0, despesa: 0};
-        const pcById = new Map(planoContas.map((p) => [p.id, p]));
-
-        for (const m of metas) {
-            const pc = pcById.get(m.plano_conta_id);
-            if (!pc) continue;
-            const v = parseFloat(m.valor_projetado) || 0;
-            if (pc.tipo in byTipo) byTipo[pc.tipo] += v;
-        }
-
-        const receitas = byTipo.receita;
-        const saidas = byTipo.custo + byTipo.despesa;
-        const resultado = receitas - saidas;
-        const categoriasComMeta = new Set(metas.map((m) => m.plano_conta_id)).size;
-
-        return {receitas, saidas, resultado, categoriasComMeta};
-    }, [metas, planoContas]);
+    // Cards seguem o filtro de mês; o CSV exporta o ano inteiro, então o resumo dele também.
+    const stats = useMemo(
+        () => resumirCadastroMetas(metas, planoContas, mesesVisiveis),
+        [metas, planoContas, mesesVisiveis],
+    );
+    const statsAno = useMemo(
+        () => resumirCadastroMetas(metas, planoContas, TODOS_MESES),
+        [metas, planoContas],
+    );
+    const periodo = rotuloPeriodoMetas(mesesVisiveis, ano);
 
     // ── Handlers de célula ─────────────────────────────────────────────────────
-    const handleActivate = (cell: ActiveCell) => setActiveCell(cell);
+    // Com os valores ocultos não abre o editor (ele mostraria o número): avisa e oferece mostrar.
+    const handleActivate = (cell: ActiveCell) => {
+        if (!saldos.visivel) {
+            toast({
+                title: "Valores ocultos",
+                description: "Mostre os valores para editar as metas.",
+                action: (
+                    <ToastAction altText="Mostrar valores" onClick={saldos.alternar}>
+                        Mostrar valores
+                    </ToastAction>
+                ),
+            });
+            return;
+        }
+        setActiveCell(cell);
+    };
 
     const handleChange = (value: string) => {
         if (!activeCell) return;
         setActiveCell({...activeCell, value});
     };
 
+    // Célula vazia (ou 0,00) = sem meta. Se havia valor, a remoção é avisada com "Desfazer".
     const handleSave = (plano_conta_id: number, mes: number) => {
         if (!activeCell) return;
         setActiveCell(null);
 
-        const apiValue = brMoneyDisplayToApiString(activeCell.value) || "0.00";
-        const current = metasMap.get(`${plano_conta_id}-${mes}`) ?? "";
+        const anterior = metasMap.get(`${plano_conta_id}-${mes}`);
+        const acao = acaoAoSalvarCelula(anterior, activeCell.value);
+        if (acao === "nada") return;
 
-        if (apiValue === current) return;
+        const anoCelula = ano;
+        saveMeta.mutate({plano_conta_id, ano: anoCelula, mes, valor_projetado: entradaMetaParaApi(activeCell.value)});
 
-        saveMeta.mutate({plano_conta_id, ano, mes, valor_projetado: apiValue});
+        if (acao === "remover" && anterior) {
+            const pc = planoContas.find((p) => p.id === plano_conta_id);
+            const onde = `${pc ? nomeLinha(pc) : "Categoria"} · ${MESES_EXTENSO[mes - 1]} de ${anoCelula}`;
+            toast({
+                title: "Meta removida",
+                duration: 10000,
+                description: `${onde} ficou sem meta (era ${dinheiro(valorMeta(anterior))}).`,
+                action: (
+                    <ToastAction
+                        altText={`Desfazer: voltar a meta de ${onde}`}
+                        onClick={() => saveMeta.mutate({plano_conta_id, ano: anoCelula, mes, valor_projetado: anterior})}
+                    >
+                        Desfazer
+                    </ToastAction>
+                ),
+            });
+        }
     };
 
     const handleCancel = () => setActiveCell(null);
@@ -474,12 +525,24 @@ export default function Metas() {
         <div className="space-y-6">
             <PageHeader
                 title="Metas Financeiras"
-                description="Planeamento orçamentário por categoria — clique numa célula para editar"
+                description="Planejamento orçamentário por categoria — clique numa célula para editar"
                 actions={
                     <div className="flex gap-3">
+                        {/* Mesma preferência global de "Ocultar saldos" do menu do usuário. */}
                         <button
                             type="button"
-                            onClick={() => exportarCSV(ano, grouped, metasMap, stats)}
+                            onClick={saldos.alternar}
+                            title="Vale para todo o sistema (mesma opção do menu do usuário)"
+                            className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all"
+                        >
+                            {saldos.visivel
+                                ? <EyeOff className="w-4 h-4" aria-hidden="true"/>
+                                : <Eye className="w-4 h-4" aria-hidden="true"/>}
+                            {saldos.visivel ? "Ocultar valores" : "Mostrar valores"}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => exportarCSV(ano, grouped, metasMap, statsAno)}
                             disabled={!canExport}
                             title={
                                 isLoading
@@ -490,7 +553,7 @@ export default function Metas() {
                             }
                             className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                         >
-                            <Download className="w-4 h-4"/> Exportar
+                            <Download className="w-4 h-4" aria-hidden="true"/> Exportar
                         </button>
                     </div>
                 }
@@ -523,12 +586,12 @@ export default function Metas() {
                 />
             </div>
 
-            {/* ── KPI Cards ── */}
+            {/* ── KPI Cards (respeitam o filtro de mês) ── */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                 <div className="glass-panel rounded-2xl p-4">
                     <div className="flex items-center gap-2 mb-2">
-                        <Target className="w-5 h-5 text-teal-400"/>
-                        <p className="text-xs text-muted-foreground">Meta Receita {ano}</p>
+                        <Target className="w-5 h-5 text-teal-400" aria-hidden="true"/>
+                        <p className="text-xs text-muted-foreground">Meta Receita · {periodo}</p>
                     </div>
                     <p className="text-lg font-bold text-teal-400">
                         {isLoading ? "…" : dinheiro(stats.receitas)}
@@ -536,8 +599,8 @@ export default function Metas() {
                 </div>
                 <div className="glass-panel rounded-2xl p-4">
                     <div className="flex items-center gap-2 mb-2">
-                        <TrendingDown className="w-5 h-5 text-destructive"/>
-                        <p className="text-xs text-muted-foreground">Despesas + Custos</p>
+                        <TrendingDown className="w-5 h-5 text-destructive" aria-hidden="true"/>
+                        <p className="text-xs text-muted-foreground">Despesas + Custos · {periodo}</p>
                     </div>
                     <p className="text-lg font-bold text-destructive">
                         {isLoading ? "…" : dinheiro(stats.saidas)}
@@ -546,20 +609,21 @@ export default function Metas() {
                 <div className="glass-panel rounded-2xl p-4">
                     <div className="flex items-center gap-2 mb-2">
                         <TrendingUp
-                            className={`w-5 h-5 ${stats.resultado >= 0 ? "text-success" : "text-destructive"}`}/>
-                        <p className="text-xs text-muted-foreground">Resultado Projetado</p>
+                            aria-hidden="true"
+                            className={`w-5 h-5 ${!saldos.visivel ? "text-muted-foreground" : stats.resultado >= 0 ? "text-success" : "text-destructive"}`}/>
+                        <p className="text-xs text-muted-foreground">Resultado Projetado · {periodo}</p>
                     </div>
-                    <p className={`text-lg font-bold ${stats.resultado >= 0 ? "text-success" : "text-destructive"}`}>
+                    <p className={`text-lg font-bold ${!saldos.visivel ? "text-white" : stats.resultado >= 0 ? "text-success" : "text-destructive"}`}>
                         {isLoading ? "…" : dinheiro(stats.resultado)}
                     </p>
                 </div>
                 <div className="glass-panel rounded-2xl p-4">
                     <div className="flex items-center gap-2 mb-2">
-                        <Target className="w-5 h-5 text-orange-400"/>
-                        <p className="text-xs text-muted-foreground">Categorias com Meta</p>
+                        <Target className="w-5 h-5 text-orange-400" aria-hidden="true"/>
+                        <p className="text-xs text-muted-foreground">Categorias com Meta · {periodo}</p>
                     </div>
                     <p className="text-lg font-bold text-orange-400">
-                        {isLoading ? "…" : `${stats.categoriasComMeta} / ${planoContas.filter((p) => p.ativo).length}`}
+                        {isLoading ? "…" : `${stats.categoriasComMeta} / ${stats.categoriasAtivas}`}
                     </p>
                 </div>
             </div>
@@ -570,12 +634,14 @@ export default function Metas() {
                     <h3 className="font-bold text-white">
                         Planilha de Metas Orçamentárias — {ano}
                     </h3>
-                    {saveMeta.isPending && (
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <Loader2 className="w-3.5 h-3.5 animate-spin"/>
-                            Salvando…
-                        </div>
-                    )}
+                    <div role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
+                        {saveMeta.isPending && (
+                            <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true"/>
+                                Salvando…
+                            </>
+                        )}
+                    </div>
                 </div>
 
                 {isLoading ? (
@@ -637,22 +703,24 @@ export default function Metas() {
                                 return (
                                     <Fragment key={`tipo-${tipo}`}>
                                         {/* ── Cabeçalho de Tipo ── */}
-                                        <tr
-                                            className={`${cfg.bg} border-y ${cfg.border} cursor-pointer select-none`}
-                                            onClick={() => toggleTipo(tipo)}
-                                        >
+                                        <tr className={`${cfg.bg} border-y ${cfg.border} select-none`}>
                                             <td
                                                 className={`px-4 py-2.5 font-bold ${cfg.color} sticky left-0 bg-inherit z-10`}
                                                 colSpan={totalColunas}
                                             >
-                                                <div className="flex items-center gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => toggleTipo(tipo)}
+                                                    aria-expanded={!isCollapsed}
+                                                    className="flex w-full items-center gap-2 text-left rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                                                >
                                                     {isCollapsed ? (
-                                                        <ChevronRight className="w-4 h-4"/>
+                                                        <ChevronRight className="w-4 h-4" aria-hidden="true"/>
                                                     ) : (
-                                                        <ChevronDown className="w-4 h-4"/>
+                                                        <ChevronDown className="w-4 h-4" aria-hidden="true"/>
                                                     )}
                                                     {cfg.label}
-                                                </div>
+                                                </button>
                                             </td>
                                         </tr>
 
@@ -677,16 +745,18 @@ export default function Metas() {
                                                                 key={`pc-${pc.id}`}
                                                                 className="border-b border-white/5 hover:bg-white/[0.02] transition-colors"
                                                             >
-                                                                <td className="px-4 py-2.5 sticky left-0 bg-card/80 backdrop-blur-sm z-10 pl-12">
+                                                                <th scope="row" className="px-4 py-2.5 sticky left-0 bg-card/80 backdrop-blur-sm z-10 pl-12 text-left font-normal">
                                     <span className="text-sm text-white/80 capitalize">
                                       {pc.subcategoria ?? pc.categoria}
                                     </span>
-                                                                </td>
+                                                                </th>
                                                                 {mesesVisiveis.map((mes) => (
                                                                     <td key={mes} className="px-2 py-2">
                                                                         <MetaCell
                                                                             plano_conta_id={pc.id}
                                                                             mes={mes}
+                                                                            ano={ano}
+                                                                            linha={nomeLinha(pc)}
                                                                             currentValue={metasMap.get(`${pc.id}-${mes}`) ?? ""}
                                                                             activeCell={activeCell}
                                                                             onActivate={handleActivate}
@@ -722,6 +792,7 @@ export default function Metas() {
                 Pressione <kbd className="px-1.5 py-0.5 bg-white/10 rounded text-[10px] font-mono">Enter</kbd> para
                 confirmar
                 ou <kbd className="px-1.5 py-0.5 bg-white/10 rounded text-[10px] font-mono">Esc</kbd> para cancelar.
+                Célula vazia fica sem meta (dá para desfazer no aviso).
             </p>
         </div>
     );

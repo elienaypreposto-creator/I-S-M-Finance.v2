@@ -43,12 +43,14 @@ import {
 import {cn} from "@/lib/utils";
 import {useAuth} from "@/hooks/use-auth";
 import {PERM} from "@/lib/permissoes";
+import {telaLiberada} from "@/lib/telas-permissoes";
 
-const navItems = [
+// A permissão de cada item vem de @/lib/telas-permissoes, a mesma que a rota (App.tsx) confere.
+const navItems: NavItem[] = [
     {title: "Home", url: "/", icon: Home},
-    {title: "Tarefas", url: "/kanban", icon: Columns, permission: PERM.KANBAN_LISTAR},
-    {title: "Conciliação", url: "/conciliacao", icon: RefreshCw, permission: PERM.CONCILIACAO_ACESSAR},
-    {title: "Lançamentos", url: "/lancamentos", icon: FileText, permission: PERM.LANCAMENTOS_LISTAR},
+    {title: "Tarefas", url: "/kanban", icon: Columns},
+    {title: "Conciliação", url: "/conciliacao", icon: RefreshCw},
+    {title: "Lançamentos", url: "/lancamentos", icon: FileText},
 ];
 
 const cadastrosItems: NavItem[] = [
@@ -67,7 +69,7 @@ const relatoriosItems: NavItem[] = [
     {title: "Relatório de Metas", url: "/relatorios/metas", icon: Target},
 ];
 
-const configItems = [
+const configItems: NavItem[] = [
     {title: "Usuários", url: "/configuracoes/usuarios", icon: Users},
     {title: "Filiais", url: "/configuracoes/filiais", icon: Building2},
     {title: "Tokens de API", url: "/configuracoes/tokens-api", icon: Key},
@@ -77,7 +79,6 @@ type NavItem = {
     title: string;
     url: string;
     icon: React.ElementType;
-    permission?: string;
 };
 
 type MenuSection = {
@@ -95,19 +96,14 @@ export function AppSidebar() {
     // No celular o menu abre inteiro (sheet), independente do estado retraído do desktop.
     const isCollapsed = state === "collapsed" && !isMobile;
 
-    const visibleNav = navItems.filter(
-        (item) => !("permission" in item && item.permission) || hasPermission((item as NavItem).permission!),
-    );
-    const visibleRelatorios = relatoriosItems.filter(
-        (item) => !item.permission || hasPermission(item.permission),
-    );
-    const visibleCadastros = cadastrosItems.filter(
-        (item) => !item.permission || hasPermission(item.permission),
-    );
+    const liberado = (item: NavItem) => telaLiberada(item.url, hasPermission);
+    const visibleNav = navItems.filter(liberado);
+    const visibleRelatorios = relatoriosItems.filter(liberado);
+    const visibleCadastros = cadastrosItems.filter(liberado);
     const visibleConfig = [
         ...(canListarEmpresas ? [{title: "Empresas", url: "/admin/empresas", icon: Building2}] : []),
         ...(canEditarPropriaEmpresa ? [{title: "Minha empresa", url: "/admin/empresas", icon: Building2}] : []),
-        ...configItems,
+        ...configItems.filter(liberado),
     ];
 
     const isActive = (url: string) => {

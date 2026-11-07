@@ -6,12 +6,14 @@ import {
     DndContext, DragOverlay,
     PointerSensor, TouchSensor, useSensor, useSensors,
     DragStartEvent, DragEndEvent,
-    rectIntersection,
+    pointerWithin, rectIntersection,
     MeasuringStrategy,
+    type CollisionDetection,
+    type Announcements,
+    type ScreenReaderInstructions,
 } from "@dnd-kit/core";
-import {useDroppable} from "@dnd-kit/core";
-import {SortableContext, verticalListSortingStrategy, useSortable} from "@dnd-kit/sortable";
-import {CSS} from "@dnd-kit/utilities";
+import {useDraggable, useDroppable} from "@dnd-kit/core";
+import type {QueryClient, QueryKey} from "@tanstack/react-query";
 import {Plus, Loader2} from "lucide-react";
 import {useAuth} from "@/hooks/use-auth";
 import {PERM} from "@/lib/permissoes";
@@ -32,6 +34,8 @@ import {SectionErrorFallback} from "@/components/error-boundary";
 import {fetchApiData} from "@/lib/api-config";
 import {toast} from "sonner";
 import {invalidateRelated} from "@/App";
+import {useConfirm} from "@/hooks/use-confirm";
+import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 
 // ─── Paleta ───────────────────────────────────────────────────────────────────
 const COLORS = {
@@ -107,13 +111,66 @@ function sanitizePatch(data: Record<string, any>): Record<string, any> {
     );
 }
 
-// ─── SortableCard ─────────────────────────────────────────────────────────────
-function SortableCard({
+// ─── Cache otimista ───────────────────────────────────────────────────────────
+// A lista fica em [empresaId, "kanban-cards", filtros]. O optimistic update
+// precisa casar por prefixo (todas as listas da empresa atual): escrever em
+// ["kanban-cards"] criava uma entrada órfã, o cartão voltava para a coluna de
+// origem até o refetch e os vizinhos mudavam de lugar no meio do próximo arrasto.
+type SnapshotCards = [QueryKey, Card[] | undefined][];
+
+async function atualizarCardsNoCache(
+    queryClient: QueryClient,
+    atualizar: (cards: Card[]) => Card[],
+): Promise<SnapshotCards> {
+    const filtro = {queryKey: tenantQueryKey("kanban-cards")};
+    await queryClient.cancelQueries(filtro);
+    const snapshot = queryClient.getQueriesData<Card[]>(filtro);
+    queryClient.setQueriesData<Card[]>(filtro, (old) => (old ? atualizar(old) : old));
+    return snapshot;
+}
+
+function restaurarCardsNoCache(queryClient: QueryClient, snapshot: SnapshotCards | undefined) {
+    snapshot?.forEach(([key, data]) => queryClient.setQueryData(key, data));
+}
+
+// Só as colunas são alvo de soltura e quem decide é o ponteiro (pointerWithin);
+// rectIntersection fica de reserva para o vão entre colunas. Antes os cartões
+// também eram alvos e o retângulo do overlay escolhia o alvo — perto da borda
+// caía no cartão/coluna vizinho.
+const deteccaoColuna: CollisionDetection = (args) => {
+    const sobPonteiro = pointerWithin(args);
+    return sobPonteiro.length > 0 ? sobPonteiro : rectIntersection(args);
+};
+
+// Textos do leitor de tela do dnd-kit (o padrão é em inglês).
+const tituloColuna = (id: string | number | undefined) =>
+    COLUMNS.find(c => `${COL_PREFIX}${c.id}` === String(id))?.title ?? "coluna";
+
+const ACESSIBILIDADE_DND: {announcements: Announcements; screenReaderInstructions: ScreenReaderInstructions} = {
+    screenReaderInstructions: {
+        draggable: "Para mover a tarefa entre colunas, arraste o cartão com o mouse ou o dedo. Clique no cartão para abrir.",
+    },
+    announcements: {
+        onDragStart: () => "Tarefa pega para mover.",
+        onDragOver: ({over}) =>
+            over ? `Sobre a coluna ${tituloColuna(over.id)}.` : "Fora das colunas.",
+        onDragEnd: ({over}) =>
+            over ? `Tarefa solta na coluna ${tituloColuna(over.id)}.` : "Tarefa solta fora das colunas; nada mudou.",
+        onDragCancel: () => "Movimento cancelado.",
+    },
+};
+
+// ─── DraggableCard ────────────────────────────────────────────────────────────
+// Arrastável simples (sem sortable): a ordem dentro da coluna não é persistida,
+// então o sortable só deslocava os cartões vizinhos durante o arrasto e os
+// devolvia no fim — parecia que o arrasto tinha pegado o cartão do lado.
+function DraggableCard({
                           card,
                           onView,
                           onEdit,
                           onDelete,
                           isDragging,
+                          canArrastar,
                           canEditar,
                           canExcluir,
                       }: {
@@ -122,18 +179,25 @@ function SortableCard({
     onEdit: (card: Card) => void;
     onDelete: (card: Card) => void;
     isDragging: boolean;
+    canArrastar: boolean;
     canEditar: boolean;
     canExcluir: boolean;
 }) {
-    const {attributes, listeners, setNodeRef, transform, transition} = useSortable({id: card.id});
-    const style = {transform: CSS.Transform.toString(transform), transition};
+    const {attributes, listeners, setNodeRef} = useDraggable({
+        id: card.id,
+        // Cartão otimista (id negativo) ainda não existe no servidor.
+        disabled: !canArrastar || card.id < 0,
+    });
 
     return (
         <div
             ref={setNodeRef}
-            style={{...style, touchAction: "pan-y"}}
+            style={{touchAction: "pan-y"}}
             {...attributes}
             {...listeners}
+            aria-roledescription="cartão arrastável"
+            // O original vira um marcador esmaecido; quem segue o ponteiro é o DragOverlay.
+            className={cn("rounded-xl transition-opacity", isDragging && "opacity-40")}
             onClick={(e) => {
                 // Se o clique originou de dentro do menu, não abre o modal de visualização
                 if ((e.target as HTMLElement).closest("[data-card-menu]")) return;
@@ -143,7 +207,6 @@ function SortableCard({
             <TaskCard
                 {...card}
                 onClick={undefined}
-                isDragging={isDragging}
                 menuSlot={
                     (canEditar || canExcluir) ? (
                     <div data-card-menu className="flex items-center gap-2" onPointerDown={e => e.stopPropagation()}>
@@ -157,6 +220,7 @@ function SortableCard({
                         )}
                         {canExcluir && (
                         <BotaoExcluir
+                            title={`Excluir tarefa "${card.titulo}"`}
                             onClick={e => {
                                 e.stopPropagation();
                                 onDelete(card);
@@ -224,20 +288,19 @@ function KanbanColumn({
             </div>
 
             <DroppableColumn id={column.id}>
-                <SortableContext items={cards.map(c => c.id)} strategy={verticalListSortingStrategy}>
-                    {cards.map(card => (
-                        <SortableCard
-                            key={card.id}
-                            card={card}
-                            onView={onView}
-                            onEdit={onEdit}
-                            onDelete={onDelete}
-                            isDragging={activeId === card.id}
-                            canEditar={canEditar}
-                            canExcluir={canExcluir}
-                        />
-                    ))}
-                </SortableContext>
+                {cards.map(card => (
+                    <DraggableCard
+                        key={card.id}
+                        card={card}
+                        onView={onView}
+                        onEdit={onEdit}
+                        onDelete={onDelete}
+                        isDragging={activeId === card.id}
+                        canArrastar={canEditar}
+                        canEditar={canEditar}
+                        canExcluir={canExcluir}
+                    />
+                ))}
 
                 {cards.length === 0 && (
                     <div
@@ -258,6 +321,7 @@ export default function Kanban() {
     const [modalColuna, setModalColuna] = useState("solicitado");
     const [activeId, setActiveId] = useState<number | null>(null);
     const {user, hasPermission} = useAuth();
+    const {confirm, ConfirmDialogProps} = useConfirm();
     const canCriar = hasPermission(PERM.KANBAN_CRIAR);
     const canEditar = hasPermission(PERM.KANBAN_EDITAR);
     const canExcluir = hasPermission(PERM.KANBAN_EXCLUIR);
@@ -296,8 +360,6 @@ export default function Kanban() {
         mutationFn: (data: Partial<Card>) =>
             fetchApiData<Card>("/kanban/cards", {method: "POST", body: JSON.stringify(data)}),
         onMutate: async (newCard) => {
-            await queryClient.cancelQueries({queryKey: tenantQueryKey("kanban-cards")});
-            const snapshot = queryClient.getQueryData<Card[]>(["kanban-cards"]);
             const tempCard: Card = {
                 id: -(Date.now()),
                 titulo: newCard.titulo ?? "Nova tarefa",
@@ -315,11 +377,11 @@ export default function Kanban() {
                 prioridade: newCard.prioridade ?? "normal",
                 created_at: new Date().toISOString(),
             };
-            queryClient.setQueryData<Card[]>(["kanban-cards"], (old = []) => [...old, tempCard]);
+            const snapshot = await atualizarCardsNoCache(queryClient, (old) => [...old, tempCard]);
             return {snapshot};
         },
         onError: (_err, _data, ctx) => {
-            if (ctx?.snapshot) queryClient.setQueryData(["kanban-cards"], ctx.snapshot);
+            restaurarCardsNoCache(queryClient, ctx?.snapshot);
             toast.error("Erro ao criar tarefa.");
         },
         onSuccess: () => toast.success("Tarefa criada!"),
@@ -334,15 +396,13 @@ export default function Kanban() {
                 body: JSON.stringify(payload),
             }),
         onMutate: async ({id, payload}) => {
-            await queryClient.cancelQueries({queryKey: tenantQueryKey("kanban-cards")});
-            const snapshot = queryClient.getQueryData<Card[]>(["kanban-cards"]);
-            queryClient.setQueryData<Card[]>(["kanban-cards"], (old = []) =>
+            const snapshot = await atualizarCardsNoCache(queryClient, (old) =>
                 old.map(c => c.id === id ? {...c, ...payload} : c)
             );
             return {snapshot};
         },
         onError: (_err, _vars, ctx) => {
-            if (ctx?.snapshot) queryClient.setQueryData(["kanban-cards"], ctx.snapshot);
+            restaurarCardsNoCache(queryClient, ctx?.snapshot);
             toast.error("Erro ao atualizar tarefa. Alteração desfeita.");
         },
         onSuccess: () => toast.success("Tarefa atualizada!"),
@@ -354,13 +414,11 @@ export default function Kanban() {
         mutationFn: (id: number) =>
             fetchApiData(`/kanban/cards/${id}`, {method: "DELETE"}),
         onMutate: async (id) => {
-            await queryClient.cancelQueries({queryKey: tenantQueryKey("kanban-cards")});
-            const snapshot = queryClient.getQueryData<Card[]>(["kanban-cards"]);
-            queryClient.setQueryData<Card[]>(["kanban-cards"], (old = []) => old.filter(c => c.id !== id));
+            const snapshot = await atualizarCardsNoCache(queryClient, (old) => old.filter(c => c.id !== id));
             return {snapshot};
         },
         onError: (_err, _id, ctx) => {
-            if (ctx?.snapshot) queryClient.setQueryData(["kanban-cards"], ctx.snapshot);
+            restaurarCardsNoCache(queryClient, ctx?.snapshot);
             toast.error("Erro ao excluir. Operação desfeita.");
         },
         onSuccess: () => toast.success("Tarefa excluída."),
@@ -372,15 +430,13 @@ export default function Kanban() {
         mutationFn: ({id, coluna}: { id: number; coluna: string }) =>
             fetchApiData(`/kanban/cards/${id}`, {method: "PATCH", body: JSON.stringify({coluna})}),
         onMutate: async ({id, coluna}) => {
-            await queryClient.cancelQueries({queryKey: tenantQueryKey("kanban-cards")});
-            const snapshot = queryClient.getQueryData<Card[]>(["kanban-cards"]);
-            queryClient.setQueryData<Card[]>(["kanban-cards"], (old = []) =>
+            const snapshot = await atualizarCardsNoCache(queryClient, (old) =>
                 old.map(c => c.id === id ? {...c, coluna} : c)
             );
             return {snapshot};
         },
         onError: (_err, _vars, ctx) => {
-            if (ctx?.snapshot) queryClient.setQueryData(["kanban-cards"], ctx.snapshot);
+            restaurarCardsNoCache(queryClient, ctx?.snapshot);
             toast.error("Erro ao mover tarefa. Alteração desfeita.");
         },
         onSettled: () => invalidateRelated(queryClient, "kanban-cards"),
@@ -416,16 +472,10 @@ export default function Kanban() {
             return;
         }
 
+        // Só colunas são droppable (ids "col::<coluna>").
         const overId = String(over.id);
-
-        let targetColuna: string;
-        if (overId.startsWith(COL_PREFIX)) {
-            targetColuna = overId.slice(COL_PREFIX.length);
-        } else {
-            const overCard = allCards.find(c => c.id === Number(overId));
-            if (!overCard) return;
-            targetColuna = overCard.coluna;
-        }
+        if (!overId.startsWith(COL_PREFIX)) return;
+        const targetColuna = overId.slice(COL_PREFIX.length);
 
         if (draggedCard.coluna !== targetColuna) {
             moveMutation.mutate({id: draggedCard.id, coluna: targetColuna});
@@ -454,8 +504,20 @@ export default function Kanban() {
         setModalOpen(true);
     };
 
-    const handleDeleteCard = (card: Card) => {
-        deleteMutation.mutate(card.id);
+    const handleDeleteCard = async (card: Card) => {
+        const itensChecklist = card.checklist?.length ?? 0;
+        const ok = await confirm({
+            title: `Excluir a tarefa "${card.titulo}"?`,
+            description: itensChecklist > 1
+                ? `A tarefa e os ${itensChecklist} itens do checklist serão apagados. Essa ação não pode ser desfeita.`
+                : itensChecklist === 1
+                    ? "A tarefa e o item do checklist serão apagados. Essa ação não pode ser desfeita."
+                    : "A tarefa será apagada. Essa ação não pode ser desfeita.",
+            confirmLabel: "Excluir",
+            cancelLabel: "Cancelar",
+            variant: "destructive",
+        });
+        if (ok) deleteMutation.mutate(card.id);
     };
 
     const handleSaveCard = (data: any) => {
@@ -538,10 +600,12 @@ export default function Kanban() {
             ) : (
                 <DndContext
                     sensors={sensors}
-                    collisionDetection={rectIntersection}
+                    accessibility={ACESSIBILIDADE_DND}
+                    collisionDetection={deteccaoColuna}
                     measuring={{droppable: {strategy: MeasuringStrategy.WhileDragging}}}
                     onDragStart={handleDragStart}
                     onDragEnd={handleDragEnd}
+                    onDragCancel={() => setActiveId(null)}
                 >
                     <div className="flex-1 min-h-0 min-w-0 overflow-x-auto overflow-y-hidden pb-4 custom-scrollbar">
                     <div className="flex gap-4 h-full w-max min-w-full">
@@ -606,6 +670,8 @@ export default function Kanban() {
                 defaultColuna={modalColuna}
                 mode={modalMode}
             />
+
+            <ConfirmDialog {...ConfirmDialogProps}/>
         </div>
     );
 }

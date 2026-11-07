@@ -1,15 +1,16 @@
-import {count, desc, eq, sql, type SQL} from "drizzle-orm";
+import {and, count, desc, eq, sql, type SQL} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {
     contasBancariasTable,
     centrosCustosTable,
     departamentosTable,
+    itensConciliacaoLancamentosTable,
     lancamentosTable,
     parceirosTable,
     planoContasTable,
 } from "@workspace/db/schema";
 import {AppError} from "../../../utils/app-error";
-import {tenantWhere, withEmpresaId} from "../../../lib/tenant-scope";
+import {tenantScope, tenantWhere, withEmpresaId} from "../../../lib/tenant-scope";
 
 import {assertRefsDaEmpresa} from "../../../lib/tenant-refs-guard";
 import {
@@ -20,9 +21,10 @@ import {
     type UpdateLancamentoBody,
 } from "./schemas";
 import {montarWhereLancamentos} from "./lancamentos.filtros";
-import {statusAbertoPorVencimento} from "../../../utils/conciliacao-vincular";
+import {MSG_REABRIR_CONCILIADO, statusNaCriacao, type StatusManual} from "./status-manual";
 import {hojeIsoLocal} from "../../../utils/date-civil";
-import {toCents} from "../../../utils/money";
+import {fromCents, toCents} from "../../../utils/money";
+import {emAbertoLinhaCents, emAbertoLinhaSql, quitadoCents, quitadoSql, temResidualAtivoSql} from "./em-aberto";
 import {CAMPOS_RETENCAO, MSG_RETENCOES_ACIMA_DO_VALOR, somaRetencoesCents} from "../../../utils/retencoes";
 
 function formatPlanoContaPath(categoria: string | null, subcategoria: string | null): string | null {
@@ -55,13 +57,6 @@ const resolveDepartamentoCentroByParceiro = async (empresaId: number, parceiroId
         centro_custo_id: parceiro?.centro_custo_id ?? undefined,
     };
 };
-
-/**
- * Total "a receber / a pagar" do resumo: o que de fato entra/sai do banco,
- * ou seja max(valor_liquido - desconto + juros, 0). valor_liquido já desconta
- * as retenções na fonte (a coluna de valor da lista segue no bruto).
- */
-const valorLiquidoSql = sql`greatest(${lancamentosTable.valor_liquido} - coalesce(${lancamentosTable.desconto}, 0) + coalesce(${lancamentosTable.juros}, 0), 0)`;
 
 /** Retenções + líquido como número (borda HTTP). */
 function retencoesParaHttp(item: Partial<Record<(typeof CAMPOS_RETENCAO)[number] | "valor_liquido", unknown>>) {
@@ -101,6 +96,10 @@ async function buscarItens(where: SQL, limit: number, offset: number) {
             retencao_inss: lancamentosTable.retencao_inss,
             retencao_iss: lancamentosTable.retencao_iss,
             valor_liquido: lancamentosTable.valor_liquido,
+            valor_quitado: lancamentosTable.valor_quitado,
+            // Pago parcial cujo restante passou para um residual (não conta aqui);
+            // o CASE só roda a subconsulta nas linhas pago_parcial.
+            tem_residual_ativo: sql<boolean>`(case when ${lancamentosTable.status} = 'pago_parcial' then ${temResidualAtivoSql} else false end)`,
             status: lancamentosTable.status,
             plano_conta_id: lancamentosTable.plano_conta_id,
             plano_conta_categoria: planoContasTable.categoria,
@@ -134,31 +133,46 @@ async function buscarItens(where: SQL, limit: number, offset: number) {
             ...item,
             ...retencoesParaHttp(item),
             plano_conta_nome: formatPlanoContaPath(item.plano_conta_categoria, item.plano_conta_subcategoria),
+            // Valor da linha: bruto − desconto + juros (sem tirar retenções).
             valor: Math.max(valorBruto - desconto + juros, 0),
             valor_bruto: valorBruto,
             desconto,
             juros,
+            valor_quitado: fromCents(quitadoCents(item)),
+            /** O que falta quitar (mesma regra do resumo "A receber / A pagar"). */
+            valor_em_aberto: fromCents(emAbertoLinhaCents(item)),
         };
     });
 }
 
-/** Quantidade e totais líquidos por tipo (resumo da linha de filtros). */
+/**
+ * Resumo da lista com os mesmos filtros: quantidade (todos os status),
+ * "A receber / A pagar" = só o que está em aberto, no critério da coluna de
+ * valor (ver em-aberto.ts), e "Recebido / Pago" = o que já foi quitado.
+ */
 async function resumir(where: SQL) {
     const linhas = await db
         .select({
             tipo: lancamentosTable.tipo,
             quantidade: count(),
-            total: sql<string>`coalesce(sum(${valorLiquidoSql}), 0)`,
+            em_aberto: sql<string>`coalesce(sum(${emAbertoLinhaSql}), 0)`,
+            quitado: sql<string>`coalesce(sum(${quitadoSql}), 0)`,
         })
         .from(lancamentosTable)
         .leftJoin(parceirosTable, eq(lancamentosTable.parceiro_id, parceirosTable.id))
         .where(where)
         .groupBy(lancamentosTable.tipo);
 
-    const totalDo = (t: "CR" | "CP") => Number(linhas.find((l) => l.tipo === t)?.total ?? 0);
+    const doTipo = (t: "CR" | "CP", campo: "em_aberto" | "quitado") =>
+        fromCents(toCents(linhas.find((l) => l.tipo === t)?.[campo]));
     return {
         total: linhas.reduce((acc, l) => acc + Number(l.quantidade), 0),
-        totais: {receber: totalDo("CR"), pagar: totalDo("CP")},
+        totais: {
+            receber: doTipo("CR", "em_aberto"),
+            pagar: doTipo("CP", "em_aberto"),
+            recebido: doTipo("CR", "quitado"),
+            pago: doTipo("CP", "quitado"),
+        },
     };
 }
 
@@ -178,6 +192,11 @@ export const lancamentosService = {
         };
     },
 
+    /** Só o resumo (quantidade e totais), com os mesmos filtros da lista. */
+    async resumo(empresaId: number, filtros: FiltrosLancamentos) {
+        return resumir(montarWhereLancamentos(empresaId, filtros));
+    },
+
     /** Export sem paginação, com teto de LIMITE_EXPORT_LANCAMENTOS linhas. */
     async exportar(empresaId: number, filtros: FiltrosLancamentos) {
         const where = montarWhereLancamentos(empresaId, filtros);
@@ -194,7 +213,8 @@ export const lancamentosService = {
         };
     },
 
-    async create(empresaId: number, payload: CreateLancamentoBody) {
+    /** `criadoPor`: usuário da sessão (null em chamada por token de API). */
+    async create(empresaId: number, payload: CreateLancamentoBody, criadoPor: number | null = null) {
         await assertRefsDaEmpresa(empresaId, {
             conta_id: payload.conta_id,
             parceiro_id: payload.parceiro_id,
@@ -229,13 +249,8 @@ export const lancamentosService = {
                         retencao_csll: payload.retencao_csll ?? "0",
                         retencao_inss: payload.retencao_inss ?? "0",
                         retencao_iss: payload.retencao_iss ?? "0",
-                        status:
-                            payload.status === "pago" ||
-                            payload.status === "recebido" ||
-                            payload.status === "pago_parcial" ||
-                            payload.status === "cancelado"
-                                ? payload.status
-                                : statusAbertoPorVencimento(payload.vencimento, hojeIsoLocal()),
+                        // Quitação só pela conciliação/transferência (ver status-manual.ts).
+                        status: statusNaCriacao(payload.status, payload.vencimento, hojeIsoLocal()),
                         plano_conta_id: payload.plano_conta_id ?? null,
                         departamento_id: departamentoFinal ?? null,
                         centro_custo_id: centroCustoFinal ?? null,
@@ -244,6 +259,7 @@ export const lancamentosService = {
                         riscos: payload.riscos ?? [],
                         forma_pagamento: payload.forma_pagamento ?? null,
                         dados_pagamento: (payload.dados_pagamento ?? null) as typeof lancamentosTable.$inferInsert.dados_pagamento,
+                        criado_por: criadoPor,
                     },
                     empresaId,
                 ),
@@ -254,24 +270,52 @@ export const lancamentosService = {
     },
 
     async getById(empresaId: number, id: number) {
-        const [item] = await db
-            .select()
+        const [linha] = await db
+            .select({item: lancamentosTable, conta_nome: contasBancariasTable.nome})
             .from(lancamentosTable)
+            .leftJoin(
+                contasBancariasTable,
+                and(eq(lancamentosTable.conta_id, contasBancariasTable.id), tenantScope(contasBancariasTable, empresaId)),
+            )
             .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.id, id)))
             .limit(1);
-        if (!item) {
+        if (!linha) {
             throw new AppError(404, "NOT_FOUND", "Lançamento não encontrado.");
         }
+        const {item, conta_nome} = linha;
+        // Sequencial: na transação do tenant as consultas dividem a mesma conexão.
+        const [vinculo] = await db
+            .select({id: itensConciliacaoLancamentosTable.id})
+            .from(itensConciliacaoLancamentosTable)
+            .where(
+                tenantWhere(itensConciliacaoLancamentosTable, empresaId, eq(itensConciliacaoLancamentosTable.lancamento_id, id)),
+            )
+            .limit(1);
 
         return {
             ...item,
+            conta_nome: conta_nome ?? null,
+            /** Vinculado a linha de extrato: a quitação é da conciliação (só leitura em Lançamentos). */
+            tem_conciliacao: vinculo != null,
             valor: Number(item.valor ?? 0),
             ...retencoesParaHttp(item),
             riscos: Array.isArray(item.riscos) ? item.riscos : [],
         };
     },
 
-    async update(empresaId: number, id: number, payload: UpdateLancamentoBody) {
+    /**
+     * O status do payload nunca é gravado direto: quem decide é `opcoes.status`
+     * (ver status-manual.ts), e quitação nunca é gravada aqui. Ao mudar o status,
+     * o UPDATE só passa se o título continua sem vínculo de conciliação (corrida
+     * com um vincular entre a leitura e a escrita). O mesmo vale quando o PUT
+     * muda valor/tipo/conta/desconto/juros/retenções (`conflitoSeVinculado`).
+     */
+    async update(
+        empresaId: number,
+        id: number,
+        payload: UpdateLancamentoBody,
+        opcoes: {status?: StatusManual; limparQuitacao?: boolean; conflitoSeVinculado?: string} = {},
+    ) {
         await assertRefsDaEmpresa(empresaId, {
             conta_id: payload.conta_id,
             parceiro_id: payload.parceiro_id,
@@ -311,20 +355,37 @@ export const lancamentosService = {
             }
         }
 
-        const {empresa_id: _ignored, ...safePayload} = payload as UpdateLancamentoBody & { empresa_id?: unknown };
+        const {empresa_id: _ignored, status: _statusPedido, ...safePayload} = payload as UpdateLancamentoBody & {
+            empresa_id?: unknown;
+        };
+        const mudaStatus = opcoes.status !== undefined;
         const updateData = {
             ...safePayload,
+            ...(mudaStatus ? {status: opcoes.status} : {}),
+            // Reabrir quitação órfã (sem vínculo/transferência, do caminho antigo):
+            // o título volta a ser só previsão e sai do saldo e dos relatórios de caixa.
+            ...(opcoes.limparQuitacao ? {data_quitacao: null, valor_quitado: null} : {}),
             departamento_id: departamentoFinal ?? payload.departamento_id,
             centro_custo_id: centroCustoFinal ?? payload.centro_custo_id,
             updated_at: new Date(),
         };
 
+        const semVinculo = sql`NOT EXISTS (SELECT 1 FROM itens_conciliacao_lancamentos icl WHERE icl.lancamento_id = ${lancamentosTable.id})`;
+        const msgConflito = mudaStatus ? MSG_REABRIR_CONCILIADO : opcoes.conflitoSeVinculado;
         const [item] = await db
             .update(lancamentosTable)
             .set(updateData as typeof lancamentosTable.$inferInsert)
-            .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.id, id)))
+            .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.id, id), msgConflito ? semVinculo : undefined))
             .returning();
         if (!item) {
+            if (msgConflito) {
+                const [existe] = await db
+                    .select({id: lancamentosTable.id})
+                    .from(lancamentosTable)
+                    .where(tenantWhere(lancamentosTable, empresaId, eq(lancamentosTable.id, id)))
+                    .limit(1);
+                if (existe) throw new AppError(409, "CONFLICT", msgConflito);
+            }
             throw new AppError(404, "NOT_FOUND", "Lançamento não encontrado.");
         }
 

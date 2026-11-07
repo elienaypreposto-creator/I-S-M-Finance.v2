@@ -204,6 +204,7 @@ type ProjecaoMes = {
     totalPagamentos?: number;
 };
 
+/** `saldo` = saldo na abertura do dia (o 1º ponto, hoje, é o Saldo geral); receber/pagar = em aberto que vence no dia. */
 type ProjecaoDia = { data: string; saldo: number; receber: number; pagar: number };
 
 type ParceiroInadimplente = {
@@ -279,7 +280,7 @@ async function exportarXLSX(dashboardData: DashboardExportData) {
 
     if (dashboardData.projecaoDias?.length) {
         const rows: (string | number)[][] = [
-            ["Data", "Saldo Acumulado", "A Receber", "A Pagar"],
+            ["Data", "Saldo (início do dia)", "A Receber", "A Pagar"],
             ...dashboardData.projecaoDias.map((r) => [r.data, r.saldo, r.receber, r.pagar]),
         ];
         const ws = XLSX.utils.aoa_to_sheet(rows);
@@ -879,7 +880,8 @@ export default function Dashboard() {
                                 />
                                 <RechartsTooltip content={<CustomTooltip/>}/>
                                 <Legend iconType="circle" wrapperStyle={{fontSize: "12px"}}/>
-                                <Line type="monotone" dataKey="saldo" name="Saldo acumulado" stroke="#3BA8DC"
+                                {/* Saldo na abertura do dia: hoje = Saldo geral; o que vence no dia entra no seguinte. */}
+                                <Line type="monotone" dataKey="saldo" name="Saldo (início do dia)" stroke="#3BA8DC"
                                       strokeWidth={2} dot={false}/>
                                 <Line type="monotone" dataKey="receber" name="A receber (dia)" stroke="#27AE60"
                                       strokeWidth={1.5} dot={false}/>

@@ -21,6 +21,7 @@ import {
     adminDb,
     closeDbPools,
     pool,
+    centrosCustosTable,
     contasBancariasTable,
     conciliacoesTable,
     departamentosTable,
@@ -103,6 +104,7 @@ export type EmpresaFx = {
         parceiro: number;
         planoConta: number;
         departamento: number;
+        centroCusto: number;
         filial: number;
         lancamento: number;
         transferenciaGrupo: string;
@@ -110,6 +112,7 @@ export type EmpresaFx = {
         tokenApi: number;
         kanbanCard: number;
         extrato: number;
+        conciliacao: number;
         linha: number;
         vinculo: number;
     };
@@ -184,6 +187,10 @@ async function seedEmpresa(label: "A" | "B", run: string): Promise<EmpresaFx> {
     const [departamento] = await adminDb
         .insert(departamentosTable)
         .values({empresa_id: empresaId, nome: `${marker} Departamento`})
+        .returning();
+    const [centroCusto] = await adminDb
+        .insert(centrosCustosTable)
+        .values({empresa_id: empresaId, nome: `${marker} Centro de Custo`, departamento_id: departamento.id})
         .returning();
     const [filial] = await adminDb
         .insert(filiaisTable)
@@ -281,6 +288,7 @@ async function seedEmpresa(label: "A" | "B", run: string): Promise<EmpresaFx> {
             parceiro: parceiro.id,
             planoConta: planoConta.id,
             departamento: departamento.id,
+            centroCusto: centroCusto.id,
             filial: filial.id,
             lancamento: lancamento.id,
             transferenciaGrupo,
@@ -288,6 +296,7 @@ async function seedEmpresa(label: "A" | "B", run: string): Promise<EmpresaFx> {
             tokenApi: tokenApi.id,
             kanbanCard: kanbanCard.id,
             extrato: extrato.id,
+            conciliacao: conciliacao.id,
             linha: linha.id,
             vinculo: vinculo.id,
         },

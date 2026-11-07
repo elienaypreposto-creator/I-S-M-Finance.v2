@@ -1,4 +1,5 @@
 import {cn} from "@/lib/utils";
+import {rotuloStatus} from "@/lib/status-label";
 
 type StatusType =
     | "pendente"
@@ -15,10 +16,12 @@ type StatusType =
 
 interface StatusBadgeProps {
     status: StatusType | string;
+    /** Tipo do título (CP/CR): "pago_parcial" de CR aparece como "Recebido parcial". */
+    tipo?: string | null;
     className?: string;
 }
 
-export function StatusBadge({status, className}: StatusBadgeProps) {
+export function StatusBadge({status, tipo, className}: StatusBadgeProps) {
     const getStatusStyles = (s: string) => {
         switch (s.toLowerCase()) {
             case "pago":
@@ -43,11 +46,6 @@ export function StatusBadge({status, className}: StatusBadgeProps) {
         }
     };
 
-    const getStatusLabel = (s: string) => {
-        if (s.toLowerCase() === "pago_parcial") return "Pago parcial";
-        return s.charAt(0).toUpperCase() + s.slice(1).replace("_", " ");
-    };
-
     return (
         <span
             className={cn(
@@ -56,7 +54,7 @@ export function StatusBadge({status, className}: StatusBadgeProps) {
                 className
             )}
         >
-      {getStatusLabel(status)}
+      {rotuloStatus(status, tipo)}
     </span>
     );
 }

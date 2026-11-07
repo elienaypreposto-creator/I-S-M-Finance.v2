@@ -1,4 +1,7 @@
 import {z} from "zod";
+import {cnpjValido, cpfValido, erroDocumento} from "@/lib/documento";
+import {hojeIsoLocal} from "@/lib/datas";
+import {AGENCIA_REGEX, SALDO_REGEX} from "@/lib/conta-bancaria";
 
 export const departamentoFormSchema = z.object({
     nome: z.string().trim().min(2, "Nome deve ter ao menos 2 caracteres."),
@@ -27,14 +30,16 @@ export const contaBancariaFormSchema = z
             .string()
             .optional()
             .default("")
+            // Pode ser negativo: conta corrente abre no cheque especial.
             .refine(
-                (v) => !v || /^[\d.]*\d,\d{2}$/.test(v.trim()),
-                "Saldo inválido - use o formato 1.234,56",
+                (v) => !v || SALDO_REGEX.test(v.trim()),
+                "Saldo inválido. Use o formato 1.234,56 ou -1.234,56.",
             ),
         data_inicio: z
             .string()
             .min(1, "Informe a data de início dos lançamentos.")
-            .refine((v) => !v || /^\d{4}-\d{2}-\d{2}$/.test(v), "Data inválida."),
+            .refine((v) => !v || /^\d{4}-\d{2}-\d{2}$/.test(v), "Data inválida.")
+            .refine((v) => !v || v <= hojeIsoLocal(), "A data de início não pode ser no futuro."),
         cor: z
             .string()
             .regex(/^#[0-9A-Fa-f]{6}$/, "Selecione uma cor válida.")
@@ -50,14 +55,18 @@ export const contaBancariaFormSchema = z
                 ctx.addIssue({code: "custom", message: "Informe o banco.", path: ["banco"]});
             if (!data.agencia?.trim())
                 ctx.addIssue({code: "custom", message: "Informe a agência.", path: ["agencia"]});
+            else if (!AGENCIA_REGEX.test(data.agencia.trim()))
+                ctx.addIssue({
+                    code: "custom",
+                    message: "Agência inválida: até 4 dígitos e, se houver, o dígito (ex.: 1234-5).",
+                    path: ["agencia"],
+                });
             if (!data.conta?.trim())
                 ctx.addIssue({code: "custom", message: "Informe a conta.", path: ["conta"]});
         }
     });
 
 export type ContaBancariaFormValues = z.infer<typeof contaBancariaFormSchema>;
-
-const docNumeros = (s: string) => s.replace(/\D/g, "");
 
 /** Uma chave PIX dentro de um grupo de dados bancários. */
 export const pixKeyFormItemSchema = z.object({
@@ -98,16 +107,16 @@ export const contaBancariaFormItemSchema = z
                 } else {
                     const chave = p.chave.trim();
                     const nums = chave.replace(/\D/g, "");
-                    if (p.tipo_chave === "cpf" && nums.length !== 11)
+                    if (p.tipo_chave === "cpf" && !cpfValido(nums))
                         ctx.addIssue({
                             code: "custom",
-                            message: "CPF inválido - verifique os 11 dígitos.",
+                            message: erroDocumento(nums, "PF") ?? "CPF inválido.",
                             path: ["pix", i, "chave"]
                         });
-                    else if (p.tipo_chave === "cnpj" && nums.length !== 14)
+                    else if (p.tipo_chave === "cnpj" && !cnpjValido(chave))
                         ctx.addIssue({
                             code: "custom",
-                            message: "CNPJ inválido - verifique os 14 dígitos.",
+                            message: erroDocumento(chave, "PJ") ?? "CNPJ inválido.",
                             path: ["pix", i, "chave"]
                         });
                     else if (p.tipo_chave === "email" && !z.string().email().safeParse(chave).success)
@@ -154,11 +163,7 @@ export const parceiroFormSchema = z
         documento: z
             .string()
             .trim()
-            .min(1, "CPF/CNPJ é obrigatório.")
-            .refine(
-                (v) => docNumeros(v).length >= 11,
-                "Documento incompleto - verifique os dígitos."
-            ),
+            .min(1, "Informe o CPF ou CNPJ."),
 
         departamento_id: z.string().default(""),
         tiposParceiro: z.array(z.string()).min(1, "Selecione ao menos um tipo de parceiro."),
@@ -167,12 +172,9 @@ export const parceiroFormSchema = z
         dadosBancarios: z.array(contaBancariaFormItemSchema).default([]),
     })
     .superRefine((data, ctx) => {
-        const n = docNumeros(data.documento);
-        if (data.tipoPessoa === "PF") {
-            if (n.length !== 11)
-                ctx.addIssue({code: "custom", message: "CPF deve ter 11 dígitos.", path: ["documento"]});
-        } else if (n.length !== 14) {
-            ctx.addIssue({code: "custom", message: "CNPJ deve ter 14 dígitos.", path: ["documento"]});
+        if (data.documento.trim()) {
+            const erro = erroDocumento(data.documento, data.tipoPessoa);
+            if (erro) ctx.addIssue({code: "custom", message: erro, path: ["documento"]});
         }
 
         const mail = data.email.trim();

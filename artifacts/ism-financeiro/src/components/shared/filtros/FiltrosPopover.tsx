@@ -86,10 +86,13 @@ export function FiltrosPopover({definicoes, valores, contagem, onAplicar, classN
         setAberto(false);
     };
 
-    const limparRascunho = () => {
+    // Limpar vale na hora (a lista atualiza sem precisar de "Aplicar"); o painel
+    // fica aberto e vazio para escolher outros filtros.
+    const limparFiltros = () => {
         setRascunho({});
         setFaixaDigitada({});
         setErroFaixa(null);
+        onAplicar({});
     };
 
     const aoTeclar = (e: KeyboardEvent<HTMLFormElement>) => {
@@ -282,7 +285,7 @@ export function FiltrosPopover({definicoes, valores, contagem, onAplicar, classN
                     <div className="sticky bottom-0 bg-card flex flex-wrap items-center justify-between gap-2 px-5 py-3 border-t border-white/10">
                         <button
                             type="button"
-                            onClick={limparRascunho}
+                            onClick={limparFiltros}
                             className={cn("text-xs font-semibold text-sky-300 hover:underline rounded px-1 py-1", FOCO_VISIVEL)}
                         >
                             Limpar filtros
