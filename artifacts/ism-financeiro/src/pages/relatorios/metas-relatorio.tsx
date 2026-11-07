@@ -10,9 +10,9 @@ import {
     Scale,
     Loader2,
     AlertCircle,
-    EyeOff,
 } from "lucide-react";
 import {useDinheiro, useSaldosVisiveis} from "@/components/conta/saldos-visiveis";
+import {GraficoOculto} from "@/components/conta/grafico-oculto";
 import {SelectCampo} from "@/components/ui/select-campo";
 import {useQuery} from "@tanstack/react-query";
 import {fetchApiData} from "@/lib/api-config";
@@ -591,13 +591,7 @@ export default function MetasRelatorio() {
 
                     {hasChartData && !saldosVisiveis && (
                         // A altura das barras mostra a proporção dos valores: com saldos ocultos, sem gráfico.
-                        <div className="glass-panel rounded-2xl p-6 flex items-center gap-3 text-sm text-muted-foreground">
-                            <EyeOff className="w-5 h-5 shrink-0" aria-hidden="true"/>
-                            <p>
-                                Gráfico Orçado × Realizado oculto porque os saldos estão ocultos. Mostre os
-                                saldos para ver as barras.
-                            </p>
-                        </div>
+                        <GraficoOculto titulo="Gráfico Orçado × Realizado" className="glass-panel rounded-2xl p-6"/>
                     )}
 
                     {hasChartData && saldosVisiveis && (

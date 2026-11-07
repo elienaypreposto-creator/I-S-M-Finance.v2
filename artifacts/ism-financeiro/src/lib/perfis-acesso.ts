@@ -15,17 +15,19 @@ export type GrupoPermissoes = {grupo: string; itens: ItemPermissao[]};
 /**
  * Toda permissão que alguma rota da API (withPermission/hasPermission) ou tela
  * do front confere tem de estar aqui ou em PERMISSOES_USADAS_FORA_DA_JANELA; o
- * teste `perfis-acesso.test.ts` varre o código e falha se faltar alguma.
+ * teste `perfis-acesso.test.ts` varre o código e falha se faltar alguma. E o
+ * inverso: toda permissão daqui tem de ser conferida por alguma rota da API
+ * (ou estar em PERMISSOES_SO_PORTA_DE_TELA); a que não libera nada vai para
+ * PERMISSOES_SEM_TELA.
  *
  * Nomes: relatórios e grupos usam o nome do item do menu lateral. "(só pela API)"
  * marca permissão sem tela no sistema, usada por integração com token de API.
  */
 export const permissoesGranulares: GrupoPermissoes[] = [
     {
-        grupo: "Dashboard & Relatórios",
+        grupo: "Relatórios",
         itens: [
             // Nome = item do menu Relatórios que a permissão libera (teste confere com o menu).
-            {nome: "Dashboard", codigo: "dashboard:ver"},
             {nome: "Fechamento Mensal", codigo: "relatorios:financeiro"},
             {nome: "Contábil/Fiscal", codigo: "relatorios:contabil-fiscal"},
             {nome: "DRE Gerencial", codigo: "relatorios:dre"},
@@ -33,26 +35,6 @@ export const permissoesGranulares: GrupoPermissoes[] = [
             {nome: "Relatório de Metas", codigo: "relatorios:metas"},
             // Sem tela no front: só GET /relatorios/conciliacao da API usa.
             {nome: "Relatório de Conciliação (só pela API, sem tela no sistema)", codigo: "relatorios:conciliacao"},
-        ],
-    },
-    {
-        grupo: "Contas a Pagar",
-        itens: [
-            {nome: "Cadastro de Contas a Pagar", codigo: "financeiro:contas-pagar:criar"},
-            {nome: "Consulta de Contas a Pagar", codigo: "financeiro:contas-pagar:listar"},
-            {nome: "Baixa de Contas a Pagar", codigo: "financeiro:contas-pagar:baixar"},
-            {nome: "Cancelamento de Contas a Pagar", codigo: "financeiro:contas-pagar:cancelar"},
-            {nome: "Importar CR e CP", codigo: "financeiro:importar"},
-        ],
-    },
-    {
-        grupo: "Contas a Receber",
-        itens: [
-            {nome: "Cadastro de Contas a Receber", codigo: "financeiro:contas-receber:criar"},
-            {nome: "Consulta de Contas a Receber", codigo: "financeiro:contas-receber:listar"},
-            {nome: "Baixa de Contas a Receber", codigo: "financeiro:contas-receber:baixar"},
-            {nome: "Cancelamento de Contas a Receber", codigo: "financeiro:contas-receber:cancelar"},
-            {nome: "Exportar Contas a Receber", codigo: "financeiro:contas-receber:exportar"},
         ],
     },
     {
@@ -118,21 +100,14 @@ export const permissoesGranulares: GrupoPermissoes[] = [
             {nome: "Consulta de Plano de Contas", codigo: "configuracoes:plano-contas:listar"},
             {nome: "Edição de Plano de Contas", codigo: "configuracoes:plano-contas:editar"},
             {nome: "Exclusão de Plano de Contas", codigo: "configuracoes:plano-contas:deletar"},
-            {nome: "Exportar Plano de Contas", codigo: "configuracoes:plano-contas:exportar"},
-            {nome: "Cadastro de Categoria do Plano de Contas", codigo: "configuracoes:categorias:criar"},
-            {nome: "Consulta de Categoria do Plano de Contas", codigo: "configuracoes:categorias:listar"},
-            {nome: "Exclusão de Categoria do Plano de Contas", codigo: "configuracoes:categorias:deletar"},
         ],
     },
     {
-        grupo: "Metas Financeiras & Fechamentos",
+        grupo: "Metas Financeiras",
         itens: [
             {nome: "Consulta de Metas", codigo: "financeiro:metas:listar"},
             // POST /metas grava (cria e altera) a planilha inteira com esta permissão.
             {nome: "Cadastro e edição de Metas", codigo: "financeiro:metas:editar"},
-            {nome: "Cadastro de Fechamentos Financeiros", codigo: "financeiro:fechamentos:criar"},
-            {nome: "Consulta de Fechamentos Financeiros", codigo: "financeiro:fechamentos:listar"},
-            {nome: "Exclusão de Fechamentos Financeiros", codigo: "financeiro:fechamentos:deletar"},
         ],
     },
     {
@@ -152,8 +127,8 @@ export const permissoesGranulares: GrupoPermissoes[] = [
         itens: [
             {nome: "Cadastro de Usuários", codigo: "admin:usuarios:criar"},
             {nome: "Consulta de Usuários", codigo: "admin:usuarios:listar"},
-            {nome: "Edição de Usuários", codigo: "admin:usuarios:editar"},
-            {nome: "Exclusão de Usuários", codigo: "admin:usuarios:deletar"},
+            // Bloquear o usuário é edição (PUT /usuarios/:id com bloqueado).
+            {nome: "Edição e bloqueio de Usuários", codigo: "admin:usuarios:editar"},
             {nome: "Conceder permissões a usuários", codigo: "admin:permissoes:conceder"},
             {nome: "Edição dos dados da própria empresa", codigo: "admin:empresas:editar"},
             {nome: "Cadastro de Tokens de API", codigo: "admin:tokens-api:criar"},
@@ -185,6 +160,51 @@ export const PERMISSOES_SEM_TELA: readonly string[] = [
     "financeiro:metas:deletar",
     // GET /regras-conciliacao usa financeiro:conciliacao:acessar.
     "financeiro:regras-conciliacao:listar",
+    // Dashboard é a tela inicial ("/") e abre para qualquer usuário da empresa;
+    // as rotas /dashboard/* não conferem permissão. Ligar exigiria outra tela
+    // inicial para quem não a tiver: decisão de produto, não tomada aqui.
+    "dashboard:ver",
+    // Não há módulo de Contas a Pagar/Receber à parte: títulos são lançamentos
+    // (financeiro:lancamentos:*), quitados só pela conciliação, e a exportação
+    // é a da tela de Lançamentos (financeiro:lancamentos:listar).
+    "financeiro:contas-pagar:criar",
+    "financeiro:contas-pagar:listar",
+    "financeiro:contas-pagar:baixar",
+    "financeiro:contas-pagar:cancelar",
+    "financeiro:contas-receber:criar",
+    "financeiro:contas-receber:listar",
+    "financeiro:contas-receber:baixar",
+    "financeiro:contas-receber:cancelar",
+    "financeiro:contas-receber:exportar",
+    // "Importar CR e CP": não há importação de títulos. Importar extrato é
+    // financeiro:conciliacao:importar.
+    "financeiro:importar",
+    // Plano de contas não tem exportação nem cadastro de categoria à parte (a
+    // categoria é um campo da conta, gravado com configuracoes:plano-contas:*).
+    "configuracoes:plano-contas:exportar",
+    "configuracoes:categorias:criar",
+    "configuracoes:categorias:listar",
+    "configuracoes:categorias:deletar",
+    // Não há cadastro de fechamentos; o relatório Fechamento Mensal usa
+    // relatorios:financeiro.
+    "financeiro:fechamentos:criar",
+    "financeiro:fechamentos:listar",
+    "financeiro:fechamentos:deletar",
+    // Não há exclusão de usuário: bloquear é admin:usuarios:editar e tirar o
+    // usuário da empresa é só do superadmin.
+    "admin:usuarios:deletar",
+];
+
+/**
+ * Permissões da janela que nenhuma rota da API confere: só abrem a tela no
+ * front (PERMISSAO_TELA). A API de listagem desses cadastros não as exige
+ * porque os combos de outras telas usam a mesma lista.
+ */
+export const PERMISSOES_SO_PORTA_DE_TELA: readonly string[] = [
+    "financeiro:parceiros:listar",
+    "configuracoes:contas-bancarias:listar",
+    "configuracoes:plano-contas:listar",
+    "financeiro:metas:listar",
 ];
 
 /**
@@ -224,11 +244,9 @@ const tarefasKanban = [
 export const perfisBase: Record<string, string[]> = {
     Admin: todasPermissoes,
     Financeiro: [
-        // relatorios:extrato saiu: não libera tela nenhuma (PERMISSOES_SEM_TELA).
-        "dashboard:ver", "relatorios:fluxo-caixa-mensal", "relatorios:dre",
+        // Fica fora o que está em PERMISSOES_SEM_TELA (não libera nada).
+        "relatorios:fluxo-caixa-mensal", "relatorios:dre",
         "relatorios:contabil-fiscal",
-        "financeiro:contas-pagar:criar", "financeiro:contas-pagar:listar", "financeiro:contas-pagar:baixar",
-        "financeiro:contas-receber:criar", "financeiro:contas-receber:listar", "financeiro:contas-receber:baixar",
         "financeiro:conciliacao:acessar",
         "financeiro:conciliacao:importar",
         "financeiro:conciliacao:vincular",
@@ -241,9 +259,8 @@ export const perfisBase: Record<string, string[]> = {
         ...tarefasKanban,
     ],
     Gestor: [
-        "dashboard:ver", "relatorios:dre", "relatorios:fluxo-caixa-mensal", "relatorios:metas",
+        "relatorios:dre", "relatorios:fluxo-caixa-mensal", "relatorios:metas",
         "relatorios:contabil-fiscal",
-        "financeiro:contas-pagar:listar", "financeiro:contas-receber:listar",
         "configuracoes:contas-bancarias:listar", "financeiro:parceiros:listar", "configuracoes:plano-contas:listar",
         "financeiro:lancamentos:listar", "financeiro:metas:listar",
         ...tarefasKanban,
@@ -251,7 +268,7 @@ export const perfisBase: Record<string, string[]> = {
     // Perfil de leitura: só consulta. Tarefas também (migration 0033 tira criar/
     // editar/excluir de quem já tem perfil_base = 'Visualizador').
     Visualizador: [
-        "dashboard:ver", "financeiro:contas-pagar:listar", "financeiro:contas-receber:listar", "financeiro:metas:listar",
+        "financeiro:metas:listar",
         "financeiro:lancamentos:listar",
         "kanban:tarefas:listar",
     ],

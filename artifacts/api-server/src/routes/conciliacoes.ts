@@ -38,6 +38,7 @@ import {
     statusAbertoPorVencimento,
     statusAposDesfazerVinculo,
     statusAposQuitacao,
+    valorAPagarTituloCents,
 } from "../utils/conciliacao-vincular";
 import {MSG_RETENCOES_ACIMA_DO_VALOR, somaRetencoesCents, valorLiquidoCents} from "../utils/retencoes";
 import {retencoesShape} from "../domains/financial/lancamentos/schemas";
@@ -1748,6 +1749,8 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
                 descricao: lancamentosTable.descricao,
                 valor: lancamentosTable.valor,
                 valor_liquido: lancamentosTable.valor_liquido,
+                desconto: lancamentosTable.desconto,
+                juros: lancamentosTable.juros,
                 valor_quitado: lancamentosTable.valor_quitado,
                 status: lancamentosTable.status,
                 parceiro_id: lancamentosTable.parceiro_id,
@@ -1824,16 +1827,25 @@ router.get("/conciliacoes/buscar-lancamentos", withPermission(PERM.CONCILIACAO_A
                 // Salvar) - não há mais "rascunho" via ledger pra somar aqui.
                 const quitadoAcumuladoCents = toCents(l.valor_quitado);
                 const valorCents = valorLiquidoCents(l);
+                // Base do vínculo (mesma do calcularVinculo): líquido − desconto + juros do título.
+                const aPagarCents = valorAPagarTituloCents({
+                    valorLiquidoCents: valorCents,
+                    descontoCents: toCents(l.desconto),
+                    jurosCents: toCents(l.juros),
+                });
                 const b = bloqueio.get(l.id);
                 return {
                     ...l,
                     // valor = bruto (nota); valor_liquido = o esperado no extrato.
                     valor: toDecimal(l.valor),
                     valor_liquido: fromCents(valorCents),
+                    desconto: fromCents(toCents(l.desconto)),
+                    juros: fromCents(toCents(l.juros)),
+                    valor_a_pagar: fromCents(aPagarCents),
                     total_retencoes: fromCents(toCents(l.valor) - valorCents),
                     valor_quitado: l.valor_quitado != null ? toDecimal(l.valor_quitado) : null,
                     quitado_acumulado: fromCents(quitadoAcumuladoCents),
-                    saldo_aberto_titulo: fromCents(Math.max(0, valorCents - quitadoAcumuladoCents)),
+                    saldo_aberto_titulo: fromCents(Math.max(0, aPagarCents - quitadoAcumuladoCents)),
                     em_modo_b_neste_extrato: idsEmUsoNoExtrato.has(l.id),
                     quitado_em_outra_conta: b?.emOutraConta ?? false,
                     coberto_por_outros_vinculos: b?.coberto ?? false,
@@ -2439,8 +2451,14 @@ async function calcularVinculo(
                 (quitadoLocalExtra[String(lancamento.id)] ?? 0);
             return {
                 lancamento_id: lancamento.id,
-                // Base da quitação = líquido (bruto − retenções na fonte).
-                valorCents: valorLiquidoCents(lancamento),
+                // Base = líquido (bruto − retenções) − desconto + juros já gravados
+                // no título. Sem o desconto/juros do cadastro, o residual nascia
+                // com o desconto embutido (e juros cadastrados viravam saldo na linha).
+                valorCents: valorAPagarTituloCents({
+                    valorLiquidoCents: valorLiquidoCents(lancamento),
+                    descontoCents: toCents(lancamento.desconto),
+                    jurosCents: toCents(lancamento.juros),
+                }),
                 descontoCents: toCents(p?.desconto ?? 0),
                 jurosMultaCents: toCents(jurosMulta),
                 quitadoAnteriorCents,
@@ -2571,9 +2589,6 @@ async function persistirVinculo(
         const residualExistente =
             (await buscarResiduoJaCriado(tx, empresaId, origem.id, linhaId)) ??
             (await buscarResiduoPorOrigem(tx, empresaId, origem.id));
-        if (residualExistente) {
-            residuoCriado = {lancamento_id: residualExistente.id, valor: fromCents(decision.residual.valorCents)};
-        } else {
         let parceiroNomeOrigem: string | null = null;
         if (origem.parceiro_id) {
             const [parceiro] = await tx
@@ -2583,6 +2598,38 @@ async function persistirVinculo(
                 .limit(1);
             parceiroNomeOrigem = parceiro?.nome ?? null;
         }
+        if (residualExistente) {
+            // Um residual por origem: o reaproveitado passa a carregar o em
+            // aberto de agora (antes ficava com o valor antigo e o novo
+            // pagamento da origem não abatia nada). Só enquanto o residual
+            // está aberto e sem quitação própria: com pagamento nele, mudar o
+            // valor desmancharia o que já foi conciliado.
+            await tx
+                .update(lancamentosTable)
+                .set({
+                    valor: centsToDecimalString(decision.residual.valorCents),
+                    descricao: descreverResiduoParcial({
+                        origemId: origem.id,
+                        tipo: origem.tipo,
+                        valorCents: decision.residual.valorCents,
+                        vencimento: origem.vencimento,
+                        parceiroNome: parceiroNomeOrigem,
+                        parcelaAtual: origem.parcela_atual,
+                        totalParcelas: origem.total_parcelas,
+                    }),
+                    updated_at: new Date(),
+                })
+                .where(
+                    tenantWhere(
+                        lancamentosTable,
+                        empresaId,
+                        eq(lancamentosTable.id, residualExistente.id),
+                        inArray(lancamentosTable.status, ["pendente", "atrasado"]),
+                        or(isNull(lancamentosTable.valor_quitado), eq(lancamentosTable.valor_quitado, "0")),
+                    ),
+                );
+            residuoCriado = {lancamento_id: residualExistente.id, valor: fromCents(decision.residual.valorCents)};
+        } else {
         const [novoResiduo] = await tx
                         .insert(lancamentosTable)
             .values(withEmpresaId({
