@@ -1,6 +1,6 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { PageHeader } from "@/components/shared/page-header";
@@ -33,8 +33,9 @@ import {
   focarPrimeiro,
   modalBtnPrimaryCls,
   modalBtnSecondaryCls,
-  modalGridCls,
+  modalGrid2Cls,
 } from "@/components/ui/modal-responsivo";
+import { dataCivilIso, formatarData, hojeIsoLocal, parseDataCivil } from "@/lib/datas";
 import { CampoBusca, contemBusca, useParametrosUrl } from "@/components/shared/filtros";
 import {
   Empty,
@@ -55,22 +56,59 @@ type TokenRow = {
 
 type CreatedToken = TokenRow & {
   token: string;
+  escopos: string[];
+  data_expiracao: string;
 };
+
+// ─── Escopos e validade ────────────────────────────────────────────────────────
+// Espelha ESCOPOS_V1_DISPONIVEIS (lib/db/src/schema/tokens-api.ts): a API recusa
+// qualquer código fora daquela lista.
+const ESCOPOS_V1 = [
+  { codigo: "v1:lancamentos:ler", nome: "Lançamentos", descricao: "Contas a pagar e a receber" },
+  { codigo: "v1:parceiros:ler", nome: "Pessoas", descricao: "Clientes e fornecedores" },
+  { codigo: "v1:bancos:ler", nome: "Bancos", descricao: "Contas bancárias" },
+  { codigo: "v1:filiais:ler", nome: "Filiais", descricao: "Filiais da empresa" },
+  { codigo: "v1:planoContas:ler", nome: "Plano de contas", descricao: "Plano de contas e categorias" },
+] as const;
+
+const VALIDADE_PADRAO_DIAS = 90;
+// A API aceita no máximo 365 dias a partir de hoje.
+const VALIDADE_MAXIMA_DIAS = 365;
+
+/** Hoje + `dias`, como data civil local "YYYY-MM-DD". */
+function daquiADias(dias: number): string {
+  const data = new Date();
+  data.setDate(data.getDate() + dias);
+  return dataCivilIso(data);
+}
 
 // ─── Validação ─────────────────────────────────────────────────────────────────
 const tokenFormSchema = z.object({
   nome: z.string().trim().min(2, "Nome deve ter ao menos 2 caracteres."),
+  escopos: z.array(z.string()).min(1, "Selecione ao menos um escopo."),
+  data_expiracao: z.string().superRefine((valor, ctx) => {
+    if (!parseDataCivil(valor)) {
+      ctx.addIssue({ code: "custom", message: "Informe uma data de expiração válida." });
+    } else if (valor <= hojeIsoLocal()) {
+      ctx.addIssue({ code: "custom", message: "A data de expiração precisa ser futura." });
+    } else if (valor > daquiADias(VALIDADE_MAXIMA_DIAS)) {
+      ctx.addIssue({ code: "custom", message: "A validade máxima é de 1 ano a partir de hoje." });
+    }
+  }),
 });
 type TokenFormValues = z.infer<typeof tokenFormSchema>;
 
-// ─── Endpoints da documentação (estáticos) ────────────────────────────────────
+// ─── Endpoints da documentação (espelham routes/v1.ts da API) ─────────────────
+const PAGINACAO = "?limit=10000 (máx. 50000)&offset=0";
 const endpoints = [
-  { method: "GET", path: "/api/v1/kpis", descricao: "KPIs do dashboard principal", parametros: "?periodo=mensal|anual" },
-  { method: "GET", path: "/api/v1/fluxo-caixa", descricao: "Dados de fluxo de caixa", parametros: "?ano=&mes=1-12" },
-  { method: "GET", path: "/api/v1/lancamentos", descricao: "Lista de lançamentos", parametros: "?tipo=CR|CP&status=&page=1" },
-  { method: "GET", path: "/api/v1/dre", descricao: "DRE Gerencial consolidado", parametros: "?ano=" },
-  { method: "GET", path: "/api/v1/parceiros", descricao: "Lista de parceiros/clientes", parametros: "?tipo=cliente|fornecedor" },
-  { method: "GET", path: "/api/v1/metas", descricao: "Metas vs realizado", parametros: "?ano=" },
+  { method: "GET", path: "/api/v1/bancos", descricao: "Contas bancárias", escopo: "v1:bancos:ler" },
+  { method: "GET", path: "/api/v1/contasPagar", descricao: "Contas a pagar, das alteradas mais recentemente", parametros: PAGINACAO, escopo: "v1:lancamentos:ler" },
+  { method: "GET", path: "/api/v1/contasReceber", descricao: "Contas a receber, das alteradas mais recentemente", parametros: PAGINACAO, escopo: "v1:lancamentos:ler" },
+  { method: "GET", path: "/api/v1/pessoas", descricao: "Pessoas (clientes e fornecedores)", escopo: "v1:parceiros:ler" },
+  { method: "GET", path: "/api/v1/filiais", descricao: "Filiais", escopo: "v1:filiais:ler" },
+  { method: "GET", path: "/api/v1/planoContas", descricao: "Plano de contas", escopo: "v1:planoContas:ler" },
+  { method: "GET", path: "/api/v1/categoriaPlanoConta", descricao: "Categorias do plano de contas, com o total de contas de cada uma", escopo: "v1:planoContas:ler" },
+  { method: "GET", path: "/api/v1/tipoDocumentos", descricao: "Tipos de documento (lista fixa)" },
 ];
 
 const methodColors: Record<string, string> = {
@@ -90,15 +128,25 @@ function NovoTokenModal({ onClose }: { onClose: () => void }) {
 
   const {
     register,
+    control,
     handleSubmit,
     formState: { errors, isDirty },
-  } = useForm<TokenFormValues>({ resolver: zodResolver(tokenFormSchema) });
+  } = useForm<TokenFormValues>({
+    resolver: zodResolver(tokenFormSchema),
+    defaultValues: { nome: "", escopos: [], data_expiracao: daquiADias(VALIDADE_PADRAO_DIAS) },
+  });
+  const dataMinima = daquiADias(1);
+  const dataMaxima = daquiADias(VALIDADE_MAXIMA_DIAS);
 
   const createMutation = useMutation({
     mutationFn: (data: TokenFormValues) =>
       fetchApiData<CreatedToken>("/tokens-api", {
         method: "POST",
-        body: JSON.stringify({ nome: data.nome }),
+        body: JSON.stringify({
+          nome: data.nome,
+          escopos: data.escopos,
+          data_expiracao: data.data_expiracao,
+        }),
       }),
     onSuccess: (data) => {
       setCreatedToken(data);
@@ -148,7 +196,7 @@ function NovoTokenModal({ onClose }: { onClose: () => void }) {
       {!createdToken ? (
         <ModalForm onSubmit={handleSubmit((v) => createMutation.mutate(v))}>
           <ModalBody>
-            <div className={modalGridCls}>
+            <div className={modalGrid2Cls}>
               <div>
                 <label htmlFor="token-nome" className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
                   Nome do Token <span className="text-destructive">*</span>
@@ -165,6 +213,85 @@ function NovoTokenModal({ onClose }: { onClose: () => void }) {
                   <p className="text-xs text-destructive mt-1">{errors.nome.message}</p>
                 )}
               </div>
+              <div>
+                <label htmlFor="token-expiracao" className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                  Expira em <span className="text-destructive">*</span>
+                </label>
+                <input
+                  id="token-expiracao"
+                  type="date"
+                  {...register("data_expiracao")}
+                  min={dataMinima}
+                  max={dataMaxima}
+                  aria-invalid={!!errors.data_expiracao}
+                  aria-describedby="token-expiracao-dica"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors"
+                />
+                {errors.data_expiracao ? (
+                  <p className="text-xs text-destructive mt-1">{errors.data_expiracao.message}</p>
+                ) : (
+                  <p id="token-expiracao-dica" className="text-xs text-muted-foreground mt-1">
+                    Padrão de {VALIDADE_PADRAO_DIAS} dias; máximo até {formatarData(dataMaxima)}.
+                  </p>
+                )}
+              </div>
+              <Controller
+                control={control}
+                name="escopos"
+                render={({ field }) => {
+                  const marcados = field.value;
+                  const todos = marcados.length === ESCOPOS_V1.length;
+                  const alternar = (codigo: string) =>
+                    field.onChange(
+                      marcados.includes(codigo)
+                        ? marcados.filter((c) => c !== codigo)
+                        : [...marcados, codigo],
+                    );
+                  return (
+                    <fieldset
+                      className="col-span-full"
+                      aria-invalid={!!errors.escopos}
+                      aria-describedby={errors.escopos ? "token-escopos-erro" : undefined}
+                    >
+                      <legend className="float-left mb-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                        Escopos (o que o token pode ler) <span className="text-destructive">*</span>
+                      </legend>
+                      <button
+                        type="button"
+                        onClick={() => field.onChange(todos ? [] : ESCOPOS_V1.map((e) => e.codigo))}
+                        className="float-right mb-1.5 text-xs text-primary hover:underline"
+                      >
+                        {todos ? "Desmarcar todos" : "Marcar todos"}
+                      </button>
+                      <div className="clear-both grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {ESCOPOS_V1.map((escopo) => (
+                          <label
+                            key={escopo.codigo}
+                            className="flex items-start gap-3 px-3 py-2.5 rounded-xl border border-white/10 bg-white/5 cursor-pointer hover:bg-white/10 transition-colors"
+                          >
+                            <input
+                              type="checkbox"
+                              className="accent-primary w-4 h-4 shrink-0 mt-0.5"
+                              checked={marcados.includes(escopo.codigo)}
+                              onChange={() => alternar(escopo.codigo)}
+                              onBlur={field.onBlur}
+                            />
+                            <span className="min-w-0">
+                              <span className="block text-sm text-white">{escopo.nome}</span>
+                              <span className="block text-xs text-muted-foreground">{escopo.descricao}</span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                      {errors.escopos && (
+                        <p id="token-escopos-erro" className="text-xs text-destructive mt-1">
+                          {errors.escopos.message}
+                        </p>
+                      )}
+                    </fieldset>
+                  );
+                }}
+              />
               <p id="token-nome-aviso" className="col-span-full text-xs text-muted-foreground">
                 O token será gerado no servidor e exibido uma única vez. Guarde-o em local seguro.
               </p>
@@ -186,6 +313,9 @@ function NovoTokenModal({ onClose }: { onClose: () => void }) {
               <div className="text-center py-2">
                 <CheckCircle aria-hidden="true" className="w-10 h-10 text-success mx-auto mb-2" />
                 <p className="font-bold text-white">Token "{createdToken.nome}" criado!</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Válido até {formatarData(createdToken.data_expiracao)}.
+                </p>
                 <p className="text-xs text-destructive mt-1 font-semibold">
                   ⚠ Copie agora - não será exibido novamente.
                 </p>
@@ -476,7 +606,7 @@ export default function TokensApi() {
             <div className="bg-black/50 rounded-xl p-3 sm:p-4 font-mono text-xs text-success border border-success/10 overflow-x-auto">
               <p className="text-muted-foreground mb-1"># Exemplo de requisição curl:</p>
               <p className="whitespace-nowrap">curl -H "Authorization: Bearer &lt;token&gt;" \</p>
-              <p className="pl-4 whitespace-nowrap">https://api.ismtecnologia.com.br/api/v1/kpis</p>
+              <p className="pl-4 whitespace-nowrap">https://api.ismtecnologia.com.br/api/v1/bancos</p>
             </div>
           </div>
 
@@ -507,6 +637,14 @@ export default function TokensApi() {
                         {ep.parametros}
                       </p>
                     )}
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Escopo:{" "}
+                      {ep.escopo ? (
+                        <code className="bg-black/30 px-1.5 py-0.5 rounded font-mono">{ep.escopo}</code>
+                      ) : (
+                        "nenhum (basta um token válido)"
+                      )}
+                    </p>
                   </div>
                 </div>
               ))}
