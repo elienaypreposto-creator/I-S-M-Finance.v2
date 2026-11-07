@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
-import {somaRetencoesCents, valorLiquidoTitulo} from "./retencoes.ts";
+import {somaRetencoesCents, valorAPagarTitulo, valorLiquidoTitulo} from "./retencoes.ts";
 import {
     getLancamentoModalDefaultValues,
     lancamentoModalFormSchema,
@@ -22,6 +22,14 @@ describe("retenções na fonte (front)", () => {
         assert.equal(somaRetencoesCents({retencao_ir: "15.00", retencao_iss: 85}), 10000);
         assert.equal(valorLiquidoTitulo({valor: "1000.00", valor_liquido: "900.00"}), 900);
         assert.equal(valorLiquidoTitulo({valor: 250}), 250);
+    });
+
+    it("valor a pagar na conciliação = líquido − desconto + juros do título", () => {
+        assert.equal(valorAPagarTitulo({valor: "1000.00", valor_liquido: "900.00", desconto: "100.00", juros: "30.00"}), 830);
+        assert.equal(valorAPagarTitulo({valor: 500, desconto: "50.00"}), 450);
+        assert.equal(valorAPagarTitulo({valor: 500}), 500);
+        // A API manda pronto: vale o dela.
+        assert.equal(valorAPagarTitulo({valor: 500, desconto: "50.00", valor_a_pagar: "450.00"}), 450);
     });
 
     it("formulário aceita retenções e envia decimais da API", () => {

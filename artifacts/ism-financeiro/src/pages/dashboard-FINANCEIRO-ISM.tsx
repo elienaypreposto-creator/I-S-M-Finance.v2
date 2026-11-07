@@ -38,6 +38,7 @@ import {
 } from "recharts";
 import {formatCurrency, cn} from "@/lib/utils";
 import {useSaldosVisiveis} from "@/components/conta/saldos-visiveis";
+import {GraficoOculto} from "@/components/conta/grafico-oculto";
 import {fetchApiData} from "@/lib/api-config";
 import {SaldoGeralCard} from "@/components/dashboard/saldo-geral-card";
 import {formatarData, formatarDiaMes, hojeIsoLocal, intervaloEixoDias} from "@/lib/datas";
@@ -714,7 +715,9 @@ function ContasPanel({
 export default function Dashboard() {
     const saldos = useSaldosVisiveis();
     const dinheiro = (valor: number) => saldos.texto(formatCurrency(valor));
-    const eixo = (v: number) => (saldos.visivel ? formatarEixoMoeda(v) : "•••");
+    // Com saldos ocultos os gráficos saem da tela (GraficoOculto): mesmo com o eixo
+    // mascarado, a forma da linha, a altura das barras e as fatias contam proporções.
+
     // % de participação revela a proporção entre categorias: some com os saldos.
     const pct = (v: number) => saldos.texto(`${v}%`);
     const [anoFluxo] = useState(new Date().getFullYear());
@@ -848,6 +851,8 @@ export default function Dashboard() {
                     <LoadingPanel h={220}/>
                 ) : projecaoDias.length === 0 ? (
                     <p className="text-center text-muted-foreground text-xs py-12">Sem dados de projeção diária.</p>
+                ) : !saldos.visivel ? (
+                    <GraficoOculto titulo="Gráfico da projeção de saldo" className="justify-center py-8"/>
                 ) : (
                     <div className="h-[220px]">
                         <ResponsiveContainer width="100%" height="100%">
@@ -875,7 +880,7 @@ export default function Dashboard() {
                                     tickLine={false}
                                     axisLine={false}
                                     width={72}
-                                    tickFormatter={(v) => eixo(v)}
+                                    tickFormatter={(v) => formatarEixoMoeda(v)}
                                 />
                                 <RechartsTooltip content={<CustomTooltip formatarLabel={formatarData}/>}/>
                                 <Legend iconType="circle" wrapperStyle={{fontSize: "12px"}}/>
@@ -1000,6 +1005,12 @@ export default function Dashboard() {
                 <h3 className="font-bold text-white text-sm mb-5">Fluxo de Caixa - {anoFluxo}</h3>
                 {fluxoLoading ? (
                     <LoadingPanel h={260}/>
+                ) : !saldos.visivel ? (
+                    <GraficoOculto
+                        titulo="Gráficos de recebimentos × pagamentos e de saídas por categoria"
+                        plural
+                        className="justify-center py-8"
+                    />
                 ) : (
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         <div className="lg:col-span-2 h-[260px]">
@@ -1015,7 +1026,7 @@ export default function Dashboard() {
                                         tickLine={false}
                                         axisLine={false}
                                         width={72}
-                                    tickFormatter={(v) => eixo(v)}
+                                        tickFormatter={(v) => formatarEixoMoeda(v)}
                                     />
                                     <RechartsTooltip cursor={{fill: "#ffffff05"}} content={<CustomTooltip/>}/>
                                     <Legend iconType="circle" wrapperStyle={{fontSize: "12px"}}/>

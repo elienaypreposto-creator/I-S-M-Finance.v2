@@ -670,6 +670,56 @@ describe(`Fluxo conciliação → lançamentos (run ${RUN})`, {concurrency: fals
         assert.equal(num(alertas.data.find((a) => a.id === residualId)?.valor), 100);
     });
 
+    caso("residual carrega líquido − desconto + juros do título (CP e CR) e o reaproveitado é atualizado", async () => {
+        // TST: residual #20 do lançamento #13 nasceu sem descontar o desconto do título.
+        const kpis = async () => {
+            const r = await api("GET", "/dashboard/kpis", {token: ctx.token});
+            assert.equal(r.status, 200, JSON.stringify(r.json));
+            return r.data;
+        };
+        const centavos = (v) => Math.round(num(v) * 100);
+        const antes = await kpis();
+
+        const conta = await criarConta("Residual desconto juros");
+        const cp = await criarTitulo({tipo: "CP", valor: "1000.00", vencimento: D.d1, descricao: "residual com desconto", extra: {desconto: "100.00"}});
+        const cr = await criarTitulo({tipo: "CR", valor: "1000.00", vencimento: D.d1, descricao: "residual com juros", extra: {juros: "30.00"}});
+        const imp = await importar(conta, [
+            {fitid: "RD1", data: D.d2, valor: -400, memo: "PAG PARCIAL COM DESCONTO"},
+            {fitid: "RJ1", data: D.d3, valor: 400, memo: "REC PARCIAL COM JUROS"},
+            {fitid: "RD2", data: D.d4, valor: -200, memo: "PAG PARCIAL DA ORIGEM DE NOVO"},
+        ]);
+        let r = await salvar(imp.extratoId, [
+            {...vincular(imp.linhas.RD1, cp.id), gerar_parcial: true},
+            {...vincular(imp.linhas.RJ1, cr.id), gerar_parcial: true},
+        ]);
+        assert.equal(r.status, 200, JSON.stringify(r.json));
+        const det = await extrato(imp.extratoId);
+        const residuo = (linha) => det.linhas.find((x) => x.linha_id === linha).vinculacoes[0].residuo_gerado?.id;
+        const resCp = residuo(imp.linhas.RD1);
+        const resCr = residuo(imp.linhas.RJ1);
+        assert.ok(resCp && resCr, "resíduos não gerados");
+        assert.equal(num((await titulo(resCp)).valor), 500, "CP: 1000 − 100 de desconto − 400 pagos");
+        assert.equal(num((await titulo(resCr)).valor), 630, "CR: 1000 + 30 de juros − 400 recebidos");
+        assert.equal((await titulo(cp.id)).status, "pago_parcial");
+        assert.equal((await titulo(cr.id)).status, "pago_parcial");
+
+        // Painel: cada restante conta uma vez (no residual).
+        let depois = await kpis();
+        assert.equal(centavos(depois.contasPagarAtraso) - centavos(antes.contasPagarAtraso), 50000, "CP Vencidos");
+        assert.equal(centavos(depois.contasReceberAtraso) - centavos(antes.contasReceberAtraso), 63000, "CR Vencidos");
+
+        // Novo pagamento parcial da origem: o residual é o mesmo, com o que falta agora.
+        r = await salvar(imp.extratoId, [{...vincular(imp.linhas.RD2, cp.id), gerar_parcial: true}]);
+        assert.equal(r.status, 200, JSON.stringify(r.json));
+        assert.equal(num((await titulo(resCp)).valor), 300, "residual reaproveitado: 900 − 600 pagos");
+        const prefixo = `Residual do lançamento #${cp.id} `;
+        const lista = await api("GET", `/lancamentos?search=${encodeURIComponent(prefixo)}`, {token: ctx.token});
+        assert.equal(lista.status, 200, JSON.stringify(lista.json));
+        assert.deepEqual(lista.data.filter((l) => l.descricao?.startsWith(prefixo)).map((l) => l.id), [resCp], "um residual por origem");
+        depois = await kpis();
+        assert.equal(centavos(depois.contasPagarAtraso) - centavos(antes.contasPagarAtraso), 30000, "CP Vencidos após 2º pagamento");
+    });
+
     caso("regra que classifica todas as linhas não conclui o extrato sozinha; Conciliar finaliza", async () => {
         // QA: extrato #15 do clone (55 linhas, todas casando com a regra) ficou
         // "conciliado" na importação sem quitar nenhum título e sem como finalizar.

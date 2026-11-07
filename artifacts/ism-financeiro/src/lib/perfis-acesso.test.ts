@@ -9,6 +9,7 @@ import {PERMISSAO_TELA} from "./telas-permissoes.ts";
 import {
     contarVisiveis,
     PERMISSOES_SEM_TELA,
+    PERMISSOES_SO_PORTA_DE_TELA,
     PERMISSOES_USADAS_FORA_DA_JANELA,
     perfisBase,
     permissoesGranulares,
@@ -84,7 +85,7 @@ describe("tela de permissões", () => {
     });
 
     it("Contábil/Fiscal pode ser concedido", () => {
-        const relatorios = permissoesGranulares.find((g) => g.grupo === "Dashboard & Relatórios");
+        const relatorios = permissoesGranulares.find((g) => g.grupo === "Relatórios");
         assert.ok(relatorios?.itens.some((i) => i.codigo === "relatorios:contabil-fiscal"));
     });
 
@@ -97,6 +98,32 @@ describe("tela de permissões", () => {
             .filter((c) => !naJanela.has(c))
             .map((c) => `${c} (${usos.get(c)!.join(", ")})`);
         assert.deepEqual(faltando, [], "ponha na janela (perfis-acesso.ts) ou em PERMISSOES_USADAS_FORA_DA_JANELA");
+    });
+
+    it("só mostra permissão que alguma rota da API confere (ou que só abre tela, justificada)", () => {
+        const api = permissoesConferidasNaApi();
+        const semRota = todasPermissoes.filter((c) => !api.has(c) && !PERMISSOES_SO_PORTA_DE_TELA.includes(c));
+        assert.deepEqual(semRota, [], "ligue a uma rota, ou ponha em PERMISSOES_SEM_TELA (não libera nada)");
+    });
+
+    it("a exceção de 'só porta de tela' é mesmo porta de tela, aparece na janela e a API não confere", () => {
+        const api = permissoesConferidasNaApi();
+        const portas = new Set<string>(Object.values(PERMISSAO_TELA));
+        for (const codigo of PERMISSOES_SO_PORTA_DE_TELA) {
+            assert.ok(portas.has(codigo), `${codigo} não abre tela nenhuma`);
+            assert.ok(todasPermissoes.includes(codigo), `${codigo} fora da janela`);
+            assert.ok(!api.has(codigo), `${codigo} já é conferida pela API: tire da exceção`);
+        }
+    });
+
+    it("Contas a Pagar/Receber, Fechamentos, Categorias, Dashboard e Excluir usuário não aparecem (nada os confere)", () => {
+        for (const prefixo of ["financeiro:contas-pagar:", "financeiro:contas-receber:", "financeiro:fechamentos:", "configuracoes:categorias:"]) {
+            assert.ok(!todasPermissoes.some((c) => c.startsWith(prefixo)), prefixo);
+        }
+        for (const codigo of ["dashboard:ver", "financeiro:importar", "configuracoes:plano-contas:exportar", "admin:usuarios:deletar"]) {
+            assert.ok(!todasPermissoes.includes(codigo), codigo);
+            assert.ok(PERMISSOES_SEM_TELA.includes(codigo), codigo);
+        }
     });
 
     it("lista toda permissão que uma tela do front confere", () => {
@@ -122,6 +149,12 @@ describe("tela de permissões", () => {
         assert.ok(usos.get("financeiro:metas:editar")?.some((a) => a.includes("metas")));
         assert.ok(todasPermissoes.includes("financeiro:metas:editar"));
         assert.ok(!todasPermissoes.includes("financeiro:metas:criar"));
+    });
+
+    it("Metas: a planilha libera a edição pela mesma permissão do POST /metas", () => {
+        assert.equal(PERM.METAS_EDITAR, "financeiro:metas:editar");
+        const tela = fs.readFileSync(path.join(WEB_SRC, "pages/cadastros/metas.tsx"), "utf8");
+        assert.match(tela, /hasPermission\(PERM\.METAS_EDITAR\)/);
     });
 
     it("relatórios têm o mesmo nome do item no menu lateral", () => {
@@ -156,7 +189,7 @@ describe("permissões sem tela", () => {
     });
 
     it("a contagem da janela ignora as escondidas", () => {
-        assert.equal(contarVisiveis(["dashboard:ver", "relatorios:extrato", "financeiro:metas:criar"]), 1);
+        assert.equal(contarVisiveis(["relatorios:dre", "relatorios:extrato", "dashboard:ver", "financeiro:metas:criar"]), 1);
     });
 });
 

@@ -47,3 +47,20 @@ export function valorLiquidoTitulo(l: {valor: unknown; valor_liquido?: unknown})
     if (l.valor_liquido != null && l.valor_liquido !== "") return paraCentavos(l.valor_liquido) / 100;
     return paraCentavos(l.valor) / 100;
 }
+
+/**
+ * Quanto o título pede na conciliação, em reais: líquido − desconto + juros
+ * já gravados no título (mesma base do vincular na API). Usa `valor_a_pagar`
+ * quando a API mandou; senão calcula.
+ */
+export function valorAPagarTitulo(l: {
+    valor: unknown;
+    valor_liquido?: unknown;
+    desconto?: unknown;
+    juros?: unknown;
+    valor_a_pagar?: unknown;
+}): number {
+    if (l.valor_a_pagar != null && l.valor_a_pagar !== "") return paraCentavos(l.valor_a_pagar) / 100;
+    const cents = Math.round(valorLiquidoTitulo(l) * 100) - paraCentavos(l.desconto) + paraCentavos(l.juros);
+    return Math.max(0, cents) / 100;
+}
