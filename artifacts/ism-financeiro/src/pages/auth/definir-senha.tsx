@@ -9,7 +9,7 @@
  * Modo B - Primeiro acesso com senha de admin (Fluxo setupToken):
  *   URL: /definir-senha?email=<email>&setupToken=<jwt>
  *   Endpoint: POST /auth/setup-password
- *   Válido quando o admin definiu uma senha temporária e o utilizador
+ *   Válido quando o admin definiu uma senha temporária e o usuário
  *   está a fazer o primeiro login.
  */
 

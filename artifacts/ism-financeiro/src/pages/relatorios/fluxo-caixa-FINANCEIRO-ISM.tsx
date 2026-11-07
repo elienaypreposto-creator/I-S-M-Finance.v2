@@ -1,11 +1,12 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
+import { useRolarAoTopo } from "@/hooks/use-rolar-ao-topo";
 import { Fragment, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParametrosUrl } from "@/components/shared/filtros";
 import { PageHeader } from "@/components/shared/page-header";
 import { Download, Loader2, AlertCircle, ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useDinheiro } from "@/components/conta/saldos-visiveis";
+import { useDinheiro, useSaldosVisiveis } from "@/components/conta/saldos-visiveis";
 import { fetchApiData } from "@/lib/api-config";
 import {SelectCampo} from "@/components/ui/select-campo";
 
@@ -58,7 +59,9 @@ function somaTotalSecaoCents(linhas: FluxoLinhaApi[]): number {
 }
 
 export default function FluxoCaixa() {
+  const raizRef = useRolarAoTopo();
   const dinheiro = useDinheiro();
+  const { visivel: saldosVisiveis } = useSaldosVisiveis();
   const currentYear = new Date().getFullYear();
   // Ano na URL (?ano=2026) para sobreviver ao F5 e ao compartilhar o link.
   const { ler, atualizar } = useParametrosUrl();
@@ -83,7 +86,7 @@ export default function FluxoCaixa() {
     }));
   };
 
-  /** Secções expandidas por defeito até o utilizador fechar. */
+  /** Seções expandidas por padrão até o usuário fechar. */
   const isOpen = (tipo: string) => aberto[tipo] !== false;
 
   const fluxoLiquidoMensalCents = useMemo(() => {
@@ -106,13 +109,15 @@ export default function FluxoCaixa() {
 
   const cellTone = (vCents: number, opts?: { mutedZero?: boolean }) => {
     if (vCents === 0 && opts?.mutedZero) return "text-muted-foreground/35";
+    // Com saldos ocultos a cor não conta o sinal.
+    if (!saldosVisiveis) return vCents === 0 ? "text-muted-foreground/40" : "text-white/90";
     if (vCents < 0) return "text-orange-300/95";
     if (vCents > 0) return "text-teal-300/95";
     return "text-muted-foreground/40";
   };
 
   return (
-    <div className="space-y-6">
+    <div ref={raizRef} className="space-y-6">
       <PageHeader
         title="Fluxo de caixa mensal"
         description="Entradas e saídas por categoria (data de quitação, lançamentos recebidos/pagos)."
@@ -225,14 +230,14 @@ export default function FluxoCaixa() {
                               return (
                                 <td
                                   key={m}
-                                  className={cn("px-1.5 py-2 text-right tabular-nums text-xs", cellTone(vCents, { mutedZero: true }))}>
+                                  className={cn("px-1.5 py-2 text-right tabular-nums whitespace-nowrap text-xs", cellTone(vCents, { mutedZero: true }))}>
                                   {vCents !== 0 ? dinheiro(vCents / 100) : "—"}
                                 </td>
                               );
                             })}
                             <td
                               className={cn(
-                                "px-3 py-2 text-right font-semibold tabular-nums text-xs sticky right-0 bg-[#121417]/90 border-l border-white/5",
+                                "px-3 py-2 text-right font-semibold tabular-nums whitespace-nowrap text-xs sticky right-0 bg-[#121417]/90 border-l border-white/5",
                                 cellTone(toCents(linha.total)),
                               )}>
                               {toCents(linha.total) !== 0 ? dinheiro(toCents(linha.total) / 100) : "—"}
@@ -245,13 +250,13 @@ export default function FluxoCaixa() {
                             Subtotal {secao.titulo}
                           </td>
                           {subTotaisMesCents.map((vCents, i) => (
-                            <td key={i} className={cn("px-1.5 py-2 text-right tabular-nums text-xs", cellTone(vCents))}>
+                            <td key={i} className={cn("px-1.5 py-2 text-right tabular-nums whitespace-nowrap text-xs", cellTone(vCents))}>
                               {vCents !== 0 ? dinheiro(vCents / 100) : "—"}
                             </td>
                           ))}
                           <td
                             className={cn(
-                              "px-3 py-2 text-right tabular-nums text-xs sticky right-0 bg-[#121417]/95 border-l border-white/5",
+                              "px-3 py-2 text-right tabular-nums whitespace-nowrap text-xs sticky right-0 bg-[#121417]/95 border-l border-white/5",
                               cellTone(subTotalAnoCents),
                             )}>
                             {subTotalAnoCents !== 0 ? dinheiro(subTotalAnoCents / 100) : "—"}
@@ -268,13 +273,13 @@ export default function FluxoCaixa() {
                       Fluxo líquido (todas as seções)
                     </td>
                     {fluxoLiquidoMensalCents.map((vCents, i) => (
-                      <td key={i} className={cn("px-1.5 py-3 text-right tabular-nums text-xs", cellTone(vCents))}>
+                      <td key={i} className={cn("px-1.5 py-3 text-right tabular-nums whitespace-nowrap text-xs", cellTone(vCents))}>
                         {vCents !== 0 ? dinheiro(vCents / 100) : "—"}
                       </td>
                     ))}
                     <td
                       className={cn(
-                        "px-3 py-3 text-right tabular-nums text-sm sticky right-0 bg-emerald-500/10 border-l border-emerald-500/20",
+                        "px-3 py-3 text-right tabular-nums whitespace-nowrap text-sm sticky right-0 bg-emerald-500/10 border-l border-emerald-500/20",
                         cellTone(fluxoLiquidoTotalCents),
                       )}>
                       {fluxoLiquidoTotalCents !== 0 ? dinheiro(fluxoLiquidoTotalCents / 100) : "—"}

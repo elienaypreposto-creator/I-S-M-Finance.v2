@@ -58,7 +58,17 @@ type PlanoContaComboboxProps = {
     error?: string;
     /** Classes extras do botão (ex.: tamanhos em `em` no modal de lançamento). */
     className?: string;
+    /** id do botão (o nome acessível inclui o valor escolhido). */
+    id?: string;
+    /** id do rótulo visível do campo; sem ele o botão leva aria-label "Classificação (plano de contas)". */
+    "aria-labelledby"?: string;
 };
+
+/** Nome acessível do botão: rótulo visível (aria-labelledby) + valor escolhido. */
+function nomeDoBotao(id: string | undefined, labelledBy: string | undefined, padrao: string) {
+    if (!labelledBy) return {"aria-label": padrao};
+    return {"aria-labelledby": id ? `${labelledBy} ${id}` : labelledBy};
+}
 
 export function PlanoContaCombobox({
                                        value,
@@ -66,6 +76,8 @@ export function PlanoContaCombobox({
                                        planoContas,
                                        error,
                                        className,
+                                       id,
+                                       "aria-labelledby": ariaLabelledBy,
                                    }: PlanoContaComboboxProps) {
     const [open, setOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState("");
@@ -95,6 +107,9 @@ export function PlanoContaCombobox({
                 <PopoverTrigger asChild>
                     <button
                         type="button"
+                        id={id}
+                        {...nomeDoBotao(id, ariaLabelledBy, "Classificação (plano de contas)")}
+                        aria-invalid={error ? true : undefined}
                         className={cn(
                             "w-full bg-[#1a1c23] border rounded-xl px-4 py-2.5 text-sm text-left flex items-center justify-between hover:border-white/20 transition-all",
                             error ? "border-red-500/60" : "border-white/10",
@@ -125,6 +140,7 @@ export function PlanoContaCombobox({
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
                                 placeholder="Buscar categoria ou subcategoria..."
+                                aria-label="Buscar categoria ou subcategoria"
                                 className="bg-transparent text-sm text-white outline-none w-full placeholder:text-muted-foreground/40"
                             />
                         </div>

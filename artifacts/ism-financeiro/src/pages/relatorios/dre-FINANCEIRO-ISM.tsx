@@ -1,11 +1,12 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
+import { useRolarAoTopo } from "@/hooks/use-rolar-ao-topo";
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { FOCO_VISIVEL, useParametrosUrl } from "@/components/shared/filtros";
 import { PageHeader } from "@/components/shared/page-header";
-import { Download, Loader2, TrendingUp, TrendingDown, AlertCircle } from "lucide-react";
+import { Download, Loader2, TrendingUp, TrendingDown, AlertCircle, Scale } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useDinheiro } from "@/components/conta/saldos-visiveis";
+import { useDinheiro, useSaldosVisiveis } from "@/components/conta/saldos-visiveis";
 import { fetchApiData } from "@/lib/api-config";
 import {SelectCampo} from "@/components/ui/select-campo";
 
@@ -37,7 +38,10 @@ function valorMes(linha: DreLinhaApi, mes: number): number {
 }
 
 export default function DreGerencial() {
+  const raizRef = useRolarAoTopo();
   const dinheiro = useDinheiro();
+  // Com saldos ocultos, cores e ícones de resultado ficam neutros (não contam o sinal).
+  const { visivel: saldosVisiveis } = useSaldosVisiveis();
   const currentYear = new Date().getFullYear();
   // Ano e regime na URL (?ano=2026&regime=caixa) para sobreviver ao F5 e ao compartilhar o link.
   const { ler, atualizar } = useParametrosUrl();
@@ -71,14 +75,14 @@ export default function DreGerencial() {
     const comCor = (label: string, value: number, cor: string) => ({
       label,
       value,
-      color: value < 0 ? "text-destructive" : cor,
+      color: !saldosVisiveis ? "text-white" : value < 0 ? "text-destructive" : cor,
     });
     return [
       comCor("Receita líquida (ano)", Number(rl?.total ?? 0), "text-teal-400"),
       comCor("Margem de contribuição (ano)", Number(mc?.total ?? 0), "text-primary"),
       comCor("Lucro líquido (ano)", Number(ll?.total ?? 0), "text-emerald-400"),
     ];
-  }, [porCodigo]);
+  }, [porCodigo, saldosVisiveis]);
 
   const anosOpcoes = useMemo(() => {
     const out: number[] = [];
@@ -90,13 +94,15 @@ export default function DreGerencial() {
 
   // Lucro do ano negativo (prejuízo): faixa da linha em destrutivo, não em verde.
   const lucroNegativo = Number(porCodigo.get("7")?.total ?? 0) < 0;
-  const fundoLucro = lucroNegativo ? "bg-destructive/10" : "bg-emerald-500/10";
+  const fundoLucro = !saldosVisiveis ? "bg-primary/10" : lucroNegativo ? "bg-destructive/10" : "bg-emerald-500/10";
 
   const rowClass = (codigo: string) => {
     if (codigo === "7")
-      return lucroNegativo
-        ? "bg-destructive/15 border-y border-destructive/30 font-bold text-white"
-        : "bg-emerald-500/15 border-y border-emerald-500/30 font-bold text-white";
+      return !saldosVisiveis
+        ? "bg-primary/15 border-y border-primary/30 font-bold text-white"
+        : lucroNegativo
+          ? "bg-destructive/15 border-y border-destructive/30 font-bold text-white"
+          : "bg-emerald-500/15 border-y border-emerald-500/30 font-bold text-white";
     if (codigo === "3" || codigo === "5")
       return "bg-primary/10 font-semibold text-white border-t border-primary/15";
     if (codigo === "2" || codigo === "4" || codigo === "6") return "text-white/90";
@@ -104,6 +110,7 @@ export default function DreGerencial() {
   };
 
   const cellClass = (codigo: string, val: number) => {
+    if (!saldosVisiveis) return val === 0 ? "text-muted-foreground/40" : "text-white";
     if (codigo === "7") return val >= 0 ? "text-emerald-300" : "text-destructive";
     // Linhas de resultado (receita líquida, margem) negativas: cor de destrutivo.
     // Deduções, custos e despesas (2, 4, 6) já são negativas por natureza: laranja.
@@ -114,7 +121,7 @@ export default function DreGerencial() {
   };
 
   return (
-    <div className="space-y-6">
+    <div ref={raizRef} className="space-y-6">
       <PageHeader
         title="DRE Gerencial"
         description="Demonstração do resultado do exercício por mês (competência ou caixa)."
@@ -202,7 +209,9 @@ export default function DreGerencial() {
             {kpis.map((item) => (
               <div key={item.label} className="glass-panel rounded-2xl p-4 border border-white/10">
                 <div className="flex items-center gap-2 mb-1">
-                  {item.value < 0 ? (
+                  {!saldosVisiveis ? (
+                    <Scale className="w-4 h-4 text-muted-foreground" />
+                  ) : item.value < 0 ? (
                     <TrendingDown className={cn("w-4 h-4", item.color)} />
                   ) : (
                     <TrendingUp className={cn("w-4 h-4", item.color)} />
@@ -269,7 +278,7 @@ export default function DreGerencial() {
                           <td
                             key={m}
                             className={cn(
-                              "px-2 py-2.5 text-right tabular-nums text-xs",
+                              "px-2 py-2.5 text-right tabular-nums whitespace-nowrap text-xs",
                               cellClass(linha.codigo, v),
                               futuro && "opacity-40",
                             )}>
@@ -279,7 +288,7 @@ export default function DreGerencial() {
                       })}
                       <td
                         className={cn(
-                          "px-3 py-2.5 text-right font-bold tabular-nums text-xs sticky right-0 border-l border-white/5 backdrop-blur-sm",
+                          "px-3 py-2.5 text-right font-bold tabular-nums whitespace-nowrap text-xs sticky right-0 border-l border-white/5 backdrop-blur-sm",
                           cellClass(linha.codigo, Number(linha.total)),
                           linha.codigo === "7" ? fundoLucro : "bg-[#121417]/90",
                         )}>

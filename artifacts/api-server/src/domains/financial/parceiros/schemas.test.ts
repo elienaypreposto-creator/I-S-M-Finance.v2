@@ -75,6 +75,24 @@ describe("CNPJ alfanumérico", () => {
         assert.equal(createParceiroBodySchema.safeParse(pix("12.ABC.345/01DE-36")).success, false);
     });
 
+    it("chave PIX CNPJ é gravada em maiúsculas, como o cpf_cnpj; as outras ficam como vieram", () => {
+        const r = createParceiroBodySchema.safeParse({
+            ...base,
+            tipo_pessoa: "PJ",
+            cpf_cnpj: CNPJ_OK,
+            dados_bancarios: [
+                {tipo: "PIX", tipo_chave: "cnpj", chave: " 12.abc.345/01de-35 "},
+                {tipo: "PIX", tipo_chave: "email", chave: "Financeiro@Exemplo.com"},
+                {tipo: "TED", banco_codigo: "341", banco_nome: "Itaú", agencia: "1234", conta: "5678-9"},
+            ],
+        });
+        assert.equal(r.success, true);
+        const itens = r.success ? r.data.dados_bancarios ?? [] : [];
+        assert.deepEqual(itens.map((i) => (i.tipo === "PIX" ? i.chave : i.conta)), ["12.ABC.345/01DE-35", "Financeiro@Exemplo.com", "5678-9"]);
+        const u = updateParceiroBodySchema.safeParse({dados_bancarios: [{tipo: "PIX", tipo_chave: "cnpj", chave: "12abc34501de35"}]});
+        assert.equal(u.success && u.data.dados_bancarios?.[0]?.tipo === "PIX" && u.data.dados_bancarios[0].chave, "12ABC34501DE35");
+    });
+
     it("sem tipo_pessoa, documento com letra é tratado como CNPJ (mesmo com 11 dígitos)", () => {
         assert.equal(updateParceiroBodySchema.safeParse({cpf_cnpj: "12ABC34501DE35"}).success, true);
         // 3 letras + 11 dígitos: só pelos dígitos pareceria CPF; a mensagem tem de falar de CNPJ.

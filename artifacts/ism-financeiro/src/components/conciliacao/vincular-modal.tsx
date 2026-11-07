@@ -19,14 +19,15 @@ import {useConfirm} from "@/hooks/use-confirm";
 import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
 import {Modal, ModalFooter, ModalHeader, ModalSpinner, modalBtnPrimaryCls, modalBtnSecondaryCls} from "@/components/ui/modal-responsivo";
 import {SelectCampo} from "@/components/ui/select-campo";
-import {Loader2, Link2, AlertCircle, CheckCircle2, Pencil, Search} from "lucide-react";
+import {Loader2, Link2, AlertCircle, CheckCircle2, Pencil, Search, X} from "lucide-react";
+import {DatePicker} from "@/components/ui/date-picker";
 import {useAuth} from "@/hooks/use-auth";
 import {PERM} from "@/lib/permissoes";
 import {EditarLancamentoConciliacaoModal} from "@/components/conciliacao/editar-lancamento-modal";
 import {StatusBadge} from "@/components/shared/status-badge";
 import {invalidateRelated} from "@/App";
 import {LancamentoModal, type LancamentoPrefill} from "@/components/lancamentos/lancamento-modal";
-import {valorLiquidoTitulo} from "@/lib/retencoes";
+import {valorAPagarTitulo, valorLiquidoTitulo} from "@/lib/retencoes";
 
 export type LancamentoCompativel = {
   id: number;
@@ -34,8 +35,13 @@ export type LancamentoCompativel = {
   vencimento: string;
   descricao: string | null;
   valor: string | number;
-    /** Bruto − retenções na fonte: é o que chega no extrato (base da quitação). */
+    /** Bruto − retenções na fonte. */
     valor_liquido?: string | number | null;
+    /** Desconto e juros já gravados no título (cadastro ou vínculos anteriores). */
+    desconto?: string | number | null;
+    juros?: string | number | null;
+    /** Líquido − desconto + juros: o que chega no extrato (base do vínculo). */
+    valor_a_pagar?: string | number | null;
     /** Σ retenções na fonte (IR, PIS, COFINS, CSLL, INSS, ISS). */
     total_retencoes?: string | number | null;
     /** Quitado antes deste vínculo. Sem isto, o Modo B calcula excedente
@@ -75,15 +81,16 @@ export function motivoBloqueioVinculo(l: LancamentoCompativel): string | null {
 
 /**
  * Título sem restante: o já quitado (gravado + vínculos em rascunho de outras
- * linhas deste extrato) alcança o líquido. O backend recusa com 409; aqui o
- * título já aparece bloqueado, com o motivo.
+ * linhas deste extrato) alcança o líquido menos o desconto (quitadoPorInteiro
+ * na API). O backend recusa com 409; aqui o título já aparece bloqueado, com o motivo.
  */
 export function motivoJaQuitado(
     l: LancamentoCompativel,
     quitadoAnteriorCents: number,
     quitadoRascunhoCents: number,
 ): string | null {
-    const liquidoCents = Math.round(Math.abs(valorLiquidoTitulo(l)) * 100);
+    const liquidoCents =
+        Math.round(Math.abs(valorLiquidoTitulo(l)) * 100) - Math.round(Math.abs(Number(l.desconto ?? 0)) * 100);
     if (liquidoCents <= 0 || quitadoAnteriorCents < liquidoCents) return null;
     if (quitadoRascunhoCents > 0 && quitadoAnteriorCents - quitadoRascunhoCents < liquidoCents) {
         return "Já vinculado pelo valor todo em outra linha deste extrato (ainda não salvo). Remova aquele vínculo antes de vincular aqui.";
@@ -213,8 +220,9 @@ function VincularFormBody({
   const lancamentosValorById = useMemo(() => {
     const m = new Map<number, string | number>();
     for (const l of lancamentos) {
-      // Base da comparação com o extrato = líquido (bruto − retenções).
-      m.set(l.id, valorLiquidoTitulo(l));
+      // Base da comparação com o extrato = líquido (bruto − retenções)
+      // − desconto + juros do título: a mesma do vincular na API.
+      m.set(l.id, valorAPagarTitulo(l));
     }
     return m;
   }, [lancamentos]);
@@ -583,7 +591,7 @@ function VincularFormBody({
                           disabled={Boolean(motivoBloqueio) && !cb.value}
                           aria-label={
                               `Selecionar lançamento #${l.id} ${l.tipo}, ${l.descricao ?? "sem descrição"}, ` +
-                              `vencimento ${formatDate(l.vencimento)}, ${dinheiro(valorLiquidoTitulo(l))}` +
+                              `vencimento ${formatDate(l.vencimento)}, ${dinheiro(valorAPagarTitulo(l))}` +
                               (motivoBloqueio ? `. Bloqueado: ${motivoBloqueio}` : "")
                           }
                           onCheckedChange={(c) => {
@@ -620,11 +628,11 @@ function VincularFormBody({
                                                     )}
                                                     {/* Valor esperado no extrato (líquido) e restante (já comprometido noutras conciliações). */}
                                                     <p className="text-sm font-bold text-primary mt-0.5">
-                                                        {dinheiro(valorLiquidoTitulo(l))}
+                                                        {dinheiro(valorAPagarTitulo(l))}
                                                         {quitadoAnteriorCents > 0 && (
                                                             <span className="text-xs font-semibold text-amber-300/90">
                                                                 {" "}| Restante: {dinheiro(
-                                                                    toMoney(Math.max(0, Math.round(Math.abs(valorLiquidoTitulo(l)) * 100) - quitadoAnteriorCents)),
+                                                                    toMoney(Math.max(0, Math.round(Math.abs(valorAPagarTitulo(l)) * 100) - quitadoAnteriorCents)),
                                                                 )}
                                                             </span>
                                                         )}
@@ -865,7 +873,7 @@ function VincularFormBody({
                                                 const l = lancamentos.find((x) => x.id === i.lancamento_id);
                                                 return {
                                                     value: String(i.lancamento_id),
-                                                    label: `#${i.lancamento_id} · ${l?.descricao ?? "-"} · ${dinheiro(l ? valorLiquidoTitulo(l) : 0)}`,
+                                                    label: `#${i.lancamento_id} · ${l?.descricao ?? "-"} · ${dinheiro(l ? valorAPagarTitulo(l) : 0)}`,
                                                 };
                                             })}
                                         />
@@ -1230,14 +1238,30 @@ export function VincularModal({
                             <label htmlFor="vincular-vencimento" className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
                                 Vencimento
                             </label>
-                            <input
-                                id="vincular-vencimento"
-                                type="date"
-                                value={vencimentoTexto}
-                                onChange={(e) => setVencimentoTexto(e.target.value)}
-                                onKeyDown={(e) => e.key === "Enter" && handleAplicarBusca()}
-                                className="bg-[#1a1c23] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-primary/50"
-                            />
+                            {/* DatePicker em dd/mm/aaaa: o input nativo seguia o idioma do
+                                navegador e mostrava "mm/dd/yyyy". O X limpa o filtro. */}
+                            <div className="relative">
+                                <DatePicker
+                                    id="vincular-vencimento"
+                                    value={vencimentoTexto}
+                                    onChange={setVencimentoTexto}
+                                    placeholder="dd/mm/aaaa"
+                                    className={cn(
+                                        "w-full bg-[#1a1c23] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-primary/50",
+                                        vencimentoTexto && "pr-6",
+                                    )}
+                                />
+                                {vencimentoTexto ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => setVencimentoTexto("")}
+                                        aria-label="Limpar vencimento"
+                                        className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-muted-foreground hover:text-white"
+                                    >
+                                        <X aria-hidden="true" className="w-3 h-3"/>
+                                    </button>
+                                ) : null}
+                            </div>
           </div>
           <button
             type="button"

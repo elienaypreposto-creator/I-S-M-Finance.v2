@@ -4,8 +4,8 @@ import type {
   ToastActionElement,
   ToastProps,
 } from "@/components/ui/toast"
+import { limitarToasts } from "@/lib/limite-toasts"
 
-const TOAST_LIMIT = 1
 const TOAST_REMOVE_DELAY = 1000000
 
 type ToasterToast = ToastProps & {
@@ -76,7 +76,8 @@ export const reducer = (state: State, action: Action): State => {
     case "ADD_TOAST":
       return {
         ...state,
-        toasts: [action.toast, ...state.toasts].slice(0, TOAST_LIMIT),
+        // Até 3 na tela; um aviso com ação (ex.: "Desfazer") não cai por causa de aviso comum.
+        toasts: limitarToasts([action.toast, ...state.toasts]),
       }
 
     case "UPDATE_TOAST":

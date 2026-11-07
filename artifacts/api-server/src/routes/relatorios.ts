@@ -22,6 +22,7 @@ import {
     aberturaNoPeriodo,
     agruparVinculos,
     comSaldoCorrido,
+    contaNoResumoDoPeriodo,
     diaAnterior,
     filtrarPorTipo,
     lerParamsExtratoConta,
@@ -844,7 +845,7 @@ router.get("/relatorios/contabil-fiscal/movimentacoes", withPermission(PERM.RELA
         const ordenados = await anexarVinculos(movs, null);
         const linhas: LinhaExtratoCalculada[] = filtrarPorTipo(semSaldoCorrido(ordenados), tipo);
         const contasComMovimento = new Set(movs.map((m) => m.conta_id));
-        const contasNoResumo = contas.filter((c) => c.status === "ativo" || contasComMovimento.has(c.id));
+        const contasNoResumo = contas.filter((c) => contaNoResumoDoPeriodo(c, contasComMovimento.has(c.id), dataFim));
 
         const porConta = await Promise.all(
             contasNoResumo.map(async (c) => {

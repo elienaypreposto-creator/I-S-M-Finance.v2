@@ -20,6 +20,8 @@ import {format as formatBtn, parseISO} from "date-fns";
 import {cn} from "@/lib/utils";
 import {TIPOS_DOCUMENTO_LANCAMENTO} from "@/lib/lancamento-documento";
 import {CAMPOS_RETENCAO, ROTULO_RETENCAO} from "@/lib/retencoes";
+import {nivelDosRiscos, nivelSugeridoPorVencimento, riscosParaSalvar} from "@/lib/riscos-lancamento";
+import {hojeIsoLocal} from "@/lib/datas";
 import {SelectCampo} from "@/components/ui/select-campo";
 import {fetchApiData} from "@/lib/api-config";
 import {
@@ -427,7 +429,15 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
     const [riskLevels, setRiskLevels] = useState(BASE_RISK_LEVELS);
     const [showAddTag, setShowAddTag] = useState(false);
     const [newTag, setNewTag] = useState({name: "", level: 1});
-    const [nivelRisco, setNivelRisco] = useState(0);
+    // Nível exibido e de onde veio: só "nenhum"/"sugestao" seguem a sugestão
+    // pelo vencimento; escolha do usuário ou nível já gravado não são trocados.
+    // Um estado só, para a sugestão não sobrescrever o gravado no mesmo render.
+    const [risco, setRisco] = useState<{nivel: number; origem: "nenhum" | "sugestao" | "usuario" | "salvo"}>({
+        nivel: 0,
+        origem: "nenhum",
+    });
+    const nivelRisco = risco.nivel;
+    const origemNivel = risco.origem;
     const [searchParceiro, setSearchParceiro] = useState("");
 
     // Controla a exibição do modal "Cancelar cadastro?" quando o usuário
@@ -594,7 +604,8 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
         // Libera a hidratação do editItemFull para o próximo lançamento
         // aberto (ver useEffect abaixo).
         hydratedAtRef.current = 0;
-        setNivelRisco(0);
+        const nivelSalvo = nivelDosRiscos(editItem?.riscos, BASE_RISK_LEVELS);
+        setRisco({nivel: nivelSalvo, origem: nivelSalvo > 0 ? "salvo" : "nenhum"});
         setRiskLevels(BASE_RISK_LEVELS);
         setShowAddTag(false);
         setShowCancelConfirm(false);
@@ -624,6 +635,11 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
         if (editItemFull && dataUpdatedAt !== hydratedAtRef.current) {
             reset(getLancamentoModalDefaultValues(editItemFull));
             hydratedAtRef.current = dataUpdatedAt;
+            // Reabre no nível gravado (rótulo do nível ou tags).
+            const nivelSalvo = nivelDosRiscos(editItemFull.riscos, BASE_RISK_LEVELS);
+            if (nivelSalvo > 0) {
+                setRisco({nivel: nivelSalvo, origem: "salvo"});
+            }
         }
     }, [editItemFull, dataUpdatedAt, reset]);
 
@@ -636,18 +652,16 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
 
     // Sugestão automática de nível de risco
 
+    // Segue o vencimento enquanto o nível não foi escolhido nem veio gravado.
+    // O nível visível é gravado ao salvar (riscosParaSalvar).
     useEffect(() => {
-        if (vencimento && nivelRisco === 0) {
-            const vcto = new Date(vencimento + "T00:00:00");
-            const diffDays = Math.floor((Date.now() - vcto.getTime()) / 86_400_000);
-            let level = 0;
-            if (diffDays >= 1 && diffDays <= 15) level = 1;
-            else if (diffDays >= 16 && diffDays <= 30) level = 2;
-            else if (diffDays >= 31 && diffDays <= 60) level = 3;
-            else if (diffDays > 60) level = 4;
-            setNivelRisco(level);
-        }
-    }, [vencimento, nivelRisco]);
+        const sugerido = nivelSugeridoPorVencimento(vencimento, hojeIsoLocal());
+        setRisco((atual) =>
+            atual.origem === "nenhum" || atual.origem === "sugestao"
+                ? {nivel: sugerido, origem: sugerido > 0 ? "sugestao" : "nenhum"}
+                : atual,
+        );
+    }, [vencimento, origemNivel]);
 
     const {data: parceiros = [], isFetching: isFetchingParceiros} = useQuery<ParceiroRow[]>({
         queryKey: tenantQueryKey("parceiros-modal", searchParceiro),
@@ -720,7 +734,12 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
         },
     });
 
-    const onSubmit = (values: LancamentoModalFormValues) => mutation.mutate(mapModalFormToApiBody(values));
+    // CP: grava o nível que o formulário mostra (tags marcadas ou, sem tag, o
+    // rótulo do nível escolhido/sugerido). Antes o nível sugerido ia vazio.
+    const onSubmit = (values: LancamentoModalFormValues) =>
+        mutation.mutate(mapModalFormToApiBody(
+            values.tipo === "CP" ? {...values, riscos: riscosParaSalvar(values.riscos, nivelRisco, riskLevels)} : values,
+        ));
 
     // Handlers de risco
 
@@ -863,6 +882,8 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                         <span id="lancamento-parceiro-label" className={labelCls}>Cliente / Fornecedor</span>
                                         <Controller name="parceiro_id" control={control} render={({field}) => (
                                             <ParceiroCombobox
+                                                id="lancamento-parceiro"
+                                                aria-labelledby="lancamento-parceiro-label"
                                                 value={field.value}
                                                 onChange={field.onChange}
                                                 parceiros={parceiros}
@@ -964,6 +985,8 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                         <span id="lancamento-plano-label" className={labelCls}>Classificação (Plano de Contas)</span>
                                         <Controller name="plano_conta_id" control={control} render={({field}) => (
                                             <PlanoContaCombobox
+                                                id="lancamento-plano"
+                                                aria-labelledby="lancamento-plano-label"
                                                 value={field.value}
                                                 onChange={field.onChange}
                                                 planoContas={planoContasDoLancamento}
@@ -1262,17 +1285,19 @@ export function LancamentoModal({onClose, onSaved, editItem, prefill}: Lancament
                                                 <label htmlFor="lancamento-nivel-risco" className={cn(labelCls, "mb-0")}>
                                                     Vulnerabilidade / Nível de Risco
                                                 </label>
-                                                <span
-                                                    className="flex items-center gap-[0.3em] text-[0.75em] font-black text-primary uppercase">
-                                                    <Target aria-hidden="true" className="w-[1em] h-[1em]"/> Sugestão Ativa
-                                                </span>
+                                                {origemNivel === "sugestao" && (
+                                                    <span
+                                                        className="flex items-center gap-[0.3em] text-[0.75em] font-black text-primary uppercase">
+                                                        <Target aria-hidden="true" className="w-[1em] h-[1em]"/> Sugestão Ativa
+                                                    </span>
+                                                )}
                                             </div>
                                             <SelectCampo
                                                 id="lancamento-nivel-risco"
                                                 value={String(nivelRisco)}
                                                 className={cn("font-black tracking-tight", selectedRisk?.color || "text-muted-foreground")}
                                                 onChange={(value) => {
-                                                    setNivelRisco(parseInt(value, 10));
+                                                    setRisco({nivel: parseInt(value, 10), origem: "usuario"});
                                                     setValue("riscos", [], {shouldDirty: true});
                                                 }}
                                                 opcoes={[

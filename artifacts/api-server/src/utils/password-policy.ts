@@ -4,7 +4,7 @@
  * - mínimo 12 caracteres, sem exigir maiúscula/número/símbolo
  * - máximo: 128 caracteres E 72 bytes UTF-8 (bcrypt ignora o que passar de 72 bytes;
  *   aceitar mais que isso seria prometer uma senha que o hash não protege)
- * - não pode conter o e-mail nem o nome do utilizador
+ * - não pode conter o e-mail nem o nome do usuário
  * - não pode constar em vazamentos conhecidos (HIBP, k-anonymity: só os 5 primeiros
  *   caracteres do SHA-1 saem do servidor, a senha nunca)
  *

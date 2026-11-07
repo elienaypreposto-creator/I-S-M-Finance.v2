@@ -138,6 +138,18 @@ describe("resumirMetas", () => {
         assert.deepEqual(r.despesas.totalPorPeriodo[2], {orcadoCents: 1000, realizadoCents: 0, jurosCents: 0});
     });
 
+    it("sem meta: esconde categoria com orçado, realizado e juros zerados", () => {
+        const r = resumirMetas(
+            [
+                item("Zerada", "despesa", 1, 0, 0),
+                item("Só juros", "despesa", 1, 0, 0, 12),
+                item("Com realizado", "receita", 1, 0, 50),
+            ],
+            periodosDaVisao("ano"),
+        );
+        assert.deepEqual(r.semMeta.map((l) => l.categoria), ["Com realizado", "Só juros"]);
+    });
+
     it("sem itens no período", () => {
         const r = resumirMetas(itens, periodosSelecionados({visao: "mes", periodos: [12]}));
         assert.equal(r.receitas.linhas.length + r.despesas.linhas.length + r.semMeta.length, 0);

@@ -45,7 +45,7 @@ import {
     pixKeyPlaceholder,
     tipoChaveDocumento,
 } from "@/lib/pix-ted-masks.ts";
-import {mascararDocumento, normalizarDocumento, somenteDigitos} from "@/lib/documento";
+import {erroDocumento, mascararDocumento, normalizarDocumento, somenteDigitos} from "@/lib/documento";
 import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
 import {TableSkeleton} from "@/components/shared/table-skeleton";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
@@ -1093,7 +1093,7 @@ export default function Parceiros() {
 
     const handleDelete = async (p: ParceiroRow) => {
         const ok = await confirm({
-            title: `Excluir "${p.nome.toUpperCase()}"?`,
+            title: `Excluir "${p.nome}"?`,
             description: "Esta ação não pode ser desfeita. O cadastro será removido permanentemente.",
             confirmLabel: "Excluir",
             cancelLabel: "Cancelar",
@@ -1102,16 +1102,8 @@ export default function Parceiros() {
         if (ok) deleteMutation.mutate(p.id);
     };
 
-    const handleEdit = async (p: ParceiroRow) => {
-        const ok = await confirm({
-            title: `Editar "${p.nome}"?`,
-            description: "Você será direcionado ao formulário de edição deste cadastro.",
-            confirmLabel: "Editar",
-            cancelLabel: "Cancelar",
-            variant: "default",
-        });
-        if (ok) setEditingParceiro(p);
-    };
+    // Editar abre o formulário direto: o próprio modal pede confirmação ao descartar alterações.
+    const handleEdit = (p: ParceiroRow) => setEditingParceiro(p);
 
     const handleToggleAtivo = async (p: ParceiroRow) => {
         const isAtivo = resolveStatus(p) === "ativo";
@@ -1133,6 +1125,13 @@ export default function Parceiros() {
         if (!p.cpf_cnpj) return "-";
         const tipo = (p.tipo_pessoa === "PF" ? "PF" : "PJ") as "PF" | "PJ";
         return mascararDocumento(String(p.cpf_cnpj), tipo);
+    };
+
+    // Cadastros antigos (de antes da validação) podem ter CPF/CNPJ inválido: a lista só
+    // sinaliza; a correção é pelo Editar, que já valida o documento.
+    const erroDocumentoGravado = (p: ParceiroRow): string | null => {
+        if (!p.cpf_cnpj) return null;
+        return erroDocumento(String(p.cpf_cnpj), p.tipo_pessoa === "PF" ? "PF" : "PJ");
     };
 
     const EXPORT_COLUMNS_PARCEIROS = [
@@ -1296,7 +1295,18 @@ export default function Parceiros() {
                                                 </p>
                                             )}
                                         </td>
-                                        <td className="px-3 xl:px-5 py-4 text-muted-foreground font-mono text-xs whitespace-nowrap">{getDocDisplay(p)}</td>
+                                        <td className="px-3 xl:px-5 py-4 text-muted-foreground font-mono text-xs whitespace-nowrap">
+                                            {getDocDisplay(p)}
+                                            {erroDocumentoGravado(p) && (
+                                                <span
+                                                    className="flex items-center gap-1 font-sans text-[11px] text-amber-300/90 mt-0.5"
+                                                    title={`${erroDocumentoGravado(p)} Edite o cadastro para corrigir.`}
+                                                >
+                                                    <AlertTriangle aria-hidden="true" className="w-3 h-3"/>
+                                                    Documento inválido
+                                                </span>
+                                            )}
+                                        </td>
                                         <td className="px-3 xl:px-5 py-4 min-w-[140px]">
                                             <div className="flex gap-1 flex-wrap">
                                                 {tipos.length === 0 ? (

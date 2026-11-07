@@ -112,6 +112,18 @@ export function rotuloPeriodoMetas(meses: readonly number[], ano: number): strin
  * Rótulo acessível da célula: "Meta de Vendas / Produtos em Março de 2026: R$ 1.500,00".
  * `valorTexto` já vem tratado pela preferência de ocultar valores; null = sem meta.
  */
+const TIPO_NO_ROTULO: Record<string, string> = {receita: "receita", custo: "custo", despesa: "despesa"};
+
+/**
+ * Nome da linha para o leitor de tela: "Categoria / Subcategoria (tipo)". O tipo
+ * entra sempre, porque receita e despesa podem ter o mesmo nome e as células
+ * ficariam com o mesmo aria-label.
+ */
+export function rotuloLinhaMeta(categoria: string, subcategoria: string | null | undefined, tipo: string): string {
+    const nome = subcategoria ? `${categoria} / ${subcategoria}` : categoria;
+    return `${nome} (${TIPO_NO_ROTULO[tipo] ?? tipo})`;
+}
+
 export function rotuloCelulaMeta(linha: string, mes: number, ano: number, valorTexto: string | null): string {
     const base = `Meta de ${linha} em ${MESES_EXTENSO[mes - 1]} de ${ano}`;
     return `${base}: ${valorTexto ?? "sem meta"}`;

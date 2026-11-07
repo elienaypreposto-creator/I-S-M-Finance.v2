@@ -12,10 +12,13 @@ import {
     AlertCircle,
 } from "lucide-react";
 import {useDinheiro, useSaldosVisiveis} from "@/components/conta/saldos-visiveis";
+import {GraficoOculto} from "@/components/conta/grafico-oculto";
 import {SelectCampo} from "@/components/ui/select-campo";
 import {useQuery} from "@tanstack/react-query";
 import {fetchApiData} from "@/lib/api-config";
 import {exportToExcel, exportToPDF, fmtBRL, type ExportColumn} from "@/lib/export";
+import {formatarEixoMoeda} from "@/lib/eixo-moeda";
+import {useRolarAoTopo} from "@/hooks/use-rolar-ao-topo";
 import {FiltroPeriodoMetas} from "@/components/relatorios/filtro-periodo-metas";
 import {
     descricaoDaSelecao,
@@ -77,6 +80,35 @@ type MetaItem = {
 
 const COR_RECEITA = "#2DD4BF";
 const COR_DESPESA = "#FB7185";
+
+/** Orçado = contorno tracejado com fundo claro; realizado = cor cheia. Mesma regra nas barras e na legenda. */
+const SERIES_GRAFICO = [
+    {chave: "receitaOrcado", nome: "Receitas orçado", cor: COR_RECEITA, orcado: true},
+    {chave: "receitaRealizado", nome: "Receitas realizado", cor: COR_RECEITA, orcado: false},
+    {chave: "despesaOrcado", nome: "Despesas orçado", cor: COR_DESPESA, orcado: true},
+    {chave: "despesaRealizado", nome: "Despesas realizado", cor: COR_DESPESA, orcado: false},
+] as const;
+
+function LegendaGrafico() {
+    return (
+        <ul className="flex flex-wrap justify-center gap-x-4 gap-y-1 pt-2 text-xs text-white/80">
+            {SERIES_GRAFICO.map((s) => (
+                <li key={s.chave} className="flex items-center gap-1.5">
+                    <span
+                        aria-hidden="true"
+                        className="inline-block w-3.5 h-3 rounded-sm"
+                        style={
+                            s.orcado
+                                ? {border: `1.5px dashed ${s.cor}`, backgroundColor: `${s.cor}33`}
+                                : {backgroundColor: s.cor}
+                        }
+                    />
+                    {s.nome}
+                </li>
+            ))}
+        </ul>
+    );
+}
 
 const COR_AVALIACAO = {bom: "text-success", alerta: "text-amber-300", neutro: "text-white"} as const;
 
@@ -220,6 +252,7 @@ function CardGrupo({titulo, icone, bloco, rotuloPct, dinheiro}: {
 }
 
 export default function MetasRelatorio() {
+    const raizRef = useRolarAoTopo();
     const dinheiro = useDinheiro();
     const {visivel: saldosVisiveis} = useSaldosVisiveis();
     // Ano na URL (?ano=2026) para sobreviver ao F5 e ao compartilhar o link.
@@ -291,6 +324,9 @@ export default function MetasRelatorio() {
     const resultadoOrcado = reais(resultado.orcadoCents);
     const resultadoRealizado = reais(resultado.realizadoCents);
     const diferencaResultado = reais(resultado.realizadoCents - resultado.orcadoCents);
+    // Com saldos ocultos, vermelho/verde e o "+" contariam o sinal do resultado.
+    const corResultado = (valor: number, normal: string) =>
+        saldosVisiveis && valor < 0 ? "text-destructive" : normal;
 
     function colunasExportacao(comPeriodos: boolean): ExportColumn[] {
         const cols: ExportColumn[] = [
@@ -442,7 +478,7 @@ export default function MetasRelatorio() {
     }
 
     return (
-        <div className="space-y-6">
+        <div ref={raizRef} className="space-y-6">
             <PageHeader
                 title="Relatório de Metas"
                 description={`Previsto × realizado pela data de pagamento — ${descricaoPeriodo}`}
@@ -528,19 +564,19 @@ export default function MetasRelatorio() {
                                 <dl className="space-y-1 text-sm">
                                     <div className="flex justify-between gap-3">
                                         <dt className="text-muted-foreground">Orçado</dt>
-                                        <dd className={`font-medium ${resultadoOrcado < 0 ? "text-destructive" : "text-white/90"}`}>
+                                        <dd className={`font-medium ${corResultado(resultadoOrcado, "text-white/90")}`}>
                                             {dinheiro(resultadoOrcado)}
                                         </dd>
                                     </div>
                                     <div className="flex justify-between gap-3">
                                         <dt className="text-muted-foreground">Realizado</dt>
-                                        <dd className={`font-medium ${resultadoRealizado < 0 ? "text-destructive" : "text-teal-300"}`}>
+                                        <dd className={`font-medium ${corResultado(resultadoRealizado, saldosVisiveis ? "text-teal-300" : "text-white/90")}`}>
                                             {dinheiro(resultadoRealizado)}
                                         </dd>
                                     </div>
                                 </dl>
-                                <p className={`mt-3 text-2xl font-bold ${diferencaResultado < 0 ? "text-destructive" : "text-white"}`}>
-                                    {diferencaResultado > 0 ? "+" : ""}{dinheiro(diferencaResultado)}
+                                <p className={`mt-3 text-2xl font-bold ${corResultado(diferencaResultado, "text-white")}`}>
+                                    {saldosVisiveis && diferencaResultado > 0 ? "+" : ""}{dinheiro(diferencaResultado)}
                                 </p>
                                 <p className="text-xs text-muted-foreground mt-1.5">
                                     Realizado − orçado. O realizado inclui as categorias sem meta.
@@ -553,7 +589,12 @@ export default function MetasRelatorio() {
                         </p>
                     </section>
 
-                    {hasChartData && (
+                    {hasChartData && !saldosVisiveis && (
+                        // A altura das barras mostra a proporção dos valores: com saldos ocultos, sem gráfico.
+                        <GraficoOculto titulo="Gráfico Orçado × Realizado" className="glass-panel rounded-2xl p-6"/>
+                    )}
+
+                    {hasChartData && saldosVisiveis && (
                         <div className="glass-panel rounded-2xl p-6">
                             <div className="mb-5">
                                 <h3 className="font-bold text-white">Orçado × Realizado — {descricaoPeriodo}</h3>
@@ -573,18 +614,24 @@ export default function MetasRelatorio() {
                                             fontSize={11}
                                             tickLine={false}
                                             axisLine={false}
-                                            tickFormatter={(v) => (!saldosVisiveis ? "•••" : v >= 1000 ? `R$${(v / 1000).toFixed(0)}k` : `R$${v}`)}
+                                            width={72}
+                                            tickFormatter={(v: number) => formatarEixoMoeda(v)}
                                         />
                                         <Tooltip content={<CustomTooltip/>} cursor={{fill: "#ffffff05"}}/>
-                                        <Legend iconType="circle" wrapperStyle={{fontSize: "12px"}}/>
-                                        <Bar dataKey="receitaOrcado" name="Receitas orçado" fill={COR_RECEITA}
-                                             fillOpacity={0.4} radius={[3, 3, 0, 0]}/>
-                                        <Bar dataKey="receitaRealizado" name="Receitas realizado" fill={COR_RECEITA}
-                                             radius={[3, 3, 0, 0]}/>
-                                        <Bar dataKey="despesaOrcado" name="Despesas orçado" fill={COR_DESPESA}
-                                             fillOpacity={0.4} radius={[3, 3, 0, 0]}/>
-                                        <Bar dataKey="despesaRealizado" name="Despesas realizado" fill={COR_DESPESA}
-                                             radius={[3, 3, 0, 0]}/>
+                                        <Legend content={() => <LegendaGrafico/>}/>
+                                        {SERIES_GRAFICO.map((s) => (
+                                            <Bar
+                                                key={s.chave}
+                                                dataKey={s.chave}
+                                                name={s.nome}
+                                                fill={s.cor}
+                                                fillOpacity={s.orcado ? 0.2 : 1}
+                                                stroke={s.orcado ? s.cor : undefined}
+                                                strokeDasharray={s.orcado ? "3 2" : undefined}
+                                                strokeWidth={s.orcado ? 1.5 : 0}
+                                                radius={[3, 3, 0, 0]}
+                                            />
+                                        ))}
                                     </BarChart>
                                 </ResponsiveContainer>
                             </div>
@@ -658,9 +705,11 @@ export default function MetasRelatorio() {
                                             Resultado (receitas − despesas)
                                         </td>
                                         {porPeriodo && resumo.resultadoPorPeriodo.map((v, i) => (
-                                            <CelulaResultado key={periodos[i].indice} v={v} dinheiro={dinheiro} inicioGrupo/>
+                                            <CelulaResultado key={periodos[i].indice} v={v} dinheiro={dinheiro} inicioGrupo
+                                                             visivel={saldosVisiveis}/>
                                         ))}
-                                        <CelulaResultado v={resultado} dinheiro={dinheiro} inicioGrupo={porPeriodo}/>
+                                        <CelulaResultado v={resultado} dinheiro={dinheiro} inicioGrupo={porPeriodo}
+                                                         visivel={saldosVisiveis}/>
                                         <td className={`${TD} text-amber-300/80 ${porPeriodo ? INICIO_GRUPO : ""}`}>
                                             {dinheiro(totalJuros)}
                                         </td>
@@ -684,13 +733,17 @@ export default function MetasRelatorio() {
     );
 }
 
-/** Resultado: orçado e realizado (negativo em vermelho); sem % (receitas − despesas pode ser negativo). */
-function CelulaResultado({v, dinheiro, inicioGrupo}: {
+/**
+ * Resultado: orçado e realizado (negativo em vermelho); sem % (receitas − despesas pode ser negativo).
+ * Com saldos ocultos a cor fica neutra para não revelar o sinal.
+ */
+function CelulaResultado({v, dinheiro, inicioGrupo, visivel}: {
     v: ValoresMeta;
     dinheiro: (n: number) => string;
     inicioGrupo?: boolean;
+    visivel: boolean;
 }) {
-    const cor = (cents: number) => (cents < 0 ? "text-destructive" : "text-white");
+    const cor = (cents: number) => (visivel && cents < 0 ? "text-destructive" : "text-white");
     return (
         <>
             <td className={`${TD} ${cor(v.orcadoCents)} ${inicioGrupo ? INICIO_GRUPO : ""}`}>

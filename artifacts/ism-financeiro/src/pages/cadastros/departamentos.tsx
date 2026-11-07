@@ -287,8 +287,9 @@ export default function Departamentos() {
   // ── Busca por nome na URL (?q=), aplicada no navegador ──
   const { ler, atualizar } = useParametrosUrl();
   const busca = ler("q");
+  // Ordem alfabética sem caixa/acento (como Filiais), independente da ordem da API.
   const departamentosFiltrados = useMemo(
-    () => departamentos.filter((d) => contemBusca(busca, d.nome)),
+    () => ordenarPorNome(departamentos.filter((d) => contemBusca(busca, d.nome))),
     [departamentos, busca],
   );
   const anuncio = isLoading || !busca

@@ -1,4 +1,5 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
+import { useRolarAoTopo } from "@/hooks/use-rolar-ao-topo";
 import { useMemo } from "react";
 import { PageHeader } from "@/components/shared/page-header";
 import {
@@ -13,7 +14,7 @@ import {
   Link2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useDinheiro } from "@/components/conta/saldos-visiveis";
+import { useDinheiro, useSaldosVisiveis } from "@/components/conta/saldos-visiveis";
 import { useQuery } from "@tanstack/react-query";
 import { fetchApiData } from "@/lib/api-config";
 import { fmtDate } from "@/lib/export";
@@ -64,7 +65,12 @@ const TH = "px-4 py-3 font-medium text-muted-foreground whitespace-nowrap text-x
 
 // ─── Página ────────────────────────────────────────────────────────────────────
 export default function ContabilFiscal() {
+  const raizRef = useRolarAoTopo();
   const dinheiro = useDinheiro();
+  // Com saldos ocultos a cor não pode contar o sinal (vermelho = negativo).
+  const { visivel: saldosVisiveis } = useSaldosVisiveis();
+  const corSaldo = (valor: number, positivo = "text-white") =>
+    !saldosVisiveis ? "text-white" : valor < 0 ? "text-destructive" : positivo;
 
   // Opções do filtro "Conta bancária" (mesma chave de cache da tela de lançamentos).
   const { data: contas = [] } = useQuery({
@@ -138,7 +144,7 @@ export default function ContabilFiscal() {
   const naoConciliados = data?.nao_conciliados;
 
   return (
-    <div className="space-y-6">
+    <div ref={raizRef} className="space-y-6">
       <PageHeader
         title="Relatório Contábil / Fiscal"
         description="Movimentações por conta para conferir com o extrato do banco"
@@ -277,12 +283,13 @@ export default function ContabilFiscal() {
         <>
           {/* ── Resumo de saldos ── */}
           <section aria-label="Resumo do período" className="space-y-3">
-            <div className={cn("grid grid-cols-2 gap-3", saldoAbertura !== 0 ? "lg:grid-cols-5" : "lg:grid-cols-4")}>
+            {/* 5 cards só lado a lado em tela larga; a 1024px vão em 3 colunas para o valor caber inteiro. */}
+            <div className={cn("grid grid-cols-2 gap-3", saldoAbertura !== 0 ? "md:grid-cols-3 xl:grid-cols-5" : "md:grid-cols-4")}>
               <CardResumo
                 titulo="Saldo inicial"
                 detalhe={`Fim de ${fmtDate(data.resumo.data_saldo_inicial)}`}
                 valor={dinheiro(data.resumo.saldo_inicial)}
-                cor={data.resumo.saldo_inicial < 0 ? "text-destructive" : "text-white"}
+                cor={corSaldo(data.resumo.saldo_inicial)}
               />
               {saldoAbertura !== 0 && (
                 <CardResumo
@@ -293,7 +300,7 @@ export default function ContabilFiscal() {
                       : "Contas que começam no período"
                   }
                   valor={dinheiro(saldoAbertura)}
-                  cor={saldoAbertura < 0 ? "text-destructive" : "text-white"}
+                  cor={corSaldo(saldoAbertura)}
                 />
               )}
               <CardResumo titulo="Entradas" detalhe={periodoTexto} valor={dinheiro(data.resumo.entradas)} cor="text-teal-400" />
@@ -302,7 +309,7 @@ export default function ContabilFiscal() {
                 titulo="Saldo final"
                 detalhe={`Fim de ${fmtDate(dataFim)}`}
                 valor={dinheiro(data.resumo.saldo_final)}
-                cor={data.resumo.saldo_final < 0 ? "text-destructive" : "text-success"}
+                cor={corSaldo(data.resumo.saldo_final, "text-success")}
               />
             </div>
 
@@ -402,7 +409,7 @@ export default function ContabilFiscal() {
                         </td>
                         <td className="px-4 py-3 text-right whitespace-nowrap text-teal-400">{dinheiro(c.entradas)}</td>
                         <td className="px-4 py-3 text-right whitespace-nowrap text-destructive">{dinheiro(c.saidas)}</td>
-                        <td className={cn("px-4 py-3 text-right whitespace-nowrap font-bold", c.saldo_final < 0 ? "text-destructive" : "text-white")}>
+                        <td className={cn("px-4 py-3 text-right whitespace-nowrap font-bold", corSaldo(c.saldo_final))}>
                           {dinheiro(c.saldo_final)}
                         </td>
                         <td className="px-4 py-3 text-right whitespace-nowrap text-xs">
@@ -432,7 +439,9 @@ export default function ContabilFiscal() {
                 Ordem por data de pagamento{umaConta ? "; saldo da conta após cada linha" : ""}.
                 {tipoFiltro !== "ambos" ? " O filtro de tipo só esconde linhas: saldos e totais são da conta inteira." : ""}
                 {totalPages > 1 &&
-                  ` Página ${paginaAtual}/${totalPages} · Exibindo ${(paginaAtual - 1) * PAGE_SIZE + 1}–${Math.min(paginaAtual * PAGE_SIZE, itens.length)} de ${itens.length}.`}
+                  ` Página ${paginaAtual}/${totalPages} · Exibindo linhas ${(paginaAtual - 1) * PAGE_SIZE + 1}–${Math.min(paginaAtual * PAGE_SIZE, itens.length)} de ${itens.length}.`}
+                {/* A linha "Saldo de abertura" ocupa uma linha da tabela mas não é lançamento. */}
+                {itens.length !== linhas.length && " A linha de saldo de abertura não conta como lançamento."}
               </p>
             </div>
 
@@ -465,9 +474,9 @@ export default function ContabilFiscal() {
                     <tbody className="divide-y divide-white/5">
                       {paginados.map((item) =>
                         item.tipo === "abertura" ? (
-                          <LinhaAbertura key="abertura" abertura={item.abertura} umaConta={umaConta} dinheiro={dinheiro} />
+                          <LinhaAbertura key="abertura" abertura={item.abertura} umaConta={umaConta} dinheiro={dinheiro} corSaldo={corSaldo} />
                         ) : (
-                          <LinhaMovimento key={item.linha.id} linha={item.linha} umaConta={umaConta} dinheiro={dinheiro} />
+                          <LinhaMovimento key={item.linha.id} linha={item.linha} umaConta={umaConta} dinheiro={dinheiro} corSaldo={corSaldo} />
                         ),
                       )}
                     </tbody>
@@ -555,12 +564,24 @@ export default function ContabilFiscal() {
 
 // ─── Componentes ───────────────────────────────────────────────────────────────
 
+/**
+ * O valor não pode sair cortado com reticências: a fonte acompanha a largura do
+ * card (container query) e o title mostra o valor inteiro se ainda faltar espaço.
+ */
 function CardResumo({ titulo, detalhe, valor, cor }: { titulo: string; detalhe: string; valor: string; cor: string }) {
   return (
-    <div className="glass-panel rounded-2xl px-4 py-3 border border-white/5 min-w-0">
+    <div className="@container glass-panel rounded-2xl px-4 py-3 border border-white/5 min-w-0">
       <p className="text-xs text-muted-foreground">{titulo}</p>
-      <p className={cn("text-lg font-bold tracking-tight truncate", cor)}>{valor}</p>
-      <p className="text-[11px] text-muted-foreground/80 truncate">{detalhe}</p>
+      <p
+        className={cn(
+          "font-bold tracking-tight tabular-nums whitespace-nowrap overflow-hidden text-ellipsis text-[clamp(0.875rem,10cqi,1.125rem)]",
+          cor,
+        )}
+        title={valor}
+      >
+        {valor}
+      </p>
+      <p className="text-[11px] text-muted-foreground/80 truncate" title={detalhe}>{detalhe}</p>
     </div>
   );
 }
@@ -570,10 +591,12 @@ function LinhaAbertura({
   abertura,
   umaConta,
   dinheiro,
+  corSaldo,
 }: {
   abertura: AberturaContaExtrato;
   umaConta: boolean;
   dinheiro: (v: number) => string;
+  corSaldo: (v: number) => string;
 }) {
   return (
     <tr className="bg-primary/5">
@@ -585,7 +608,7 @@ function LinhaAbertura({
       <td className="px-4 py-3" />
       <td className="px-4 py-3" />
       {umaConta && (
-        <td className={cn("px-4 py-3 text-right text-sm font-bold whitespace-nowrap", abertura.saldo_apos < 0 ? "text-destructive" : "text-white")}>
+        <td className={cn("px-4 py-3 text-right text-sm font-bold whitespace-nowrap", corSaldo(abertura.saldo_apos))}>
           {dinheiro(abertura.saldo_apos)}
         </td>
       )}
@@ -598,10 +621,12 @@ function LinhaMovimento({
   linha: l,
   umaConta,
   dinheiro,
+  corSaldo,
 }: {
   linha: LinhaExtrato;
   umaConta: boolean;
   dinheiro: (v: number) => string;
+  corSaldo: (v: number) => string;
 }) {
   const documento = documentoDaLinha(l.tipo_documento, l.numero_documento);
   const vinculo = textoVinculo(l.extrato, dinheiro);
@@ -634,7 +659,7 @@ function LinhaMovimento({
         <td
           className={cn(
             "px-4 py-3 text-right text-sm font-bold whitespace-nowrap",
-            (l.saldo_apos ?? 0) < 0 ? "text-destructive" : "text-white",
+            corSaldo(l.saldo_apos ?? 0),
           )}
         >
           {l.saldo_apos != null ? dinheiro(l.saldo_apos) : "—"}

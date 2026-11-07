@@ -4,6 +4,7 @@ import {
     AGENCIA_REGEX,
     chaveContaBancaria,
     encontrarContaDuplicada,
+    idsContasDuplicadas,
     formatarSaldoComSinal,
     inverterSinalSaldo,
     mascararAgenciaConta,
@@ -69,5 +70,19 @@ describe("conta duplicada", () => {
         assert.equal(encontrarContaDuplicada({banco: "Itaú Unibanco", agencia: "1234", conta: "98765-4"}, existentes, 1), undefined);
         assert.equal(encontrarContaDuplicada({banco: null, agencia: null, conta: null}, existentes), undefined);
         assert.equal(chaveContaBancaria({banco: "Itaú", agencia: "", conta: "1"}), null);
+    });
+});
+
+describe("idsContasDuplicadas", () => {
+    it("marca todas as contas que repetem banco + agência + conta", () => {
+        const contas = [
+            {id: 1, banco: "Itaú Unibanco", agencia: "1234", conta: "98765-4"},
+            {id: 2, banco: "itaú unibanco", agencia: "01234-0", conta: "0987654"},
+            {id: 3, banco: "Bradesco", agencia: "1234", conta: "98765-4"},
+            {id: 4, banco: null, agencia: null, conta: null},
+            {id: 5, banco: null, agencia: null, conta: null},
+        ];
+        assert.deepEqual([...idsContasDuplicadas(contas)].sort(), [1, 2]);
+        assert.equal(idsContasDuplicadas([]).size, 0);
     });
 });

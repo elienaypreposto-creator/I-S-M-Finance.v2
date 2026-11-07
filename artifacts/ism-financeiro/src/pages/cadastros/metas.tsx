@@ -5,6 +5,8 @@ import {Download, Target, TrendingUp, TrendingDown, Loader2, ChevronDown, Chevro
 import {useDinheiro, useSaldosVisiveis} from "@/components/conta/saldos-visiveis";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
+import {useAuth} from "@/hooks/use-auth";
+import {PERM} from "@/lib/permissoes";
 import {ToastAction} from "@/components/ui/toast";
 import {fetchApiData} from "@/lib/api-config";
 import {formatCurrency} from "@/lib/utils";
@@ -16,6 +18,7 @@ import {
     entradaMetaParaApi,
     resumirCadastroMetas,
     rotuloCelulaMeta,
+    rotuloLinhaMeta,
     rotuloPeriodoMetas,
     valorMeta,
 } from "@/lib/metas-cadastro";
@@ -171,9 +174,11 @@ interface MetaCellProps {
     plano_conta_id: number;
     mes: number;
     ano: number;
-    /** "Categoria / Subcategoria" — compõe o aria-label da célula. */
+    /** "Categoria / Subcategoria (tipo)" — compõe o aria-label da célula. */
     linha: string;
     currentValue: string;
+    /** Sem financeiro:metas:editar a célula é só texto (o POST /metas recusaria). */
+    podeEditar: boolean;
     activeCell: ActiveCell | null;
     onActivate: (cell: ActiveCell) => void;
     onChange: (value: string) => void;
@@ -187,6 +192,7 @@ function MetaCell({
                       ano,
                       linha,
                       currentValue,
+                      podeEditar,
                       activeCell,
                       onActivate,
                       onChange,
@@ -196,7 +202,7 @@ function MetaCell({
     const saldos = useSaldosVisiveis();
     const inputRef = useRef<HTMLInputElement>(null);
     const isActive =
-        activeCell?.plano_conta_id === plano_conta_id && activeCell?.mes === mes;
+        podeEditar && activeCell?.plano_conta_id === plano_conta_id && activeCell?.mes === mes;
 
     useEffect(() => {
         if (isActive) inputRef.current?.select();
@@ -233,6 +239,23 @@ function MetaCell({
     const valorFalado = hasValue
         ? (saldos.visivel ? formatCurrency(valorMeta(currentValue)) : "valor oculto")
         : null;
+    const corTexto = hasValue && saldos.visivel ? "text-white" : "text-muted-foreground/30";
+    const conteudo = hasValue ? saldos.texto(compactBrl(currentValue)) : "—";
+
+    // Só leitura: texto comum; o cabeçalho da linha e o do mês dão o contexto ao leitor de tela.
+    if (!podeEditar) {
+        return (
+            <span className={`block w-full text-right text-xs px-1 py-0.5 font-mono ${corTexto}`}>
+                {hasValue && !saldos.visivel ? (
+                    <>
+                        <span aria-hidden="true">{conteudo}</span>
+                        <span className="sr-only">valor oculto</span>
+                    </>
+                ) : conteudo}
+            </span>
+        );
+    }
+
     return (
         <button
             type="button"
@@ -244,11 +267,9 @@ function MetaCell({
                     value: hasValue ? apiValorToValorBr(currentValue) : "",
                 })
             }
-            className={`w-full text-right text-xs rounded px-1 py-0.5 transition-colors hover:bg-white/10 font-mono ${
-                hasValue && saldos.visivel ? "text-white" : "text-muted-foreground/30"
-            }`}
+            className={`w-full text-right text-xs rounded px-1 py-0.5 transition-colors hover:bg-white/10 font-mono ${corTexto}`}
         >
-            {hasValue ? saldos.texto(compactBrl(currentValue)) : "—"}
+            {conteudo}
         </button>
     );
 }
@@ -259,6 +280,9 @@ export default function Metas() {
     const saldos = useSaldosVisiveis();
     const queryClient = useQueryClient();
     const {toast} = useToast();
+    // A API exige financeiro:metas:editar no POST /metas; sem ela a planilha é só leitura.
+    const {hasPermission} = useAuth();
+    const podeEditar = hasPermission(PERM.METAS_EDITAR);
 
     const [activeCell, setActiveCell] = useState<ActiveCell | null>(null);
     const [collapsedTipos, setCollapsedTipos] = useState<Set<string>>(new Set());
@@ -372,7 +396,7 @@ export default function Metas() {
             toast({
                 variant: "destructive",
                 title: "Erro ao salvar meta",
-                description: "Não foi possível guardar o valor. Tente novamente.",
+                description: "Não foi possível salvar o valor. Tente novamente.",
             });
         },
 
@@ -444,6 +468,7 @@ export default function Metas() {
     // ── Handlers de célula ─────────────────────────────────────────────────────
     // Com os valores ocultos não abre o editor (ele mostraria o número): avisa e oferece mostrar.
     const handleActivate = (cell: ActiveCell) => {
+        if (!podeEditar) return;
         if (!saldos.visivel) {
             toast({
                 title: "Valores ocultos",
@@ -525,7 +550,9 @@ export default function Metas() {
         <div className="space-y-6">
             <PageHeader
                 title="Metas Financeiras"
-                description="Planejamento orçamentário por categoria — clique numa célula para editar"
+                description={podeEditar
+                    ? "Planejamento orçamentário por categoria — clique numa célula para editar"
+                    : "Planejamento orçamentário por categoria — somente consulta"}
                 actions={
                     <div className="flex gap-3">
                         {/* Mesma preferência global de "Ocultar saldos" do menu do usuário. */}
@@ -746,9 +773,17 @@ export default function Metas() {
                                                                 className="border-b border-white/5 hover:bg-white/[0.02] transition-colors"
                                                             >
                                                                 <th scope="row" className="px-4 py-2.5 sticky left-0 bg-card/80 backdrop-blur-sm z-10 pl-12 text-left font-normal">
-                                    <span className="text-sm text-white/80 capitalize">
-                                      {pc.subcategoria ?? pc.categoria}
-                                    </span>
+                                    {/* Grupo sem subcategoria: mesmo rótulo da tela de Plano de Contas,
+                                        em vez de repetir o nome do grupo. */}
+                                    {pc.subcategoria?.trim() ? (
+                                        <span className="text-sm text-white/80 capitalize">
+                                          {pc.subcategoria.trim()}
+                                        </span>
+                                    ) : (
+                                        <span className="text-sm italic text-muted-foreground">
+                                          Sem subcategoria
+                                        </span>
+                                    )}
                                                                 </th>
                                                                 {mesesVisiveis.map((mes) => (
                                                                     <td key={mes} className="px-2 py-2">
@@ -756,8 +791,9 @@ export default function Metas() {
                                                                             plano_conta_id={pc.id}
                                                                             mes={mes}
                                                                             ano={ano}
-                                                                            linha={nomeLinha(pc)}
+                                                                            linha={rotuloLinhaMeta(pc.categoria, pc.subcategoria, pc.tipo)}
                                                                             currentValue={metasMap.get(`${pc.id}-${mes}`) ?? ""}
+                                                                            podeEditar={podeEditar}
                                                                             activeCell={activeCell}
                                                                             onActivate={handleActivate}
                                                                             onChange={handleChange}
@@ -787,13 +823,20 @@ export default function Metas() {
                 )}
             </div>
 
-            <p className="text-xs text-muted-foreground text-center">
-                Clique em qualquer célula para definir ou editar o valor projetado.
-                Pressione <kbd className="px-1.5 py-0.5 bg-white/10 rounded text-[10px] font-mono">Enter</kbd> para
-                confirmar
-                ou <kbd className="px-1.5 py-0.5 bg-white/10 rounded text-[10px] font-mono">Esc</kbd> para cancelar.
-                Célula vazia fica sem meta (dá para desfazer no aviso).
-            </p>
+            {podeEditar ? (
+                <p className="text-xs text-muted-foreground text-center">
+                    Clique em qualquer célula para definir ou editar o valor projetado.
+                    Pressione <kbd className="px-1.5 py-0.5 bg-white/10 rounded text-[10px] font-mono">Enter</kbd> para
+                    confirmar
+                    ou <kbd className="px-1.5 py-0.5 bg-white/10 rounded text-[10px] font-mono">Esc</kbd> para cancelar.
+                    Célula vazia fica sem meta (dá para desfazer no aviso).
+                </p>
+            ) : (
+                <p className="text-xs text-muted-foreground text-center">
+                    Você pode consultar as metas, mas não alterá-las. Para editar, peça ao administrador a
+                    permissão “Cadastro e edição de Metas”.
+                </p>
+            )}
         </div>
     );
 }

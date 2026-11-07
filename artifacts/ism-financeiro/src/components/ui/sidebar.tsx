@@ -544,13 +544,18 @@ function SidebarMenuButton({
     }
   }
 
+  // Só no menu retraído do desktop. Com o tooltip "escondido" (hidden) ele
+  // ainda abria no foco como camada invisível: no sheet do celular o 1º Esc
+  // fechava esse tooltip e o menu continuava aberto.
+  const semTooltip = state !== "collapsed" || isMobile
+
   return (
-    <Tooltip>
+    <Tooltip open={semTooltip ? false : undefined}>
       <TooltipTrigger asChild>{button}</TooltipTrigger>
       <TooltipContent
         side="right"
         align="center"
-        hidden={state !== "collapsed" || isMobile}
+        hidden={semTooltip}
         {...tooltip}
       />
     </Tooltip>

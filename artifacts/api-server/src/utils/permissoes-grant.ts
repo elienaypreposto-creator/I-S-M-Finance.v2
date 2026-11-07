@@ -75,7 +75,7 @@ export function validatePermissoesGrant(input: GrantPermissoesInput): GrantPermi
                 ok: false,
                 status: 403,
                 code: "FORBIDDEN",
-                message: "Não é permitido alterar permissões de um utilizador com privilégios superiores.",
+                message: "Não é permitido alterar permissões de um usuário com privilégios superiores.",
             };
         }
     }

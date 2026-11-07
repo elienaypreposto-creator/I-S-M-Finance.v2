@@ -214,6 +214,17 @@ function EmpresaModal({modo, onClose}: {modo: ModoModal; onClose: () => void}) {
 
     const dpaOk = dpaObrigatorio ? dpa.trim().length >= 2 : dpa.trim().length !== 1;
     const podeSalvar = razao.trim().length >= 2 && dpaOk && !cnpjErro && !salvar.isPending;
+    // O motivo do Salvar desabilitado aparece no próprio campo: depois de tocado ou
+    // quando ele é o único pendente (razão social já preenchida).
+    const [tocados, setTocados] = useState<{razao?: boolean; dpa?: boolean}>({});
+    const razaoErro = razao.trim().length >= 2 ? null : "Informe a razão social (mínimo 2 caracteres).";
+    const dpaErro = dpaOk
+        ? null
+        : dpa.trim().length === 0
+          ? "Informe o nome do representante que aceita o DPA."
+          : "O nome do representante precisa de pelo menos 2 caracteres.";
+    const mostrarRazaoErro = !!razaoErro && !!tocados.razao;
+    const mostrarDpaErro = !!dpaErro && (!!tocados.dpa || !razaoErro);
 
     async function fechar() {
         if (alterado && !salvar.isPending) {
@@ -250,8 +261,14 @@ function EmpresaModal({modo, onClose}: {modo: ModoModal; onClose: () => void}) {
                                 id="empresa-razao-social"
                                 value={razao}
                                 onChange={(e) => setRazao(e.target.value)}
+                                onBlur={() => setTocados((t) => ({...t, razao: true}))}
+                                aria-invalid={mostrarRazaoErro}
+                                aria-describedby={mostrarRazaoErro ? "empresa-razao-erro" : undefined}
                                 className={inputCls}
                             />
+                            {mostrarRazaoErro && (
+                                <p id="empresa-razao-erro" className="text-xs text-destructive mt-1">{razaoErro}</p>
+                            )}
                         </div>
                         <div>
                             <label htmlFor="empresa-nome-fantasia" className={labelCls}>Nome fantasia</label>
@@ -284,10 +301,15 @@ function EmpresaModal({modo, onClose}: {modo: ModoModal; onClose: () => void}) {
                                 id="empresa-dpa-representante"
                                 value={dpa}
                                 onChange={(e) => setDpa(e.target.value)}
+                                onBlur={() => setTocados((t) => ({...t, dpa: true}))}
                                 autoFocus={ativar}
-                                aria-describedby="empresa-dpa-ajuda"
+                                aria-invalid={mostrarDpaErro}
+                                aria-describedby={mostrarDpaErro ? "empresa-dpa-erro empresa-dpa-ajuda" : "empresa-dpa-ajuda"}
                                 className={inputCls}
                             />
+                            {mostrarDpaErro && (
+                                <p id="empresa-dpa-erro" className="text-xs text-destructive mt-1">{dpaErro}</p>
+                            )}
                             <p id="empresa-dpa-ajuda" className="text-xs text-muted-foreground/70 mt-1.5">
                                 {empresa?.dpa_assinado_em
                                     ? `Aceite registrado em ${formatarData(empresa.dpa_assinado_em)}. Trocar o nome registra um novo aceite.`

@@ -1,7 +1,7 @@
 /**
  * Códigos de permissão da API (padrão dominio:recurso:acao).
  *
- * O catálogo canónico vive em `@workspace/db/permissoes` e é reexportado aqui
+ * O catálogo canônico vive em `@workspace/db/permissoes` e é reexportado aqui
  * para o schema Zod (`z.enum`) e para withPermission / rotas.
  */
 import {z} from "zod";

@@ -29,6 +29,9 @@ type Perfil = {
     cargo: string | null;
     ultimo_acesso: string | null;
     ultimo_acesso_dispositivo: string | null;
+    /** Login anterior ao que abriu esta sessão (null se a sessão não guardou). */
+    acesso_anterior: string | null;
+    acesso_anterior_dispositivo: string | null;
 };
 
 export function PerfilModal({
@@ -51,7 +54,8 @@ export function PerfilModal({
     const [telefone, setTelefone] = useState(user?.telefone ?? "");
     const [cargo, setCargo] = useState(user?.cargo ?? "");
     const [email, setEmail] = useState(user?.email ?? "");
-    const [ultimo, setUltimo] = useState<string | null>(user?.ultimo_acesso ?? null);
+    // Acesso anterior, não o login desta sessão (user.ultimo_acesso é o mais recente).
+    const [anterior, setAnterior] = useState<string | null>(null);
     const [dispositivo, setDispositivo] = useState<string | null>(null);
     const [prefs, setPrefs] = useState<PreferenciasUsuario>(() => lerPreferencias(user?.id));
     const [erroNome, setErroNome] = useState<string | null>(null);
@@ -65,8 +69,8 @@ export function PerfilModal({
                 setTelefone(perfil.telefone ?? "");
                 setCargo(perfil.cargo ?? "");
                 setEmail(perfil.email ?? "");
-                setUltimo(perfil.ultimo_acesso);
-                setDispositivo(perfil.ultimo_acesso_dispositivo);
+                setAnterior(perfil.acesso_anterior);
+                setDispositivo(perfil.acesso_anterior_dispositivo);
             })
             .catch(() => undefined)
             .finally(() => {
@@ -226,7 +230,7 @@ export function PerfilModal({
 
                                 <p className="mt-4 flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-muted-foreground">
                                     <User className="w-3.5 h-3.5 shrink-0" aria-hidden="true"/>
-                                    Último acesso: {formatarQuando(ultimo)}
+                                    Acesso anterior: {carregando ? "…" : anterior ? formatarQuando(anterior) : "sem registro"}
                                     {dispositivo ? ` · ${dispositivo}` : ""}
                                 </p>
                             </section>

@@ -59,7 +59,7 @@ export function comporPacoteExportacao(input: {
     return {
         versao: 1,
         gerado_em: input.geradoEm,
-        nota: "O OFX original não é guardado. extratos_arquivos agrupa as linhas importadas por ficheiro.",
+        nota: "O OFX original não é guardado. extratos_arquivos agrupa as linhas importadas por arquivo.",
         empresa: valorJson(input.empresa) as Record<string, unknown>,
         usuarios_vinculados: input.usuarios.map((linha) => {
             const copia = valorJson(linha) as Record<string, unknown>;

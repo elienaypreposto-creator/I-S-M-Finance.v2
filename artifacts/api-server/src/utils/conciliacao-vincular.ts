@@ -15,9 +15,25 @@
 
 import {diferencaConciliacaoCents, sumCents} from "./money.js";
 
+/**
+ * Quanto o título pede antes deste vínculo: líquido (bruto − retenções) −
+ * desconto + juros JÁ GRAVADOS no título (no cadastro ou em vínculos
+ * anteriores). É a base do vínculo e, portanto, do residual: o em aberto
+ * de Lançamentos/Painel (em-aberto.ts) usa a mesma conta, menos o quitado.
+ */
+export function valorAPagarTituloCents(args: {
+    valorLiquidoCents: number;
+    descontoCents: number;
+    jurosCents: number;
+}): number {
+    return Math.max(0, args.valorLiquidoCents - args.descontoCents + args.jurosCents);
+}
+
 export type VincularLancamentoInput = {
     lancamento_id: number;
+    /** Base do título: `valorAPagarTituloCents` (líquido − desconto + juros já gravados). */
     valorCents: number;
+    /** Desconto informado NESTE vínculo (o já gravado no título está em valorCents). */
     descontoCents: number;
     /** Juros/Multa informado no payload (0 se omitido). */
     jurosMultaCents: number;
@@ -152,12 +168,15 @@ function decidirModoBUmLancamento(input: VincularDecisionInput): VincularDecisio
 
     if (deltaCents < 0) {
         const faltaCents = -deltaCents;
-        // Residual = falta DEPOIS deste vínculo (título − quitado anterior − linha).
+        // Residual = em aberto do título DEPOIS deste vínculo:
+        // (líquido − desconto + juros) − quitado. A linha inteira entra no
+        // quitado e os juros/multa informados aqui somam no título, então o
+        // que sobra é a falta + esses juros.
         // Cada requisição do Modo B gera o seu residual com o saldo já decrescido;
         // não se agrupa num único título “fundido” das outras linhas.
         const podeResidual = gerarParcial;
         const residual = podeResidual
-            ? {origemLancamentoId: l.lancamento_id, valorCents: faltaCents}
+            ? {origemLancamentoId: l.lancamento_id, valorCents: faltaCents + l.jurosMultaCents}
             : null;
 
         if (podeResidual && base < faltaCents) {

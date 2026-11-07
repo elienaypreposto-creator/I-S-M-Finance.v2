@@ -20,7 +20,7 @@ export function requireTenant(req: Request): TenantContext {
     return {empresaId};
 }
 
-/** Filtro canónico de leitura. Use em todo `where` de tabela de domínio. */
+/** Filtro canônico de leitura. Use em todo `where` de tabela de domínio. */
 export function tenantScope<TTable extends TenantTable>(table: TTable, empresaId: number): SQL {
     return eq(table.empresa_id as never, empresaId);
 }

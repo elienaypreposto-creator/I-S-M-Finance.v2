@@ -43,7 +43,7 @@ const FROM = process.env.SMTP_FROM ?? "ISM Finance <noreply@ism.finance>";
 /**
  * E-mail de boas-vindas para fluxo OTP (sem senha definida pelo admin).
  *
- * O `otp` é um código de primeiro acesso que direciona o utilizador para /primeiro-acesso,
+ * O `otp` é um código de primeiro acesso que direciona o usuário para /primeiro-acesso,
  * onde ele valida o código e define a própria senha.
  */
 export async function sendWelcomeEmail(to: string, nome: string, otp: string, originUrl: string): Promise<void> {
@@ -120,7 +120,7 @@ export async function sendWelcomeEmail(to: string, nome: string, otp: string, or
       <div style="flex:1;height:1px;background:#e5e7eb;"></div>
     </div>
 
-    <!-- Botão de acção -->
+    <!-- Botão de ação -->
     <div style="text-align:center;margin:0 0 20px;">
       <a href="${link}"
          style="display:inline-block;background:#0ea5e9;color:#ffffff;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:700;font-size:15px;letter-spacing:0.3px;">

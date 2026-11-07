@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   centrosCustosTable,
@@ -59,7 +59,8 @@ export const departamentosService = {
           query.departamento_id ? eq(centrosCustosTable.departamento_id, query.departamento_id) : undefined,
         ),
       )
-      .orderBy(centrosCustosTable.nome);
+      // Sem diferenciar caixa, como Filiais (o front reordena também sem acento).
+      .orderBy(sql`lower(${centrosCustosTable.nome})`, centrosCustosTable.id);
   },
 
   async createCentroCusto(empresaId: number, payload: CreateCentroCustoBody) {
@@ -170,7 +171,7 @@ export const departamentosService = {
       .select()
       .from(departamentosTable)
       .where(tenantScope(departamentosTable, empresaId))
-      .orderBy(departamentosTable.nome);
+      .orderBy(sql`lower(${departamentosTable.nome})`, departamentosTable.id);
   },
 
   async create(empresaId: number, payload: CreateDepartamentoBody) {

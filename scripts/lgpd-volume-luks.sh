@@ -134,7 +134,13 @@ if ! findmnt -n "$MNT" >/dev/null 2>&1; then
   sudo mount "/dev/mapper/$MAP" "$MNT"
 fi
 
-if [ ! -f "$DATA/PG_VERSION" ]; then
+# Com sudo: a pasta do Postgres é 700 do uid 70 e o usuário do deploy não enxerga o PG_VERSION.
+# Sem sudo, todo deploy achava o volume vazio e recopiava o volume antigo por cima do banco.
+if ! sudo test -f "$DATA/PG_VERSION"; then
+  if sudo test -d "$DATA" && [ -n "$(sudo find "$DATA" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+    echo "$DATA tem conteúdo sem PG_VERSION. Não apago nem copio por cima; verifique à mão." >&2
+    exit 1
+  fi
   # Só o volume deste ambiente serve de origem; nunca outro projeto da máquina.
   src=""
   mp="$(docker volume inspect -f '{{.Mountpoint}}' "$VOLUME_ANTIGO" 2>/dev/null || true)"

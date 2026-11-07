@@ -52,7 +52,7 @@ export const usuarioPermissoesTable = pgTable("usuario_permissoes", {
     ),
 ]);
 
-/** Um registo por sessão ativa — revogado = true após uso ou ao fazer logout. */
+/** Um registro por sessão ativa — revogado = true após uso ou ao fazer logout. */
 export const refreshTokensTable = pgTable("refresh_tokens", {
     id: serial("id").primaryKey(),
     usuario_id: integer("usuario_id").references(() => usuariosTable.id, {onDelete: "cascade"}).notNull(),

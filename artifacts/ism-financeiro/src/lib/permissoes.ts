@@ -34,4 +34,5 @@ export const PERM = {
     CONTAS_BANCARIAS_LISTAR: "configuracoes:contas-bancarias:listar",
     PLANO_CONTAS_LISTAR: "configuracoes:plano-contas:listar",
     METAS_LISTAR: "financeiro:metas:listar",
+    METAS_EDITAR: "financeiro:metas:editar",
 } as const;
