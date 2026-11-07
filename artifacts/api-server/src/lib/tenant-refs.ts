@@ -12,7 +12,7 @@
  *   empresas            - é o tenant
  *   usuarios            - e-mail único no sistema; vínculo em usuario_empresas
  *   usuario_permissoes  - global até ISMF-16 (perms por empresa)
- *   refresh_tokens      - sessão do utilizador; empresa viva no JWT
+ *   refresh_tokens      - sessão do usuário; empresa viva no JWT
  *   logs_sistema        - log operacional da API, não dado de negócio
  *   usuario_empresas    - ponte N:N, não é “dado de uma empresa”
  *

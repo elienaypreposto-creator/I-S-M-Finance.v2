@@ -16,6 +16,7 @@ import {
     entradaMetaParaApi,
     resumirCadastroMetas,
     rotuloCelulaMeta,
+    rotuloLinhaMeta,
     rotuloPeriodoMetas,
     valorMeta,
 } from "@/lib/metas-cadastro";
@@ -171,7 +172,7 @@ interface MetaCellProps {
     plano_conta_id: number;
     mes: number;
     ano: number;
-    /** "Categoria / Subcategoria" — compõe o aria-label da célula. */
+    /** "Categoria / Subcategoria (tipo)" — compõe o aria-label da célula. */
     linha: string;
     currentValue: string;
     activeCell: ActiveCell | null;
@@ -372,7 +373,7 @@ export default function Metas() {
             toast({
                 variant: "destructive",
                 title: "Erro ao salvar meta",
-                description: "Não foi possível guardar o valor. Tente novamente.",
+                description: "Não foi possível salvar o valor. Tente novamente.",
             });
         },
 
@@ -746,9 +747,17 @@ export default function Metas() {
                                                                 className="border-b border-white/5 hover:bg-white/[0.02] transition-colors"
                                                             >
                                                                 <th scope="row" className="px-4 py-2.5 sticky left-0 bg-card/80 backdrop-blur-sm z-10 pl-12 text-left font-normal">
-                                    <span className="text-sm text-white/80 capitalize">
-                                      {pc.subcategoria ?? pc.categoria}
-                                    </span>
+                                    {/* Grupo sem subcategoria: mesmo rótulo da tela de Plano de Contas,
+                                        em vez de repetir o nome do grupo. */}
+                                    {pc.subcategoria?.trim() ? (
+                                        <span className="text-sm text-white/80 capitalize">
+                                          {pc.subcategoria.trim()}
+                                        </span>
+                                    ) : (
+                                        <span className="text-sm italic text-muted-foreground">
+                                          Sem subcategoria
+                                        </span>
+                                    )}
                                                                 </th>
                                                                 {mesesVisiveis.map((mes) => (
                                                                     <td key={mes} className="px-2 py-2">
@@ -756,7 +765,7 @@ export default function Metas() {
                                                                             plano_conta_id={pc.id}
                                                                             mes={mes}
                                                                             ano={ano}
-                                                                            linha={nomeLinha(pc)}
+                                                                            linha={rotuloLinhaMeta(pc.categoria, pc.subcategoria, pc.tipo)}
                                                                             currentValue={metasMap.get(`${pc.id}-${mes}`) ?? ""}
                                                                             activeCell={activeCell}
                                                                             onActivate={handleActivate}

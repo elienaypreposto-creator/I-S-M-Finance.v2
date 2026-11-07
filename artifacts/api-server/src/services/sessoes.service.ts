@@ -8,6 +8,12 @@ import crypto from "node:crypto";
 import {alertRedis, getRedis} from "../lib/redis";
 import {ACCESS_TOKEN_TTL, REFRESH_TOKEN_TTL} from "./token.service";
 
+/** Um login (abertura de sessão por senha): quando e de qual navegador. */
+export interface AcessoRegistrado {
+    quando: string;
+    userAgent: string | null;
+}
+
 export interface SessaoRegistro {
     id: string;
     usuarioId: number;
@@ -16,6 +22,12 @@ export interface SessaoRegistro {
     ip: string | null;
     criadoEm: string;
     ultimoUso: string;
+    /**
+     * Login anterior ao que abriu esta sessão. Fica gravado na sessão para a
+     * tela "Segurança" mostrar sempre o mesmo valor, mesmo que outro login
+     * (outro dispositivo) aconteça depois. Ausente em sessões antigas.
+     */
+    acessoAnterior?: AcessoRegistrado | null;
 }
 
 export interface SessaoPublica {
@@ -49,6 +61,10 @@ export interface ArmazemSessoes {
     gravarUa(usuarioId: number, ua: string, ttlSec: number): Promise<void>;
 
     lerUa(usuarioId: number): Promise<string | null>;
+
+    gravarUltimoLogin(usuarioId: number, acesso: AcessoRegistrado, ttlSec: number): Promise<void>;
+
+    lerUltimoLogin(usuarioId: number): Promise<AcessoRegistrado | null>;
 }
 
 const kSess = (id: string) => `sess:v1:${id}`;
@@ -56,6 +72,20 @@ const kUser = (uid: number) => `sess:v1:u:${uid}`;
 const kHash = (hash: string) => `sess:v1:h:${hash}`;
 const kRev = (id: string) => `sess:v1:rev:${id}`;
 const kUa = (uid: number) => `sess:v1:ua:${uid}`;
+const kLogin = (uid: number) => `sess:v1:login:${uid}`;
+
+/** O registro do último login vive mais que a sessão: quem volta depois de meses ainda vê o acesso anterior. */
+const ULTIMO_LOGIN_TTL = 400 * 24 * 60 * 60;
+
+function parseAcesso(bruto: string | null): AcessoRegistrado | null {
+    if (!bruto) return null;
+    try {
+        const v = JSON.parse(bruto) as AcessoRegistrado;
+        return v && typeof v.quando === "string" ? {quando: v.quando, userAgent: v.userAgent ?? null} : null;
+    } catch {
+        return null;
+    }
+}
 
 function parseRegistro(bruto: string | null): SessaoRegistro | null {
     if (!bruto) return null;
@@ -187,6 +217,26 @@ export function redisArmazem(): ArmazemSessoes {
                 return null;
             }
         },
+        async gravarUltimoLogin(usuarioId, acesso, ttlSec) {
+            const r = cli();
+            if (!r) return;
+            try {
+                const valor = {quando: acesso.quando, userAgent: acesso.userAgent?.slice(0, 400) ?? null};
+                await r.set(kLogin(usuarioId), JSON.stringify(valor), "EX", ttlSec);
+            } catch (err) {
+                alertRedis("gravar último login", err);
+            }
+        },
+        async lerUltimoLogin(usuarioId) {
+            const r = cli();
+            if (!r) return null;
+            try {
+                return parseAcesso(await r.get(kLogin(usuarioId)));
+            } catch (err) {
+                alertRedis("ler último login", err);
+                return null;
+            }
+        },
     };
 }
 
@@ -196,6 +246,7 @@ export function memoriaArmazem(agora: () => number = Date.now): ArmazemSessoes {
     const porHash = new Map<string, { id: string; expira: number }>();
     const revogadas = new Map<string, number>();
     const uas = new Map<number, { ua: string; expira: number }>();
+    const logins = new Map<number, { acesso: AcessoRegistrado; expira: number }>();
     const vivo = (exp: number) => exp > agora();
     return {
         async gravar(reg, ttlSec) {
@@ -241,6 +292,14 @@ export function memoriaArmazem(agora: () => number = Date.now): ArmazemSessoes {
             const item = uas.get(usuarioId);
             if (!item || !vivo(item.expira)) return null;
             return item.ua;
+        },
+        async gravarUltimoLogin(usuarioId, acesso, ttlSec) {
+            logins.set(usuarioId, {acesso, expira: agora() + ttlSec * 1000});
+        },
+        async lerUltimoLogin(usuarioId) {
+            const item = logins.get(usuarioId);
+            if (!item || !vivo(item.expira)) return null;
+            return item.acesso;
         },
     };
 }
@@ -300,7 +359,22 @@ export interface MetaSessao {
 }
 
 export interface ServicoSessoes {
-    abrir(input: { usuarioId: number; tokenHash: string; meta: MetaSessao; sid?: string }): Promise<string>;
+    /**
+     * `login`: sessão aberta por login com senha. Guarda na sessão o login
+     * anterior (registro do Redis ou, sem ele, `acessoAnteriorDb`, o
+     * usuarios.ultimo_acesso de antes deste login) e passa a ser o último.
+     */
+    abrir(input: {
+        usuarioId: number;
+        tokenHash: string;
+        meta: MetaSessao;
+        sid?: string;
+        login?: boolean;
+        acessoAnteriorDb?: Date | null;
+    }): Promise<string>;
+
+    /** Login anterior ao que abriu a sessão `sid` (null se a sessão não guardou). */
+    acessoAnterior(sid: string | undefined): Promise<{ quando: string; dispositivo: string | null } | null>;
 
     girar(sid: string, novoHash: string, meta: MetaSessao): Promise<void>;
 
@@ -335,9 +409,15 @@ export function criarSessoes(store: ArmazemSessoes): ServicoSessoes {
     }
 
     return {
-        async abrir({usuarioId, tokenHash, meta, sid}) {
+        async abrir({usuarioId, tokenHash, meta, sid, login, acessoAnteriorDb}) {
             const id = sid ?? crypto.randomUUID();
             const agora = new Date().toISOString();
+            let acessoAnterior: AcessoRegistrado | null = null;
+            if (login) {
+                acessoAnterior = (await store.lerUltimoLogin(usuarioId))
+                    ?? (acessoAnteriorDb ? {quando: acessoAnteriorDb.toISOString(), userAgent: null} : null);
+                await store.gravarUltimoLogin(usuarioId, {quando: agora, userAgent: meta.userAgent}, ULTIMO_LOGIN_TTL);
+            }
             const reg: SessaoRegistro = {
                 id,
                 usuarioId,
@@ -346,6 +426,7 @@ export function criarSessoes(store: ArmazemSessoes): ServicoSessoes {
                 ip: meta.ip,
                 criadoEm: agora,
                 ultimoUso: agora,
+                acessoAnterior,
             };
             await store.gravar(reg, REFRESH_TOKEN_TTL);
             await store.ligarHash(tokenHash, id, REFRESH_TOKEN_TTL);
@@ -434,6 +515,15 @@ export function criarSessoes(store: ArmazemSessoes): ServicoSessoes {
             if (ua) await store.gravarUa(usuarioId, ua, REFRESH_TOKEN_TTL);
         },
         lerUa: (usuarioId) => store.lerUa(usuarioId),
+        async acessoAnterior(sid) {
+            if (!sid) return null;
+            const anterior = (await store.ler(sid))?.acessoAnterior;
+            if (!anterior) return null;
+            return {
+                quando: anterior.quando,
+                dispositivo: anterior.userAgent ? rotuloDispositivo(anterior.userAgent) : null,
+            };
+        },
     };
 }
 

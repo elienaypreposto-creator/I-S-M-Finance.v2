@@ -1,4 +1,5 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
+import { useRolarAoTopo } from "@/hooks/use-rolar-ao-topo";
 import { useMemo } from "react";
 import { PageHeader } from "@/components/shared/page-header";
 import {
@@ -9,6 +10,7 @@ import {
   TrendingDown,
   Loader2,
   AlertCircle,
+  Scale,
   ArrowUpCircle,
   ArrowDownCircle,
 } from "lucide-react";
@@ -82,6 +84,7 @@ function KpiCard({
 
 // ─── Página ────────────────────────────────────────────────────────────────────
 export default function FechamentoMensal() {
+  const raizRef = useRolarAoTopo();
   const dinheiro = useDinheiro();
   // Com saldos ocultos, % da meta e barra também somem (revelam a proporção dos valores).
   const { visivel: saldosVisiveis, texto } = useSaldosVisiveis();
@@ -157,7 +160,7 @@ export default function FechamentoMensal() {
   }
 
   return (
-    <div className="space-y-6">
+    <div ref={raizRef} className="space-y-6">
       <PageHeader
         title="Fechamento Mensal"
         description="Consolidação financeira do período selecionado"
@@ -261,9 +264,11 @@ export default function FechamentoMensal() {
                 label="Receitas realizadas"
                 value={dinheiro(data.realizado_receber)}
                 colorClass={
-                  data.realizado_receber >= data.planejado_receber
-                    ? "text-success"
-                    : "text-warning"
+                  !saldosVisiveis
+                    ? "text-white"
+                    : data.realizado_receber >= data.planejado_receber
+                      ? "text-success"
+                      : "text-warning"
                 }
                 icon={<ArrowUpCircle className="w-4 h-4 text-teal-400" />}
                 sub={
@@ -294,16 +299,20 @@ export default function FechamentoMensal() {
                 }
               />
 
-              {/* Resultado */}
+              {/* Resultado: com saldos ocultos, fundo, ícone e cor neutros (não contam o sinal) */}
               <div
                 className={`rounded-2xl p-5 border ${
-                  saldo >= 0
-                    ? "bg-success/10 border-success/20"
-                    : "bg-destructive/10 border-destructive/20"
+                  !saldosVisiveis
+                    ? "bg-white/5 border-white/10"
+                    : saldo >= 0
+                      ? "bg-success/10 border-success/20"
+                      : "bg-destructive/10 border-destructive/20"
                 }`}
               >
                 <div className="flex items-center gap-2 mb-3">
-                  {saldo >= 0 ? (
+                  {!saldosVisiveis ? (
+                    <Scale className="w-4 h-4 text-muted-foreground" />
+                  ) : saldo >= 0 ? (
                     <TrendingUp className="w-4 h-4 text-success" />
                   ) : (
                     <TrendingDown className="w-4 h-4 text-destructive" />
@@ -311,7 +320,9 @@ export default function FechamentoMensal() {
                   <p className="text-xs text-muted-foreground">Resultado Líquido</p>
                 </div>
                 <p
-                  className={`text-2xl font-bold ${saldo >= 0 ? "text-success" : "text-destructive"}`}
+                  className={`text-2xl font-bold ${
+                    !saldosVisiveis ? "text-white" : saldo >= 0 ? "text-success" : "text-destructive"
+                  }`}
                 >
                   {dinheiro(saldo)}
                 </p>

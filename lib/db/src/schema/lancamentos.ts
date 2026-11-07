@@ -107,6 +107,9 @@ export const lancamentosTable = pgTable("lancamentos", {
     index("lancamentos_data_quitacao_idx").on(table.data_quitacao),
     index("lancamentos_empresa_id_vencimento_idx").on(table.empresa_id, table.vencimento),
     index("lancamentos_empresa_id_conta_id_idx").on(table.empresa_id, table.conta_id),
+    // Residual -> título de origem: subconsulta por linha do pago_parcial
+    // (em-aberto.ts) e busca de residuais no desfazer/excluir extrato.
+    index("lancamentos_lancamento_origem_id_idx").on(table.lancamento_origem_id),
 ]);
 
 export const insertLancamentoSchema = createInsertSchema(lancamentosTable).omit({

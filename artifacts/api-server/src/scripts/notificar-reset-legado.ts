@@ -52,7 +52,7 @@ async function main(): Promise<void> {
     );
 
   console.log(
-    `${pendentes.length} utilizador(es) a avisar${
+    `${pendentes.length} usuário(s) para avisar${
       dryRun ? " (dry-run)" : ""
     }.`,
   );

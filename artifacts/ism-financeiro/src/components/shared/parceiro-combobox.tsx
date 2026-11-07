@@ -15,7 +15,17 @@ type ParceiroComboboxProps = {
     isLoading?: boolean;
     /** Classes extras do botão (ex.: tamanhos em `em` no modal de lançamento). */
     className?: string;
+    /** id do botão (o nome acessível inclui o valor escolhido). */
+    id?: string;
+    /** id do rótulo visível do campo; sem ele o botão leva aria-label "Cliente ou fornecedor". */
+    "aria-labelledby"?: string;
 };
+
+/** Nome acessível do botão: rótulo visível (aria-labelledby) + valor escolhido. */
+function nomeDoBotao(id: string | undefined, labelledBy: string | undefined, padrao: string) {
+    if (!labelledBy) return {"aria-label": padrao};
+    return {"aria-labelledby": id ? `${labelledBy} ${id}` : labelledBy};
+}
 
 export function ParceiroCombobox({
                                      value,
@@ -27,6 +37,8 @@ export function ParceiroCombobox({
                                      onCreateNew,
                                      isLoading = false,
                                      className,
+                                     id,
+                                     "aria-labelledby": ariaLabelledBy,
                                  }: ParceiroComboboxProps) {
     const [open, setOpen] = useState(false);
 
@@ -47,6 +59,8 @@ export function ParceiroCombobox({
             <PopoverTrigger asChild>
                 <button
                     type="button"
+                    id={id}
+                    {...nomeDoBotao(id, ariaLabelledBy, "Cliente ou fornecedor")}
                     className={cn("w-full bg-[#1a1c23] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-left flex items-center justify-between hover:border-white/20 transition-all", className)}
                 >
                     {selected ? (
@@ -74,6 +88,7 @@ export function ParceiroCombobox({
                             value={search}
                             onChange={(e) => onSearchChange(e.target.value)}
                             placeholder="Buscar por nome..."
+                            aria-label="Buscar cliente ou fornecedor"
                             className="bg-transparent text-sm text-white outline-none w-full placeholder:text-muted-foreground/40"
                         />
                     </div>

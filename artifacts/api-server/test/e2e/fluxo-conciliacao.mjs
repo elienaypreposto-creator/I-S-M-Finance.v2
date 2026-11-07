@@ -983,7 +983,9 @@ describe(`Fluxo conciliação → lançamentos (run ${RUN})`, {concurrency: fals
         assert.equal(num(ateInicio.resumo.saldo_final), 1000);
         // Todas as contas: "+ abertura" da conta só no período que contém a data de início.
         const contaEm = (dados) => dados.contas.find((c) => c.conta_id === id);
-        assert.equal(num(contaEm(await movimentacoes(D.d1, diaIso(-13), null)).saldo_abertura), 0);
+        // Período que termina antes do início: a conta não entra no resumo por conta
+        // (QA: outubro listava a conta que começa em 01/11, zerada, com "Começa em").
+        assert.equal(contaEm(await movimentacoes(D.d1, diaIso(-13), null)), undefined);
         const todasDoInicio = contaEm(await movimentacoes(D.d4, D.d7, null));
         assert.equal(num(todasDoInicio.saldo_inicial), 0);
         assert.equal(num(todasDoInicio.saldo_abertura), 1000);
@@ -1040,6 +1042,101 @@ describe(`Fluxo conciliação → lançamentos (run ${RUN})`, {concurrency: fals
         const dia = pontos.find((p) => p.data === vencimento);
         assert.ok(dia, `vencimento ${vencimento} fora da projeção`);
         assert.ok(centavos(dia.pagar) >= 12345 && centavos(dia.receber) >= 1005, JSON.stringify(dia));
+    });
+
+    caso("CP/CR Vencidos do Painel somam desconto e juros como o total de atrasados de Lançamentos", async () => {
+        // QA: "CP Vencidos" ignorava desconto/juros e não batia com Lançamentos.
+        const kpis = async () => {
+            const r = await api("GET", "/dashboard/kpis", {token: ctx.token});
+            assert.equal(r.status, 200, JSON.stringify(r.json));
+            return r.data;
+        };
+        const centavos = (v) => Math.round(num(v) * 100);
+        const antes = await kpis();
+        const tag = `E2E-${RUN} vencido ajustado`;
+        await criarTitulo({tipo: "CP", valor: "1000.00", vencimento: D.d1, descricao: "vencido ajustado CP", extra: {desconto: "100.00", juros: "30.00"}});
+        await criarTitulo({tipo: "CR", valor: "500.00", vencimento: D.d1, descricao: "vencido ajustado CR", extra: {desconto: "50.00"}});
+
+        const depois = await kpis();
+        assert.equal(centavos(depois.contasPagarAtraso) - centavos(antes.contasPagarAtraso), 93000, "CP Vencidos sem desconto/juros");
+        assert.equal(centavos(depois.contasReceberAtraso) - centavos(antes.contasReceberAtraso), 45000, "CR Vencidos sem desconto");
+
+        const r = await api("GET", `/lancamentos/resumo?search=${encodeURIComponent(tag)}`, {token: ctx.token});
+        assert.equal(r.status, 200, JSON.stringify(r.json));
+        assert.equal(r.data.totais.pagar, 930);
+        assert.equal(r.data.totais.receber, 450);
+    });
+
+    caso("excluir extrato e desfazer vínculo devolvem o título para a conta de antes", async () => {
+        // QA: o título voltava para atrasado/pendente, mas na conta do extrato.
+        const contaOriginal = await criarConta("Conta original");
+        const contaExtrato = await criarConta("Conta do extrato");
+        const comConta = await criarTitulo({valor: "61.10", vencimento: D.d5, descricao: "conta anterior", extra: {conta_id: contaOriginal}});
+        const semConta = await criarTitulo({valor: "62.20", vencimento: D.d5, descricao: "sem conta anterior"});
+        assert.equal(comConta.conta_id, contaOriginal);
+
+        // Excluir o extrato (não finalizado).
+        let imp = await importar(contaExtrato, [
+            {fitid: "CA1", data: D.d5, valor: -61.1, memo: "PAG CONTA ANTERIOR"},
+            {fitid: "CA2", data: D.d5, valor: -62.2, memo: "PAG SEM CONTA"},
+        ]);
+        let r = await salvar(imp.extratoId, [vincular(imp.linhas.CA1, comConta.id), vincular(imp.linhas.CA2, semConta.id)]);
+        assert.equal(r.status, 200, JSON.stringify(r.json));
+        assert.equal((await titulo(comConta.id)).conta_id, contaExtrato);
+        assert.equal((await titulo(semConta.id)).conta_id, contaExtrato);
+        r = await api("DELETE", `/conciliacoes/${imp.extratoId}`, {token: ctx.token});
+        assert.equal(r.status, 200, JSON.stringify(r.json));
+        let t = await titulo(comConta.id);
+        assert.ok(ABERTOS.includes(t.status), `status ${t.status}`);
+        assert.equal(t.conta_id, contaOriginal, "ficou na conta do extrato excluído");
+        assert.equal((await titulo(semConta.id)).conta_id ?? null, null);
+
+        // Desfazer pelo Salvar e excluir o vínculo: mesma coisa.
+        imp = await importar(contaExtrato, [
+            {fitid: "CB1", data: D.d6, valor: -61.1, memo: "PAG CONTA ANTERIOR 2"},
+            {fitid: "CB2", data: D.d6, valor: -62.2, memo: "PAG SEM CONTA 2"},
+        ]);
+        r = await salvar(imp.extratoId, [vincular(imp.linhas.CB1, comConta.id), vincular(imp.linhas.CB2, semConta.id)]);
+        assert.equal(r.status, 200, JSON.stringify(r.json));
+        r = await salvar(imp.extratoId, [{tipo: "desfazer", linha_id: imp.linhas.CB1}]);
+        assert.equal(r.status, 200, JSON.stringify(r.json));
+        t = await titulo(comConta.id);
+        assert.equal(num(t.valor_quitado), 0);
+        assert.equal(t.conta_id, contaOriginal, "desfazer deixou na conta do extrato");
+        const det = await extrato(imp.extratoId);
+        const vinculoId = det.linhas.find((x) => x.linha_id === imp.linhas.CB2).vinculacoes[0].vinculo_id;
+        r = await api("DELETE", `/conciliacoes/vinculos/${vinculoId}`, {token: ctx.token});
+        assert.equal(r.status, 200, JSON.stringify(r.json));
+        assert.equal((await titulo(semConta.id)).conta_id ?? null, null);
+
+        // Vincular de novo depois de desfazer guarda a conta de novo.
+        r = await salvar(imp.extratoId, [vincular(imp.linhas.CB1, comConta.id)]);
+        assert.equal(r.status, 200, JSON.stringify(r.json));
+        assert.equal((await titulo(comConta.id)).conta_id, contaExtrato);
+        r = await api("DELETE", `/conciliacoes/${imp.extratoId}`, {token: ctx.token});
+        assert.equal(r.status, 200, JSON.stringify(r.json));
+        assert.equal((await titulo(comConta.id)).conta_id, contaOriginal);
+    });
+
+    caso("kanban grava quem criou a tarefa e atualiza updated_at ao mover", async () => {
+        // QA: created_by vazio e updated_at parado ao mover o card.
+        const me = await api("GET", "/me", {token: ctx.token});
+        assert.equal(me.status, 200, JSON.stringify(me.json));
+        let r = await api("POST", "/kanban/cards", {token: ctx.token, body: {titulo: `E2E-${RUN} tarefa`}});
+        assert.equal(r.status, 201, JSON.stringify(r.json));
+        const card = r.data;
+        try {
+            assert.equal(card.created_by, me.data.id);
+            await new Promise((ok) => setTimeout(ok, 50));
+            r = await api("PATCH", `/kanban/cards/${card.id}`, {token: ctx.token, body: {coluna: "em_execucao"}});
+            assert.equal(r.status, 200, JSON.stringify(r.json));
+            assert.equal(r.data.coluna, "em_execucao");
+            assert.ok(new Date(r.data.updated_at) > new Date(card.updated_at), `updated_at ${r.data.updated_at} <= ${card.updated_at}`);
+            const lista = await api("GET", "/kanban/cards", {token: ctx.token});
+            assert.equal(lista.data.find((c) => c.id === card.id)?.created_by, me.data.id);
+        } finally {
+            await api("DELETE", `/kanban/cards/${card.id}`, {token: ctx.token});
+        }
     });
 
     caso("outra empresa não enxerga os títulos", {skip: !EMPRESA_B_ID}, async () => {

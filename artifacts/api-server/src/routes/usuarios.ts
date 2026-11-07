@@ -2,7 +2,7 @@
  * Rotas de Usuários
  *
  * GET    /usuarios                       - Lista paginada
- * POST   /usuarios                       - Cria utilizador + envia OTP por e-mail
+ * POST   /usuarios                       - Cria usuário + envia OTP por e-mail
  * PUT    /usuarios/:id                   - Atualização
  * GET    /usuarios/:id/permissoes        - Leitura de permissões (empresa ativa do autor)
  * PUT    /usuarios/:id/permissoes        - Substituição de permissões (empresa ativa do autor)
@@ -255,7 +255,7 @@ router.post(
                     res,
                     422,
                     "EMAIL_JA_CADASTRADO",
-                    "Já existe um utilizador cadastrado com este e-mail.",
+                    "Já existe um usuário cadastrado com este e-mail.",
                 );
             }
 
@@ -298,7 +298,7 @@ router.post(
                         res,
                         422,
                         "PARCEIRO_FLAG_BLOQUEADA",
-                        `Utilizador não pode ser cadastrado, pois a flag ${flagsAtivas
+                        `Usuário não pode ser cadastrado, pois a flag ${flagsAtivas
                             .map((f) => `"${f}"`)
                             .join(
                                 " e ",
@@ -390,7 +390,7 @@ router.post(
                     res,
                     503,
                     "EMAIL_ERROR",
-                    "Utilizador criado, mas o e-mail de boas-vindas falhou. Verifique as configurações SMTP.",
+                    "Usuário criado, mas o e-mail de boas-vindas falhou. Verifique as configurações SMTP.",
                     emailErr,
                 );
             }
@@ -420,7 +420,7 @@ router.post(
                     res,
                     422,
                     "EMAIL_JA_CADASTRADO",
-                    "Já existe um utilizador cadastrado com este e-mail.",
+                    "Já existe um usuário cadastrado com este e-mail.",
                 );
             }
             return errorResponse(
@@ -460,7 +460,7 @@ router.put(
                     res,
                     404,
                     "NOT_FOUND",
-                    "Utilizador não encontrado.",
+                    "Usuário não encontrado.",
                 );
             }
 
@@ -506,7 +506,7 @@ router.put(
                         res,
                         422,
                         "EMAIL_JA_CADASTRADO",
-                        "Já existe um utilizador cadastrado com este e-mail.",
+                        "Já existe um usuário cadastrado com este e-mail.",
                     );
                 }
             }
@@ -577,7 +577,7 @@ router.put(
                     res,
                     404,
                     "NOT_FOUND",
-                    "Utilizador não encontrado.",
+                    "Usuário não encontrado.",
                 );
             }
 
@@ -656,7 +656,7 @@ router.get(
                     res,
                     404,
                     "NOT_FOUND",
-                    "Utilizador não encontrado.",
+                    "Usuário não encontrado.",
                 );
             }
 
@@ -742,7 +742,7 @@ router.put(
                     res,
                     404,
                     "NOT_FOUND",
-                    "Utilizador não encontrado.",
+                    "Usuário não encontrado.",
                 );
             }
 
@@ -753,7 +753,7 @@ router.put(
                     res,
                     404,
                     "NOT_FOUND",
-                    "Utilizador não encontrado.",
+                    "Usuário não encontrado.",
                 );
             }
 
@@ -1147,7 +1147,7 @@ router.delete(
                     res,
                     422,
                     "ULTIMO_VINCULO",
-                    "Não é possível remover o último vínculo ativo do utilizador.",
+                    "Não é possível remover o último vínculo ativo do usuário.",
                 );
             }
 

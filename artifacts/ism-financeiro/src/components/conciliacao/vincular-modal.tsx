@@ -19,7 +19,8 @@ import {useConfirm} from "@/hooks/use-confirm";
 import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
 import {Modal, ModalFooter, ModalHeader, ModalSpinner, modalBtnPrimaryCls, modalBtnSecondaryCls} from "@/components/ui/modal-responsivo";
 import {SelectCampo} from "@/components/ui/select-campo";
-import {Loader2, Link2, AlertCircle, CheckCircle2, Pencil, Search} from "lucide-react";
+import {Loader2, Link2, AlertCircle, CheckCircle2, Pencil, Search, X} from "lucide-react";
+import {DatePicker} from "@/components/ui/date-picker";
 import {useAuth} from "@/hooks/use-auth";
 import {PERM} from "@/lib/permissoes";
 import {EditarLancamentoConciliacaoModal} from "@/components/conciliacao/editar-lancamento-modal";
@@ -1230,14 +1231,30 @@ export function VincularModal({
                             <label htmlFor="vincular-vencimento" className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
                                 Vencimento
                             </label>
-                            <input
-                                id="vincular-vencimento"
-                                type="date"
-                                value={vencimentoTexto}
-                                onChange={(e) => setVencimentoTexto(e.target.value)}
-                                onKeyDown={(e) => e.key === "Enter" && handleAplicarBusca()}
-                                className="bg-[#1a1c23] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-primary/50"
-                            />
+                            {/* DatePicker em dd/mm/aaaa: o input nativo seguia o idioma do
+                                navegador e mostrava "mm/dd/yyyy". O X limpa o filtro. */}
+                            <div className="relative">
+                                <DatePicker
+                                    id="vincular-vencimento"
+                                    value={vencimentoTexto}
+                                    onChange={setVencimentoTexto}
+                                    placeholder="dd/mm/aaaa"
+                                    className={cn(
+                                        "w-full bg-[#1a1c23] border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-primary/50",
+                                        vencimentoTexto && "pr-6",
+                                    )}
+                                />
+                                {vencimentoTexto ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => setVencimentoTexto("")}
+                                        aria-label="Limpar vencimento"
+                                        className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-muted-foreground hover:text-white"
+                                    >
+                                        <X aria-hidden="true" className="w-3 h-3"/>
+                                    </button>
+                                ) : null}
+                            </div>
           </div>
           <button
             type="button"

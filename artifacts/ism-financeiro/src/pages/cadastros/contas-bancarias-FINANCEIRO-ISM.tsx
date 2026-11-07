@@ -21,16 +21,13 @@ import {
     Info,
     Search,
     TrendingUp,
-    Calendar as CalendarIcon,
 } from "lucide-react";
-import {format as formatarDataFns, parseISO} from "date-fns";
-import {ptBR} from "date-fns/locale";
-import {Popover, PopoverContent, PopoverTrigger} from "@/components/ui/popover";
-import {Calendar as CalendarPicker} from "@/components/ui/calendar";
+import {DatePicker} from "@/components/ui/date-picker";
 import {formatCurrency, cn} from "@/lib/utils";
 import {
     AGENCIA_MAX_LENGTH,
     encontrarContaDuplicada,
+    idsContasDuplicadas,
     formatarSaldoComSinal,
     inverterSinalSaldo,
     mascararAgenciaConta,
@@ -481,7 +478,11 @@ function BancoSelect({
 
     const selectedBanco = bancoPorNome(value);
 
+    // Setas usadas desde a abertura: Tab passa a confirmar a opção destacada.
+    const navegouRef = useRef(false);
+
     const abrir = () => {
+        navegouRef.current = false;
         setBusca("");
         setAtivo(Math.max(0, BANCOS_BR.findIndex((b) => b.nome === value)));
         setOpen(true);
@@ -501,9 +502,11 @@ function BancoSelect({
     const aoTeclarBusca = (e: React.KeyboardEvent<HTMLInputElement>) => {
         if (e.key === "ArrowDown") {
             e.preventDefault();
+            navegouRef.current = true;
             setAtivo((a) => Math.min(a + 1, filtrados.length - 1));
         } else if (e.key === "ArrowUp") {
             e.preventDefault();
+            navegouRef.current = true;
             setAtivo((a) => Math.max(a - 1, 0));
         } else if (e.key === "Enter") {
             // Não deixa o Enter enviar o formulário do modal.
@@ -514,7 +517,11 @@ function BancoSelect({
             e.preventDefault();
             fechar(true);
         } else if (e.key === "Tab") {
-            // Foco volta ao botão antes do Tab andar, para seguir até o próximo campo (Agência).
+            // Com busca digitada (ou setas usadas), Tab escolhe a opção destacada — ou a
+            // única que sobrou — como num combobox; sem isso a busca era descartada.
+            // O foco volta ao botão antes do Tab andar, para seguir até o próximo campo (Agência).
+            const b = filtrados.length === 1 ? filtrados[0] : filtrados[ativo];
+            if (b && (busca.trim() || navegouRef.current)) onChange(b.nome);
             fechar(true);
         }
     };
@@ -816,19 +823,14 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
         },
     });
 
-    // ── Salvar (passo 3) ──
+    // ── Salvar (passo 3 na criação; qualquer passo na edição) ──
     const handleSave = async () => {
-        const requiredFields: (keyof ContaBancariaFormValues)[] = [
-            "nome",
-            "saldo_inicial_br",
-            "data_inicio",
-            ...(tipo === TIPO_SEM_BANCO
-                ? []
-                : (["banco", "agencia", "conta"] as (keyof ContaBancariaFormValues)[])),
-        ];
-        const isValid = await trigger(requiredFields);
+        const passo2Ok = (await trigger(getStep2RequiredFields())) && step2Valid;
+        const passo3Ok = (await trigger(["saldo_inicial_br", "data_inicio"])) && step3Valid;
 
-        if (!tipo || !isValid || !step3Valid) {
+        if (!tipo || !passo2Ok || !passo3Ok) {
+            // Na edição o Salvar aparece em todos os passos: abre o passo com pendência.
+            setActiveStep(!tipo ? 1 : !passo2Ok ? 2 : 3);
             toast({
                 title: "Campos obrigatórios não preenchidos",
                 description: "Confira os campos destacados antes de salvar.",
@@ -850,6 +852,13 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
     // Sumários para passos colapsados
     const step1Summary = ACCOUNT_TYPES.find((t) => t.value === tipo)?.label ?? tipo;
     const step2Summary = nome || "";
+    // Na edição o passo 3 fica fechado: o resumo mostra data e saldo sem precisar abri-lo.
+    const step3Summary = [
+        data_inicio ? `Início ${formatarData(data_inicio)}` : "",
+        saldo_inicial_br?.trim() ? `Saldo R$ ${saldo_inicial_br.trim()}` : "",
+    ]
+        .filter(Boolean)
+        .join(" · ");
 
     // Placeholder do campo "Nome da conta" conforme o tipo selecionado
     function getNomePlaceholder() {
@@ -1144,6 +1153,7 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                         stepNumber={3}
                         title="Dados Iniciais da Conta"
                         status={getStatus(3)}
+                        summary={step3Summary}
                         onEdit={() => setActiveStep(3)}
                     >
                         {/* Caixa de instrução */}
@@ -1161,44 +1171,25 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                                     required
                                     error={errors.data_inicio?.message}
                                 >
-                                    {/* Seletor com exibição dd/mm/aaaa (o input nativo segue o idioma do
-                                        navegador e mostrava mm/dd/aaaa). Datas futuras ficam desabilitadas. */}
+                                    {/* DatePicker (exibe dd/mm/aaaa e fecha ao escolher o dia; o calendário
+                                        solto aqui ficava aberto). Datas futuras ficam desabilitadas. */}
                                     <Controller
                                         name="data_inicio"
                                         control={control}
                                         render={({field}) => (
-                                            <Popover>
-                                                <PopoverTrigger asChild>
-                                                    <button
-                                                        type="button"
-                                                        id="conta-data-inicio"
-                                                        aria-invalid={!!errors.data_inicio}
-                                                        aria-haspopup="dialog"
-                                                        className={cn(
-                                                            inputClass,
-                                                            "flex items-center justify-between text-left",
-                                                            !field.value && "text-muted-foreground",
-                                                        )}
-                                                    >
-                                                        {field.value ? formatarData(field.value) : "dd/mm/aaaa"}
-                                                        <CalendarIcon aria-hidden="true" className="w-4 h-4 text-muted-foreground shrink-0"/>
-                                                    </button>
-                                                </PopoverTrigger>
-                                                <PopoverContent className="w-auto p-0 border border-white/10" align="start">
-                                                    <CalendarPicker
-                                                        mode="single"
-                                                        selected={field.value ? parseISO(field.value) : undefined}
-                                                        defaultMonth={field.value ? parseISO(field.value) : maxDataInicio}
-                                                        onSelect={(date) => {
-                                                            field.onChange(date ? formatarDataFns(date, "yyyy-MM-dd") : "");
-                                                            void trigger("data_inicio");
-                                                        }}
-                                                        disabled={{after: maxDataInicio}}
-                                                        locale={ptBR}
-                                                        initialFocus
-                                                    />
-                                                </PopoverContent>
-                                            </Popover>
+                                            <DatePicker
+                                                id="conta-data-inicio"
+                                                value={field.value ?? ""}
+                                                onChange={(valor) => {
+                                                    field.onChange(valor);
+                                                    void trigger("data_inicio");
+                                                }}
+                                                placeholder="dd/mm/aaaa"
+                                                aria-invalid={!!errors.data_inicio}
+                                                diasDesabilitados={{after: maxDataInicio}}
+                                                mesPadrao={maxDataInicio}
+                                                className={inputClass}
+                                            />
                                         )}
                                     />
                                 </Field>
@@ -1260,11 +1251,12 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                     <button type="button" onClick={() => void handleRequestClose()} className={modalBtnSecondaryCls}>
                         Cancelar
                     </button>
-                    {/* Salvar só no passo 3, como antes da migração. */}
-                    {activeStep === 3 && (
+                    {/* Criação: Salvar só no passo 3. Edição: em qualquer passo (os dados já
+                        existem; o handleSave valida tudo e abre o passo com pendência). */}
+                    {(activeStep === 3 || !!initialData) && (
                         <button
                             type="button"
-                            disabled={mutation.isPending || !step3Valid}
+                            disabled={mutation.isPending || (activeStep === 3 && !step3Valid)}
                             onClick={() => void handleSave()}
                             className={modalBtnPrimaryCls}
                         >
@@ -1297,6 +1289,8 @@ export default function ContasBancarias() {
         queryKey: tenantQueryKey("contas-bancarias"),
         queryFn: () => fetchApiData<ContaBancaria[]>("/contas-bancarias"),
     });
+    // Contas antigas que repetem banco + agência + conta: só sinaliza na lista.
+    const contasDuplicadas = useMemo(() => idsContasDuplicadas(contas), [contas]);
 
     // ── Filtros (estado na URL: ?status=&tipo=&banco=&q=&pagina=) ──
     const definicoes: DefinicaoFiltro[] = useMemo(() => {
@@ -1396,7 +1390,7 @@ export default function ContasBancarias() {
 
     const handleDelete = async (conta: ContaBancaria) => {
         const ok = await confirm({
-            title: `Excluir "${conta.nome.toUpperCase()}"?`,
+            title: `Excluir "${conta.nome}"?`,
             description:
                 "Esta ação não pode ser desfeita. A conta bancária será removida permanentemente.",
             confirmLabel: "Excluir",
@@ -1617,6 +1611,15 @@ export default function ContasBancarias() {
                                                 {conta.banco && (
                                                     <p className="text-xs text-muted-foreground mt-0.5 truncate">
                                                         {conta.banco}
+                                                    </p>
+                                                )}
+                                                {contasDuplicadas.has(conta.id) && (
+                                                    <p
+                                                        className="inline-flex items-center gap-1 text-[11px] text-amber-300/90 mt-0.5"
+                                                        title="Outra conta tem o mesmo banco, agência e número. Edite ou bloqueie a repetida."
+                                                    >
+                                                        <AlertCircle aria-hidden="true" className="w-3 h-3"/>
+                                                        Conta duplicada
                                                     </p>
                                                 )}
                                             </div>

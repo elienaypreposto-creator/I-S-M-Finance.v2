@@ -6,7 +6,7 @@
  * POST /auth/switch-empresa     - Troca empresa da sessão (revoga refresh, emite par novo)
  * POST /auth/refresh            - Renova tokens (refresh lido do cookie httpOnly); recusa se o vínculo estiver inativo
  * POST /auth/logout             - Revoga o Refresh Token e limpa o cookie
- * GET  /auth/me                 - Perfil do utilizador autenticado
+ * GET  /auth/me                 - Perfil do usuário autenticado
  * POST /auth/verify-otp         - Valida o OTP de boas-vindas; retorna setupToken
  * POST /auth/setup-password     - Define a senha permanente com setupToken
  * POST /auth/forgot-password    - Solicita recuperação de senha por e-mail
@@ -55,7 +55,7 @@ import {
 const BCRYPT_SALT_ROUNDS = 12;
 const router = Router();
 
-// Hash descartável: usado para gastar o mesmo tempo de bcrypt quando o utilizador não existe
+// Hash descartável: usado para gastar o mesmo tempo de bcrypt quando o usuário não existe
 // (ou está bloqueado), evitando que o tempo de resposta revele quais e-mails estão cadastrados.
 const DUMMY_PASSWORD_HASH = bcrypt.hashSync("dummy-password-for-timing", BCRYPT_SALT_ROUNDS);
 
@@ -90,12 +90,19 @@ async function emitSession(
     empresaId: number,
     meta: MetaSessao,
     sidExistente?: string,
+    login?: { acessoAnteriorDb?: Date | null },
 ) {
     await assertVinculoAtivo(usuario.id, empresaId);
     const permissions = await fetchPermissions(usuario.id, empresaId, usuario.superadmin);
     const refresh = await signRefreshToken({sub: String(usuario.id), email: usuario.email, empresa_id: empresaId});
     const sid = sidExistente
-        ?? await sessoes.abrir({usuarioId: usuario.id, tokenHash: refresh.tokenHash, meta});
+        ?? await sessoes.abrir({
+            usuarioId: usuario.id,
+            tokenHash: refresh.tokenHash,
+            meta,
+            login: login != null,
+            acessoAnteriorDb: login?.acessoAnteriorDb ?? null,
+        });
     if (sidExistente) {
         await sessoes.girar(sidExistente, refresh.tokenHash, meta);
     }
@@ -195,7 +202,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
                 res,
                 403,
                 "SETUP_PENDING",
-                "Este utilizador ainda não definiu uma senha. Complete o processo de primeiro acesso.",
+                "Este usuário ainda não definiu uma senha. Complete o processo de primeiro acesso.",
             );
         }
 
@@ -222,7 +229,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
         const ehPrimeiroAcesso =
             !usuario.ultimo_acesso && !usuario.senha_unica_utilizada;
 
-        // No primeiro acesso, NÃO atualiza ultimo_acesso aqui: se o utilizador abandonar a
+        // No primeiro acesso, NÃO atualiza ultimo_acesso aqui: se o usuário abandonar a
         // tela de definir senha, o próximo login deve cair de novo no setup (senão a senha
         // temporária viraria permanente). A conclusão é marcada em /auth/setup-password.
         if (ehPrimeiroAcesso) {
@@ -246,7 +253,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
 
         const empresas = await listEmpresasAtivasDoUsuario(usuario.id);
         if (empresas.length === 0) {
-            return errorResponse(res, 403, "SEM_EMPRESA", "Utilizador sem vínculo ativo com nenhuma empresa.");
+            return errorResponse(res, 403, "SEM_EMPRESA", "Usuário sem vínculo ativo com nenhuma empresa.");
         }
 
         if (empresas.length > 1) {
@@ -271,6 +278,9 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
             {id: usuario.id, nome: usuario.nome, email: usuario.email, superadmin: usuario.superadmin},
             empresas[0].id,
             metaSessao(req),
+            undefined,
+            // ultimo_acesso lido antes do UPDATE acima: o login anterior a este.
+            {acessoAnteriorDb: usuario.ultimo_acesso},
         );
         attachTenantForAudit(req, usuario, empresas[0].id);
 
@@ -318,7 +328,7 @@ router.post("/auth/refresh", csrfGuard, async (req, res) => {
             .where(eq(refreshTokensTable.token_hash, tokenHash))
             .limit(1);
 
-        // O registro precisa pertencer ao mesmo utilizador declarado no JWT.
+        // O registro precisa pertencer ao mesmo usuário declarado no JWT.
         if (!registro || registro.usuario_id !== usuarioId) {
             return reject("INVALID_TOKEN", "Refresh token inválido.");
         }
@@ -358,7 +368,7 @@ router.post("/auth/refresh", csrfGuard, async (req, res) => {
             await revokeAllTokensForUser(usuarioId);
             await denylistUser(usuarioId);
             await sessoes.encerrarTodas(usuarioId);
-            return reject("UNAUTHORIZED", "Utilizador inválido ou bloqueado.");
+            return reject("UNAUTHORIZED", "Usuário inválido ou bloqueado.");
         }
 
         try {
@@ -462,10 +472,10 @@ router.post("/auth/select-empresa", loginLimiter, async (req, res) => {
             .limit(1);
 
         if (!usuario || usuario.bloqueado) {
-            return errorResponse(res, 401, "UNAUTHORIZED", "Utilizador inválido ou bloqueado.");
+            return errorResponse(res, 401, "UNAUTHORIZED", "Usuário inválido ou bloqueado.");
         }
 
-        const session = await emitSession(usuario, empresaId, metaSessao(req));
+        const session = await emitSession(usuario, empresaId, metaSessao(req), undefined, {});
         attachTenantForAudit(req, usuario, empresaId);
         return sendSession(res, session, SESSION_META);
     } catch (error: unknown) {
@@ -500,11 +510,11 @@ router.post("/auth/switch-empresa", csrfGuard, withAuth, async (req, res) => {
             .limit(1);
 
         if (!usuario || usuario.bloqueado) {
-            return errorResponse(res, 401, "UNAUTHORIZED", "Utilizador inválido ou bloqueado.");
+            return errorResponse(res, 401, "UNAUTHORIZED", "Usuário inválido ou bloqueado.");
         }
 
         // Valida o vínculo ANTES de revogar: se a empresa for inválida, a sessão atual
-        // continua intacta em vez de o utilizador ficar sem refresh token.
+        // continua intacta em vez de o usuário ficar sem refresh token.
         await assertVinculoAtivo(usuario.id, empresaId);
 
         const sidAtual = rawRefresh ? await sessoes.idPorHash(hashToken(rawRefresh)) : req.user?.sid;
@@ -576,7 +586,7 @@ router.get("/auth/me", withAuth, async (req, res) => {
             .limit(1);
 
         if (!usuario) {
-            return errorResponse(res, 404, "NOT_FOUND", "Utilizador não encontrado.");
+            return errorResponse(res, 404, "NOT_FOUND", "Usuário não encontrado.");
         }
 
         const [empresas, permissoes] = await Promise.all([
@@ -589,7 +599,7 @@ router.get("/auth/me", withAuth, async (req, res) => {
             empresas,
         });
     } catch (error: unknown) {
-        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao obter utilizador autenticado.", error);
+        return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao obter usuário autenticado.", error);
     }
 });
 
@@ -800,7 +810,7 @@ router.post("/auth/reset-password", authLimiter, async (req, res) => {
         }
 
         // Primeiro troca a senha; só então revoga as sessões. Na ordem inversa, uma falha
-        // no update deixaria o utilizador deslogado sem ter a senha alterada.
+        // no update deixaria o usuário deslogado sem ter a senha alterada.
         await db
             .update(usuariosTable)
             .set({
@@ -812,7 +822,7 @@ router.post("/auth/reset-password", authLimiter, async (req, res) => {
             })
             .where(eq(usuariosTable.id, usuarioId));
 
-        // Invalida todas as sessões activas - mudança de senha implica revogação obrigatória
+        // Invalida todas as sessões ativas - mudança de senha implica revogação obrigatória
         await revokeAllTokensForUser(usuarioId);
         clearRefreshCookie(res);
 

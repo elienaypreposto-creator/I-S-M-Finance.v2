@@ -8,7 +8,7 @@ import {fromCents, toCents} from "../utils/money";
 import {projetarSaldoDiario} from "../utils/projecao-saldo";
 import {contasBancariasService} from "../domains/financial/contas-bancarias/contas-bancarias.service";
 import {requireTenant, tenantWhere} from "../lib/tenant-scope";
-import {emAbertoLiquidoSql, emAbertoNoPainelWhere} from "../domains/financial/lancamentos/em-aberto";
+import {emAbertoLinhaSql, emAbertoLiquidoSql, emAbertoNoPainelWhere} from "../domains/financial/lancamentos/em-aberto";
 
 const router = Router();
 const STATUS_ABERTO = ["pendente", "atrasado"] as const;
@@ -63,15 +63,20 @@ router.get("/dashboard/kpis", async (req, res) => {
         // (ver em-aberto.ts); "atraso" = vencidos até ontem.
         const somaEmAberto = (tipo: "CR" | "CP", periodo: SQL) =>
             sql<number>`coalesce(sum(case when ${lancamentosTable.tipo} = ${tipo} and ${periodo} then ${emAbertoLiquidoSql} else 0 end), 0)`;
+        // CR/CP Vencidos: mesmo critério do total de atrasados em Lançamentos
+        // (valor da linha = bruto − desconto + juros; restante do pago parcial;
+        // 0 com residual ativo). Pelo líquido ignorava desconto/juros e divergia.
+        const somaVencida = (tipo: "CR" | "CP", periodo: SQL) =>
+            sql<number>`coalesce(sum(case when ${lancamentosTable.tipo} = ${tipo} and ${periodo} then ${emAbertoLinhaSql} else 0 end), 0)`;
         const vencido = sql`${lancamentosTable.vencimento} < ${hoje}`;
         const doMes = sql`${lancamentosTable.vencimento} between ${inicio} and ${fim}`;
 
         const [totais] = await db
             .select({
-                contas_receber_atraso: somaEmAberto("CR", vencido),
+                contas_receber_atraso: somaVencida("CR", vencido),
                 contas_receber_aberto_mes: somaEmAberto("CR", doMes),
                 contas_pagar_aberto_mes: somaEmAberto("CP", doMes),
-                contas_pagar_atraso: somaEmAberto("CP", vencido),
+                contas_pagar_atraso: somaVencida("CP", vencido),
             })
             .from(lancamentosTable)
             .where(tenantWhere(lancamentosTable, empresaId, emAbertoNoPainelWhere));

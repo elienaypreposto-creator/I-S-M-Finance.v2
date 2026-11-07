@@ -283,3 +283,19 @@ export function aberturaNoPeriodo(
     if (!inicio.antes_do_inicio || fim.antes_do_inicio) return null;
     return {data: String(dataInicioConta).slice(0, 10), valorCents: toCents(inicio.saldo_inicial)};
 }
+
+/**
+ * Conta entra no resumo por conta (visão "todas as contas") do período:
+ * ativa ou com movimento no período, e já começada até o fim do período. Conta
+ * que só começa depois (ex.: início 01/11 no relatório de outubro) aparecia
+ * zerada com a nota "Começa em 01/11".
+ */
+export function contaNoResumoDoPeriodo(
+    conta: {status: string | null; data_inicio: string | null},
+    temMovimentoNoPeriodo: boolean,
+    dataFimPeriodo: string,
+): boolean {
+    const inicio = conta.data_inicio ? String(conta.data_inicio).slice(0, 10) : null;
+    if (inicio && inicio > dataFimPeriodo) return false;
+    return conta.status === "ativo" || temMovimentoNoPeriodo;
+}

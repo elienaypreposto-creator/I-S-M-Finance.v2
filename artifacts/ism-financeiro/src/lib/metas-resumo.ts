@@ -164,6 +164,10 @@ function resultadoDe(rec: ValoresMeta, recSem: ValoresMeta, desp: ValoresMeta, d
     };
 }
 
+function valoresZerados(v: ValoresMeta): boolean {
+    return v.orcadoCents === 0 && v.realizadoCents === 0 && v.jurosCents === 0;
+}
+
 const ORDEM_TIPO: Record<TipoCategoria, number> = {receita: 0, custo: 1, despesa: 2};
 
 /**
@@ -232,7 +236,8 @@ export function resumirMetas(itens: ItemMetaResumo[], periodos: Periodo[]): Resu
     return {
         receitas,
         despesas,
-        semMeta: linhas.filter((l) => !l.comMeta),
+        // Sem meta e sem movimento (orçado, realizado e juros zerados) não diz nada: fica fora.
+        semMeta: linhas.filter((l) => !l.comMeta && !valoresZerados(l.total)),
         resultadoPorPeriodo: periodos.map((_, i) =>
             resultadoDe(
                 receitas.totalPorPeriodo[i],

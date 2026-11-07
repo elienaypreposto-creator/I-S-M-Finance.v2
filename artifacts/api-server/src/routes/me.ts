@@ -50,13 +50,17 @@ router.get("/me", async (req, res) => {
             .where(eq(usuariosTable.id, req.user!.id))
             .limit(1);
         if (!usuario) {
-            return errorResponse(res, 404, "NOT_FOUND", "Utilizador não encontrado.");
+            return errorResponse(res, 404, "NOT_FOUND", "Usuário não encontrado.");
         }
         const ua = await sessoes.lerUa(usuario.id);
+        const anterior = await sessoes.acessoAnterior(req.user!.sid);
         return successResponse(res, {
             ...usuario,
             empresa_id: req.user!.empresaId,
             ultimo_acesso_dispositivo: ua,
+            // ultimo_acesso é o login mais recente (em geral o desta sessão); a tela mostra o anterior.
+            acesso_anterior: anterior?.quando ?? null,
+            acesso_anterior_dispositivo: anterior?.dispositivo ?? null,
         });
     } catch (error: unknown) {
         return errorResponse(res, 500, "INTERNAL_ERROR", "Erro ao obter o perfil.", error);
@@ -80,7 +84,7 @@ router.patch("/me", async (req, res) => {
             .where(eq(usuariosTable.id, req.user!.id))
             .limit(1);
         if (!atual) {
-            return errorResponse(res, 404, "NOT_FOUND", "Utilizador não encontrado.");
+            return errorResponse(res, 404, "NOT_FOUND", "Usuário não encontrado.");
         }
         req.auditAntes = atual;
         const [item] = await db
@@ -124,7 +128,7 @@ router.post("/me/senha", authLimiter, async (req, res) => {
             .where(eq(usuariosTable.id, req.user!.id))
             .limit(1);
         if (!usuario) {
-            return errorResponse(res, 404, "NOT_FOUND", "Utilizador não encontrado.");
+            return errorResponse(res, 404, "NOT_FOUND", "Usuário não encontrado.");
         }
 
         const ip = chaveIp(req);
@@ -177,10 +181,13 @@ router.get("/me/sessoes", async (req, res) => {
         const lista = await sessoes.listar(req.user!.id, req.user!.sid);
         const falhas = usuario ? await lerFalhasRecentes(usuario.email) : null;
         const ua = await sessoes.lerUa(req.user!.id);
+        const anterior = await sessoes.acessoAnterior(req.user!.sid);
         return successResponse(res, {
             sessoes: lista,
             ultimo_acesso: usuario?.ultimo_acesso ?? null,
             ultimo_acesso_dispositivo: ua,
+            acesso_anterior: anterior?.quando ?? null,
+            acesso_anterior_dispositivo: anterior?.dispositivo ?? null,
             tentativas: falhas
                 ? {total: falhas.total, ips: falhas.ips.map((ip) => mascararIp(ip))}
                 : null,

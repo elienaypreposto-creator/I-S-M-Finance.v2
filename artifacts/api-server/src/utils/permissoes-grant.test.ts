@@ -113,7 +113,7 @@ describe("validatePermissoesGrant (Card 91 + Card 2: superadmin como bit, sem '*
         assert.deepEqual(result, {ok: true, permissoes: ["dashboard:ver"]});
     });
 
-    it("permite Admin com catálogo completo conceder subset a outro utilizador", () => {
+    it("permite Admin com catálogo completo conceder subset a outro usuário", () => {
         const requested = ["dashboard:ver", "admin:usuarios:listar", "financeiro:lancamentos:listar"];
         const result = validatePermissoesGrant({
             actorUserId: ACTOR_ID,

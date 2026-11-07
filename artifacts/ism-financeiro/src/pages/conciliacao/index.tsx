@@ -395,7 +395,7 @@ export default function ConciliacaoList() {
                                     </td>
                                     <td className="px-4 py-3 text-white/70 whitespace-nowrap">
                                         {row.periodo_inicio && row.periodo_fim
-                                            ? `De ${formatDatePt(row.periodo_inicio)} à ${formatDatePt(row.periodo_fim)}`
+                                            ? `de ${formatDatePt(row.periodo_inicio)} a ${formatDatePt(row.periodo_fim)}`
                                             : "-"}
                                     </td>
                                     <td className="px-4 py-3 text-right text-emerald-300/90 font-semibold tabular-nums">

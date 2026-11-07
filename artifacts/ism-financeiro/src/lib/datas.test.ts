@@ -3,7 +3,7 @@
 //   TZ=UTC tsx --test src/lib/datas.test.ts
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
-import {dataCivilIso, formatarData, hojeIsoLocal, parseDataCivil} from "./datas.ts";
+import {dataCivilIso, formatarData, formatarDiaMes, hojeIsoLocal, intervaloEixoDias, parseDataCivil} from "./datas.ts";
 
 describe("formatarData", () => {
     it("data civil não desloca pelo fuso", () => {
@@ -57,5 +57,24 @@ describe("parseDataCivil / dataCivilIso / hojeIsoLocal", () => {
         const agora = new Date();
         assert.equal(hojeIsoLocal(), dataCivilIso(agora));
         assert.match(hojeIsoLocal(), /^\d{4}-\d{2}-\d{2}$/);
+    });
+});
+
+describe("eixo de gráfico por dia", () => {
+    it("formatarDiaMes: dd/mm", () => {
+        assert.equal(formatarDiaMes("2026-11-07"), "07/11");
+        assert.equal(formatarDiaMes("2026-12-31T00:00:00Z"), "31/12");
+        assert.equal(formatarDiaMes("abc"), "abc");
+    });
+
+    it("intervaloEixoDias: no máximo N rótulos a partir do 1º dia, espaçamento fixo", () => {
+        assert.equal(intervaloEixoDias(5), 0);
+        assert.equal(intervaloEixoDias(8), 0);
+        // 30 dias, até 8 rótulos: a cada 5 dias (índices 0, 5, …, 25).
+        assert.equal(intervaloEixoDias(30), 4);
+        for (const n of [9, 15, 30, 31, 60, 365]) {
+            const passo = intervaloEixoDias(n) + 1;
+            assert.ok(Math.ceil(n / passo) <= 8, `${n} pontos geram rótulos demais`);
+        }
     });
 });

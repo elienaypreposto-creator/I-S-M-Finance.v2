@@ -45,6 +45,12 @@ import {hashLinhaExtrato} from "../utils/extrato-hash";
 import {encontrarRegraParaLinha, type RegraParaMatch} from "../utils/regras-match";
 import {hojeIsoLocal} from "../utils/date-civil";
 import {conciliacaoFinalizada, statusExtratoEfetivoSql} from "../utils/conciliacao-status";
+import {
+    ACOES_VINCULO,
+    CHAVE_CONTAS_ANTERIORES,
+    contaAnteriorParaRestaurar,
+    contasAnterioresDoVinculo,
+} from "../utils/conciliacao-conta-anterior";
 import {parseCsvPermitido} from "../utils/filtro-csv";
 import {contasBancariasService} from "../domains/financial/contas-bancarias/contas-bancarias.service";
 import {regrasConciliacaoService} from "../domains/financial/regras-conciliacao/regras-conciliacao.service";
@@ -2640,6 +2646,13 @@ async function persistirVinculo(
     // quitação já no momento em que o vínculo é de fato salvo (Salvar/Conciliar
     // em lote), sem esperar o finalizar da conciliação inteira - senão o
     // lançamento fica com status/valor_quitado antigos mesmo após persistir.
+    const contasAnterioresAntes = contasAnterioresDoVinculo(
+        decision.itens
+            .map((v) => lancamentoById.get(v.lancamento_id))
+            .filter((l): l is NonNullable<typeof l> => Boolean(l))
+            .map((l) => ({id: l.id, conta_id: l.conta_id ?? null, quitadoCents: toCents(l.valor_quitado)})),
+        conciliacao.conta_id ?? null,
+    );
     for (const vinculoItem of decision.itens) {
         const origem = lancamentoById.get(vinculoItem.lancamento_id);
         if (!origem) continue;
@@ -2696,6 +2709,10 @@ async function persistirVinculo(
             ramo: decision.ramo,
             valor_saldo: fromCents(valorSaldoFinalCents),
             residuo_criado_lancamento_id: residuoCriado?.lancamento_id ?? null,
+            // Conta de cada título antes do vínculo (só quando o vínculo troca a
+            // conta de um título sem quitação): desfazer/excluir o extrato
+            // devolve o título para ela (reverterVinculoNoTitulo).
+            [CHAVE_CONTAS_ANTERIORES]: contasAnterioresAntes,
         }),
     }, empresaId));
 
@@ -3984,9 +4001,43 @@ async function reverterVinculoNoTitulo(
         hojeIso: hojeIsoLocal(),
     });
 
+    // Sem quitação restante o título volta para a conta de antes do vínculo
+    // (o vínculo grava a conta do extrato). Lê o histórico dos itens que ainda
+    // têm vínculo com o título - este inclusive: quem chama apaga o vínculo
+    // depois de reverter.
+    let contaRestaurada: {conta_id: number | null} | null = null;
+    if (quitadoNovo === 0) {
+        const itensVinculados: {item_conciliacao_id: number}[] = await tx
+            .select({item_conciliacao_id: itensConciliacaoLancamentosTable.item_conciliacao_id})
+            .from(itensConciliacaoLancamentosTable)
+            .where(tenantWhere(itensConciliacaoLancamentosTable, empresaId, eq(itensConciliacaoLancamentosTable.lancamento_id, lanc.id)));
+        const itemIds = [...new Set(itensVinculados.map((i) => i.item_conciliacao_id))];
+        if (itemIds.length > 0) {
+            const historicos = await tx
+                .select({
+                    id: historicoConciliacaoTable.id,
+                    item_conciliacao_id: historicoConciliacaoTable.item_conciliacao_id,
+                    acao: historicoConciliacaoTable.acao,
+                    detalhes: historicoConciliacaoTable.detalhes,
+                })
+                .from(historicoConciliacaoTable)
+                .where(tenantWhere(
+                    historicoConciliacaoTable,
+                    empresaId,
+                    inArray(historicoConciliacaoTable.item_conciliacao_id, itemIds),
+                    inArray(historicoConciliacaoTable.acao, [...ACOES_VINCULO]),
+                ));
+            const anterior = contaAnteriorParaRestaurar(historicos, lanc.id);
+            if (anterior.encontrada && anterior.conta_id !== (lanc.conta_id ?? null)) {
+                contaRestaurada = {conta_id: anterior.conta_id};
+            }
+        }
+    }
+
     await tx
         .update(lancamentosTable)
         .set({
+            ...(contaRestaurada ?? {}),
             status: novoStatus,
             valor_quitado: quitadoNovo > 0 ? centsToDecimalString(quitadoNovo) : null,
             data_quitacao:

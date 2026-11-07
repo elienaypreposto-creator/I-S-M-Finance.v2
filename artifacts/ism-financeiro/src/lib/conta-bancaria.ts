@@ -89,3 +89,21 @@ export function mensagemContaDuplicada(nome?: string): string {
         ? `Já existe a conta "${nome}" com este banco, agência e número de conta.`
         : "Já existe uma conta com este banco, agência e número de conta.";
 }
+
+/**
+ * Ids das contas que repetem banco + agência + conta de outra da lista (dados antigos,
+ * de antes da regra). A lista só sinaliza; corrigir é com o usuário.
+ */
+export function idsContasDuplicadas<T extends DadosConta & {id: number}>(contas: readonly T[]): Set<number> {
+    const porChave = new Map<string, number[]>();
+    for (const c of contas) {
+        const chave = chaveContaBancaria(c);
+        if (!chave) continue;
+        const ids = porChave.get(chave) ?? [];
+        ids.push(c.id);
+        porChave.set(chave, ids);
+    }
+    const duplicadas = new Set<number>();
+    for (const ids of porChave.values()) if (ids.length > 1) ids.forEach((id) => duplicadas.add(id));
+    return duplicadas;
+}

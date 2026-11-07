@@ -419,9 +419,8 @@ export default function PlanoContas() {
     };
 
     const handleDelete = async (cat: PlanoConta) => {
-        const label = cat.subcategoria
-            ? `"${cat.subcategoria.toUpperCase()}"`
-            : `"${cat.categoria.toUpperCase()}"`;
+        // Grafia original do cadastro (sem caixa alta forçada).
+        const label = `"${cat.subcategoria || cat.categoria}"`;
         const ok = await confirm({
             title: `Excluir ${label}?`,
             description: 'Esta ação não pode ser desfeita. A categoria será removida permanentemente.',

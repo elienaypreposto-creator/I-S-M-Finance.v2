@@ -55,13 +55,16 @@ export const emAbertoLinhaSql: SQL = sql`case
     else 0 end`;
 
 /**
- * Painel (vencidos, alertas, inadimplência, nível de risco, KPIs): critério
+ * Painel (alertas, inadimplência, nível de risco, KPIs do mês): critério
  * LÍQUIDO, o que ainda vai entrar/sair do banco.
  *   - pendente / atrasado: valor_liquido (como sempre foi no Painel);
  *   - pago_parcial: o restante (antes sumia: venc. 04/11, pago 400 de 500 e
  *     os 100 que faltam não apareciam em lugar nenhum); com residual ativo o
  *     título sai e entra o residual (pendente/atrasado) pelo que falta.
  * Use os dois juntos: o WHERE escolhe os títulos, o valor diz quanto falta.
+ * Exceção: os KPIs "CR/CP Vencidos" somam `emAbertoLinhaSql` (critério da
+ * lista de Lançamentos, com desconto e juros) para bater com o total de
+ * atrasados de lá; o WHERE continua sendo este.
  */
 export const emAbertoNoPainelWhere: SQL = sql`(${t.status} in ('pendente', 'atrasado') or (${t.status} = 'pago_parcial' and ${restanteParcialSql} > 0))`;
 

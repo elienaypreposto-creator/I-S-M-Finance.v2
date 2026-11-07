@@ -107,6 +107,31 @@ describe("sessões", () => {
         assert.equal(await svc.revogada(atual), false);
     });
 
+    it("acesso anterior: a sessão guarda o login de antes dela e não muda com logins depois", async () => {
+        const svc = criarSessoes(memoriaArmazem());
+        const chrome = {userAgent: "Mozilla/5.0 (Windows NT 10.0) Chrome/129.0", ip: "189.48.1.2"};
+        const iphone = {userAgent: "Mozilla/5.0 (iPhone) Version/17.0 Safari/605", ip: "177.12.1.2"};
+
+        // Sem registro no armazém: usa o ultimo_acesso do banco lido antes do login.
+        const antigoDb = new Date("2026-11-06T22:41:00.000Z");
+        const primeira = await svc.abrir({usuarioId: 9, tokenHash: "h1", meta: chrome, login: true, acessoAnteriorDb: antigoDb});
+        assert.deepEqual(await svc.acessoAnterior(primeira), {quando: antigoDb.toISOString(), dispositivo: null});
+
+        const segunda = await svc.abrir({usuarioId: 9, tokenHash: "h2", meta: iphone, login: true});
+        const daSegunda = await svc.acessoAnterior(segunda);
+        assert.equal(daSegunda?.dispositivo, "Windows · Chrome 129");
+
+        // Um terceiro login não altera o que as sessões já abertas mostram.
+        await svc.abrir({usuarioId: 9, tokenHash: "h3", meta: chrome, login: true});
+        assert.deepEqual(await svc.acessoAnterior(primeira), {quando: antigoDb.toISOString(), dispositivo: null});
+        assert.deepEqual(await svc.acessoAnterior(segunda), daSegunda);
+
+        // Sessão aberta sem login (refresh legado) não conta como acesso.
+        const semLogin = await svc.abrir({usuarioId: 9, tokenHash: "h4", meta: iphone});
+        assert.equal(await svc.acessoAnterior(semLogin), null);
+        assert.equal(await svc.acessoAnterior(undefined), null);
+    });
+
     it("mascara o IP e descreve o navegador", () => {
         assert.equal(mascararIp("189.48.10.20"), "189.48.•••.•••");
         assert.equal(
