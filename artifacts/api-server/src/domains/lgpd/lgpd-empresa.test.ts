@@ -320,6 +320,10 @@ describe("inventário e documentos no git", () => {
         assert.match(luks, /luksFormat/);
         assert.match(luks, /luksOpen/);
         assert.match(luks, /DISCO_CIFRADO=1/);
+        // A pasta do Postgres é 700 do uid 70: sem sudo o teste nunca acha o PG_VERSION
+        // e o deploy recopiava o volume antigo por cima do banco a cada execução.
+        assert.match(luks, /if ! sudo test -f "\$DATA\/PG_VERSION"; then/);
+        assert.equal(/\[ !? ?-f "\$DATA\/PG_VERSION" \]/.test(luks), false);
         const dpa = readFileSync(path.join(raiz, "docs/lgpd/dpa-modelo.md"), "utf8");
         assert.match(dpa, /Volume LUKS2 do Postgres/);
         assert.match(dpa, /admin@ism\.finance/);
