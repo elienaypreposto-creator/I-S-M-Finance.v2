@@ -4,6 +4,7 @@ import { MulterError } from "multer";
 import { AppError } from "../utils/app-error";
 import {clientErrorDetails, logInternalError, requestIdFrom} from "../utils/safe-error";
 import { OFX_MAX_MB } from "../lib/upload-limits";
+import { mensagemDeValidacao } from "./validate";
 
 /** Mensagens amigáveis por código de erro do multer (limits/fileFilter). */
 const MULTER_ERROR_MESSAGES: Partial<Record<MulterError["code"], string>> = {
@@ -81,7 +82,7 @@ export const errorHandler = (err: unknown, req: Request, res: Response, _next: N
       errors: [
         {
           code: "VALIDATION_ERROR",
-          message: "Payload inválido.",
+          message: mensagemDeValidacao(err.issues),
           details: err.issues,
         },
       ],

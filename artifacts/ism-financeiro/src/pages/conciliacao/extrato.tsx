@@ -37,6 +37,7 @@ import {
 import {invalidateRelated} from "@/App";
 import {formatValorBrInput, brMoneyDisplayToApiString} from "@/validations/lancamentos.schema";
 import {RegraConciliacaoModal} from "@/components/conciliacao/regra-conciliacao-modal";
+import {rolarAteElemento} from "@/lib/rolar-ate-elemento";
 import {
     CampoBusca,
     casaMulti,
@@ -633,7 +634,7 @@ function CardLancamento({
                     {canDesfazer && (
                         <button
                             type="button"
-                            title="Estornar quitação / remover vínculo"
+                            title={isLocal ? "Remover vínculo do rascunho" : "Estornar quitação / remover vínculo"}
                             onClick={onRemoverVinculo}
                             className="p-1 rounded hover:bg-red-500/20 text-muted-foreground hover:text-red-300"
                         >
@@ -1602,7 +1603,7 @@ export default function ConciliacaoExtratoDetalhe({
                     },
                 ),
 
-            onSuccess: (r, preview) => {
+            onSuccess: async (r, preview) => {
                 if (preview) {
                     if (r.linhas_casadas > 0) {
                         setAplicarRegras({
@@ -1619,12 +1620,17 @@ export default function ConciliacaoExtratoDetalhe({
                     return;
                 }
 
-                setAplicarRegras(null);
                 invalidateRelated(queryClient, "conciliacao");
                 invalidateRelated(queryClient, "lancamentos");
-                void queryClient.invalidateQueries({
-                    queryKey: tenantQueryKey("conciliacao-extrato", extratoId),
-                });
+                void queryClient.invalidateQueries({queryKey: tenantQueryKey("conciliacoes")});
+                void queryClient.invalidateQueries({queryKey: tenantQueryKey("conciliacoes-pendencias-mes")});
+                // Linhas vinculadas pela regra já aparecem vinculadas ao fechar a
+                // confirmação: espera o extrato recarregar (antes só aparecia
+                // depois de "Atualizar extrato").
+                await queryClient
+                    .refetchQueries({queryKey: tenantQueryKey("conciliacao-extrato", extratoId), exact: true})
+                    .catch(() => undefined);
+                setAplicarRegras(null);
                 toast({
                     title: "Regra aplicada",
                     description:
@@ -1763,7 +1769,9 @@ export default function ConciliacaoExtratoDetalhe({
             if (idx >= linhasVisiveisCount) setLinhasVisiveisCount(idx + 1);
             return;
         }
-        el.scrollIntoView({behavior: "smooth", block: "center"});
+        // Só o contêiner da tabela rola: scrollIntoView rolava também o layout
+        // do app e o cabeçalho saía da tela.
+        rolarAteElemento(el);
         setLinhaAlvo(null);
     }, [linhaAlvo, linhasFiltradas, linhasVisiveisCount]);
 
@@ -2048,9 +2056,14 @@ export default function ConciliacaoExtratoDetalhe({
                 ============================================================ */}
             <ConfirmDialog
                 open={desfazerAlvo != null}
-                title="Confirmar o estorno da quitação?"
-                description="O saldo será alterado e o lançamento voltará para situação prevista inicial. Obs.: A conciliação também será desfeita."
-                confirmLabel="Confirmo"
+                // Vínculo ainda não salvo: não há quitação a estornar, só sai do rascunho.
+                title={desfazerAlvo?.isLocal ? "Remover o vínculo deste rascunho?" : "Confirmar o estorno da quitação?"}
+                description={
+                    desfazerAlvo?.isLocal
+                        ? "O vínculo ainda não foi salvo: ele só sai do rascunho desta linha. O lançamento e o saldo não mudam."
+                        : "O saldo será alterado e o lançamento voltará para situação prevista inicial. Obs.: A conciliação também será desfeita."
+                }
+                confirmLabel={desfazerAlvo?.isLocal ? "Remover vínculo" : "Confirmo"}
                 cancelLabel="Cancelar"
                 variant="destructive"
                 icon={Unlink}
@@ -2386,7 +2399,9 @@ export default function ConciliacaoExtratoDetalhe({
                                 aplicados.
                             </div>
                         ) : (
-                            <div className="divide-y divide-white/5 overflow-y-auto flex-1 min-h-0">
+                            <div className="divide-y divide-white/5 overflow-y-auto flex-1 min-h-[16rem] max-h-[calc(100dvh-15rem)]">
+                                {/* Altura limitada à janela: a lista rola por dentro ("Ir para a linha" rola só ela,
+                                    sem levar o cabeçalho do app embora) e o rodapé Salvar/Conciliar fica à vista. */}
                                 {linhasVisiveis.map(
                                     (
                                         linha,

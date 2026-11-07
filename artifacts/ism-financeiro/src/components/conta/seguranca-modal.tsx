@@ -30,6 +30,9 @@ type RespostaSessoes = {
     sessoes: Sessao[];
     ultimo_acesso: string | null;
     ultimo_acesso_dispositivo: string | null;
+    /** Login anterior ao que abriu esta sessão (gravado na sessão; null se ela não guardou). */
+    acesso_anterior: string | null;
+    acesso_anterior_dispositivo: string | null;
     tentativas: { total: number; ips: string[] } | null;
 };
 
@@ -100,7 +103,8 @@ export function SegurancaModal({onClose}: { onClose: () => void }) {
     const erroNovaId = useId();
     const cancelarRef = useRef<HTMLButtonElement>(null);
     const [sessoes, setSessoes] = useState<Sessao[]>([]);
-    const [ultimo, setUltimo] = useState<string | null>(user?.ultimo_acesso ?? null);
+    // Acesso anterior (não o login atual): começa vazio em vez de user.ultimo_acesso, que é o login mais recente.
+    const [anterior, setAnterior] = useState<string | null>(null);
     const [dispositivo, setDispositivo] = useState<string | null>(null);
     const [tentativas, setTentativas] = useState<RespostaSessoes["tentativas"]>(null);
     const [carregando, setCarregando] = useState(true);
@@ -129,8 +133,8 @@ export function SegurancaModal({onClose}: { onClose: () => void }) {
     async function recarregar() {
         const res = await fetchApiData<RespostaSessoes>("/me/sessoes");
         setSessoes(res.sessoes);
-        setUltimo(res.ultimo_acesso);
-        setDispositivo(res.ultimo_acesso_dispositivo);
+        setAnterior(res.acesso_anterior);
+        setDispositivo(res.acesso_anterior_dispositivo);
         setTentativas(res.tentativas);
     }
 
@@ -361,7 +365,7 @@ export function SegurancaModal({onClose}: { onClose: () => void }) {
 
                         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <p className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-muted-foreground">
-                                Último acesso: {formatarQuando(ultimo)}
+                                Acesso anterior: {carregando ? "…" : anterior ? formatarQuando(anterior) : "sem registro"}
                                 {dispositivo ? <span className="block mt-0.5">{dispositivo}</span> : null}
                             </p>
                             {tentativas && tentativas.total > 0 && (

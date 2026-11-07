@@ -60,7 +60,13 @@ const parceiroBodySchema = z.object({
     ativo: z.boolean().optional(),
     bloqueado: z.boolean().optional(),
     status: z.enum(["ativo", "inativo"]).default("ativo").optional(),
-    dados_bancarios: z.array(dadoBancarioSchema).optional(),
+    // Chave PIX do tipo CNPJ (alfanumérico) vai em maiúsculas, como o cpf_cnpj acima.
+    dados_bancarios: z
+        .array(dadoBancarioSchema)
+        .transform((itens) =>
+            itens.map((i) => (i.tipo === "PIX" && i.tipo_chave === "cnpj" ? {...i, chave: i.chave.toUpperCase()} : i)),
+        )
+        .optional(),
 });
 
 type ParceiroBodyParcial = Partial<z.infer<typeof parceiroBodySchema>>;

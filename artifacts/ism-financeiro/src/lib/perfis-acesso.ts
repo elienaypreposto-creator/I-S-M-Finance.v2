@@ -12,19 +12,27 @@
 export type ItemPermissao = {nome: string; codigo: string};
 export type GrupoPermissoes = {grupo: string; itens: ItemPermissao[]};
 
+/**
+ * Toda permissão que alguma rota da API (withPermission/hasPermission) ou tela
+ * do front confere tem de estar aqui ou em PERMISSOES_USADAS_FORA_DA_JANELA; o
+ * teste `perfis-acesso.test.ts` varre o código e falha se faltar alguma.
+ *
+ * Nomes: relatórios e grupos usam o nome do item do menu lateral. "(só pela API)"
+ * marca permissão sem tela no sistema, usada por integração com token de API.
+ */
 export const permissoesGranulares: GrupoPermissoes[] = [
     {
         grupo: "Dashboard & Relatórios",
         itens: [
-            // Nome = item do menu Relatórios que a permissão libera.
+            // Nome = item do menu Relatórios que a permissão libera (teste confere com o menu).
             {nome: "Dashboard", codigo: "dashboard:ver"},
-            {nome: "Relatório Fechamento Mensal", codigo: "relatorios:financeiro"},
-            {nome: "Relatório Contábil/Fiscal", codigo: "relatorios:contabil-fiscal"},
-            {nome: "Relatório DRE Gerencial", codigo: "relatorios:dre"},
-            {nome: "Relatório Fluxo de Caixa", codigo: "relatorios:fluxo-caixa-mensal"},
+            {nome: "Fechamento Mensal", codigo: "relatorios:financeiro"},
+            {nome: "Contábil/Fiscal", codigo: "relatorios:contabil-fiscal"},
+            {nome: "DRE Gerencial", codigo: "relatorios:dre"},
+            {nome: "Fluxo de Caixa", codigo: "relatorios:fluxo-caixa-mensal"},
             {nome: "Relatório de Metas", codigo: "relatorios:metas"},
             // Sem tela no front: só GET /relatorios/conciliacao da API usa.
-            {nome: "Relatório de Conciliação (somente API)", codigo: "relatorios:conciliacao"},
+            {nome: "Relatório de Conciliação (só pela API, sem tela no sistema)", codigo: "relatorios:conciliacao"},
         ],
     },
     {
@@ -48,7 +56,20 @@ export const permissoesGranulares: GrupoPermissoes[] = [
         ],
     },
     {
-        grupo: "Conciliação Bancária",
+        grupo: "Lançamentos",
+        itens: [
+            {nome: "Cadastro de Lançamentos", codigo: "financeiro:lancamentos:criar"},
+            {nome: "Consulta de Lançamentos", codigo: "financeiro:lancamentos:listar"},
+            {nome: "Edição de Lançamentos", codigo: "financeiro:lancamentos:editar"},
+            {nome: "Alterar valor de lançamento", codigo: "financeiro:lancamentos:alterar_valor"},
+            {nome: "Exclusão de Lançamentos", codigo: "financeiro:lancamentos:deletar"},
+            {nome: "Transferência entre contas - Cadastro (só pela API)", codigo: "financeiro:transferencias:criar"},
+            {nome: "Transferência entre contas - Edição (só pela API)", codigo: "admin:transferencias:editar"},
+            {nome: "Transferência entre contas - Exclusão (só pela API)", codigo: "admin:transferencias:deletar"},
+        ],
+    },
+    {
+        grupo: "Conciliação",
         itens: [
             {nome: "Conciliação Bancária", codigo: "financeiro:conciliacao:acessar"},
             {nome: "Conciliação - Importar Extrato", codigo: "financeiro:conciliacao:importar"},
@@ -57,45 +78,10 @@ export const permissoesGranulares: GrupoPermissoes[] = [
             {nome: "Conciliação - Desfazer / Reverter", codigo: "financeiro:conciliacao:desfazer"},
             {nome: "Conciliação - Concluir / Finalizar", codigo: "financeiro:conciliacao:concluir"},
             {nome: "Conciliação - Configurar / Jobs", codigo: "financeiro:conciliacao:configurar"},
-        ],
-    },
-    {
-        grupo: "Cadastro de Contas",
-        itens: [
-            {nome: "Cadastro de Contas", codigo: "configuracoes:contas-bancarias:criar"},
-            {nome: "Consulta de Contas", codigo: "configuracoes:contas-bancarias:listar"},
-            {nome: "Exclusão de Contas", codigo: "configuracoes:contas-bancarias:deletar"},
-        ],
-    },
-    {
-        grupo: "Cadastro de Pessoas",
-        itens: [
-            {nome: "Cadastro de Pessoa", codigo: "financeiro:parceiros:criar"},
-            {nome: "Consulta de Pessoa", codigo: "financeiro:parceiros:listar"},
-            {nome: "Exclusão de Pessoa", codigo: "financeiro:parceiros:deletar"},
-        ],
-    },
-    {
-        grupo: "Plano de Contas",
-        itens: [
-            {nome: "Cadastro de Plano de Contas", codigo: "configuracoes:plano-contas:criar"},
-            {nome: "Consulta de Plano de Contas", codigo: "configuracoes:plano-contas:listar"},
-            {nome: "Exclusão de Plano de Contas", codigo: "configuracoes:plano-contas:deletar"},
-            {nome: "Exportar Plano de Contas", codigo: "configuracoes:plano-contas:exportar"},
-            {nome: "Cadastro de Categoria do Plano de Contas", codigo: "configuracoes:categorias:criar"},
-            {nome: "Consulta de Categoria do Plano de Contas", codigo: "configuracoes:categorias:listar"},
-            {nome: "Exclusão de Categoria do Plano de Contas", codigo: "configuracoes:categorias:deletar"},
-        ],
-    },
-    {
-        grupo: "Metas & Fechamentos",
-        itens: [
-            {nome: "Cadastro de Metas", codigo: "financeiro:metas:criar"},
-            {nome: "Consulta de Metas", codigo: "financeiro:metas:listar"},
-            {nome: "Exclusão de Metas", codigo: "financeiro:metas:deletar"},
-            {nome: "Cadastro de Fechamentos Financeiros", codigo: "financeiro:fechamentos:criar"},
-            {nome: "Consulta de Fechamentos Financeiros", codigo: "financeiro:fechamentos:listar"},
-            {nome: "Exclusão de Fechamentos Financeiros", codigo: "financeiro:fechamentos:deletar"},
+            // Consultar regras não tem permissão própria: vem com "Conciliação Bancária".
+            {nome: "Regras de Conciliação - Cadastro", codigo: "financeiro:regras-conciliacao:criar"},
+            {nome: "Regras de Conciliação - Edição", codigo: "financeiro:regras-conciliacao:editar"},
+            {nome: "Regras de Conciliação - Exclusão", codigo: "financeiro:regras-conciliacao:deletar"},
         ],
     },
     {
@@ -108,13 +94,57 @@ export const permissoesGranulares: GrupoPermissoes[] = [
         ],
     },
     {
-        grupo: "Movimentações",
+        grupo: "Clientes/Fornecedores",
         itens: [
-            {nome: "Cadastro de Movimentação Financeira", codigo: "financeiro:lancamentos:criar"},
-            {nome: "Consulta de Movimentação Financeira", codigo: "financeiro:lancamentos:listar"},
-            {nome: "Edição de Movimentação Financeira", codigo: "financeiro:lancamentos:editar"},
-            {nome: "Alterar valor de lançamento", codigo: "financeiro:lancamentos:alterar_valor"},
-            {nome: "Exclusão de Movimentação Financeira", codigo: "financeiro:lancamentos:deletar"},
+            {nome: "Cadastro de Clientes/Fornecedores", codigo: "financeiro:parceiros:criar"},
+            {nome: "Consulta de Clientes/Fornecedores", codigo: "financeiro:parceiros:listar"},
+            {nome: "Edição de Clientes/Fornecedores", codigo: "financeiro:parceiros:editar"},
+            {nome: "Exclusão de Clientes/Fornecedores", codigo: "financeiro:parceiros:deletar"},
+        ],
+    },
+    {
+        grupo: "Contas Bancárias",
+        itens: [
+            {nome: "Cadastro de Contas Bancárias", codigo: "configuracoes:contas-bancarias:criar"},
+            {nome: "Consulta de Contas Bancárias", codigo: "configuracoes:contas-bancarias:listar"},
+            {nome: "Edição de Contas Bancárias", codigo: "configuracoes:contas-bancarias:editar"},
+            {nome: "Exclusão de Contas Bancárias", codigo: "configuracoes:contas-bancarias:deletar"},
+        ],
+    },
+    {
+        grupo: "Plano de Contas",
+        itens: [
+            {nome: "Cadastro de Plano de Contas", codigo: "configuracoes:plano-contas:criar"},
+            {nome: "Consulta de Plano de Contas", codigo: "configuracoes:plano-contas:listar"},
+            {nome: "Edição de Plano de Contas", codigo: "configuracoes:plano-contas:editar"},
+            {nome: "Exclusão de Plano de Contas", codigo: "configuracoes:plano-contas:deletar"},
+            {nome: "Exportar Plano de Contas", codigo: "configuracoes:plano-contas:exportar"},
+            {nome: "Cadastro de Categoria do Plano de Contas", codigo: "configuracoes:categorias:criar"},
+            {nome: "Consulta de Categoria do Plano de Contas", codigo: "configuracoes:categorias:listar"},
+            {nome: "Exclusão de Categoria do Plano de Contas", codigo: "configuracoes:categorias:deletar"},
+        ],
+    },
+    {
+        grupo: "Metas Financeiras & Fechamentos",
+        itens: [
+            {nome: "Consulta de Metas", codigo: "financeiro:metas:listar"},
+            // POST /metas grava (cria e altera) a planilha inteira com esta permissão.
+            {nome: "Cadastro e edição de Metas", codigo: "financeiro:metas:editar"},
+            {nome: "Cadastro de Fechamentos Financeiros", codigo: "financeiro:fechamentos:criar"},
+            {nome: "Consulta de Fechamentos Financeiros", codigo: "financeiro:fechamentos:listar"},
+            {nome: "Exclusão de Fechamentos Financeiros", codigo: "financeiro:fechamentos:deletar"},
+        ],
+    },
+    {
+        grupo: "Departamentos & Filiais",
+        itens: [
+            // Consultar não exige permissão: as listas abrem para qualquer usuário da empresa.
+            {nome: "Cadastro de Departamentos", codigo: "configuracoes:departamentos:criar"},
+            {nome: "Edição de Departamentos", codigo: "configuracoes:departamentos:editar"},
+            {nome: "Exclusão de Departamentos", codigo: "configuracoes:departamentos:deletar"},
+            {nome: "Cadastro de Filiais", codigo: "configuracoes:filiais:criar"},
+            {nome: "Edição de Filiais", codigo: "configuracoes:filiais:editar"},
+            {nome: "Exclusão de Filiais", codigo: "configuracoes:filiais:deletar"},
         ],
     },
     {
@@ -124,11 +154,13 @@ export const permissoesGranulares: GrupoPermissoes[] = [
             {nome: "Consulta de Usuários", codigo: "admin:usuarios:listar"},
             {nome: "Edição de Usuários", codigo: "admin:usuarios:editar"},
             {nome: "Exclusão de Usuários", codigo: "admin:usuarios:deletar"},
-            {nome: "Conceder permissões a utilizadores", codigo: "admin:permissoes:conceder"},
+            {nome: "Conceder permissões a usuários", codigo: "admin:permissoes:conceder"},
             {nome: "Edição dos dados da própria empresa", codigo: "admin:empresas:editar"},
-            {nome: "Cadastro de Token de API", codigo: "admin:tokens-api:criar"},
+            {nome: "Cadastro de Tokens de API", codigo: "admin:tokens-api:criar"},
             {nome: "Consulta de Tokens de API", codigo: "admin:tokens-api:listar"},
-            {nome: "Exclusão de Token de API", codigo: "admin:tokens-api:deletar"},
+            {nome: "Edição de Tokens de API", codigo: "admin:tokens-api:editar"},
+            {nome: "Exclusão de Tokens de API", codigo: "admin:tokens-api:deletar"},
+            {nome: "Consulta da Auditoria (só pela API)", codigo: "admin:auditoria:listar"},
         ],
     },
 ];
@@ -136,18 +168,31 @@ export const permissoesGranulares: GrupoPermissoes[] = [
 export const todasPermissoes: string[] = permissoesGranulares.flatMap((g) => g.itens.map((i) => i.codigo));
 
 /**
- * Permissões do catálogo que nenhuma rota da API nem tela do front confere
- * (relatórios planejados que não foram feitos). Ficam fora da tela para o
- * admin não conceder algo que não libera nada. Continuam no catálogo e no
- * banco: quem já as tem não perde a linha, e o PUT de permissões segue
- * aceitando o que a janela reenviar.
+ * Permissões do catálogo que nenhuma rota da API nem tela do front confere.
+ * Ficam fora da tela para o admin não conceder algo que não libera nada.
+ * Continuam no catálogo e no banco: quem já as tem não perde a linha, e o PUT
+ * de permissões segue aceitando o que a janela reenviar.
  */
 export const PERMISSOES_SEM_TELA: readonly string[] = [
+    // Relatórios planejados que não foram feitos.
     "relatorios:fluxo-caixa-diario",
     "relatorios:economico",
     "relatorios:vencimento",
     "relatorios:extrato",
+    // Metas: POST /metas (cria e altera) exige financeiro:metas:editar; não há
+    // rota de exclusão. A migration 0034 dá editar a quem tinha criar.
+    "financeiro:metas:criar",
+    "financeiro:metas:deletar",
+    // GET /regras-conciliacao usa financeiro:conciliacao:acessar.
+    "financeiro:regras-conciliacao:listar",
 ];
+
+/**
+ * Permissões que a API ou o front conferem mas que, de propósito, não aparecem
+ * na janela. Hoje nenhuma: toda permissão conferida pode ser concedida. Quem
+ * acrescentar aqui explica o motivo ao lado.
+ */
+export const PERMISSOES_USADAS_FORA_DA_JANELA: readonly string[] = [];
 
 /** Quantas das permissões marcadas aparecem na tela (as escondidas não contam). */
 export function contarVisiveis(codigos: readonly string[]): number {
@@ -171,6 +216,9 @@ const tarefasKanban = [
  *   "Relatório Financeiro" (Fechamento Mensal) continua só no Admin.
  * - Visualizador: nenhum relatório.
  *
+ * Metas: Financeiro cadastra e altera (financeiro:metas:editar, o que o POST
+ * /metas exige); Gestor e Visualizador só consultam.
+ *
  * O Visualizador só lê: só ações `:listar`/`:ver` (perfis-acesso.test.ts confere).
  */
 export const perfisBase: Record<string, string[]> = {
@@ -189,7 +237,7 @@ export const perfisBase: Record<string, string[]> = {
         "financeiro:conciliacao:concluir",
         "configuracoes:contas-bancarias:listar", "financeiro:parceiros:listar", "configuracoes:plano-contas:listar",
         "financeiro:lancamentos:criar", "financeiro:lancamentos:listar", "financeiro:lancamentos:editar",
-        "financeiro:metas:criar", "financeiro:metas:listar",
+        "financeiro:metas:listar", "financeiro:metas:editar",
         ...tarefasKanban,
     ],
     Gestor: [

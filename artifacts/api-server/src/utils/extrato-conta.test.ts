@@ -4,6 +4,7 @@ import {
     aberturaNoPeriodo,
     agruparVinculos,
     comSaldoCorrido,
+    contaNoResumoDoPeriodo,
     dataIsoValida,
     diaAnterior,
     filtrarPorTipo,
@@ -179,5 +180,24 @@ describe("extrato-conta — conta que começa dentro do período", () => {
         const r = comSaldoCorrido(1_000, [mov(1, "CR", "2026-08-27", "1.00")]);
         assert.equal(r.abertura, null);
         assert.equal(r.saldoFinalCents, 1_100);
+    });
+});
+
+describe("contaNoResumoDoPeriodo", () => {
+    it("conta que só começa depois do fim do período fica fora do resumo", () => {
+        // QA: outubro mostrava a conta com início em 01/11 zerada ("Começa em 01/11/2026").
+        assert.equal(contaNoResumoDoPeriodo({status: "ativo", data_inicio: "2026-11-01"}, false, "2026-10-31"), false);
+        assert.equal(contaNoResumoDoPeriodo({status: "ativo", data_inicio: "2026-11-01"}, true, "2026-10-31"), false);
+    });
+
+    it("começa no último dia ou antes: entra", () => {
+        assert.equal(contaNoResumoDoPeriodo({status: "ativo", data_inicio: "2026-10-31"}, false, "2026-10-31"), true);
+        assert.equal(contaNoResumoDoPeriodo({status: "ativo", data_inicio: "2026-01-01"}, false, "2026-10-31"), true);
+        assert.equal(contaNoResumoDoPeriodo({status: "ativo", data_inicio: null}, false, "2026-10-31"), true);
+    });
+
+    it("inativa só com movimento no período", () => {
+        assert.equal(contaNoResumoDoPeriodo({status: "inativo", data_inicio: "2026-01-01"}, false, "2026-10-31"), false);
+        assert.equal(contaNoResumoDoPeriodo({status: "inativo", data_inicio: "2026-01-01"}, true, "2026-10-31"), true);
     });
 });

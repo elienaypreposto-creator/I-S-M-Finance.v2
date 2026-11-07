@@ -52,7 +52,7 @@ async function montar() {
     const React = await import("react");
     const {act} = React;
     const {createRoot} = await import("react-dom/client");
-    const {SidebarProvider, Sidebar, SidebarTrigger} = await import("@/components/ui/sidebar");
+    const {SidebarProvider, Sidebar, SidebarTrigger, SidebarMenu, SidebarMenuItem, SidebarMenuButton} = await import("@/components/ui/sidebar");
     const h = React.createElement;
 
     const el = document.createElement("div");
@@ -61,7 +61,13 @@ async function montar() {
     await act(async () => {
         root.render(
             h(SidebarProvider, null,
-                h(Sidebar, {collapsible: "icon", variant: "inset"}, h("nav", null, "itens do menu")),
+                h(Sidebar, {collapsible: "icon", variant: "inset"},
+                    h("nav", null, "itens do menu",
+                        h(SidebarMenu, null,
+                            h(SidebarMenuItem, null, h(SidebarMenuButton, {tooltip: "Lançamentos"}, "Lançamentos")),
+                        ),
+                    ),
+                ),
                 h(SidebarTrigger),
             ),
         );
@@ -76,6 +82,13 @@ async function montar() {
             botao.dispatchEvent(new w.MouseEvent("click", {bubbles: true}));
         }),
         desmontar: () => act(async () => root.unmount()),
+        apertarEsc: () => act(async () => {
+            const alvo = (document.activeElement ?? document.body) as HTMLElement;
+            alvo.dispatchEvent(new w.KeyboardEvent("keydown", {key: "Escape", bubbles: true, cancelable: true}));
+        }),
+        focarItemDoMenu: () => act(async () => {
+            (document.querySelector("[data-mobile=true] [data-sidebar=menu-button]") as HTMLElement).focus();
+        }),
     };
 }
 
@@ -103,6 +116,34 @@ describe("menu lateral: troca desktop → celular", () => {
         largura = 375; // nenhum evento disparado
         await t.clicarBotao();
         assert.equal(t.sheetAberto(), true);
+        await t.desmontar();
+    });
+
+    it("Esc fecha o sheet já no primeiro toque, com o foco num item do menu", async () => {
+        // QA: o 1º Esc fechava um tooltip invisível do item focado e o menu ficava.
+        largura = 375;
+        const t = await montar();
+        await t.clicarBotao();
+        await t.focarItemDoMenu();
+        assert.equal(document.querySelector("[role=tooltip]"), null);
+        await t.apertarEsc();
+        assert.equal(t.sheetAberto(), false);
+        await t.desmontar();
+    });
+
+    it("alargar para o desktop com o sheet aberto tira o painel e o fundo escuro", async () => {
+        largura = 375;
+        const t = await montar();
+        await t.clicarBotao();
+        assert.equal(t.sheetAberto(), true);
+        await t.act(async () => {
+            largura = 1400;
+            ouvintesChange.forEach((l) => l());
+        });
+        assert.equal(t.sheetAberto(), false);
+        assert.equal(document.querySelector("[data-slot=sheet-overlay], [data-state=open][role=dialog]"), null);
+        assert.notEqual(document.body.style.pointerEvents, "none");
+        assert.equal(t.menuDesktop(), true);
         await t.desmontar();
     });
 

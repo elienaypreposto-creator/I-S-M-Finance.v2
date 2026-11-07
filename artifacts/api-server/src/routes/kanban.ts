@@ -99,6 +99,7 @@ router.get("/cards", withPermission(PERM.KANBAN_LISTAR), async (req, res) => {
                 checklist: kanbanCardsTable.checklist,
                 tags: kanbanCardsTable.tags,
                 responsavel_id: kanbanCardsTable.responsavel_id,
+                created_by: kanbanCardsTable.created_by,
                 created_at: kanbanCardsTable.created_at,
                 updated_at: kanbanCardsTable.updated_at,
                 responsavel: {id: usuariosTable.id, nome: usuariosTable.nome},
@@ -140,15 +141,33 @@ router.post(
             const {titulo, descricao, prioridade, coluna, prazo, departamentos, checklist, tags} =
                 req.body as CreateCardBody;
 
+            // Usuário da sessão: created_by ficava vazio (QA).
+            const usuarioId = req.user?.id ?? null;
+
             const card = await db.transaction(async (tx) => {
                 const [inserted] = await tx
                     .insert(kanbanCardsTable)
-                    .values(withEmpresaId({titulo, descricao, prioridade, coluna, prazo, departamentos, checklist, tags}, empresaId))
+                    .values(withEmpresaId({
+                        titulo,
+                        descricao,
+                        prioridade,
+                        coluna,
+                        prazo,
+                        departamentos,
+                        checklist,
+                        tags,
+                        created_by: usuarioId,
+                    }, empresaId))
                     .returning();
 
                 await tx
                     .insert(kanbanHistoricoTable)
-                    .values(withEmpresaId({card_id: inserted.id, comentario: `Tarefa "${titulo}" criada`}, empresaId));
+                    .values(withEmpresaId({
+                        card_id: inserted.id,
+                        comentario: `Tarefa "${titulo}" criada`,
+                        coluna_nova: inserted.coluna,
+                        usuario_id: usuarioId,
+                    }, empresaId));
 
                 return inserted;
             });
@@ -179,19 +198,29 @@ router.patch(
             }
 
             const card = await db.transaction(async (tx) => {
+                const [antes] = await tx
+                    .select({coluna: kanbanCardsTable.coluna})
+                    .from(kanbanCardsTable)
+                    .where(tenantWhere(kanbanCardsTable, empresaId, eq(kanbanCardsTable.id, id)))
+                    .limit(1);
+                if (!antes) return null;
+
+                // updated_at não mudava ao mover/editar (defaultNow só no INSERT).
                 const [updated] = await tx
                     .update(kanbanCardsTable)
-                    .set(updates)
+                    .set({...updates, updated_at: new Date()})
                     .where(tenantWhere(kanbanCardsTable, empresaId, eq(kanbanCardsTable.id, id)))
                     .returning();
 
                 if (!updated) return null;
 
-                if (updates.coluna) {
+                if (updates.coluna && updates.coluna !== antes.coluna) {
                     await tx.insert(kanbanHistoricoTable).values(withEmpresaId({
                         card_id: id,
                         comentario: `Movido para ${updates.coluna}`,
+                        coluna_anterior: antes.coluna,
                         coluna_nova: updates.coluna,
+                        usuario_id: req.user?.id ?? null,
                     }, empresaId));
                 }
 

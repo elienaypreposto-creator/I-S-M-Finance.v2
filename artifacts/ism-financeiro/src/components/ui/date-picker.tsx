@@ -34,6 +34,10 @@ type DatePickerProps = {
   className?: string
   "aria-invalid"?: boolean
   "aria-describedby"?: string
+  /** Dias que não podem ser escolhidos (ex.: {after: hoje} para não aceitar datas futuras). */
+  diasDesabilitados?: React.ComponentProps<typeof Calendar>["disabled"]
+  /** Mês exibido ao abrir sem data escolhida (padrão: mês atual). */
+  mesPadrao?: Date
 }
 
 /**
@@ -51,6 +55,8 @@ export function DatePicker({
   placeholder = "Selecione...",
   disabled,
   className,
+  diasDesabilitados,
+  mesPadrao,
   ...aria
 }: DatePickerProps) {
   const [aberto, setAberto] = React.useState(false)
@@ -81,7 +87,8 @@ export function DatePicker({
           mode="single"
           required
           selected={selecionada}
-          defaultMonth={selecionada}
+          defaultMonth={selecionada ?? mesPadrao}
+          disabled={diasDesabilitados}
           showOutsideDays={false}
           autoFocus
           onSelect={(data) => {

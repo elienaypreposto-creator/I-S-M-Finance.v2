@@ -40,7 +40,8 @@ import {formatCurrency, cn} from "@/lib/utils";
 import {useSaldosVisiveis} from "@/components/conta/saldos-visiveis";
 import {fetchApiData} from "@/lib/api-config";
 import {SaldoGeralCard} from "@/components/dashboard/saldo-geral-card";
-import {hojeIsoLocal} from "@/lib/datas";
+import {formatarData, formatarDiaMes, hojeIsoLocal, intervaloEixoDias} from "@/lib/datas";
+import {formatarEixoMoeda} from "@/lib/eixo-moeda";
 
 const PIE_COLORS = ["#6366F1", "#F59E0B", "#E74C3C", "#22C55E", "#3B82F6", "#EC4899"];
 
@@ -136,12 +137,12 @@ function lucroLiquidoFromProjecao(p: ProjecaoMes | undefined): number {
     return (toCents(p.projecaoRecebimentos) - toCents(p.projecaoPagamentos)) / 100;
 }
 
-const CustomTooltip = ({active, payload, label}: any) => {
+const CustomTooltip = ({active, payload, label, formatarLabel}: any) => {
     const saldos = useSaldosVisiveis();
     if (active && payload && payload.length) {
         return (
             <div className="bg-card/95 backdrop-blur-md border border-white/10 p-3 rounded-lg shadow-xl">
-                {label && <p className="text-white font-medium mb-2 text-xs">{label}</p>}
+                {label && <p className="text-white font-medium mb-2 text-xs">{formatarLabel ? formatarLabel(label) : label}</p>}
                 {payload.map((entry: any, i: number) => (
                     <p key={i} style={{color: entry.color || entry.fill}} className="text-sm font-medium">
                         {entry.name}:{" "}
@@ -713,14 +714,9 @@ function ContasPanel({
 export default function Dashboard() {
     const saldos = useSaldosVisiveis();
     const dinheiro = (valor: number) => saldos.texto(formatCurrency(valor));
-    const eixo = (v: number) =>
-        saldos.visivel
-            ? v >= 1_000_000
-                ? `R$${(v / 1_000_000).toFixed(1)}M`
-                : v >= 1000
-                    ? `R$${(v / 1000).toFixed(0)}k`
-                    : `R$${v}`
-            : "•••";
+    const eixo = (v: number) => (saldos.visivel ? formatarEixoMoeda(v) : "•••");
+    // % de participação revela a proporção entre categorias: some com os saldos.
+    const pct = (v: number) => saldos.texto(`${v}%`);
     const [anoFluxo] = useState(new Date().getFullYear());
     const [tabInadimplencia, setTabInadimplencia] = useState<InadimplenciaTab>("vencidos");
     const [filtroRisco, setFiltroRisco] = useState<string>("");
@@ -869,16 +865,19 @@ export default function Dashboard() {
                                     fontSize={10}
                                     tickLine={false}
                                     axisLine={false}
-                                    tickFormatter={(d: string) => (typeof d === "string" ? d.slice(5) : d)}
+                                    // Do 1º dia (hoje) em diante, espaçamento fixo, dd/mm.
+                                    interval={intervaloEixoDias(projecaoDias.length)}
+                                    tickFormatter={formatarDiaMes}
                                 />
                                 <YAxis
                                     stroke="#ffffff50"
                                     fontSize={11}
                                     tickLine={false}
                                     axisLine={false}
+                                    width={72}
                                     tickFormatter={(v) => eixo(v)}
                                 />
-                                <RechartsTooltip content={<CustomTooltip/>}/>
+                                <RechartsTooltip content={<CustomTooltip formatarLabel={formatarData}/>}/>
                                 <Legend iconType="circle" wrapperStyle={{fontSize: "12px"}}/>
                                 {/* Saldo na abertura do dia: hoje = Saldo geral; o que vence no dia entra no seguinte. */}
                                 <Line type="monotone" dataKey="saldo" name="Saldo (início do dia)" stroke="#3BA8DC"
@@ -1015,7 +1014,8 @@ export default function Dashboard() {
                                         fontSize={11}
                                         tickLine={false}
                                         axisLine={false}
-                                        tickFormatter={(v) => eixo(v)}
+                                        width={72}
+                                    tickFormatter={(v) => eixo(v)}
                                     />
                                     <RechartsTooltip cursor={{fill: "#ffffff05"}} content={<CustomTooltip/>}/>
                                     <Legend iconType="circle" wrapperStyle={{fontSize: "12px"}}/>
@@ -1077,7 +1077,7 @@ export default function Dashboard() {
                                     <span className="text-xs text-white/70 flex-1 truncate">{item.categoria}</span>
                                     <span className="text-xs font-bold text-teal-300">{dinheiro(item.valor)}</span>
                                     <span
-                                        className="text-xs text-muted-foreground w-8 text-right">{item.percentual}%</span>
+                                        className="text-xs text-muted-foreground min-w-8 text-right">{pct(item.percentual)}</span>
                                 </div>
                             ))}
                         </div>
@@ -1092,7 +1092,7 @@ export default function Dashboard() {
                                     <span className="text-xs text-white/70 flex-1 truncate">{item.categoria}</span>
                                     <span className="text-xs font-bold text-orange-300">- {dinheiro(item.valor)}</span>
                                     <span
-                                        className="text-xs text-muted-foreground w-8 text-right">{item.percentual}%</span>
+                                        className="text-xs text-muted-foreground min-w-8 text-right">{pct(item.percentual)}</span>
                                 </div>
                             ))}
                         </div>

@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -33,6 +34,11 @@ export function ConfirmDialog({
   onCancel,
   confirmDisabled = false,
 }: ConfirmDialogProps) {
+  // O Radix só devolve o foco a um AlertDialogTrigger; aqui o diálogo é aberto por
+  // código (useConfirm), então ao fechar o foco caía no <body> e o Esc do modal de
+  // trás parava de funcionar. Guarda quem tinha o foco e devolve ao fechar.
+  const focoAnteriorRef = useRef<HTMLElement | null>(null);
+
   const isDestructive = variant === "destructive";
   const isWarning     = variant === "warning";
 
@@ -54,6 +60,19 @@ export function ConfirmDialog({
   return (
     <AlertDialog open={open} onOpenChange={(v) => { if (!v) onCancel(); }}>
       <AlertDialogContent
+        onOpenAutoFocus={() => {
+          // Roda antes de o foco entrar no diálogo.
+          const ativo = document.activeElement;
+          focoAnteriorRef.current = ativo instanceof HTMLElement && ativo !== document.body ? ativo : null;
+        }}
+        onCloseAutoFocus={(e) => {
+          const el = focoAnteriorRef.current;
+          focoAnteriorRef.current = null;
+          if (el?.isConnected) {
+            e.preventDefault();
+            el.focus();
+          }
+        }}
         className="
           bg-card border border-white/10 rounded-2xl shadow-2xl
           w-full max-w-sm p-0 gap-0

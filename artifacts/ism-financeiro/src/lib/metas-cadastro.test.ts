@@ -5,6 +5,7 @@ import {
     entradaMetaParaApi,
     resumirCadastroMetas,
     rotuloCelulaMeta,
+    rotuloLinhaMeta,
     rotuloPeriodoMetas,
     valorMeta,
     type MetaCadastro,
@@ -134,5 +135,14 @@ describe("rótulos", () => {
             "Meta de Vendas / Produtos em Março de 2026: R$ 1.500,00",
         );
         assert.equal(rotuloCelulaMeta("Aluguel", 12, 2026, null), "Meta de Aluguel em Dezembro de 2026: sem meta");
+    });
+
+    it("linhas de mesmo nome em receita e despesa têm rótulos diferentes", () => {
+        const receita = rotuloLinhaMeta("Serviços", "Consultoria", "receita");
+        const despesa = rotuloLinhaMeta("Serviços", "Consultoria", "despesa");
+        assert.equal(receita, "Serviços / Consultoria (receita)");
+        assert.equal(despesa, "Serviços / Consultoria (despesa)");
+        assert.notEqual(rotuloCelulaMeta(receita, 1, 2026, null), rotuloCelulaMeta(despesa, 1, 2026, null));
+        assert.equal(rotuloLinhaMeta("Aluguel", null, "custo"), "Aluguel (custo)");
     });
 });

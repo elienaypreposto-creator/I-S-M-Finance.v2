@@ -48,3 +48,21 @@ export function formatarData(valor: unknown, vazio = "-"): string {
     if (Number.isNaN(data.getTime())) return texto;
     return FORMATO_DATA.format(data);
 }
+
+/** Data civil "YYYY-MM-DD" → "dd/mm" (eixo de gráfico por dia). Outro texto volta como veio. */
+export function formatarDiaMes(valor: unknown): string {
+    const texto = String(valor ?? "").trim();
+    const civil = DATA_CIVIL.exec(texto.slice(0, 10));
+    return civil ? `${civil[3]}/${civil[2]}` : texto;
+}
+
+/**
+ * `interval` do eixo X (recharts) para mostrar no máximo `maxRotulos` datas em
+ * espaçamento regular a partir do 1º ponto: com número fixo o recharts exibe os
+ * índices 0, k+1, 2(k+1)…; no automático ("preserveEnd") ele pulava o 1º dia
+ * e deixava os rótulos com espaçamento irregular.
+ */
+export function intervaloEixoDias(pontos: number, maxRotulos = 8): number {
+    if (pontos <= maxRotulos || maxRotulos < 2) return 0;
+    return Math.ceil((pontos - 1) / (maxRotulos - 1)) - 1;
+}

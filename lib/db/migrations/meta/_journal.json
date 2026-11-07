@@ -239,6 +239,20 @@
       "when": 1790168400000,
       "tag": "0033_visualizador_kanban_somente_leitura",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1790168500000,
+      "tag": "0034_metas_editar_para_quem_tinha_criar",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1790168600000,
+      "tag": "0035_lancamentos_origem_idx",
+      "breakpoints": true
     }
   ]
 }
