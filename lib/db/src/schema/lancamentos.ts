@@ -10,8 +10,10 @@ import {
     timestamp,
     boolean,
     foreignKey,
-    index
+    index,
+    check,
 } from "drizzle-orm/pg-core";
+import {sql} from "drizzle-orm";
 import {createInsertSchema} from "drizzle-zod";
 import {z} from "zod/v4";
 import {contasBancariasTable} from "./contas-bancarias";
@@ -35,6 +37,18 @@ export const lancamentosTable = pgTable("lancamentos", {
     numero_documento: varchar("numero_documento", {length: 60}),
     observacao: text("observacao"),
     valor: numeric("valor", {precision: 15, scale: 2}).notNull(),
+    // Retenções na fonte (o tomador retém e paga o líquido). `valor` segue
+    // sendo o BRUTO da nota; `valor_liquido` é a base da quitação.
+    retencao_ir: numeric("retencao_ir", {precision: 15, scale: 2}).notNull().default("0"),
+    retencao_pis: numeric("retencao_pis", {precision: 15, scale: 2}).notNull().default("0"),
+    retencao_cofins: numeric("retencao_cofins", {precision: 15, scale: 2}).notNull().default("0"),
+    retencao_csll: numeric("retencao_csll", {precision: 15, scale: 2}).notNull().default("0"),
+    retencao_inss: numeric("retencao_inss", {precision: 15, scale: 2}).notNull().default("0"),
+    retencao_iss: numeric("retencao_iss", {precision: 15, scale: 2}).notNull().default("0"),
+    // Coluna gerada (STORED): nunca entra em INSERT/UPDATE.
+    valor_liquido: numeric("valor_liquido", {precision: 15, scale: 2}).generatedAlwaysAs(
+        sql`"valor" - ("retencao_ir" + "retencao_pis" + "retencao_cofins" + "retencao_csll" + "retencao_inss" + "retencao_iss")`,
+    ),
     status: statusLancamentoEnum("status").notNull().default("pendente"),
     origem: origemLancamentoEnum("origem").notNull().default("manual"),
     plano_conta_id: integer("plano_conta_id").references(() => planoContasTable.id),
@@ -65,6 +79,14 @@ export const lancamentosTable = pgTable("lancamentos", {
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [
+    check(
+        "lancamentos_retencoes_nao_negativas_chk",
+        sql`${table.retencao_ir} >= 0 AND ${table.retencao_pis} >= 0 AND ${table.retencao_cofins} >= 0 AND ${table.retencao_csll} >= 0 AND ${table.retencao_inss} >= 0 AND ${table.retencao_iss} >= 0`,
+    ),
+    check(
+        "lancamentos_retencoes_ate_valor_chk",
+        sql`(${table.retencao_ir} + ${table.retencao_pis} + ${table.retencao_cofins} + ${table.retencao_csll} + ${table.retencao_inss} + ${table.retencao_iss}) = 0 OR (${table.retencao_ir} + ${table.retencao_pis} + ${table.retencao_cofins} + ${table.retencao_csll} + ${table.retencao_inss} + ${table.retencao_iss}) <= ${table.valor}`,
+    ),
     foreignKey({
         columns: [table.lancamento_origem_id],
         foreignColumns: [table.id],

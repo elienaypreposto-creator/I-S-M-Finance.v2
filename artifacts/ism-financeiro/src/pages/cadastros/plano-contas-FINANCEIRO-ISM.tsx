@@ -1,10 +1,12 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
-import {useState, useRef, useEffect, useMemo} from "react";
-import {useForm, Controller} from "react-hook-form";
+import {useState, useMemo} from "react";
+import {useForm, useWatch, Controller} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {z} from "zod";
 import {PageHeader} from "@/components/shared/page-header";
-import {Plus, Lock, ChevronDown, ChevronUp, X} from "lucide-react";
+import {Plus, Lock, ChevronDown, ChevronUp} from "lucide-react";
+import {limparNome, normalizarNome} from "@/lib/nomes";
+import {acharPlanoDuplicado, categoriaExistente, grupoDreCompativel} from "@/lib/plano-contas-regras";
 import {BotaoEditar, BotaoExcluir} from "@/components/shared/botoes-acao";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
@@ -53,13 +55,30 @@ type PlanoConta = {
     tipo: string;
     categoria: string;
     subcategoria: string | null;
+    grupo_dre: string | null;
     ativo: boolean;
 };
 
-// Comparador alfabético 
-const collator = new Intl.Collator("pt-BR", {sensitivity: "base"});
+// Linha da DRE Gerencial onde a conta entra. Vazio = segue o tipo (receita, custo, despesa).
+const ROTULO_GRUPO_DRE_AUTOMATICO = "Automático (segue o tipo)";
+const OPCOES_GRUPO_DRE = [
+    {value: "", label: ROTULO_GRUPO_DRE_AUTOMATICO},
+    {value: "receita", label: "Receita bruta"},
+    {value: "deducao", label: "Dedução da receita (impostos sobre faturamento)"},
+    {value: "custo", label: "Custo dos serviços prestados"},
+    {value: "despesa", label: "Despesa operacional"},
+    {value: "fora", label: "Fora da DRE (empréstimo, aporte, investimento, retenção repassada)"},
+];
+const ROTULO_CURTO_GRUPO_DRE: Record<string, string> = {
+    receita: "Receita bruta",
+    deducao: "Dedução",
+    custo: "Custo",
+    despesa: "Despesa",
+    fora: "Fora da DRE",
+};
 
-const normalizeText = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
+// Comparador alfabético
+const collator = new Intl.Collator("pt-BR", {sensitivity: "base"});
 
 const planoContaFormSchema = z.object({
     tipo: z.enum(["receita", "custo", "despesa"], {
@@ -68,6 +87,10 @@ const planoContaFormSchema = z.object({
     }),
     categoria: z.string().trim().min(1, "Categoria é obrigatória."),
     subcategoria: z.string().trim().optional().default(""),
+    grupo_dre: z.enum(["", "receita", "deducao", "custo", "despesa", "fora"]).default(""),
+}).refine((v) => grupoDreCompativel(v.tipo, v.grupo_dre), {
+    path: ["grupo_dre"],
+    message: "Esta linha da DRE não combina com o tipo escolhido.",
 });
 
 type PlanoContaFormValues = z.infer<typeof planoContaFormSchema>;
@@ -95,6 +118,8 @@ function FormModal({
         register,
         control,
         handleSubmit,
+        setValue,
+        getValues,
         formState: {errors, isDirty},
     } = useForm<PlanoContaFormValues>({
         resolver: zodResolver(planoContaFormSchema),
@@ -102,8 +127,21 @@ function FormModal({
             tipo: (initialData?.tipo as PlanoContaFormValues["tipo"]) ?? "despesa",
             categoria: initialData?.categoria ?? "",
             subcategoria: initialData?.subcategoria ?? "",
+            grupo_dre: (initialData?.grupo_dre as PlanoContaFormValues["grupo_dre"]) ?? "",
         },
     });
+
+    // Só as linhas da DRE coerentes com o tipo (receita não vai para despesa etc.).
+    const tipoAtual = useWatch({control, name: "tipo"});
+    const opcoesGrupoDre = OPCOES_GRUPO_DRE.filter((o) => grupoDreCompativel(tipoAtual, o.value));
+
+    function handleTipoChange(novoTipo: string, onChange: (v: string) => void) {
+        onChange(novoTipo);
+        // Trocar o tipo apaga a linha da DRE que deixou de combinar.
+        if (!grupoDreCompativel(novoTipo, getValues("grupo_dre"))) {
+            setValue("grupo_dre", "", {shouldDirty: true, shouldValidate: true});
+        }
+    }
 
     async function handleRequestClose() {
         if (isDirty) {
@@ -156,7 +194,7 @@ function FormModal({
                                         aria-describedby={lockedTipo ? "plano-conta-tipo-travado" : undefined}
                                         className={cn("mt-1", lockedTipo && "border-red-400/30 text-white/70")}
                                         onBlur={field.onBlur}
-                                        onChange={field.onChange}
+                                        onChange={(v) => handleTipoChange(v, field.onChange)}
                                         opcoes={[
                                             {value: "receita", label: "Receita"},
                                             {value: "custo", label: "Custo"},
@@ -216,6 +254,36 @@ function FormModal({
                                 placeholder="Ex: Aluguel"
                             />
                         </div>
+
+                        {/* Linha da DRE */}
+                        <div>
+                            <label htmlFor="plano-conta-grupo-dre" className="text-sm font-medium text-muted-foreground">Linha da DRE</label>
+                            <Controller
+                                name="grupo_dre"
+                                control={control}
+                                render={({field}) => (
+                                    <SelectCampo
+                                        id="plano-conta-grupo-dre"
+                                        value={field.value}
+                                        aria-invalid={!!errors.grupo_dre}
+                                        aria-describedby="plano-conta-grupo-dre-ajuda"
+                                        className="mt-1"
+                                        onBlur={field.onBlur}
+                                        onChange={field.onChange}
+                                        // Vazio é escolha válida (segue o tipo) e precisa poder voltar a ele.
+                                        permitirVazio
+                                        placeholder={ROTULO_GRUPO_DRE_AUTOMATICO}
+                                        opcoes={opcoesGrupoDre}
+                                    />
+                                )}
+                            />
+                            <p id="plano-conta-grupo-dre-ajuda" className="text-xs text-muted-foreground/80 mt-1">
+                                Em que linha a conta aparece na DRE Gerencial. Sem escolha, segue o tipo. Pode ser alterada mesmo com lançamentos.
+                            </p>
+                            {errors.grupo_dre && (
+                                <p className="text-xs text-destructive mt-1">{errors.grupo_dre.message}</p>
+                            )}
+                        </div>
                     </div>
                 </ModalBody>
                 <ModalFooter hint="Esc fecha">
@@ -259,36 +327,24 @@ export default function PlanoContas() {
     });
     const [catsAbertas, setCatsAbertas] = useState<Record<string, boolean>>({});
 
-    // ── Banner de sucesso (topo, 3s, com botão de fechar) ──────────────────
-    // Usado apenas para a mensagem de cadastro de categoria/subcategoria,
-    // sem afetar o sistema de toast global (bottom-right) usado no resto do app.
-    const [successMessage, setSuccessMessage] = useState<string | null>(null);
-    const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-    const showSuccessBanner = (message: string) => {
-        if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
-        setSuccessMessage(message);
-        successTimeoutRef.current = setTimeout(() => setSuccessMessage(null), 3000);
-    };
-
-    const closeSuccessBanner = () => {
-        if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
-        setSuccessMessage(null);
-    };
-
-    useEffect(() => {
-        return () => {
-            if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
-        };
-    }, []);
-
     const {data: contas = [], isLoading} = useQuery<PlanoConta[]>({
         queryKey: tenantQueryKey('plano-contas'),
         queryFn: () => fetchApiData("/plano-contas")
     });
 
+    const nomeConta = (c: { categoria: string; subcategoria?: string | null }) =>
+        c.subcategoria ? `${c.categoria} / ${c.subcategoria}` : c.categoria;
+
+    type PlanoContaPayload = {
+        id?: number;
+        tipo: string;
+        categoria: string;
+        subcategoria: string | null;
+        grupo_dre: string | null;
+    };
+
     const saveMutation = useMutation({
-        mutationFn: (data: any) => {
+        mutationFn: (data: PlanoContaPayload) => {
             const method = data.id ? 'PUT' : 'POST';
             const path = data.id ? `/plano-contas/${data.id}` : "/plano-contas";
             return fetchApi(path, {
@@ -296,21 +352,28 @@ export default function PlanoContas() {
                 body: JSON.stringify(data)
             });
         },
-        onSuccess: () => {
+        onSuccess: (_, data) => {
             queryClient.invalidateQueries({queryKey: tenantQueryKey('plano-contas')});
             setModal(prev => ({...prev, open: false, data: null}));
-            showSuccessBanner('Categoria salva com sucesso.');
+            toast({
+                title: data.id ? 'Categoria atualizada' : 'Categoria criada',
+                description: `"${nomeConta(data)}" foi salva.`,
+            });
         },
         onError: (error) => {
-            toast({variant: 'destructive', title: 'Erro', description: error.message});
+            toast({variant: 'destructive', title: 'Erro ao salvar', description: error.message});
         }
     });
 
     const deleteMutation = useMutation({
         mutationFn: (id: number) => fetchApi(`/plano-contas/${id}`, {method: 'DELETE'}),
-        onSuccess: () => {
+        onSuccess: (_, id) => {
             queryClient.invalidateQueries({queryKey: tenantQueryKey('plano-contas')});
-            toast({title: 'Sucesso', description: 'Categoria removida.'});
+            const removida = contas.find((c) => c.id === id);
+            toast({
+                title: 'Categoria removida',
+                description: removida ? `"${nomeConta(removida)}" foi excluída.` : 'Excluída com sucesso.',
+            });
         },
         onError: async (error: Error) => {
             const vinculada = /vincul|em uso|associad|relacionad/i.test(error.message);
@@ -369,36 +432,32 @@ export default function PlanoContas() {
         if (ok) deleteMutation.mutate(cat.id);
     };
 
-    // Validação de categoria duplicada dentro do mesmo tipo
+    // Duplicata = mesmo tipo + categoria + subcategoria (sem caixa/acento/espaços),
+    // sem contar o próprio registro. Irmãos do mesmo grupo não são duplicata.
     const handleSubmit = (data: { id?: number } & PlanoContaFormValues) => {
-        const categoriaTrim = data.categoria.trim().replace(/\s+/g, ' ');
-        const categoriaNorm = normalizeText(categoriaTrim);
+        const categoriaDigitada = limparNome(data.categoria);
+        // Conta nova cai no grupo existente com a grafia já cadastrada.
+        const categoria = data.id
+            ? categoriaDigitada
+            : categoriaExistente(contas, data.tipo, categoriaDigitada) ?? categoriaDigitada;
+        const subcategoria = limparNome(data.subcategoria) || null;
 
-        const isReaproveitandoCategoriaTravada =
-            !data.id &&
-            contas.some(c => c.tipo === data.tipo && normalizeText(c.categoria) === categoriaNorm);
-
-        if (!isReaproveitandoCategoriaTravada) {
-            const existeDuplicada = contas.some(
-                c => c.tipo === data.tipo &&
-                    normalizeText(c.categoria) === categoriaNorm &&
-                    c.id !== data.id
-            );
-
-            if (existeDuplicada) {
-                toast({
-                    variant: 'destructive',
-                    title: 'Categoria duplicada',
-                    description: `Já existe uma categoria "${categoriaTrim}" neste tipo de plano de contas.`,
-                });
-                return;
-            }
+        const duplicada = acharPlanoDuplicado(contas, {id: data.id, tipo: data.tipo, categoria, subcategoria});
+        if (duplicada) {
+            toast({
+                variant: 'destructive',
+                title: 'Categoria duplicada',
+                description: `Já existe "${nomeConta(duplicada)}" neste tipo do plano de contas.`,
+            });
+            return;
         }
 
         saveMutation.mutate({
-            ...data,
-            categoria: categoriaTrim,
-            subcategoria: data.subcategoria?.trim() || null,
+            id: data.id,
+            tipo: data.tipo,
+            categoria,
+            subcategoria,
+            grupo_dre: data.grupo_dre || null,
         });
     };
 
@@ -425,20 +484,20 @@ export default function PlanoContas() {
         : `${totalVisivel} ${totalVisivel === 1 ? 'item do plano de contas encontrado' : 'itens do plano de contas encontrados'}`;
 
     const isCatAberta = (tipo: string, categoria: string) =>
-        catsAbertas[`${tipo}:${normalizeText(categoria)}`] !== false;
+        catsAbertas[`${tipo}:${normalizarNome(categoria)}`] !== false;
 
     const toggleCat = (tipo: string, categoria: string) => {
-        const key = `${tipo}:${normalizeText(categoria)}`;
+        const key = `${tipo}:${normalizarNome(categoria)}`;
         setCatsAbertas((prev) => ({...prev, [key]: prev[key] === false}));
     };
 
-    // Agrupa por categoria normalizada
+    // Agrupa por categoria normalizada (mesma regra da duplicata: sem caixa/acento/espaços)
     const groupByCategoriaOrdenado = (items: PlanoConta[]) => {
         const grouped: Record<string, { label: string; items: PlanoConta[] }> = {};
 
         items.forEach(item => {
-            const key = normalizeText(item.categoria);
-            const labelLimpo = item.categoria.trim().replace(/\s+/g, ' ');
+            const key = normalizarNome(item.categoria);
+            const labelLimpo = limparNome(item.categoria);
             if (!grouped[key]) {
                 grouped[key] = {label: labelLimpo, items: []};
             }
@@ -516,11 +575,27 @@ export default function PlanoContas() {
                                 {catAberta && subcontas.map(cat => (
                                     <div key={cat.id}
                                          className="p-3 bg-white/5 rounded-lg border border-white/5 flex justify-between items-center hover:bg-white/10 transition-colors group">
-                     <span className="text-sm font-medium text-white pl-4 capitalize truncate max-w-[200px]">
-                       {cat.subcategoria?.trim() || "-"}
-                     </span>
+                                        <span className="flex items-center gap-2 min-w-0 pl-4">
+                                            {cat.subcategoria?.trim() ? (
+                                                <span className="text-sm font-medium text-white capitalize truncate max-w-[200px]">
+                                                    {cat.subcategoria.trim()}
+                                                </span>
+                                            ) : (
+                                                <span className="text-sm italic text-muted-foreground truncate max-w-[200px]">
+                                                    Sem subcategoria
+                                                </span>
+                                            )}
+                                            {cat.grupo_dre && ROTULO_CURTO_GRUPO_DRE[cat.grupo_dre] && (
+                                                <span
+                                                    className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-muted-foreground"
+                                                    title="Linha da DRE">
+                                                    DRE: {ROTULO_CURTO_GRUPO_DRE[cat.grupo_dre]}
+                                                </span>
+                                            )}
+                                        </span>
+                                        {/* Com mouse: aparecem no hover/foco. Toque (sem hover): sempre visíveis. */}
                                         <div
-                                            className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            className="flex gap-2 shrink-0 transition-opacity pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:focus-within:opacity-100">
                                             <BotaoEditar onClick={() => handleEdit(cat)}/>
                                             <BotaoExcluir onClick={() => handleDelete(cat)}/>
                                         </div>
@@ -544,24 +619,6 @@ export default function PlanoContas() {
     return (
         <div className="space-y-6">
             <ConfirmDialog {...ConfirmDialogProps} />
-
-            {successMessage && (
-                <div className="fixed top-0 right-0 z-[100] w-full max-w-[420px] p-4 animate-in fade-in slide-in-from-top-full">
-                    <div className="group pointer-events-auto relative flex w-full items-center justify-between space-x-4 overflow-hidden rounded-md border bg-background text-foreground p-6 pr-8 shadow-lg">
-                        <div className="grid gap-1">
-                            <p className="text-sm font-semibold">Sucesso</p>
-                            <p className="text-sm opacity-90">{successMessage}</p>
-                        </div>
-                        <button
-                            onClick={closeSuccessBanner}
-                            className="absolute right-2 top-2 rounded-md p-1 text-foreground/50 opacity-100 transition-opacity hover:text-foreground focus:outline-none focus:ring-2"
-                            aria-label="Fechar"
-                        >
-                            <X className="h-4 w-4"/>
-                        </button>
-                    </div>
-                </div>
-            )}
 
             <PageHeader
                 title="Plano de Contas"

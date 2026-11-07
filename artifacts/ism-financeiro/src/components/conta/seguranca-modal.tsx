@@ -4,6 +4,9 @@ import {ApiError, fetchApi, fetchApiData} from "@/lib/api-config";
 import {useAuth} from "@/hooks/use-auth";
 import {useToast} from "@/hooks/use-toast";
 import {SenhaForca} from "@/components/auth/senha-forca";
+import {ConfirmDialog} from "@/components/shared/confirm-dialog";
+import {useConfirm} from "@/hooks/use-confirm";
+import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
 import {
     Modal,
     ModalBody,
@@ -110,6 +113,18 @@ export function SegurancaModal({onClose}: { onClose: () => void }) {
     const [trocando, setTrocando] = useState(false);
     const [encerrando, setEncerrando] = useState<string | null>(null);
     const [confirmarTodas, setConfirmarTodas] = useState(false);
+    const {confirm, ConfirmDialogProps} = useConfirm();
+
+    // Como no Novo Usuário: fechar com senha digitada pede confirmação.
+    const senhaDigitada = atual !== "" || nova !== "" || confirma !== "";
+
+    async function pedirFechar() {
+        if (senhaDigitada) {
+            const ok = await confirm(DISCARD_PROMPT);
+            if (!ok) return;
+        }
+        onClose();
+    }
 
     async function recarregar() {
         const res = await fetchApiData<RespostaSessoes>("/me/sessoes");
@@ -194,7 +209,11 @@ export function SegurancaModal({onClose}: { onClose: () => void }) {
     }
 
     return (
-        <Modal onClose={onClose} initialFocus="content">
+        <Modal
+            onClose={() => void pedirFechar()}
+            // Começa pela "Senha atual", o primeiro campo do formulário de troca.
+            initialFocus={() => document.getElementById(atualId)}
+        >
             <ModalHeader
                 title="Segurança"
                 description={`Senha, sessões ativas e acessos da conta ${user?.email ?? ""}`}
@@ -395,6 +414,7 @@ export function SegurancaModal({onClose}: { onClose: () => void }) {
                     </div>
                 </div>
             )}
+            <ConfirmDialog {...ConfirmDialogProps} />
         </Modal>
     );
 }

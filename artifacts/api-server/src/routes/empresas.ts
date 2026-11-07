@@ -9,6 +9,9 @@ import {withPermission} from "../middlewares/withPermission";
 import {PERM} from "../constants/permissoes";
 import {validateBody} from "../middlewares/validate";
 import {errorResponse, successResponse} from "../utils/response";
+import {cnpjValido, normalizarCnpj} from "../utils/documento";
+
+const CNPJ_INVALIDO_MSG = "CNPJ inválido: confira os 14 caracteres (numérico ou alfanumérico).";
 
 /**
  * Cadastro de empresas (tenants), ISMF-16:
@@ -93,8 +96,11 @@ router.post("/empresas", withSuperadmin, validateBody(createEmpresaBodySchema), 
     try {
         const body = req.body as CreateEmpresaBody;
         const slug = await uniqueSlug(slugify(body.slug || body.razao_social));
-        const cnpj = body.cnpj?.replace(/\D/g, "") || null;
+        const cnpj = normalizarCnpj(body.cnpj) || null;
 
+        if (cnpj && !cnpjValido(cnpj)) {
+            return errorResponse(res, 422, "CNPJ_INVALIDO", CNPJ_INVALIDO_MSG);
+        }
         if (cnpj) {
             const [dup] = await db
                 .select({id: empresasTable.id})
@@ -183,7 +189,10 @@ router.patch("/empresas/:id", withPermission(PERM.ADMIN_EMPRESAS_EDITAR), valida
         }
         if (body.slug !== undefined) patch.slug = await uniqueSlug(slugify(body.slug), id);
         if (body.cnpj !== undefined) {
-            const cnpj = body.cnpj?.replace(/\D/g, "") || null;
+            const cnpj = normalizarCnpj(body.cnpj) || null;
+            if (cnpj && !cnpjValido(cnpj)) {
+                return errorResponse(res, 422, "CNPJ_INVALIDO", CNPJ_INVALIDO_MSG);
+            }
             if (cnpj) {
                 const [dup] = await db
                     .select({id: empresasTable.id})

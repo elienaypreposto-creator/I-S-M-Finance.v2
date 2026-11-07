@@ -1,14 +1,31 @@
-import {count, eq, lte, sql} from "drizzle-orm";
+import {count, eq, lte} from "drizzle-orm";
 import {db} from "@workspace/db";
 import {contasBancariasTable, extratosTable, lancamentosTable} from "@workspace/db/schema";
 import {AppError} from "../../../utils/app-error";
 import {centsToDecimalString, fromCents, toCents} from "../../../utils/money";
-import {sqlLancamentosDaConta} from "../../../utils/lancamentos-conta";
+import {saldoInicialValeNaData, sqlMovimentosNoSaldoDaConta} from "../../../utils/lancamentos-conta";
+import {diaAnterior} from "../../../utils/extrato-conta";
 import {tenantScope, tenantWhere, withEmpresaId} from "../../../lib/tenant-scope";
 import {TIPOS_CONTA_BANCARIA, type CreateContaBancariaBody, type UpdateContaBancariaBody} from "./schemas";
+import {validarCadastroConta} from "./contas-bancarias.validacoes";
 
-async function calcularSaldoCents(empresaId: number, contaId: number, dataRef?: string): Promise<{
+/**
+ * Saldo da conta no FECHAMENTO de `dataRef` (sem data: saldo atual).
+ * Com `aberturaDoDia`: saldo na ABERTURA de `dataRef` (movimentos até a véspera, mais
+ * o saldo_inicial se `dataRef` já é a data de início), o "saldo anterior" do extrato.
+ */
+async function calcularSaldoCents(
+    empresaId: number,
+    contaId: number,
+    dataRef?: string,
+    {aberturaDoDia = false}: {aberturaDoDia?: boolean} = {},
+): Promise<{
+    /** saldo_inicial cadastrado na conta. */
     saldoInicialCents: number;
+    /** false = data anterior à data de início (saldo desconhecido). */
+    saldoInicialVale: boolean;
+    /** Parte do saldo_inicial que vale na data (0 antes da data de início). */
+    saldoAberturaCents: number;
     creditosCents: number;
     debitosCents: number;
     saldoCents: number;
@@ -24,22 +41,14 @@ async function calcularSaldoCents(empresaId: number, contaId: number, dataRef?: 
     }
 
     const saldoInicialCents = toCents(conta.saldo_inicial);
-    const conditions = [
-        sqlLancamentosDaConta(contaId),
-        sql`(
-                ${lancamentosTable.data_quitacao} >= ${conta.data_inicio}
-                OR ${lancamentosTable.id} IN (
-                SELECT icl.lancamento_id
-                FROM itens_conciliacao_lancamentos icl
-                INNER JOIN itens_conciliacao ic ON ic.id = icl.item_conciliacao_id
-                INNER JOIN conciliacoes c ON c.id = ic.conciliacao_id
-                WHERE c.conta_id = ${contaId}
-                ))`,
-        sql`${lancamentosTable.status}
-        IN ('pago', 'recebido', 'pago_parcial')`,
-    ];
+    // Antes da data de início o sistema não sabe o saldo: o saldo_inicial entra no
+    // próprio dia de início (saldo atual, sem data, sempre o leva).
+    const saldoInicialVale = saldoInicialValeNaData(dataRef, conta.data_inicio);
+    const saldoAberturaCents = saldoInicialVale ? saldoInicialCents : 0;
+    // Mesma regra do extrato da conta em Relatórios (utils/lancamentos-conta.ts).
+    const conditions = sqlMovimentosNoSaldoDaConta(contaId, conta.data_inicio);
     if (dataRef) {
-        conditions.push(lte(lancamentosTable.data_quitacao, dataRef));
+        conditions.push(lte(lancamentosTable.data_quitacao, aberturaDoDia ? diaAnterior(dataRef) : dataRef));
     }
 
     const rows = await db
@@ -58,9 +67,9 @@ async function calcularSaldoCents(empresaId: number, contaId: number, dataRef?: 
         else debitosCents += q;
     }
 
-    // saldo = inicial + CR quitado − CP quitado
-    const saldoCents = saldoInicialCents + creditosCents - debitosCents;
-    return {saldoInicialCents, creditosCents, debitosCents, saldoCents};
+    // saldo = inicial (se já vale na data) + CR quitado − CP quitado
+    const saldoCents = saldoAberturaCents + creditosCents - debitosCents;
+    return {saldoInicialCents, saldoInicialVale, saldoAberturaCents, creditosCents, debitosCents, saldoCents};
 }
 
 export const contasBancariasService = {
@@ -83,6 +92,7 @@ export const contasBancariasService = {
     },
 
     async create(empresaId: number, payload: CreateContaBancariaBody) {
+        await validarCadastroConta(empresaId, payload);
         const [item] = await db
             .insert(contasBancariasTable)
             .values(
@@ -142,6 +152,8 @@ export const contasBancariasService = {
             }
         }
 
+        await validarCadastroConta(empresaId, payload, id);
+
         const {empresa, titular, ...rest} = payload;
         const [item] = await db
             .update(contasBancariasTable)
@@ -198,12 +210,14 @@ export const contasBancariasService = {
     /**
      * Saldo posicional na data (DEF-03). Regra D-1: o saldo confiável é o do fechamento
      * do dia informado (tipicamente D-1), nunca "agora" sem data.
+     * Com `aberturaDoDia`, o saldo na ABERTURA do dia (antes dos movimentos dele): é o
+     * que se compara com o "saldo anterior" de um extrato que começa em `data`.
      */
-    async saldoNaData(empresaId: number, id: number, data: string) {
+    async saldoNaData(empresaId: number, id: number, data: string, {aberturaDoDia = false}: {aberturaDoDia?: boolean} = {}) {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) {
             throw new AppError(400, "VALIDATION_ERROR", "Parâmetro data inválido. Use YYYY-MM-DD.");
         }
-        const calc = await calcularSaldoCents(empresaId, id, data);
+        const calc = await calcularSaldoCents(empresaId, id, data, {aberturaDoDia});
         const [conta] = await db
             .select({
                 id: contasBancariasTable.id,
@@ -221,6 +235,11 @@ export const contasBancariasService = {
             data,
             data_inicio: conta?.data_inicio,
             saldo_inicial: fromCents(calc.saldoInicialCents),
+            /**
+             * Data anterior à data de início: o sistema não conhece o saldo da conta
+             * nesse dia e o saldo_inicial não entra (saldo = só os movimentos).
+             */
+            antes_do_inicio: !calc.saldoInicialVale,
             creditos_quitados: fromCents(calc.creditosCents),
             debitos_quitados: fromCents(calc.debitosCents),
             saldo: fromCents(calc.saldoCents),

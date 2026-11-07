@@ -42,6 +42,7 @@ import {
     setRefreshCookie,
 } from "../utils/refresh-cookie";
 import {fetchPermissions} from "../services/permissions.service";
+import {frontendUrlDefinida, logFrontendUrlAusente} from "../lib/frontend-url";
 import {
     hashToken,
     signAccessToken,
@@ -730,9 +731,9 @@ router.post("/auth/forgot-password", authLimiter, async (req, res) => {
             return errorResponse(res, 400, "VALIDATION_ERROR", "Campo obrigatório: email.");
         }
 
-        const frontendUrl = process.env.FRONTEND_URL;
+        const frontendUrl = frontendUrlDefinida();
         if (!frontendUrl) {
-            console.error("[CONFIG] FRONTEND_URL não definido - operação de reset de senha bloqueada.");
+            console.error(logFrontendUrlAusente("redefinição de senha (POST /auth/forgot-password)", req.id));
             return errorResponse(res, 500, "CONFIGURATION_ERROR", "Serviço temporariamente indisponível.");
         }
 

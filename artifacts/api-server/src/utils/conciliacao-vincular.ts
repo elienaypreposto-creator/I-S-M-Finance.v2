@@ -500,50 +500,142 @@ export function statusAposDesfazerVinculo(args: {
 }
 
 /**
- * Martelo financeiro do POST .../finalizar - idempotente com rascunho legado.
+ * Quitação do título no POST .../finalizar.
  *
- * Ciclo novo: `valor_quitado` no título NÃO inclui vínculos em aberto.
- * Ciclo antigo: `vincular` já gravava quitado/juros no título (= risco de X+X).
+ * Todo vínculo gravado já quita o título na hora (Salvar, regra de
+ * conciliação na importação, botão [+]); finalizar só fecha o extrato. Aqui
+ * só se garante que o título reflita TODOS os seus vínculos (em qualquer
+ * extrato), sem somar duas vezes: vale o maior entre o que está gravado no
+ * título e a soma dos vínculos. Cobre extratos antigos cujos vínculos não
+ * chegaram a quitar o título (classificação automática / [+] da época em que
+ * a quitação ficava para o finalizar).
  *
- * baseCommitada = max(campoTitulo − Σ rascunhos, Σ vínculos já em conciliações conciliadas)
- * resultado     = baseCommitada + Σ desta conciliação
+ * Antes era "base finalizada + Σ desta conciliação", que descartava do título
+ * os vínculos salvos em extratos ainda abertos - e o desfazer posterior deles
+ * zerava a quitação que restava.
  */
-export function martelarQuitacaoNoFinalizar(args: {
+export function quitacaoNoFinalizar(args: {
     valorQuitadoTituloCents: number;
     jurosTituloCents: number;
     descontoTituloCents: number;
-    /** Σ valor_vinculado desta conciliação (a finalizar). */
-    sumVinculadoDestaCents: number;
-    sumJurosDestaCents: number;
-    sumDescontoDestaCents: number;
-    /** Σ valor_vinculado em conciliações já `conciliado`. */
-    sumVinculadoFinalizadosCents: number;
-    sumJurosFinalizadosCents: number;
-    sumDescontoFinalizadosCents: number;
-    /** Σ valor_vinculado em rascunho (todas as conciliações ≠ conciliado, inclusive esta). */
-    sumVinculadoRascunhosCents: number;
-    sumJurosRascunhosCents: number;
-    sumDescontoRascunhosCents: number;
+    /** Σ dos vínculos do título em todos os extratos. */
+    sumVinculadoCents: number;
+    sumJurosCents: number;
+    sumDescontoCents: number;
 }): { quitadoCents: number; jurosCents: number; descontoCents: number } {
-    const baseQuitado = Math.max(
-        args.valorQuitadoTituloCents - args.sumVinculadoRascunhosCents,
-        args.sumVinculadoFinalizadosCents,
-        0,
-    );
-    const baseJuros = Math.max(
-        args.jurosTituloCents - args.sumJurosRascunhosCents,
-        args.sumJurosFinalizadosCents,
-        0,
-    );
-    const baseDesconto = Math.max(
-        args.descontoTituloCents - args.sumDescontoRascunhosCents,
-        args.sumDescontoFinalizadosCents,
-        0,
-    );
-
     return {
-        quitadoCents: baseQuitado + args.sumVinculadoDestaCents,
-        jurosCents: baseJuros + args.sumJurosDestaCents,
-        descontoCents: baseDesconto + args.sumDescontoDestaCents,
+        quitadoCents: Math.max(args.valorQuitadoTituloCents, args.sumVinculadoCents, 0),
+        jurosCents: Math.max(args.jurosTituloCents, args.sumJurosCents, 0),
+        descontoCents: Math.max(args.descontoTituloCents, args.sumDescontoCents, 0),
     };
+}
+
+/**
+ * Um lançamento movimenta UMA conta só (regra do saldo em utils/lancamentos-conta.ts):
+ * `valor_quitado`, `data_quitacao` e `conta_id` são um só por título. Vincular a um
+ * extrato de outra conta um título que já tem quitação registrada moveria toda a
+ * quitação anterior para a conta nova (o vincular grava `conta_id` = conta do
+ * extrato). Para pagar o restante por outra conta, usa-se a parcela residual.
+ *
+ * Devolve os ids dos títulos que já têm quitação em outra conta.
+ */
+export function quitadosEmOutraConta(
+    lancamentos: ReadonlyArray<{id: number; conta_id: number | null; quitadoCents: number}>,
+    contaDoExtrato: number,
+): number[] {
+    return lancamentos
+        .filter((l) => l.quitadoCents > 0 && l.conta_id != null && l.conta_id !== contaDoExtrato)
+        .map((l) => l.id);
+}
+
+/**
+ * Quanto do título já está coberto por vínculos (de outras linhas/extratos):
+ * Σ(valor vinculado − juros/multa + desconto). Coberto por inteiro = vincular
+ * de novo pagaria o título duas vezes (ex.: título criado por regra num extrato
+ * antigo, ainda pendente, oferecido no Vincular de outro extrato).
+ */
+export function principalVinculadoCents(
+    vinculos: ReadonlyArray<{valorVinculadoCents: number; jurosCents: number; descontoCents: number}>,
+): number {
+    return vinculos.reduce((acc, v) => acc + v.valorVinculadoCents - v.jurosCents + v.descontoCents, 0);
+}
+
+export function cobertoPorVinculos(valorLiquidoCents: number, principalCents: number): boolean {
+    return valorLiquidoCents > 0 && principalCents >= valorLiquidoCents;
+}
+
+export function mensagemJaVinculadoEmOutroExtrato(lancamentoId: number, extratoIds: readonly number[]): string {
+    const onde = extratoIds.length > 0
+        ? (extratoIds.length > 1 ? "aos extratos " : "ao extrato ") + extratoIds.map((id) => `#${id}`).join(", ")
+        : "a outra linha de extrato";
+    return (
+        `O lançamento #${lancamentoId} já está vinculado ${onde} pelo valor todo. ` +
+        "Vincular de novo pagaria o mesmo título duas vezes: desfaça o vínculo anterior antes."
+    );
+}
+
+/** Formata centavos como "70.000,00" (padrão BR, sem símbolo de moeda). */
+function centsToBrDecimal(cents: number): string {
+    const negativo = cents < 0;
+    const abs = Math.abs(cents);
+    const inteiro = Math.floor(abs / 100);
+    const centavos = String(abs % 100).padStart(2, "0");
+    return `${negativo ? "-" : ""}${inteiro.toLocaleString("pt-BR")},${centavos}`;
+}
+
+/**
+ * Descrição do lançamento residual gerado após quitação parcial (Card 01):
+ * "Residual do lançamento #{origem} - {Pagamento|Recebimento} DO(A) {PARCEIRO}
+ * NO VALOR R$ {valor} (PARCELA {atual/total ou UNICA} NO DIA {dia})". Aponta o
+ * título de origem e usa "Recebimento" para conta a receber (CR).
+ */
+export function descreverResiduoParcial(params: {
+    origemId: number;
+    tipo: string | null;
+    valorCents: number;
+    vencimento: string | null;
+    parceiroNome: string | null;
+    parcelaAtual: number | null;
+    totalParcelas: number | null;
+}): string {
+    const {origemId, tipo, valorCents, vencimento, parceiroNome, parcelaAtual, totalParcelas} = params;
+
+    const nome = (parceiroNome ?? "PARCEIRO NÃO INFORMADO").toUpperCase();
+    const parcelaTexto =
+        totalParcelas && totalParcelas > 1
+            ? `PARCELA ${parcelaAtual ?? "?"}/${totalParcelas}`
+            : "PARCELA UNICA";
+    const dia = vencimento ? String(Number(String(vencimento).slice(0, 10).split("-")[2])) : "?";
+    const movimento = tipo === "CR" ? "Recebimento" : "Pagamento";
+
+    return `Residual do lançamento #${origemId} - ${movimento} DO(A) ${nome} NO VALOR R$ ${centsToBrDecimal(valorCents)} (${parcelaTexto} NO DIA ${dia})`;
+}
+
+/**
+ * Título sem nada a quitar: o quitado (gravado + vínculos ainda em rascunho na
+ * tela) já alcança o líquido menos o desconto concedido. Vincular de novo
+ * viraria "juros/multa" com o valor inteiro da linha e pagaria o título duas
+ * vezes (o Salvar recusaria com 409 só no fim).
+ */
+export function quitadoPorInteiro(args: {valorLiquidoCents: number; descontoCents?: number; quitadoCents: number}): boolean {
+    const base = Math.max(0, args.valorLiquidoCents - (args.descontoCents ?? 0));
+    return base > 0 && args.quitadoCents >= base;
+}
+
+export function mensagemJaQuitado(lancamentoId: number, porRascunho: boolean): string {
+    return porRascunho
+        ? `O lançamento #${lancamentoId} já está vinculado pelo valor todo em outra linha deste extrato (vínculo ainda não salvo). ` +
+              "Vincular de novo pagaria o mesmo título duas vezes: remova aquele vínculo antes."
+        : `O lançamento #${lancamentoId} já está quitado pelo valor todo. ` +
+              "Vincular de novo pagaria o mesmo título duas vezes: desfaça a quitação anterior antes.";
+}
+
+export function mensagemQuitadoEmOutraConta(ids: readonly number[]): string {
+    const plural = ids.length > 1;
+    return (
+        `${plural ? "Os lançamentos" : "O lançamento"} ${ids.map((id) => `#${id}`).join(", ")} ` +
+        `já ${plural ? "têm" : "tem"} pagamento registrado em outra conta bancária. ` +
+        "Um lançamento só movimenta uma conta: para quitar o restante por esta conta, " +
+        "vincule a parcela residual do pagamento parcial (ou desfaça o vínculo anterior)."
+    );
 }

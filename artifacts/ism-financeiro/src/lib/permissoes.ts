@@ -28,4 +28,10 @@ export const PERM = {
     REGRAS_CONCILIACAO_DELETAR: "financeiro:regras-conciliacao:deletar",
     ADMIN_PERMISSOES_CONCEDER: "admin:permissoes:conceder",
     ADMIN_EMPRESAS_EDITAR: "admin:empresas:editar",
+    ADMIN_USUARIOS_LISTAR: "admin:usuarios:listar",
+    ADMIN_TOKENS_API_LISTAR: "admin:tokens-api:listar",
+    PARCEIROS_LISTAR: "financeiro:parceiros:listar",
+    CONTAS_BANCARIAS_LISTAR: "configuracoes:contas-bancarias:listar",
+    PLANO_CONTAS_LISTAR: "configuracoes:plano-contas:listar",
+    METAS_LISTAR: "financeiro:metas:listar",
 } as const;

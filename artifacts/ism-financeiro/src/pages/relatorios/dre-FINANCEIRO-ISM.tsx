@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { FOCO_VISIVEL, useParametrosUrl } from "@/components/shared/filtros";
 import { PageHeader } from "@/components/shared/page-header";
-import { Download, Loader2, TrendingUp, AlertCircle } from "lucide-react";
+import { Download, Loader2, TrendingUp, TrendingDown, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDinheiro } from "@/components/conta/saldos-visiveis";
 import { fetchApiData } from "@/lib/api-config";
@@ -67,10 +67,16 @@ export default function DreGerencial() {
     const rl = porCodigo.get("3");
     const mc = porCodigo.get("5");
     const ll = porCodigo.get("7");
+    // Resultado negativo (prejuízo, margem negativa) sempre na cor de destrutivo.
+    const comCor = (label: string, value: number, cor: string) => ({
+      label,
+      value,
+      color: value < 0 ? "text-destructive" : cor,
+    });
     return [
-      { label: "Receita líquida (ano)", value: Number(rl?.total ?? 0), color: "text-teal-400" },
-      { label: "Margem de contribuição (ano)", value: Number(mc?.total ?? 0), color: "text-primary" },
-      { label: "Lucro líquido (ano)", value: Number(ll?.total ?? 0), color: "text-emerald-400" },
+      comCor("Receita líquida (ano)", Number(rl?.total ?? 0), "text-teal-400"),
+      comCor("Margem de contribuição (ano)", Number(mc?.total ?? 0), "text-primary"),
+      comCor("Lucro líquido (ano)", Number(ll?.total ?? 0), "text-emerald-400"),
     ];
   }, [porCodigo]);
 
@@ -82,9 +88,15 @@ export default function DreGerencial() {
     return out.sort((a, b) => b - a);
   }, [currentYear, ano]);
 
+  // Lucro do ano negativo (prejuízo): faixa da linha em destrutivo, não em verde.
+  const lucroNegativo = Number(porCodigo.get("7")?.total ?? 0) < 0;
+  const fundoLucro = lucroNegativo ? "bg-destructive/10" : "bg-emerald-500/10";
+
   const rowClass = (codigo: string) => {
     if (codigo === "7")
-      return "bg-emerald-500/15 border-y border-emerald-500/30 font-bold text-white";
+      return lucroNegativo
+        ? "bg-destructive/15 border-y border-destructive/30 font-bold text-white"
+        : "bg-emerald-500/15 border-y border-emerald-500/30 font-bold text-white";
     if (codigo === "3" || codigo === "5")
       return "bg-primary/10 font-semibold text-white border-t border-primary/15";
     if (codigo === "2" || codigo === "4" || codigo === "6") return "text-white/90";
@@ -93,6 +105,9 @@ export default function DreGerencial() {
 
   const cellClass = (codigo: string, val: number) => {
     if (codigo === "7") return val >= 0 ? "text-emerald-300" : "text-destructive";
+    // Linhas de resultado (receita líquida, margem) negativas: cor de destrutivo.
+    // Deduções, custos e despesas (2, 4, 6) já são negativas por natureza: laranja.
+    if ((codigo === "3" || codigo === "5") && val < 0) return "text-destructive";
     if (val < 0) return "text-orange-300/95";
     if (val > 0) return "text-white";
     return "text-muted-foreground/40";
@@ -158,7 +173,7 @@ export default function DreGerencial() {
         <div className="bg-amber-500/10 border border-amber-500/25 rounded-xl p-3 text-sm text-amber-200/95 flex gap-2 items-start">
           <span className="font-bold shrink-0">ℹ</span>
           <span>
-            Regime de caixa considera apenas lançamentos quitados/recebidos, pela data de quitação. Competência usa vencimento e exclui cancelados.
+            Regime de caixa considera apenas lançamentos pagos ou recebidos, pela data do pagamento. Regime de competência usa a data de competência (ou o vencimento) e exclui cancelados.
           </span>
         </div>
       )}
@@ -187,7 +202,11 @@ export default function DreGerencial() {
             {kpis.map((item) => (
               <div key={item.label} className="glass-panel rounded-2xl p-4 border border-white/10">
                 <div className="flex items-center gap-2 mb-1">
-                  <TrendingUp className={cn("w-4 h-4", item.color)} />
+                  {item.value < 0 ? (
+                    <TrendingDown className={cn("w-4 h-4", item.color)} />
+                  ) : (
+                    <TrendingUp className={cn("w-4 h-4", item.color)} />
+                  )}
                   <p className="text-xs text-muted-foreground">{item.label}</p>
                 </div>
                 <p className={cn("text-xl font-bold tabular-nums", item.color)}>{dinheiro(item.value)}</p>
@@ -200,7 +219,9 @@ export default function DreGerencial() {
               <p className="text-xs text-muted-foreground">
                 Exercício <span className="text-white font-semibold">{data?.ano ?? ano}</span>
                 {" · "}
-                Regime <span className="text-white font-semibold">{data?.regime ?? regime}</span>
+                <span className="text-white font-semibold">
+                  {(data?.regime ?? regime) === "caixa" ? "Regime de caixa" : "Regime de competência"}
+                </span>
               </p>
             </div>
             <div className="overflow-x-auto">
@@ -236,7 +257,7 @@ export default function DreGerencial() {
                       <td
                         className={cn(
                           "px-4 py-2.5 sticky left-0 z-[1] border-r border-white/5 backdrop-blur-sm",
-                          linha.codigo === "7" ? "bg-emerald-500/10" : "bg-[#121417]/90",
+                          linha.codigo === "7" ? fundoLucro : "bg-[#121417]/90",
                         )}>
                         <span className={cn(linha.codigo === "7" && "text-base")}>{linha.descricao}</span>
                       </td>
@@ -260,7 +281,7 @@ export default function DreGerencial() {
                         className={cn(
                           "px-3 py-2.5 text-right font-bold tabular-nums text-xs sticky right-0 border-l border-white/5 backdrop-blur-sm",
                           cellClass(linha.codigo, Number(linha.total)),
-                          linha.codigo === "7" ? "bg-emerald-500/10" : "bg-[#121417]/90",
+                          linha.codigo === "7" ? fundoLucro : "bg-[#121417]/90",
                         )}>
                         {Number(linha.total) !== 0 ? dinheiro(Number(linha.total)) : "—"}
                       </td>

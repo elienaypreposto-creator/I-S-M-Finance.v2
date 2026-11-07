@@ -23,6 +23,7 @@ import {
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {Modal, ModalBody, ModalHeader} from "@/components/ui/modal-responsivo";
+import {useAcaoAposFecharMenu} from "@/components/ui/menu-abre-dialogo";
 import {PerfilModal} from "./perfil-modal";
 import {SegurancaModal} from "./seguranca-modal";
 import {iniciaisDe} from "./formatos";
@@ -39,6 +40,9 @@ export function UserMenu() {
     const {toast} = useToast();
     const [aberto, setAberto] = useState(false);
     const [painel, setPainel] = useState<Painel>(null);
+    // Os painéis abrem só depois que o menu saiu do DOM (ver menu-abre-dialogo).
+    const depoisDoMenu = useAcaoAposFecharMenu();
+    const abrirPainel = (p: Exclude<Painel, null>) => depoisDoMenu.agendar(() => setPainel(p));
     const nome = user?.nome ?? "Usuário";
     const podeTrocar = empresas.length > 1;
 
@@ -75,6 +79,7 @@ export function UserMenu() {
                 <DropdownMenuContent
                     align="end"
                     sideOffset={8}
+                    onCloseAutoFocus={depoisDoMenu.onCloseAutoFocus}
                     className="w-80 rounded-2xl border-white/10 bg-[#1a1c23] p-2 text-white shadow-2xl"
                 >
                     <div className="flex items-start gap-3 px-2 py-2">
@@ -122,11 +127,11 @@ export function UserMenu() {
                         </DropdownMenuSub>
                     )}
                     <DropdownMenuItem className="rounded-lg focus:bg-white/10 focus:text-white"
-                                      onSelect={() => setPainel("perfil")}>
+                                      onSelect={() => abrirPainel("perfil")}>
                         <User aria-hidden="true"/> Meu perfil
                     </DropdownMenuItem>
                     <DropdownMenuItem className="rounded-lg focus:bg-white/10 focus:text-white"
-                                      onSelect={() => setPainel("preferencias")}>
+                                      onSelect={() => abrirPainel("preferencias")}>
                         <Settings2 aria-hidden="true"/> Preferências
                     </DropdownMenuItem>
                     <DropdownMenuItem
@@ -141,11 +146,11 @@ export function UserMenu() {
                         {saldos.visivel ? "Ocultar saldos" : "Mostrar saldos"}
                     </DropdownMenuItem>
                     <DropdownMenuItem className="rounded-lg focus:bg-white/10 focus:text-white"
-                                      onSelect={() => setPainel("seguranca")}>
+                                      onSelect={() => abrirPainel("seguranca")}>
                         <Shield aria-hidden="true"/> Segurança
                     </DropdownMenuItem>
                     <DropdownMenuItem className="rounded-lg focus:bg-white/10 focus:text-white"
-                                      onSelect={() => setPainel("ajuda")}>
+                                      onSelect={() => abrirPainel("ajuda")}>
                         <CircleHelp aria-hidden="true"/> Ajuda e atalhos
                     </DropdownMenuItem>
                     <DropdownMenuSeparator className="bg-white/10"/>

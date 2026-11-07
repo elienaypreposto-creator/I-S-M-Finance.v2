@@ -1,5 +1,5 @@
 import {tenantQueryKey} from "@/lib/tenant-query";
-import {useEffect, useMemo, useState, useRef} from "react";
+import {useEffect, useId, useMemo, useState, useRef} from "react";
 import {useForm, Controller} from "react-hook-form";
 import {zodResolver} from "@hookform/resolvers/zod";
 import {PageHeader} from "@/components/shared/page-header";
@@ -19,26 +19,38 @@ import {
     ChevronsRight,
     ChevronDown,
     Info,
+    Search,
     TrendingUp,
+    Calendar as CalendarIcon,
 } from "lucide-react";
+import {format as formatarDataFns, parseISO} from "date-fns";
+import {ptBR} from "date-fns/locale";
+import {Popover, PopoverContent, PopoverTrigger} from "@/components/ui/popover";
+import {Calendar as CalendarPicker} from "@/components/ui/calendar";
 import {formatCurrency, cn} from "@/lib/utils";
+import {
+    AGENCIA_MAX_LENGTH,
+    encontrarContaDuplicada,
+    formatarSaldoComSinal,
+    inverterSinalSaldo,
+    mascararAgenciaConta,
+    mensagemContaDuplicada,
+    saldoApiParaBr,
+    saldoBrParaApi,
+} from "@/lib/conta-bancaria";
+import {BANCOS_BR, BANCOS_PRINCIPAIS, bancoPorNome, filtrarBancos} from "@/lib/bancos-br";
 import {useSaldosVisiveis} from "@/components/conta/saldos-visiveis";
 import {classeSaldo} from "@/lib/saldo";
-import {hojeIsoLocal} from "@/lib/datas";
+import {formatarData, hojeIsoLocal, parseDataCivil} from "@/lib/datas";
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
-import {fetchApiData} from "@/lib/api-config";
+import {ApiError, fetchApiData} from "@/lib/api-config";
 import {
     contaBancariaFormSchema,
     type ContaBancariaFormValues,
     TIPOS_CONTA,
     type TipoConta,
 } from "@/validations/cadastros.schema";
-import {
-    apiValorToValorBr,
-    brMoneyDisplayToApiString,
-    formatValorBrInput,
-} from "@/validations/lancamentos.schema";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
 import {DISCARD_PROMPT} from "@/hooks/use-escape-close";
@@ -95,26 +107,13 @@ function toCents(v: string | number): number {
     return Math.round(Number(str) * 100);
 }
 
-function maskAgencia(value: string): string {
-    const digits = value.replace(/\D/g, "").slice(0, 4);
-    return digits;
-}
-
 function maskConta(value: string): string {
     const digits = value.replace(/\D/g, "").slice(0, 8);
     if (digits.length <= 1) return digits;
     return `${digits.slice(0, -1)}-${digits.slice(-1)}`;
 }
 
-// Data máxima permitida (hoje), formatada dd/mm/aaaa
-function getTodayIso(): string {
-    return hojeIsoLocal();
-}
-
-function formatDateBr(iso: string): string {
-    const [y, m, d] = iso.split("-");
-    return `${d}/${m}/${y}`;
-}
+const ROTULO_STATUS: Record<string, string> = {ativo: "Ativa", bloqueado: "Bloqueada"};
 
 // ─── Tipos de conta disponíveis (derivados do schema canônico) ────────────────
 const TIPO_ICONS: Record<string, React.ComponentType<{
@@ -149,104 +148,6 @@ const ACCOUNT_TYPES = (
 
 // Único tipo que não exige banco/agência/conta (renderiza apenas o campo Nome)
 const TIPO_SEM_BANCO = "Conta Movimento" as const;
-
-// Lista de bancos brasileiros mais comuns (código FEBRABAN + nome + sigla/cor
-// de fallback + caminho do logo local em /public/logos-bancos). Os arquivos
-// devem ser colocados em public/logos-bancos/<codigo>.svg (ou .png). Se o
-// arquivo não existir ou falhar ao carregar, o componente BancoLogo cai
-// automaticamente no badge colorido com a sigla.
-const BANCOS_BR = [
-    {
-        codigo: "001",
-        nome: "Banco do Brasil",
-        sigla: "BB",
-        cor: "#0033A0",
-        texto: "#FFEF00",
-        logo: "/logos-bancos/001.svg"
-    },
-    {codigo: "033", nome: "Santander", sigla: "SA", cor: "#EC0000", texto: "#FFFFFF", logo: "/logos-bancos/033.svg"},
-    {
-        codigo: "104",
-        nome: "Caixa Econômica Federal",
-        sigla: "CX",
-        cor: "#0070AD",
-        texto: "#FF6600",
-        logo: "/logos-bancos/104.svg"
-    },
-    {codigo: "237", nome: "Bradesco", sigla: "BR", cor: "#CC092F", texto: "#FFFFFF", logo: "/logos-bancos/237.svg"},
-    {
-        codigo: "341",
-        nome: "Itaú Unibanco",
-        sigla: "IT",
-        cor: "#EC7000",
-        texto: "#003087",
-        logo: "/logos-bancos/341.svg"
-    },
-    {codigo: "260", nome: "Nubank", sigla: "NU", cor: "#8A05BE", texto: "#FFFFFF", logo: "/logos-bancos/260.svg"},
-    {codigo: "077", nome: "Banco Inter", sigla: "IN", cor: "#FF7A00", texto: "#FFFFFF", logo: "/logos-bancos/077.svg"},
-    {
-        codigo: "290",
-        nome: "PagBank (PagSeguro)",
-        sigla: "PB",
-        cor: "#00C650",
-        texto: "#FFFFFF",
-        logo: "/logos-bancos/290.svg"
-    },
-    {codigo: "323", nome: "Mercado Pago", sigla: "MP", cor: "#00AAEF", texto: "#FFFFFF", logo: "/logos-bancos/323.svg"},
-    {codigo: "336", nome: "Banco C6", sigla: "C6", cor: "#000000", texto: "#FFC800", logo: "/logos-bancos/336.svg"},
-    {codigo: "756", nome: "Sicoob", sigla: "SI", cor: "#003641", texto: "#7DB92B", logo: "/logos-bancos/756.svg"},
-    {codigo: "748", nome: "Sicredi", sigla: "SC", cor: "#6DC122", texto: "#00331E", logo: "/logos-bancos/748.svg"},
-    {codigo: "422", nome: "Banco Safra", sigla: "SF", cor: "#00205B", texto: "#FFFFFF", logo: "/logos-bancos/422.svg"},
-    {
-        codigo: "070",
-        nome: "BRB - Banco de Brasília",
-        sigla: "BRB",
-        cor: "#00833E",
-        texto: "#FFC629",
-        logo: "/logos-bancos/070.svg"
-    },
-    {
-        codigo: "212",
-        nome: "Banco Original",
-        sigla: "OR",
-        cor: "#00D084",
-        texto: "#0B3D2E",
-        logo: "/logos-bancos/212.svg"
-    },
-    {
-        codigo: "655",
-        nome: "Banco Votorantim (BV)",
-        sigla: "BV",
-        cor: "#FF5F00",
-        texto: "#FFFFFF",
-        logo: "/logos-bancos/655.svg"
-    },
-    {
-        codigo: "208",
-        nome: "Banco BTG Pactual",
-        sigla: "BTG",
-        cor: "#0A0A0A",
-        texto: "#FFFFFF",
-        logo: "/logos-bancos/208.svg"
-    },
-    {
-        codigo: "197",
-        nome: "Stone Pagamentos",
-        sigla: "ST",
-        cor: "#00A868",
-        texto: "#FFFFFF",
-        logo: "/logos-bancos/197.svg"
-    },
-    {codigo: "380", nome: "PicPay", sigla: "PP", cor: "#21C25E", texto: "#FFFFFF", logo: "/logos-bancos/380.svg"},
-    {
-        codigo: "102",
-        nome: "XP Investimentos",
-        sigla: "XP",
-        cor: "#000000",
-        texto: "#FFCE00",
-        logo: "/logos-bancos/102.svg"
-    },
-] as const;
 
 const ITEMS_PER_PAGE = 8;
 
@@ -320,7 +221,7 @@ const CORES_EXTRAS: { nome: string; cor: string }[] = [
 const COLOR_PALETTE: string[] = (() => {
     const familiasVistas = new Set<string>();
     const paleta: string[] = ["#3BA8DC"]; // cor padrão neutra (sem banco vinculado)
-    for (const b of BANCOS_BR) {
+    for (const b of BANCOS_PRINCIPAIS) {
         const familia = familiaDeCor(b.cor);
         if (!familiasVistas.has(familia)) {
             familiasVistas.add(familia);
@@ -345,7 +246,7 @@ function BancoLogo({
     banco?: string | null;
     size?: number;
 }) {
-    const found = BANCOS_BR.find((b) => b.nome === banco);
+    const found = bancoPorNome(banco);
     const [imgFailed, setImgFailed] = useState(false);
 
     // Reseta o estado de erro sempre que o banco muda (ex: ao trocar seleção)
@@ -358,14 +259,15 @@ function BancoLogo({
             <div
                 className="rounded-lg flex items-center justify-center bg-white/10 text-muted-foreground flex-shrink-0"
                 style={{width: size, height: size}}
+                title={banco ?? undefined}
             >
-                <Landmark style={{width: size * 0.55, height: size * 0.55}}/>
+                <Landmark aria-hidden="true" style={{width: size * 0.55, height: size * 0.55}}/>
             </div>
         );
     }
 
-    // Fallback: badge colorido com a sigla, caso o logo local não exista/falhe
-    if (imgFailed) {
+    // Selo colorido com a sigla: bancos sem logo (lista do BCB) ou logo que falhou
+    if (!found.logo || imgFailed) {
         return (
             <div
                 className="rounded-lg flex items-center justify-center font-black flex-shrink-0"
@@ -420,13 +322,13 @@ function StepPanel({
     return (
         <div
             className={cn(
-                "border rounded-xl overflow-hidden transition-all",
+                "border rounded-xl transition-all",
                 status === "active" ? "border-white/20" : "border-white/10",
                 status === "pending" && "opacity-40 pointer-events-none",
             )}
         >
             {/* Step header */}
-            <div className="flex items-center justify-between px-4 py-3 bg-white/[0.03]">
+            <div className="flex items-center justify-between px-4 py-3 bg-white/[0.03] rounded-t-xl">
                 <div className="flex items-center gap-3">
                     {status === "completed" ? (
                         <CheckCircle2 aria-hidden="true" className="w-5 h-5 text-success flex-shrink-0"/>
@@ -528,7 +430,9 @@ const selectClass = `${inputClass} appearance-none pr-10 cursor-pointer`;
 const continueBtnClass =
     "mt-1 px-6 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-primary";
 
-// ─── Select de Banco (dropdown customizado, tema escuro, com logo real) ───
+// ─── Select de Banco (dropdown customizado, tema escuro, com logo e busca) ───
+// Lista completa do BCB com busca por código ("1", "001", "341") ou nome sem
+// acento ("itau"). Setas navegam, Enter escolhe e Esc fecha só a lista.
 function BancoSelect({
                          id,
                          value,
@@ -539,7 +443,14 @@ function BancoSelect({
     onChange: (v: string) => void;
 }) {
     const [open, setOpen] = useState(false);
+    const [busca, setBusca] = useState("");
+    const [ativo, setAtivo] = useState(0);
     const containerRef = useRef<HTMLDivElement>(null);
+    const botaoRef = useRef<HTMLButtonElement>(null);
+    const buscaRef = useRef<HTMLInputElement>(null);
+    const listaId = `${useId()}-bancos`;
+
+    const filtrados = useMemo(() => filtrarBancos(BANCOS_BR, busca), [busca]);
 
     useEffect(() => {
         function handleClickOutside(e: MouseEvent) {
@@ -548,6 +459,7 @@ function BancoSelect({
                 !containerRef.current.contains(e.target as Node)
             ) {
                 setOpen(false);
+                setBusca("");
             }
         }
 
@@ -556,15 +468,72 @@ function BancoSelect({
             document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
-    const selectedBanco = BANCOS_BR.find((b) => b.nome === value);
+    // Foco no campo de busca ao abrir.
+    useEffect(() => {
+        if (open) buscaRef.current?.focus();
+    }, [open]);
+
+    // Mantém a opção destacada visível na lista com rolagem.
+    useEffect(() => {
+        if (!open) return;
+        document.getElementById(`${listaId}-${ativo}`)?.scrollIntoView({block: "nearest"});
+    }, [open, ativo, listaId]);
+
+    const selectedBanco = bancoPorNome(value);
+
+    const abrir = () => {
+        setBusca("");
+        setAtivo(Math.max(0, BANCOS_BR.findIndex((b) => b.nome === value)));
+        setOpen(true);
+    };
+
+    const fechar = (devolverFoco: boolean) => {
+        setOpen(false);
+        setBusca("");
+        if (devolverFoco) botaoRef.current?.focus();
+    };
+
+    const escolher = (nome: string) => {
+        onChange(nome);
+        fechar(true);
+    };
+
+    const aoTeclarBusca = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setAtivo((a) => Math.min(a + 1, filtrados.length - 1));
+        } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setAtivo((a) => Math.max(a - 1, 0));
+        } else if (e.key === "Enter") {
+            // Não deixa o Enter enviar o formulário do modal.
+            e.preventDefault();
+            const b = filtrados[ativo];
+            if (b) escolher(b.nome);
+        } else if (e.key === "Escape") {
+            e.preventDefault();
+            fechar(true);
+        } else if (e.key === "Tab") {
+            // Foco volta ao botão antes do Tab andar, para seguir até o próximo campo (Agência).
+            fechar(true);
+        }
+    };
 
     return (
         <div className="relative" ref={containerRef}>
             <button
+                ref={botaoRef}
                 id={id}
                 type="button"
+                aria-haspopup="listbox"
                 aria-expanded={open}
-                onClick={() => setOpen((o) => !o)}
+                onClick={() => (open ? fechar(false) : abrir())}
+                onKeyDown={(e) => {
+                    if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+                        e.preventDefault();
+                        abrir();
+                    }
+                }}
                 className={cn(selectClass, "flex items-center gap-2.5")}
             >
                 <BancoLogo banco={value} size={22}/>
@@ -576,7 +545,7 @@ function BancoSelect({
                 >
           {selectedBanco
               ? `${selectedBanco.codigo} - ${selectedBanco.nome}`
-              : "Selecione"}
+              : value || "Selecione"}
         </span>
             </button>
             <ChevronDown
@@ -589,28 +558,70 @@ function BancoSelect({
 
             {open && (
                 <div
-                    className="absolute z-50 mt-1.5 w-full max-h-64 overflow-y-auto bg-[#1a1b23] border border-white/10 rounded-xl shadow-2xl py-1.5">
-                    {BANCOS_BR.map((b) => (
-                        <button
-                            key={b.codigo}
-                            type="button"
-                            onClick={() => {
-                                onChange(b.nome);
-                                setOpen(false);
+                    className="absolute z-50 mt-1.5 w-full bg-[#1a1b23] border border-white/10 rounded-xl shadow-2xl overflow-hidden">
+                    <div className="relative p-2 border-b border-white/10">
+                        <Search
+                            aria-hidden="true"
+                            className="pointer-events-none absolute left-4.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"
+                        />
+                        <input
+                            ref={buscaRef}
+                            type="text"
+                            role="combobox"
+                            autoComplete="off"
+                            aria-label="Buscar banco por código ou nome"
+                            aria-autocomplete="list"
+                            aria-expanded={open}
+                            aria-controls={listaId}
+                            aria-activedescendant={filtrados[ativo] ? `${listaId}-${ativo}` : undefined}
+                            placeholder="Buscar por código ou nome"
+                            value={busca}
+                            onChange={(e) => {
+                                setBusca(e.target.value);
+                                setAtivo(0);
                             }}
-                            className={cn(
-                                "w-full flex items-center gap-2.5 text-left px-4 py-2.5 text-sm transition-colors",
-                                value === b.nome
-                                    ? "bg-primary/15 text-primary font-medium"
-                                    : "text-white/80 hover:bg-white/5 hover:text-white",
-                            )}
-                        >
-                            <BancoLogo banco={b.nome} size={24}/>
-                            <span className="truncate">
+                            onKeyDown={aoTeclarBusca}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder:text-muted-foreground outline-none focus:border-primary/50 transition-colors"
+                        />
+                    </div>
+                    <ul
+                        id={listaId}
+                        role="listbox"
+                        aria-label="Bancos"
+                        className="max-h-64 overflow-y-auto py-1.5"
+                    >
+                        {filtrados.length === 0 ? (
+                            <li role="presentation" className="px-4 py-2.5 text-sm text-muted-foreground">
+                                Nenhum banco encontrado
+                            </li>
+                        ) : (
+                            filtrados.map((b, i) => (
+                                <li
+                                    key={b.codigo}
+                                    id={`${listaId}-${i}`}
+                                    role="option"
+                                    aria-selected={value === b.nome}
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() => escolher(b.nome)}
+                                    onMouseEnter={() => setAtivo(i)}
+                                    className={cn(
+                                        "w-full flex items-center gap-2.5 text-left px-4 py-2.5 text-sm cursor-pointer transition-colors",
+                                        value === b.nome
+                                            ? "bg-primary/15 text-primary font-medium"
+                                            : i === ativo
+                                                ? "bg-white/5 text-white"
+                                                : "text-white/80",
+                                        i === ativo && value === b.nome && "ring-1 ring-inset ring-primary/40",
+                                    )}
+                                >
+                                    <BancoLogo banco={b.nome} size={24}/>
+                                    <span className="truncate">
                 {b.codigo} - {b.nome}
               </span>
-                        </button>
-                    ))}
+                                </li>
+                            ))
+                        )}
+                    </ul>
                 </div>
             )}
         </div>
@@ -643,7 +654,7 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
             digito_conta: initialData?.digito_conta ?? "",
             empresa: initialData?.empresa ?? "",
             saldo_inicial_br: initialData
-                ? apiValorToValorBr(initialData.saldo_inicial)
+                ? saldoApiParaBr(initialData.saldo_inicial)
                 : "",
             data_inicio: initialData?.data_inicio ?? "",
             cor: initialData?.cor?.match(/^#[0-9A-Fa-f]{6}$/i)
@@ -661,6 +672,8 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
         watch,
         setValue,
         getValues,
+        setError,
+        clearErrors,
         formState: {errors, isDirty},
     } = useForm<ContaBancariaFormValues>({
         resolver: zodResolver(contaBancariaFormSchema),
@@ -732,11 +745,28 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
         setActiveStep(2);
     };
 
+    // Conta duplicada (mesmo banco + agência + conta): avisa já no passo 2 com a lista
+    // carregada na tela. A API confere de novo ao salvar.
+    function contaDuplicada(): string | null {
+        if (getValues("tipo") === TIPO_SEM_BANCO) return null;
+        const existentes = queryClient.getQueryData<ContaBancaria[]>(tenantQueryKey("contas-bancarias")) ?? [];
+        const dup = encontrarContaDuplicada(
+            {banco: getValues("banco"), agencia: getValues("agencia"), conta: getValues("conta")},
+            existentes,
+            initialData?.id,
+        );
+        if (!dup) return null;
+        const msg = mensagemContaDuplicada(dup.nome);
+        setError("conta", {type: "duplicada", message: msg});
+        return msg;
+    }
+
     // ── Avançar passo 2 -> 3 ──
     const handleStep2Continue = async () => {
         const fields = getStep2RequiredFields();
         const ok = await trigger(fields);
         if (!ok || !step2Valid) return;
+        if (contaDuplicada()) return;
         setMaxReached((m) => Math.max(m, 3));
         setActiveStep(3);
     };
@@ -745,8 +775,7 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
     const mutation = useMutation({
         mutationFn: (values: ContaBancariaFormValues) => {
             const isEdit = !!initialData;
-            const saldoApi =
-                brMoneyDisplayToApiString(values.saldo_inicial_br) || "0.00";
+            const saldoApi = saldoBrParaApi(values.saldo_inicial_br) || "0.00";
             const body = {
                 nome: values.nome.trim(),
                 banco: values.banco?.trim() || null,
@@ -775,8 +804,12 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
             onClose();
         },
         onError: (e: unknown) => {
+            if (e instanceof ApiError && e.code === "CONTA_DUPLICADA") {
+                setError("conta", {type: "duplicada", message: e.message});
+                setActiveStep(2);
+            }
             toast({
-                title: "Erro",
+                title: e instanceof ApiError && e.code === "CONTA_DUPLICADA" ? "Conta já cadastrada" : "Erro ao salvar",
                 description: e instanceof Error ? e.message : String(e),
                 variant: "destructive",
             });
@@ -798,9 +831,16 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
         if (!tipo || !isValid || !step3Valid) {
             toast({
                 title: "Campos obrigatórios não preenchidos",
-                description: "Há campos obrigatórios não preenchidos, volte e conclua!",
+                description: "Confira os campos destacados antes de salvar.",
                 variant: "destructive",
             });
+            return;
+        }
+
+        const duplicada = contaDuplicada();
+        if (duplicada) {
+            setActiveStep(2);
+            toast({title: "Conta já cadastrada", description: duplicada, variant: "destructive"});
             return;
         }
 
@@ -815,18 +855,18 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
     function getNomePlaceholder() {
         switch (tipo) {
             case "Conta Poupança":
-                return "Ex: Poupança Caixa";
+                return "Ex.: Poupança Caixa";
             case "Conta Movimento":
-                return "Ex: Caixa Operacional";
+                return "Ex.: Caixa Operacional";
             case "Conta Aplicação":
-                return "Ex: CDB Itaú 2027";
+                return "Ex.: CDB Itaú 2027";
             default:
-                return "Ex: Itaú PJ Principal";
+                return "Ex.: Itaú PJ Principal";
         }
     }
 
     // Data máxima permitida no campo "Início dos lançamentos" (hoje)
-    const maxDataInicio = getTodayIso();
+    const maxDataInicio = parseDataCivil(hojeIsoLocal()) ?? new Date();
 
     async function handleRequestClose() {
         if (isDirty) {
@@ -849,7 +889,16 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
     }, [activeStep]);
 
     return (
-        <Modal onClose={() => void handleRequestClose()}>
+        <Modal
+            onClose={() => void handleRequestClose()}
+            onEscapeKeyDown={(e) => {
+                // Esc na busca do banco (combobox aberto) fecha só a lista, não o modal.
+                const alvo = document.activeElement as HTMLElement | null;
+                if (alvo?.getAttribute("role") === "combobox" && alvo.getAttribute("aria-expanded") === "true") {
+                    e.preventDefault();
+                }
+            }}
+        >
             <ModalHeader title={initialData ? "Editar Conta Bancária" : "Cadastrar conta bancária"}/>
 
             <ModalForm noValidate onSubmit={(e) => e.preventDefault()}>
@@ -937,7 +986,10 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                                             <BancoSelect
                                                 id="conta-banco"
                                                 value={field.value ?? ""}
-                                                onChange={field.onChange}
+                                                onChange={(v) => {
+                                                    field.onChange(v);
+                                                    if (errors.conta?.type === "duplicada") clearErrors("conta");
+                                                }}
                                             />
                                         )}
                                     />
@@ -945,9 +997,10 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
 
                                 <Field
                                     id="conta-agencia"
-                                    label="Agência (sem dígito)"
+                                    label="Agência"
                                     required
                                     error={errors.agencia?.message}
+                                    hint="Até 4 dígitos; o dígito verificador é opcional."
                                 >
                                     <Controller
                                         name="agencia"
@@ -960,12 +1013,13 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                                                 autoComplete="off"
                                                 aria-invalid={!!errors.agencia}
                                                 value={field.value ?? ""}
-                                                onChange={(e) =>
-                                                    field.onChange(maskAgencia(e.target.value))
-                                                }
+                                                onChange={(e) => {
+                                                    field.onChange(mascararAgenciaConta(e.target.value));
+                                                    if (errors.conta?.type === "duplicada") clearErrors("conta");
+                                                }}
                                                 className={monoInputClass}
-                                                placeholder="0000"
-                                                maxLength={4}
+                                                placeholder="0000-0"
+                                                maxLength={AGENCIA_MAX_LENGTH}
                                             />
                                         )}
                                     />
@@ -988,9 +1042,10 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                                                 autoComplete="off"
                                                 aria-invalid={!!errors.conta}
                                                 value={field.value ?? ""}
-                                                onChange={(e) =>
-                                                    field.onChange(maskConta(e.target.value))
-                                                }
+                                                onChange={(e) => {
+                                                    field.onChange(maskConta(e.target.value));
+                                                    if (errors.conta?.type === "duplicada") clearErrors("conta");
+                                                }}
                                                 className={monoInputClass}
                                                 placeholder="00000-0"
                                                 maxLength={9}
@@ -1046,7 +1101,7 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                                  className="flex flex-wrap gap-2 p-2 bg-white/5 border border-white/10 rounded-xl">
                                 {COLOR_PALETTE.map((c) => {
                                     const nomeCor =
-                                        BANCOS_BR.find((b) => b.cor === c)?.nome ??
+                                        BANCOS_PRINCIPAIS.find((b) => b.cor === c)?.nome ??
                                         CORES_EXTRAS.find((e) => e.cor === c)?.nome ??
                                         "Cor padrão";
                                     return (
@@ -1106,13 +1161,45 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                                     required
                                     error={errors.data_inicio?.message}
                                 >
-                                    <input
-                                        id="conta-data-inicio"
-                                        type="date"
-                                        {...register("data_inicio")}
-                                        aria-invalid={!!errors.data_inicio}
-                                        max={maxDataInicio}
-                                        className={inputClass}
+                                    {/* Seletor com exibição dd/mm/aaaa (o input nativo segue o idioma do
+                                        navegador e mostrava mm/dd/aaaa). Datas futuras ficam desabilitadas. */}
+                                    <Controller
+                                        name="data_inicio"
+                                        control={control}
+                                        render={({field}) => (
+                                            <Popover>
+                                                <PopoverTrigger asChild>
+                                                    <button
+                                                        type="button"
+                                                        id="conta-data-inicio"
+                                                        aria-invalid={!!errors.data_inicio}
+                                                        aria-haspopup="dialog"
+                                                        className={cn(
+                                                            inputClass,
+                                                            "flex items-center justify-between text-left",
+                                                            !field.value && "text-muted-foreground",
+                                                        )}
+                                                    >
+                                                        {field.value ? formatarData(field.value) : "dd/mm/aaaa"}
+                                                        <CalendarIcon aria-hidden="true" className="w-4 h-4 text-muted-foreground shrink-0"/>
+                                                    </button>
+                                                </PopoverTrigger>
+                                                <PopoverContent className="w-auto p-0 border border-white/10" align="start">
+                                                    <CalendarPicker
+                                                        mode="single"
+                                                        selected={field.value ? parseISO(field.value) : undefined}
+                                                        defaultMonth={field.value ? parseISO(field.value) : maxDataInicio}
+                                                        onSelect={(date) => {
+                                                            field.onChange(date ? formatarDataFns(date, "yyyy-MM-dd") : "");
+                                                            void trigger("data_inicio");
+                                                        }}
+                                                        disabled={{after: maxDataInicio}}
+                                                        locale={ptBR}
+                                                        initialFocus
+                                                    />
+                                                </PopoverContent>
+                                            </Popover>
+                                        )}
                                     />
                                 </Field>
 
@@ -1122,6 +1209,7 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                                     label="Saldo final da conta no dia anterior"
                                     required
                                     error={errors.saldo_inicial_br?.message}
+                                    hint="Saldo negativo (cheque especial): digite o sinal de menos ou use o botão ±."
                                 >
                                     <div className="relative">
                                         <span aria-hidden="true"
@@ -1132,19 +1220,33 @@ function NovaContaModal({onClose, initialData}: ModalProps) {
                                             name="saldo_inicial_br"
                                             control={control}
                                             render={({field}) => (
-                                                <input
-                                                    id="conta-saldo-inicial"
-                                                    type="text"
-                                                    inputMode="numeric"
-                                                    autoComplete="off"
-                                                    aria-invalid={!!errors.saldo_inicial_br}
-                                                    value={field.value}
-                                                    onChange={(e) =>
-                                                        field.onChange(formatValorBrInput(e.target.value))
-                                                    }
-                                                    className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-sm text-white outline-none focus:border-primary/50 transition-colors font-bold"
-                                                    placeholder="0,00"
-                                                />
+                                                <>
+                                                    <input
+                                                        id="conta-saldo-inicial"
+                                                        type="text"
+                                                        inputMode="decimal"
+                                                        autoComplete="off"
+                                                        aria-invalid={!!errors.saldo_inicial_br}
+                                                        value={field.value}
+                                                        onChange={(e) =>
+                                                            field.onChange(formatarSaldoComSinal(e.target.value))
+                                                        }
+                                                        className={cn(
+                                                            "w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-12 py-3 text-sm outline-none focus:border-primary/50 transition-colors font-bold",
+                                                            field.value?.startsWith("-") ? "text-destructive" : "text-white",
+                                                        )}
+                                                        placeholder="0,00"
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => field.onChange(inverterSinalSaldo(field.value ?? ""))}
+                                                        aria-label="Inverter sinal do saldo (positivo/negativo)"
+                                                        title="Inverter sinal (positivo/negativo)"
+                                                        className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg text-sm font-bold text-muted-foreground hover:text-white hover:bg-white/10 transition-colors"
+                                                    >
+                                                        ±
+                                                    </button>
+                                                </>
                                             )}
                                         />
                                     </div>
@@ -1250,7 +1352,7 @@ export default function ContasBancarias() {
             toast({
                 title:
                     variables.status === "ativo" ? "Conta desbloqueada" : "Conta bloqueada",
-                description: `O status da conta foi alterado para ${variables.status}.`,
+                description: `O status da conta foi alterado para ${(ROTULO_STATUS[variables.status] ?? variables.status).toLowerCase()}.`,
             });
         },
         onError: (e: unknown) => {
@@ -1302,6 +1404,20 @@ export default function ContasBancarias() {
             variant: "destructive",
         });
         if (ok) deleteMutation.mutate(conta.id);
+    };
+
+    const handleToggleBloqueio = async (conta: ContaBancaria) => {
+        const bloquear = conta.status === "ativo";
+        const ok = await confirm({
+            title: bloquear ? `Bloquear "${conta.nome}"?` : `Desbloquear "${conta.nome}"?`,
+            description: bloquear
+                ? "A conta fica bloqueada (inativa). O histórico é preservado e você pode desbloquear depois."
+                : "A conta volta a ficar ativa.",
+            confirmLabel: bloquear ? "Bloquear" : "Desbloquear",
+            cancelLabel: "Cancelar",
+            variant: bloquear ? "destructive" : "default",
+        });
+        if (ok) blockMutation.mutate({id: conta.id, status: bloquear ? "bloqueado" : "ativo"});
     };
 
     // ── Filtros + busca por nome (no navegador) ──
@@ -1441,7 +1557,7 @@ export default function ContasBancarias() {
                             <thead>
                             <tr className="border-b border-white/10 bg-white/[0.03]">
                                 <th className="text-left font-black uppercase text-[10px] tracking-widest text-muted-foreground px-5 py-3">
-                                    Empresas
+                                    Banco
                                 </th>
                                 <th className="text-left font-black uppercase text-[10px] tracking-widest text-muted-foreground px-5 py-3">
                                     Nome
@@ -1474,7 +1590,7 @@ export default function ContasBancarias() {
                                             conta.status === "bloqueado" && "opacity-60",
                                         )}
                                     >
-                                        {/* Empresas (logo do banco) */}
+                                        {/* Banco (logo) */}
                                         <td className="px-5 py-4">
                                             {conta.banco ? (
                                                 <BancoLogo banco={conta.banco} size={36}/>
@@ -1484,6 +1600,7 @@ export default function ContasBancarias() {
                                                     style={{backgroundColor: `${conta.cor}20`}}
                                                 >
                                                     <Landmark
+                                                        aria-hidden="true"
                                                         className="w-4.5 h-4.5"
                                                         style={{color: conta.cor}}
                                                     />
@@ -1521,10 +1638,7 @@ export default function ContasBancarias() {
                                             </p>
                                             {conta.data_inicio && (
                                                 <p className="text-[11px] text-muted-foreground mt-0.5">
-                                                    Início:{" "}
-                                                    {new Date(
-                                                        `${conta.data_inicio}T00:00:00`,
-                                                    ).toLocaleDateString("pt-BR")}
+                                                    Início: {formatarData(conta.data_inicio)}
                                                 </p>
                                             )}
                                         </td>
@@ -1555,31 +1669,30 @@ export default function ContasBancarias() {
                             )}
                         >
                           {conta.status === "ativo" ? (
-                              <CheckCircle className="w-3 h-3"/>
+                              <CheckCircle aria-hidden="true" className="w-3 h-3"/>
                           ) : (
-                              <AlertCircle className="w-3 h-3"/>
+                              <AlertCircle aria-hidden="true" className="w-3 h-3"/>
                           )}
-                            {conta.status}
+                            {ROTULO_STATUS[conta.status] ?? conta.status}
                         </span>
                                         </td>
 
                                         {/* Ações */}
                                         <td className="px-5 py-4">
                                             <div className="flex items-center justify-end gap-2">
-                                                <BotaoEditar onClick={() => setEditingConta(conta)}/>
+                                                <BotaoEditar
+                                                    onClick={() => setEditingConta(conta)}
+                                                    title={`Editar ${conta.nome}`}
+                                                />
                                                 <BotaoBloquear
                                                     bloqueado={conta.status !== "ativo"}
-                                                    onClick={() =>
-                                                        blockMutation.mutate({
-                                                            id: conta.id,
-                                                            status:
-                                                                conta.status === "ativo"
-                                                                    ? "bloqueado"
-                                                                    : "ativo",
-                                                        })
-                                                    }
+                                                    title={`${conta.status === "ativo" ? "Bloquear" : "Desbloquear"} ${conta.nome}`}
+                                                    onClick={() => void handleToggleBloqueio(conta)}
                                                 />
-                                                <BotaoExcluir onClick={() => handleDelete(conta)}/>
+                                                <BotaoExcluir
+                                                    onClick={() => handleDelete(conta)}
+                                                    title={`Excluir ${conta.nome}`}
+                                                />
                                             </div>
                                         </td>
                                     </tr>

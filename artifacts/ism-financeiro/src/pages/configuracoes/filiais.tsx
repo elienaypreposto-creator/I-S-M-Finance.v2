@@ -15,6 +15,7 @@ import {
 import {useQuery, useMutation, useQueryClient} from "@tanstack/react-query";
 import {useToast} from "@/hooks/use-toast";
 import {fetchApiData} from "@/lib/api-config";
+import {acharNomeDuplicado, limparNome, ordenarPorNome} from "@/lib/nomes";
 import {CardsSkeleton} from "@/components/shared/table-skeleton";
 import {ConfirmDialog} from "@/components/shared/confirm-dialog";
 import {useConfirm} from "@/hooks/use-confirm";
@@ -119,8 +120,7 @@ function FilialModal({onClose, initialData, isPending, onSave}: FilialModalProps
                         <div className="col-span-full flex items-start gap-2 bg-primary/5 border border-primary/20 rounded-xl p-3">
                             <Info aria-hidden="true" className="w-4 h-4 text-primary shrink-0 mt-0.5"/>
                             <p className="text-xs text-muted-foreground leading-relaxed">
-                                Campos de CNPJ, endereço e contacto serão adicionados na{" "}
-                                <strong className="text-white">Fase 7 - Ampliação de Schema</strong>.
+                                Por enquanto a filial tem só o nome. CNPJ, endereço e contato ainda não podem ser cadastrados aqui.
                             </p>
                         </div>
                     </div>
@@ -169,8 +169,9 @@ export default function Filiais() {
     // ── Busca por nome (?q=) filtrada no navegador ─────────────────────────────
     const {ler, atualizar} = useParametrosUrl();
     const busca = ler("q");
+    // Lista em ordem alfabética (pt-BR, sem diferenciar maiúsculas/acentos).
     const filiaisFiltradas = useMemo(
-        () => filiais.filter((f) => contemBusca(busca, f.nome)),
+        () => ordenarPorNome(filiais.filter((f) => contemBusca(busca, f.nome))),
         [filiais, busca],
     );
     const anuncio = isLoading || !busca
@@ -235,10 +236,21 @@ export default function Filiais() {
     const isSaving = createMutation.isPending || updateMutation.isPending;
 
     const handleSave = (data: FilialFormValues) => {
+        const nome = limparNome(data.nome);
+        // Duplicata sem diferenciar caixa/acento/espaços; a própria filial não conta.
+        const duplicada = acharNomeDuplicado(filiais, nome, editingFilial?.id);
+        if (duplicada) {
+            toast({
+                variant: "destructive",
+                title: "Filial duplicada",
+                description: `Já existe uma filial chamada "${duplicada.nome}".`,
+            });
+            return;
+        }
         if (editingFilial) {
-            updateMutation.mutate({id: editingFilial.id, data});
+            updateMutation.mutate({id: editingFilial.id, data: {nome}});
         } else {
-            createMutation.mutate(data);
+            createMutation.mutate({nome});
         }
     };
 
@@ -306,7 +318,7 @@ export default function Filiais() {
                     className="col-span-2 sm:col-span-1 glass-panel rounded-2xl p-3 sm:p-4 flex items-center gap-2 border border-primary/20 bg-primary/5">
                     <Info className="w-4 h-4 text-primary shrink-0"/>
                     <p className="text-[10px] sm:text-xs text-muted-foreground leading-tight">
-                        CNPJ, endereço e contacto chegam na Fase 7.
+                        CNPJ, endereço e contato ainda não são cadastrados aqui.
                     </p>
                 </div>
             </div>
@@ -417,7 +429,7 @@ export default function Filiais() {
 
                                         {/* Ações */}
                                         <div
-                                            className="flex items-center gap-2 sm:opacity-0 sm:group-hover:opacity-100 transition-all shrink-0">
+                                            className="flex items-center gap-2 transition-all shrink-0 pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:focus-within:opacity-100">
                                             <BotaoEditar onClick={() => openEdit(filial)}/>
                                             <BotaoExcluir
                                                 onClick={() => handleDelete(filial)}

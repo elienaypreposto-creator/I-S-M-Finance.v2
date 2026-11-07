@@ -1,5 +1,12 @@
 import {z} from "zod";
 import {TIPO_DOCUMENTO_VALUES, type TipoDocumentoLancamento} from "@/lib/lancamento-documento";
+import {
+    CAMPOS_RETENCAO,
+    MSG_RETENCOES_ACIMA_DO_VALOR,
+    ROTULO_RETENCAO,
+    somaRetencoesCents,
+    type CampoRetencao,
+} from "@/lib/retencoes";
 
 export const lancamentoStatusEnum = z.enum([
     "pendente",
@@ -10,6 +17,43 @@ export const lancamentoStatusEnum = z.enum([
     "pago_parcial",
 ]);
 
+export type LancamentoStatus = z.infer<typeof lancamentoStatusEnum>;
+
+/**
+ * Status de quitação: derivados da conciliação bancária (ou da transferência
+ * entre contas), que grava junto conta, data e valor pago. Não são escolhidos
+ * no formulário de Lançamentos nem enviados no PUT (a API os ignora).
+ */
+export const STATUS_QUITACAO: readonly LancamentoStatus[] = ["pago", "recebido", "pago_parcial"];
+
+export function ehStatusQuitacao(status: string | null | undefined): boolean {
+    return (STATUS_QUITACAO as readonly string[]).includes(status ?? "");
+}
+
+/**
+ * Natureza do plano de contas (`tipo`: receita, custo, despesa) que combina com
+ * o lançamento: a receber -> receita; a pagar -> custo ou despesa. Plano sem
+ * natureza informada não é escondido.
+ */
+export function naturezaCombinaComTipo(natureza: string | null | undefined, tipo: "CP" | "CR"): boolean {
+    const n = (natureza ?? "").trim().toLowerCase();
+    if (!n) return true;
+    return tipo === "CR" ? n === "receita" : n === "custo" || n === "despesa";
+}
+
+/**
+ * Categorias oferecidas no formulário: só as da natureza do lançamento, mais as
+ * de `manterIds` (a já salva no título e a selecionada agora), para que uma
+ * categoria fora do filtro continue aparecendo em vez de sumir do campo.
+ */
+export function planoContasDoTipo<T extends {id: number; tipo?: string | null}>(
+    itens: readonly T[],
+    tipo: "CP" | "CR",
+    manterIds: ReadonlyArray<string | number | null | undefined>,
+): T[] {
+    const manter = new Set(manterIds.filter((v) => v != null && v !== "").map(String));
+    return itens.filter((p) => naturezaCombinaComTipo(p.tipo, tipo) || manter.has(String(p.id)));
+}
 
 const dadosPagamentoPixApiSchema = z.object({
     tipo: z.literal("PIX"),
@@ -79,6 +123,13 @@ export const lancamentoApiBodySchema = z.object({
     riscos: z.array(z.string()).optional(),
     forma_pagamento: z.enum(["PIX", "TED", "Boleto"]).nullable().optional(),
     dados_pagamento: z.array(dadosPagamentoItemApiSchema).nullable().optional(),
+    // Retenções na fonte (string decimal, ex.: "15.00"). `valor` segue bruto.
+    retencao_ir: z.string().optional(),
+    retencao_pis: z.string().optional(),
+    retencao_cofins: z.string().optional(),
+    retencao_csll: z.string().optional(),
+    retencao_inss: z.string().optional(),
+    retencao_iss: z.string().optional(),
 });
 
 export type LancamentoApiBody = z.infer<typeof lancamentoApiBodySchema>;
@@ -229,6 +280,42 @@ export const pagamentoItemDefault: PagamentoItemFormValues = {
     boleto_codigo_barras: "",
 };
 
+/** Uma retenção mascarada ("1.234,56"): vazio = 0; senão >= 0 com 2 casas (mesma regra da API). */
+function retencaoBrSchema(campo: CampoRetencao) {
+    return z
+        .string()
+        .optional()
+        .refine(
+            (s) => !s || /^[0-9]+\.[0-9]{2}$/.test(brMoneyDisplayToApiString(s)),
+            `Retenção de ${ROTULO_RETENCAO[campo]} inválida - use o formato 1.234,56.`,
+        );
+}
+
+export const retencoesBrSchema = z.object(
+    Object.fromEntries(CAMPOS_RETENCAO.map((c) => [c, retencaoBrSchema(c)])) as Record<
+        CampoRetencao,
+        ReturnType<typeof retencaoBrSchema>
+    >,
+);
+
+export type RetencoesBr = z.infer<typeof retencoesBrSchema>;
+
+export const retencoesBrVazias: RetencoesBr = {
+    retencao_ir: "",
+    retencao_pis: "",
+    retencao_cofins: "",
+    retencao_csll: "",
+    retencao_inss: "",
+    retencao_iss: "",
+};
+
+/** Retenções do formulário em decimal da API ("15.00"); vazio = "0.00". */
+export function retencoesBrParaApi(r: RetencoesBr | undefined): Record<CampoRetencao, string> {
+    return Object.fromEntries(
+        CAMPOS_RETENCAO.map((c) => [c, brMoneyDisplayToApiString(r?.[c] ?? "") || "0.00"]),
+    ) as Record<CampoRetencao, string>;
+}
+
 // Schema do formulário modal
 
 export const lancamentoModalFormSchema = z.object({
@@ -278,6 +365,10 @@ export const lancamentoModalFormSchema = z.object({
     descontoBr: z.string().optional(),
     jurosBr: z.string().optional(),
 
+    // Retenções na fonte (IR, PIS, COFINS, CSLL, INSS, ISS). O valor acima
+    // é o bruto; o líquido (bruto − retenções) é o que bate com o extrato.
+    retencoesBr: retencoesBrSchema,
+
     status: lancamentoStatusEnum,
     plano_conta_id: optionalIdSelect,
     departamento_id: optionalIdSelect,
@@ -301,6 +392,14 @@ export const lancamentoModalFormSchema = z.object({
             code: z.ZodIssueCode.custom,
             path: ["tipo_documento"],
             message: "Selecione o tipo de documento.",
+        });
+    }
+    const valorCents = Math.round(parseFloat(brMoneyDisplayToApiString(data.valorBr) || "0") * 100);
+    if (somaRetencoesCents(retencoesBrParaApi(data.retencoesBr)) > valorCents) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["retencoesBr"],
+            message: MSG_RETENCOES_ACIMA_DO_VALOR,
         });
     }
     if (data.exigir_descricao && !data.descricao?.trim()) {
@@ -333,6 +432,21 @@ export type LancamentoEditItem = {
     desconto?: string | number | null;
     /** Juros/multa já aplicados ao título. */
     juros?: string | number | null;
+    /** Retenções na fonte (bruto = `valor`; líquido = `valor_liquido`). */
+    retencao_ir?: string | number | null;
+    retencao_pis?: string | number | null;
+    retencao_cofins?: string | number | null;
+    retencao_csll?: string | number | null;
+    retencao_inss?: string | number | null;
+    retencao_iss?: string | number | null;
+    valor_liquido?: string | number | null;
+    valor_quitado?: string | number | null;
+    /** Quitação (só leitura): data do pagamento e conta onde o dinheiro passou. */
+    data_quitacao?: string | null;
+    conta_nome?: string | null;
+    /** Vinculado a linha de extrato (quitação feita pela conciliação). */
+    tem_conciliacao?: boolean;
+    transferencia_grupo_id?: string | null;
     status: string;
     plano_conta_id: number | null;
     departamento_id?: number | null;
@@ -444,6 +558,7 @@ export function getLancamentoModalDefaultValues(editItem?: LancamentoEditItem | 
         valorBr: "",
         descontoBr: "",
         jurosBr: "",
+        retencoesBr: {...retencoesBrVazias},
         status: "pendente",
         plano_conta_id: "",
         departamento_id: "",
@@ -468,6 +583,9 @@ export function getLancamentoModalDefaultValues(editItem?: LancamentoEditItem | 
         valorBr: apiValorToValorBr(editItem.valor),
         descontoBr: editItem.desconto != null ? apiValorToValorBr(editItem.desconto) : "",
         jurosBr: editItem.juros != null ? apiValorToValorBr(editItem.juros) : "",
+        retencoesBr: Object.fromEntries(
+            CAMPOS_RETENCAO.map((c) => [c, Number(editItem[c] ?? 0) > 0 ? apiValorToValorBr(editItem[c]) : ""]),
+        ) as RetencoesBr,
         status: normalizeStatusForForm(editItem.tipo, editItem.status),
         plano_conta_id: editItem.plano_conta_id != null ? String(editItem.plano_conta_id) : "",
         departamento_id: editItem.departamento_id != null ? String(editItem.departamento_id) : "",
@@ -572,7 +690,9 @@ export function mapModalFormToApiBody(values: LancamentoModalFormValues): Lancam
         valor: brMoneyDisplayToApiString(values.valorBr),
         desconto: brMoneyDisplayToApiString(values.descontoBr ?? "") || "0.00",
         juros: brMoneyDisplayToApiString(values.jurosBr ?? "") || "0.00",
-        status: values.status,
+        ...retencoesBrParaApi(values.retencoesBr),
+        // Quitação não sai do formulário: o status de um título quitado é só leitura.
+        status: ehStatusQuitacao(values.status) ? undefined : values.status,
         plano_conta_id: values.plano_conta_id === "" ? null : Number(values.plano_conta_id),
         departamento_id: values.departamento_id === "" ? null : Number(values.departamento_id),
         centro_custo_id: values.centro_custo_id === "" ? null : Number(values.centro_custo_id),

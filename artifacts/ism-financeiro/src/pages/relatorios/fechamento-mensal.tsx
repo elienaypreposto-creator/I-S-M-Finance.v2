@@ -12,12 +12,13 @@ import {
   ArrowUpCircle,
   ArrowDownCircle,
 } from "lucide-react";
-import { useDinheiro } from "@/components/conta/saldos-visiveis";
+import { useDinheiro, useSaldosVisiveis } from "@/components/conta/saldos-visiveis";
 import { useParametrosUrl } from "@/components/shared/filtros";
 import { SelectCampo } from "@/components/ui/select-campo";
 import { useQuery } from "@tanstack/react-query";
 import { fetchApiData } from "@/lib/api-config";
-import { exportToExcel, exportToPDF, fmtBRL } from "@/lib/export";
+import { exportToExcel, exportToPDF } from "@/lib/export";
+import { formatarPct } from "@/lib/metas-resumo";
 
 // ─── Constantes ────────────────────────────────────────────────────────────────
 const MESES = [
@@ -82,6 +83,8 @@ function KpiCard({
 // ─── Página ────────────────────────────────────────────────────────────────────
 export default function FechamentoMensal() {
   const dinheiro = useDinheiro();
+  // Com saldos ocultos, % da meta e barra também somem (revelam a proporção dos valores).
+  const { visivel: saldosVisiveis, texto } = useSaldosVisiveis();
   // Período na URL (?mes=10&ano=2026) para sobreviver ao F5 e ao compartilhar o link.
   const { ler, atualizar } = useParametrosUrl();
   const mes = lerMes(ler("mes"));
@@ -107,26 +110,27 @@ export default function FechamentoMensal() {
     : 0;
   const saldo = saldoCents / 100;
 
-  const variacaoCR =
+  // % real da meta de receita (pode passar de 100%); a barra só limita o desenho.
+  const pctMetaCR =
     data && data.planejado_receber > 0
-      ? ((data.realizado_receber - data.planejado_receber) /
-          data.planejado_receber) *
-        100
+      ? (toCents(data.realizado_receber) / toCents(data.planejado_receber)) * 100
       : null;
+  const variacaoCR = pctMetaCR == null ? null : pctMetaCR - 100;
+  const passouMeta = pctMetaCR != null && pctMetaCR > 100;
 
   // ── Exportação ──────────────────────────────────────────────────────────────
   const EXPORT_COLUMNS = [
     { header: "Indicador",    key: "indicador",  width: 36 },
-    { header: "Valor (R$)",   key: "valor",      width: 22 },
+    { header: "Valor (R$)",   key: "valor",      width: 22, tipo: "moeda" as const },
   ];
 
   function buildExportRows() {
     if (!data) return [];
     return [
-      { indicador: "Meta Receita (Orçado)",    valor: fmtBRL(data.planejado_receber) },
-      { indicador: "Receitas Realizadas (CR)", valor: fmtBRL(data.realizado_receber) },
-      { indicador: "Saídas Realizadas (CP)",   valor: fmtBRL(data.realizado_gastar)  },
-      { indicador: "Resultado Líquido",        valor: fmtBRL(saldo)                 },
+      { indicador: "Meta de receita (orçado)",    valor: Number(data.planejado_receber) },
+      { indicador: "Receitas realizadas", valor: Number(data.realizado_receber) },
+      { indicador: "Saídas realizadas",   valor: Number(data.realizado_gastar)  },
+      { indicador: "Resultado Líquido",        valor: saldo                         },
     ] as Record<string, unknown>[];
   }
 
@@ -146,6 +150,8 @@ export default function FechamentoMensal() {
       {
         title: `Fechamento Mensal — ${MESES[mes - 1]} ${ano}`,
         subtitle: "Valores referentes a lançamentos quitados no período",
+        // Resultado Líquido fecha a tabela (receitas − saídas): segue destacado como antes.
+        destacarUltimaLinha: true,
       },
     );
   }
@@ -241,7 +247,7 @@ export default function FechamentoMensal() {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               {/* Meta (planejado) */}
               <KpiCard
-                label="Meta Receita (Orçado)"
+                label="Meta de receita (orçado)"
                 value={dinheiro(data.planejado_receber)}
                 colorClass="text-primary"
                 icon={<Wallet className="w-4 h-4 text-primary" />}
@@ -252,7 +258,7 @@ export default function FechamentoMensal() {
 
               {/* Realizado CR */}
               <KpiCard
-                label="Receitas Realizadas (CR)"
+                label="Receitas realizadas"
                 value={dinheiro(data.realizado_receber)}
                 colorClass={
                   data.realizado_receber >= data.planejado_receber
@@ -261,7 +267,7 @@ export default function FechamentoMensal() {
                 }
                 icon={<ArrowUpCircle className="w-4 h-4 text-teal-400" />}
                 sub={
-                  variacaoCR !== null ? (
+                  pctMetaCR !== null && variacaoCR !== null && saldosVisiveis ? (
                     <p
                       className={`text-xs flex items-center gap-1 ${variacaoCR >= 0 ? "text-success" : "text-warning"}`}
                     >
@@ -270,8 +276,8 @@ export default function FechamentoMensal() {
                       ) : (
                         <TrendingDown className="w-3 h-3" />
                       )}
-                      {variacaoCR > 0 ? "+" : ""}
-                      {variacaoCR.toFixed(1)}% vs meta
+                      {formatarPct(pctMetaCR)} da meta ({variacaoCR > 0 ? "+" : ""}
+                      {formatarPct(variacaoCR)})
                     </p>
                   ) : null
                 }
@@ -279,7 +285,7 @@ export default function FechamentoMensal() {
 
               {/* Realizado CP */}
               <KpiCard
-                label="Saídas Realizadas (CP)"
+                label="Saídas realizadas"
                 value={dinheiro(data.realizado_gastar)}
                 colorClass="text-destructive"
                 icon={<ArrowDownCircle className="w-4 h-4 text-destructive" />}
@@ -327,14 +333,25 @@ export default function FechamentoMensal() {
                   <div className="flex justify-between text-xs text-muted-foreground mb-1.5">
                     <span>Receita Realizada</span>
                     <span>
-                      {Math.min(
-                        100,
-                        (data.realizado_receber / data.planejado_receber) * 100,
-                      ).toFixed(1)}
-                      % da meta
+                      {texto(formatarPct(pctMetaCR))} da meta
+                      {passouMeta && saldosVisiveis && (
+                        <span className="ml-2 text-success font-semibold">
+                          acima da meta em {formatarPct(variacaoCR)}
+                        </span>
+                      )}
                     </span>
                   </div>
-                  <div className="h-2 w-full bg-white/5 rounded-full overflow-hidden">
+                  <div
+                    className="relative h-2 w-full bg-white/5 rounded-full overflow-hidden"
+                    role="progressbar"
+                    aria-label="Receita realizada sobre a meta"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={
+                      saldosVisiveis && pctMetaCR != null ? Math.min(100, Math.round(pctMetaCR)) : undefined
+                    }
+                  >
+                    {/* A barra para em 100%; o excedente aparece no texto e na ponta listrada. */}
                     <div
                       className={`h-2 rounded-full transition-all ${
                         data.realizado_receber >= data.planejado_receber
@@ -342,9 +359,18 @@ export default function FechamentoMensal() {
                           : "bg-warning"
                       }`}
                       style={{
-                        width: `${Math.min(100, (data.realizado_receber / data.planejado_receber) * 100)}%`,
+                        width:
+                          saldosVisiveis && pctMetaCR != null
+                            ? `${Math.min(100, Math.max(0, pctMetaCR))}%`
+                            : "0%",
                       }}
                     />
+                    {passouMeta && saldosVisiveis && (
+                      <div
+                        className="absolute inset-y-0 right-0 w-6 bg-[repeating-linear-gradient(135deg,rgba(255,255,255,0.55)_0_3px,transparent_3px_6px)]"
+                        aria-hidden="true"
+                      />
+                    )}
                   </div>
                 </div>
               </div>

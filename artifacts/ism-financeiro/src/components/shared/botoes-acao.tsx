@@ -27,9 +27,10 @@ export function BotaoEditar({
             onPointerDown={onPointerDown}
             disabled={disabled}
             title={title}
+            aria-label={title}
             className={editarClass}
         >
-            <Pencil className="w-4 h-4"/>
+            <Pencil aria-hidden="true" className="w-4 h-4"/>
         </button>
     );
 }
@@ -47,9 +48,10 @@ export function BotaoExcluir({
             onPointerDown={onPointerDown}
             disabled={disabled}
             title={title}
+            aria-label={title}
             className={excluirClass}
         >
-            <Trash2 className="w-4 h-4"/>
+            <Trash2 aria-hidden="true" className="w-4 h-4"/>
         </button>
     );
 }
@@ -72,6 +74,7 @@ export function BotaoBloquear({
             onPointerDown={onPointerDown}
             disabled={disabled}
             title={title ?? (bloqueado ? "Desbloquear" : "Bloquear")}
+            aria-label={title ?? (bloqueado ? "Desbloquear" : "Bloquear")}
             className={cn(
                 "p-2 rounded-lg transition-colors disabled:opacity-40",
                 bloqueado
@@ -79,7 +82,7 @@ export function BotaoBloquear({
                     : "bg-white/5 hover:bg-orange-500/20 text-muted-foreground hover:text-orange-400",
             )}
         >
-            {bloqueado ? <Unlock className="w-4 h-4"/> : <Lock className="w-4 h-4"/>}
+            {bloqueado ? <Unlock aria-hidden="true" className="w-4 h-4"/> : <Lock aria-hidden="true" className="w-4 h-4"/>}
         </button>
     );
 }

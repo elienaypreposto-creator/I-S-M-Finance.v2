@@ -488,8 +488,11 @@ O frontend usa **Wouter** como router, com `AppLayout` envolvendo todas as rotas
 
 #### `/relatorios/contabil-fiscal` — Contábil-Fiscal
 
-- Relatório contábil e fiscal com filtros
-- Dados agrupados por tipo e categoria
+- Movimentações por conta para conferir com o extrato em PDF do banco (`GET /relatorios/contabil-fiscal/movimentacoes`)
+- Filtros: conta (ou todas), mês/ano ou intervalo de datas, entradas/saídas
+- Saldo inicial (fim da véspera), entradas, saídas, saldo final e saldo após cada linha, com a mesma regra do saldo da conta
+- Status de conciliação por lançamento (vínculo com linha de extrato importado) e total não conciliado
+- Exportação XLSX e PDF com o resumo e as linhas
 
 #### `/relatorios/dre` — DRE Gerencial
 
