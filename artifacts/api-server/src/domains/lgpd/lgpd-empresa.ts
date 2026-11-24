@@ -315,6 +315,11 @@ export async function eliminarEmpresa(
                 SET revogado = true
                 WHERE usuario_id IN (${lista})
             `);
+            // Identidade externa (idUsuario do GovADM) é dado do titular: sai junto.
+            await tx.execute(sql`
+                DELETE FROM usuario_identidades_externas
+                WHERE usuario_id IN (${lista})
+            `);
             await tx.execute(sql`
                 UPDATE usuarios
                 SET nome = 'Titular eliminado',

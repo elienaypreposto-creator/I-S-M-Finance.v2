@@ -15,3 +15,4 @@ export * from "./departamentos";
 export * from "./logs";
 export * from "./parametros-sistema";
 export * from "./regras-conciliacao";
+export * from "./usuario-identidades-externas";

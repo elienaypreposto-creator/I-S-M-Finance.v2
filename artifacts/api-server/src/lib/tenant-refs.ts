@@ -15,6 +15,7 @@
  *   refresh_tokens      - sessão do usuário; empresa viva no JWT
  *   logs_sistema        - log operacional da API, não dado de negócio
  *   usuario_empresas    - ponte N:N, não é “dado de uma empresa”
+ *   usuario_identidades_externas - vínculo usuário ↔ GovADM (a identidade é da pessoa)
  *
  * Sem tabela própria:
  *   transferencias      - par de lançamentos com transferencia_grupo_id
@@ -55,4 +56,5 @@ export const TABELAS_GLOBAIS = [
     "refresh_tokens",
     "logs_sistema",
     "usuario_empresas",
+    "usuario_identidades_externas",
 ] as const;
