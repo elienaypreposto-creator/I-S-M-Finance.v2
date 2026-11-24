@@ -31,6 +31,7 @@ import {PERM} from "@/lib/permissoes";
 import {contarVisiveis, perfisBase, permissoesGranulares, todasPermissoes} from "@/lib/perfis-acesso";
 import {useAuth} from "@/hooks/use-auth";
 import {UsuarioEmpresasModal} from "./usuario-empresas-modal";
+import {UsuarioGovadmSecao} from "./usuario-govadm-secao";
 import {SelectCampo} from "@/components/ui/select-campo";
 import {tenantQueryKey} from "@/lib/tenant-query";
 import {TableSkeleton} from "@/components/shared/table-skeleton";
@@ -462,9 +463,11 @@ interface UserModalProps {
     onClose: () => void;
     isPending: boolean;
     onSave: (values: UsuarioFormValues) => void;
+    /** Mostra a seção "Acesso pelo GovADM" (só na edição, para quem edita usuários). */
+    mostrarGovadm?: boolean;
 }
 
-function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
+function UserModal({initialData, onClose, isPending, onSave, mostrarGovadm}: UserModalProps) {
     const isEdit = !!initialData;
     const schema = isEdit ? editarUsuarioSchema : criarUsuarioSchema;
     const {confirm, ConfirmDialogProps} = useConfirm();
@@ -601,6 +604,9 @@ function UserModal({initialData, onClose, isPending, onSave}: UserModalProps) {
                             <FieldError message={e.celular?.message}/>
                         </div>
                     </div>
+                    {isEdit && mostrarGovadm && initialData && (
+                        <UsuarioGovadmSecao usuarioId={initialData.id} usuarioNome={initialData.nome}/>
+                    )}
                 </ModalBody>
                 <ModalFooter hint="* Campos obrigatórios · Esc fecha">
                     <button type="button" onClick={() => void handleRequestClose()} className={modalBtnSecondaryCls}>
@@ -635,6 +641,8 @@ export default function Usuarios() {
     const queryClient = useQueryClient();
     const {hasPermission, user} = useAuth();
     const canConcederPermissoes = hasPermission(PERM.ADMIN_PERMISSOES_CONCEDER);
+    // Mesma permissão da rota PUT /usuarios/:id (e das rotas de identidades externas).
+    const canEditarUsuarios = hasPermission(PERM.ADMIN_USUARIOS_EDITAR);
     // Vínculos usuário↔empresa são operação do ISM: rotas exigem superadmin (ISMF-16).
     const canGerirVinculos = user?.superadmin === true;
     const [vinculosUsuario, setVinculosUsuario] = useState<UsuarioRow | null>(null);
@@ -779,6 +787,7 @@ export default function Usuarios() {
                     onClose={closeUserModal}
                     isPending={isSaving}
                     onSave={handleSave}
+                    mostrarGovadm={canEditarUsuarios}
                 />
             )}
             {canConcederPermissoes && permissoesUsuario && (
