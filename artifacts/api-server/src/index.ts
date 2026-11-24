@@ -19,12 +19,17 @@ import {startRetencaoLgpdJob} from "./jobs/retencao-lgpd";
 import {assertDiscoCifrado} from "./domains/lgpd/lgpd-disco";
 import {assertSegredosJwt} from "./services/token.service";
 import {avisoBootFrontendUrl} from "./lib/frontend-url";
+import {avisoBootGovadm} from "./services/govadm.service";
 
 assertSegredosJwt(process.env);
 
 // Não derruba o boot (o resto da API funciona), mas avisa logo na subida.
 const avisoFrontendUrl = avisoBootFrontendUrl(process.env);
 if (avisoFrontendUrl) console.warn(avisoFrontendUrl);
+
+// Login vindo do GovADM ligado mas mal configurado: a rota fica em 404 (fail-closed).
+const avisoGovadm = avisoBootGovadm(process.env);
+if (avisoGovadm) console.warn(avisoGovadm);
 
 const port = process.env.PORT || 5000;
 

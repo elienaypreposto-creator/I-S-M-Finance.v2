@@ -26,6 +26,8 @@ const PARAMS: Record<string, (alvo: EmpresaFx) => string> = {
     "usuarios:id": (e) => String(e.usuarioId),
     "me:id": (e) => `sessao-${e.id}`,
     "usuarios:empresaId": (e) => String(e.id),
+    // A fixture não cria vínculo GovADM; o alvo (:id da outra empresa) já dá 404 antes.
+    "usuarios:identidadeId": () => "999999",
     "empresas:id": (e) => String(e.id),
     "admin:id": (e) => String(e.id),
     // Token de exportação é emitido só por superadmin; aqui basta um valor sintático.
@@ -68,6 +70,7 @@ const BODIES: Record<string, (alvo: EmpresaFx) => unknown> = {
     "PATCH /empresas/:id": () => ({razao_social: "HACK"}),
     "PUT /usuarios/:id": () => ({nome: "HACK"}),
     "PUT /usuarios/:id/permissoes": () => ({permissoes: ["dashboard:ver"]}),
+    "POST /usuarios/:id/identidades-externas": () => ({sujeito_externo: "999999", emissor: "isolamento"}),
     "PATCH /kanban/cards/:id": () => ({titulo: "HACK"}),
     "POST /kanban/cards": (b) => ({titulo: "HACK", empresa_id: b.id}),
 };

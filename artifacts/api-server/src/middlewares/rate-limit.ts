@@ -13,6 +13,10 @@
  * - 10 requisições / 15 min por combinação IP + e-mail.
  * - Aplicado ao login.
  *
+ * ssoLimiter
+ * - 20 requisições / 15 min por IP.
+ * - Aplicado ao login vindo do GovADM (/auth/govadm).
+ *
  * O IP é sempre `req.ip`, que só é o IP real do cliente com `trust proxy`
  * correto (ver lib/client-ip.ts); sem isso todos caem no balde do gateway.
  * O bloqueio por conta (falhas por e-mail) fica em lib/account-lockout.ts:
@@ -330,9 +334,11 @@ export function criarLimiters(novoStore: (prefixo: string) => Store) {
         authLimiter: rateLimit({...base, limit: 10, keyGenerator: chaveIp, store: novoStore("rl:auth:")}),
         /** 10 tentativas / 15 minutos por IP + e-mail. */
         loginLimiter: rateLimit({...base, limit: 10, keyGenerator: chaveLogin, store: novoStore("rl:login:")}),
+        /** 20 requisições / 15 minutos por IP. Login vindo do GovADM (GET/POST /auth/govadm). */
+        ssoLimiter: rateLimit({...base, limit: 20, keyGenerator: chaveIp, store: novoStore("rl:sso:")}),
     };
 }
 
-export const {globalLimiter, authLimiter, loginLimiter} = criarLimiters(
+export const {globalLimiter, authLimiter, loginLimiter, ssoLimiter} = criarLimiters(
     (prefixo) => new ResilientRedisStore(prefixo),
 );
