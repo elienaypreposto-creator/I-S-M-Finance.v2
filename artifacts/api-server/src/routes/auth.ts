@@ -16,7 +16,7 @@
  * token vai em cookie `rt` HttpOnly; Secure; SameSite=Strict; Path=/api/auth.
  */
 
-import {Router, type Request, type Response} from "express";
+import {Router} from "express";
 import bcrypt from "bcryptjs";
 import {and, eq} from "drizzle-orm";
 import {db} from "@workspace/db";
@@ -24,8 +24,7 @@ import {refreshTokensTable, usuariosTable} from "@workspace/db/schema";
 import {sendPasswordResetEmail} from "../services/email.service";
 import {revokeAllTokensForUser} from "../services/session.service";
 import {denylistUser} from "../services/denylist.service";
-import {sessoes, type MetaSessao} from "../services/sessoes.service";
-import {clientIp} from "../lib/client-ip";
+import {sessoes} from "../services/sessoes.service";
 import {assertVinculoAtivo, listEmpresasAtivasDoUsuario} from "../services/tenant.service";
 import {invalidateTenantCache} from "../middlewares/tenant";
 import {withAuth} from "../middlewares/auth";
@@ -51,6 +50,13 @@ import {
     verifyPurposeToken,
     verifyRefreshToken,
 } from "../services/token.service";
+import {
+    attachTenantForAudit,
+    emitSession,
+    metaSessao,
+    sendSession,
+    SESSION_META,
+} from "../services/auth-session";
 
 const BCRYPT_SALT_ROUNDS = 12;
 const router = Router();
@@ -61,101 +67,6 @@ const DUMMY_PASSWORD_HASH = bcrypt.hashSync("dummy-password-for-timing", BCRYPT_
 
 // CSRF: o csrfGuard (X-Requested-With) é aplicado apenas nas rotas que consomem o cookie
 // do refresh token: /auth/refresh, /auth/switch-empresa e /auth/logout (ver refresh-cookie.ts).
-
-function attachTenantForAudit(
-    req: Request,
-    usuario: { id: number; email: string; superadmin: boolean },
-    empresaId: number,
-): void {
-    req.tenant = {empresaId};
-    req.user = {
-        id: usuario.id,
-        email: usuario.email,
-        permissions: req.user?.permissions ?? [],
-        empresaId,
-        superadmin: usuario.superadmin,
-    };
-}
-
-function metaSessao(req: Request): MetaSessao {
-    const ua = req.headers["user-agent"];
-    return {
-        userAgent: Array.isArray(ua) ? (ua[0] ?? null) : (ua ?? null),
-        ip: clientIp(req),
-    };
-}
-
-async function emitSession(
-    usuario: { id: number; nome: string; email: string; superadmin: boolean },
-    empresaId: number,
-    meta: MetaSessao,
-    sidExistente?: string,
-    login?: { acessoAnteriorDb?: Date | null },
-) {
-    await assertVinculoAtivo(usuario.id, empresaId);
-    const permissions = await fetchPermissions(usuario.id, empresaId, usuario.superadmin);
-    const refresh = await signRefreshToken({sub: String(usuario.id), email: usuario.email, empresa_id: empresaId});
-    const sid = sidExistente
-        ?? await sessoes.abrir({
-            usuarioId: usuario.id,
-            tokenHash: refresh.tokenHash,
-            meta,
-            login: login != null,
-            acessoAnteriorDb: login?.acessoAnteriorDb ?? null,
-        });
-    if (sidExistente) {
-        await sessoes.girar(sidExistente, refresh.tokenHash, meta);
-    }
-    const accessToken = await signAccessToken({
-        sub: String(usuario.id),
-        email: usuario.email,
-        permissions,
-        empresa_id: empresaId,
-        superadmin: usuario.superadmin,
-        sid,
-    });
-
-    await db.insert(refreshTokensTable).values({
-        usuario_id: usuario.id,
-        token_hash: refresh.tokenHash,
-        expires_at: refresh.expiresAt,
-        revogado: false,
-    });
-
-    return {
-        accessToken,
-        refreshToken: refresh.token,
-        user: {
-            id: usuario.id,
-            nome: usuario.nome,
-            email: usuario.email,
-            empresa_id: empresaId,
-            superadmin: usuario.superadmin
-        },
-        permissoes: permissions,
-        empresa_id: empresaId,
-    };
-}
-
-/**
- * Envia a sessão: refresh token vai no cookie httpOnly; o body leva só o access token
- * (e, durante a transição, o refresh também - AUTH_LEGACY_REFRESH_BODY=true).
- */
-function sendSession(
-    res: Response,
-    session: Awaited<ReturnType<typeof emitSession>>,
-    meta: Record<string, unknown>,
-) {
-    const {refreshToken, ...publicSession} = session;
-    setRefreshCookie(res, refreshToken);
-    return successResponse(res, LEGACY_REFRESH_BODY ? session : publicSession, meta);
-}
-
-const SESSION_META = {
-    tokenType: "Bearer",
-    accessTokenExpiresIn: "15m",
-    refreshTokenExpiresIn: "7d",
-} as const;
 
 router.post("/auth/login", loginLimiter, async (req, res) => {
     try {
