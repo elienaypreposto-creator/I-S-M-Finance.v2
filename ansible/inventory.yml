@@ -1,0 +1,6 @@
+all:
+    hosts:
+      ism-finance-prd:
+        ansible_host: $SERVER
+        vars:
+          ansible_host_key_checking: false
