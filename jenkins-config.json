@@ -1,0 +1,12 @@
+{
+    "img": "registry.gitlab.com/meilock/finance-ism",
+    "registry_id": "<id do repositório api no Container Registry do GitLab>",
+    "registry_id_qa": "<não usado: TST e HML continuam fora do Jenkins>",
+    "registry_credentials_id": "<credencial do Jenkins com acesso de push ao registry do GitLab>",
+    "server_qa": "<IP da VM de produção>",
+    "user": "ubuntu",
+    "credentials_id": "<credencial SSH do Jenkins para a VM de produção>",
+    "namespace": "ism-finance",
+    "deployment": "ism-api",
+    "manifest": "deploy-ism-finance.yaml"
+}

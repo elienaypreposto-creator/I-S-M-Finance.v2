@@ -1,0 +1,386 @@
+# ISM Finance — manifesto de PRODUÇÃO (Kubernetes).
+# No servidor fica em /home/ubuntu/cluster/deploy-ism-finance.yaml; a esteira só troca a
+# versão das imagens api/web (ansible/tasks/deploy.yml) e aplica.
+#
+# Antes do primeiro apply (passo a passo em deploy/PRODUCAO.md):
+#   kubectl create namespace ism-finance
+#   kubectl -n ism-finance create secret generic ism-finance-env --from-env-file=producao.env
+#   kubectl -n ism-finance create secret docker-registry gitlab-registry --docker-server=registry.gitlab.com ...
+#
+# Pontos marcados com AJUSTAR dependem da infraestrutura da VM de produção.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ism-finance
+---
+# ---------------------------------------------------------------- Postgres
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: ism-finance
+spec:
+  selector:
+    app: ism-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ism-postgres
+  namespace: ism-finance
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ism-postgres
+  template:
+    metadata:
+      labels:
+        app: ism-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: ism_user
+            - name: POSTGRES_DB
+              value: ismfinance
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ism-finance-env
+                  key: DB_PASSWORD
+            # Subpasta: a raiz do volume pode ter lost+found e o Postgres recusa iniciar.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "ism_user", "-d", "ismfinance"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # AJUSTAR: StorageClass com disco CIFRADO (ex.: EBS encrypted). A API exige
+        # ISM_DISCO_CIFRADO=1 e esse valor só é verdadeiro se este volume for cifrado.
+        storageClassName: "<storageclass-cifrada>"
+        resources:
+          requests:
+            storage: 20Gi
+---
+# ---------------------------------------------------------------- Redis
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: ism-finance
+spec:
+  selector:
+    app: ism-redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ism-redis
+  namespace: ism-finance
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ism-redis
+  template:
+    metadata:
+      labels:
+        app: ism-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ism-finance-env
+                  key: REDIS_PASSWORD
+          args:
+            - redis-server
+            - --requirepass
+            - $(REDIS_PASSWORD)
+            - --maxmemory
+            - 128mb
+            - --maxmemory-policy
+            - allkeys-lru
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 192Mi
+---
+# ---------------------------------------------------------------- Backups
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ism-backups
+  namespace: ism-finance
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: "<storageclass-cifrada>"   # AJUSTAR (mesma do Postgres)
+  resources:
+    requests:
+      storage: 10Gi
+---
+# ---------------------------------------------------------------- API
+apiVersion: v1
+kind: Service
+metadata:
+  # O nome "api" é usado pelo nginx do web (proxy_pass http://api:5000). Não renomear.
+  name: api
+  namespace: ism-finance
+spec:
+  selector:
+    app: ism-api
+  ports:
+    - port: 5000
+      targetPort: 5000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ism-api
+  namespace: ism-finance
+spec:
+  # Uma réplica só: a API roda jobs agendados (atrasados, auditoria, retenção LGPD) que
+  # não podem rodar em dobro. Recreate evita duas versões migrando/rodando ao mesmo tempo.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ism-api
+  template:
+    metadata:
+      labels:
+        app: ism-api
+    spec:
+      imagePullSecrets:
+        - name: gitlab-registry
+      initContainers:
+        # 1) Backup cifrado ANTES de qualquer migration. Mesmo formato de scripts/lgpd-cifrar-backup.sh
+        #    (pg_dump + openssl aes-256-cbc pbkdf2). Imagem Debian: a alpine não tem openssl.
+        - name: backup-pre-deploy
+          image: postgres:16
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ism-finance-env
+                  key: DB_PASSWORD
+            - name: BACKUP_CIPHER_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: ism-finance-env
+                  key: BACKUP_CIPHER_PASS
+          command:
+            - sh
+            - -ec
+            - |
+              for i in $(seq 1 60); do
+                pg_isready -h postgres -U ism_user -d ismfinance && break
+                sleep 5
+              done
+              pg_isready -h postgres -U ism_user -d ismfinance
+              [ -n "$BACKUP_CIPHER_PASS" ] || { echo "BACKUP_CIPHER_PASS vazio: backup em claro recusado."; exit 1; }
+              out="/backups/pre-deploy-$(date +%Y%m%d%H%M%S).sql.enc"
+              pg_dump -h postgres -U ism_user ismfinance \
+                | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:BACKUP_CIPHER_PASS -out "$out"
+              [ "$(head -c 8 "$out")" = "Salted__" ] || { rm -f "$out"; echo "Backup sem cabeçalho de cifra."; exit 1; }
+              chmod 600 "$out"
+              echo "Backup cifrado em $out"
+              # Mantém os 30 mais recentes.
+              ls -1t /backups/pre-deploy-*.sql.enc | tail -n +31 | xargs -r rm -f
+          volumeMounts:
+            - name: backups
+              mountPath: /backups
+        # 2) Migrations versionadas (nunca drizzle-kit push). Também cria/atualiza os usuários
+        #    ism_app, ism_admin e ism_owner com as senhas do secret.
+        - name: migrations
+          image: registry.gitlab.com/meilock/finance-ism/api:1.0.0
+          command: ["sh", "-c", "pnpm --filter @workspace/db run db:migrate"]
+          envFrom:
+            - secretRef:
+                name: ism-finance-env
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ism-finance-env
+                  key: DB_PASSWORD
+            - name: DATABASE_MIGRATE_URL
+              value: postgresql://ism_user:$(DB_PASSWORD)@postgres:5432/ismfinance
+      containers:
+        - name: api
+          image: registry.gitlab.com/meilock/finance-ism/api:1.0.0
+          ports:
+            - containerPort: 5000
+          envFrom:
+            - secretRef:
+                name: ism-finance-env
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: RUN_LOCAL
+              value: "true"
+            - name: PORT
+              value: "5000"
+            - name: ISM_APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ism-finance-env
+                  key: ISM_APP_PASSWORD
+            - name: ISM_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ism-finance-env
+                  key: ISM_ADMIN_PASSWORD
+            - name: ISM_OWNER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ism-finance-env
+                  key: ISM_OWNER_PASSWORD
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ism-finance-env
+                  key: REDIS_PASSWORD
+            - name: DATABASE_URL
+              value: postgresql://ism_app:$(ISM_APP_PASSWORD)@postgres:5432/ismfinance
+            - name: DATABASE_ADMIN_URL
+              value: postgresql://ism_admin:$(ISM_ADMIN_PASSWORD)@postgres:5432/ismfinance
+            - name: DATABASE_OWNER_URL
+              value: postgresql://ism_owner:$(ISM_OWNER_PASSWORD)@postgres:5432/ismfinance
+            - name: REDIS_URL
+              value: redis://:$(REDIS_PASSWORD)@redis:6379
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 5000
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: 250m
+              memory: 384Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: backups
+          persistentVolumeClaim:
+            claimName: ism-backups
+---
+# ---------------------------------------------------------------- Web (nginx + front)
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: ism-finance
+spec:
+  # AJUSTAR: exposição conforme o cluster (Ingress com TLS, ou NodePort atrás do proxy de borda).
+  type: ClusterIP
+  selector:
+    app: ism-web
+  ports:
+    - port: 80
+      targetPort: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ism-web
+  namespace: ism-finance
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ism-web
+  template:
+    metadata:
+      labels:
+        app: ism-web
+    spec:
+      imagePullSecrets:
+        - name: gitlab-registry
+      containers:
+        - name: web
+          image: registry.gitlab.com/meilock/finance-ism/web:1.0.0
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+---
+# AJUSTAR: exemplo de Ingress com TLS (descomente e ajuste host/classe/certificado do cluster).
+# O TLS termina aqui; o nginx do web manda HSTS. Com Ingress -> web -> api são 2 saltos,
+# que é o TRUST_PROXY_HOPS padrão. Se houver outro proxy na frente, aumente o valor.
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: ism-web
+#   namespace: ism-finance
+#   annotations:
+#     nginx.ingress.kubernetes.io/proxy-body-size: 11m
+# spec:
+#   ingressClassName: nginx
+#   tls:
+#     - hosts: ["<dominio-de-producao>"]
+#       secretName: ism-finance-tls
+#   rules:
+#     - host: <dominio-de-producao>
+#       http:
+#         paths:
+#           - path: /
+#             pathType: Prefix
+#             backend:
+#               service:
+#                 name: web
+#                 port:
+#                   number: 80

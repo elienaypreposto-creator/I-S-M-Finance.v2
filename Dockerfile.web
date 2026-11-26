@@ -22,6 +22,12 @@ ARG VITE_API_URL=/api
 
 ENV VITE_API_URL=$VITE_API_URL
 
+# Versão exibida no menu do usuário (a esteira de produção passa o commit e a versão).
+ARG VITE_APP_COMMIT=
+ARG VITE_APP_BUILD=
+ENV VITE_APP_COMMIT=$VITE_APP_COMMIT
+ENV VITE_APP_BUILD=$VITE_APP_BUILD
+
 # Build do frontend
 RUN cd artifacts/ism-financeiro && pnpm run build
 

@@ -1,0 +1,34 @@
+---
+# Deploy de produção do ISM Finance: troca a versão das imagens api e web no manifesto
+# do servidor, aplica e espera o rollout. Se a migration (initContainer da API) falhar,
+# o rollout não termina e o deploy falha aqui, com a versão anterior ainda no ar.
+- hosts: ism-finance-prd
+  remote_user: ubuntu
+  vars:
+     ansible_python_interpreter: /usr/bin/python3
+     manifesto: /home/ubuntu/cluster/deploy-ism-finance.yaml
+     namespace: ism-finance
+
+  tasks:
+
+  - name: Substitui a versão da imagem da API
+    replace:
+      path: "{{ manifesto }}"
+      regexp: '(\s+)image: registry\.gitlab\.com\/meilock\/finance-ism\/api:\d+\.\d+\.\d+(\s+.*)?$'
+      replace: '\1image: registry.gitlab.com/meilock/finance-ism/api:{{versao_posterior}}\2'
+
+  - name: Substitui a versão da imagem do web
+    replace:
+      path: "{{ manifesto }}"
+      regexp: '(\s+)image: registry\.gitlab\.com\/meilock\/finance-ism\/web:\d+\.\d+\.\d+(\s+.*)?$'
+      replace: '\1image: registry.gitlab.com/meilock/finance-ism/web:{{versao_posterior}}\2'
+
+  - name: Aplicando deployment
+    shell: kubectl apply -f {{ manifesto }}
+
+  - name: Aguardando a API (backup, migrations e subida)
+    shell: kubectl rollout status deployment/ism-api -n {{ namespace }} --timeout=15m
+
+  - name: Aguardando o web
+    shell: kubectl rollout status deployment/ism-web -n {{ namespace }} --timeout=5m
+...
