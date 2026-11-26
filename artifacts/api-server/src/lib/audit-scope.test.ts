@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
-import {isAuthGlobalPath, isEmpresaSelectionPath, parsePositiveEmpresaId, resolveAuditEmpresaId} from "./audit-scope";
+import {
+    isAuthGlobalPath,
+    isEmpresaSelectionPath,
+    isGovadmSsoPath,
+    parsePositiveEmpresaId,
+    resolveAuditEmpresaId,
+    urlParaAuditoria,
+} from "./audit-scope";
 
 describe("resolveAuditEmpresaId", () => {
     it("não usa empresa_id do body no login (pre-tenant)", () => {
@@ -54,5 +61,33 @@ describe("auth path helpers", () => {
         assert.equal(isAuthGlobalPath("/api/lancamentos"), false);
         assert.equal(isEmpresaSelectionPath("/api/auth/select-empresa"), true);
         assert.equal(isEmpresaSelectionPath("/api/auth/login"), false);
+    });
+
+    it("login GovADM e seleção por SSO são rotas de auth globais", () => {
+        assert.equal(isAuthGlobalPath("/api/auth/govadm"), true);
+        assert.equal(isAuthGlobalPath("/api/auth/govadm?token=x.y.z&passport=abc"), true);
+        assert.equal(isAuthGlobalPath("/api/auth/selecao-empresas"), true);
+        assert.equal(isAuthGlobalPath("/api/auth/govadmx"), false);
+        // selecao-empresas não escolhe empresa: não pode pegar empresa_id do body.
+        assert.equal(isEmpresaSelectionPath("/api/auth/selecao-empresas"), false);
+        assert.equal(
+            resolveAuditEmpresaId({originalUrl: "/api/auth/selecao-empresas", body: {empresa_id: 2}}, 200),
+            null,
+        );
+    });
+});
+
+describe("urlParaAuditoria (login GovADM sem query nos logs)", () => {
+    it("descarta a query inteira de /api/auth/govadm (token e passport)", () => {
+        const url = urlParaAuditoria("/api/auth/govadm?passport=dXNlcjpzZW5oYQ==&token=eyJ.eyJ.sig");
+        assert.equal(url, "/api/auth/govadm");
+        assert.equal(urlParaAuditoria("/api/auth/govadm/?token=a.b.c"), "/api/auth/govadm/");
+        assert.equal(urlParaAuditoria("/api/auth/GOVADM?token=a.b.c"), "/api/auth/GOVADM");
+        assert.equal(isGovadmSsoPath("/api/auth/govadm"), true);
+    });
+
+    it("não mexe nas demais rotas", () => {
+        assert.equal(urlParaAuditoria("/api/lancamentos?pagina=2"), "/api/lancamentos?pagina=2");
+        assert.equal(urlParaAuditoria("/api/auth/govadmx?token=1"), "/api/auth/govadmx?token=1");
     });
 });

@@ -102,6 +102,8 @@ const AUTH_PATHS = [
     "/auth/refresh",
     "/auth/logout",
     "/auth/select-empresa",
+    // Entrada pelo GovADM: troca o token do hash pela lista de empresas (sem sessão ainda)
+    "/auth/selecao-empresas",
     "/auth/verify-otp",
     "/auth/setup-password",
     "/auth/forgot-password",

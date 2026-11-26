@@ -29,6 +29,7 @@ export const PERM = {
     ADMIN_PERMISSOES_CONCEDER: "admin:permissoes:conceder",
     ADMIN_EMPRESAS_EDITAR: "admin:empresas:editar",
     ADMIN_USUARIOS_LISTAR: "admin:usuarios:listar",
+    ADMIN_USUARIOS_EDITAR: "admin:usuarios:editar",
     ADMIN_TOKENS_API_LISTAR: "admin:tokens-api:listar",
     PARCEIROS_LISTAR: "financeiro:parceiros:listar",
     CONTAS_BANCARIAS_LISTAR: "configuracoes:contas-bancarias:listar",

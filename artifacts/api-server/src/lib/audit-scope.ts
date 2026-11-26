@@ -5,7 +5,22 @@
  */
 
 const AUTH_GLOBAL_PATH =
-    /\/auth\/(login|refresh|logout|select-empresa|switch-empresa|verify-otp|setup-password|forgot-password|reset-password)(?:\?|$)/;
+    /\/auth\/(login|refresh|logout|select-empresa|switch-empresa|verify-otp|setup-password|forgot-password|reset-password|govadm|selecao-empresas)(?:\?|$)/;
+
+/** Login vindo do GovADM: a URL pode trazer token (e passport) na query; nunca gravar a query. */
+const GOVADM_SSO_PATH = /^\/api\/auth\/govadm\/?(?:\?|$)/i;
+
+export function isGovadmSsoPath(url: string): boolean {
+    return GOVADM_SSO_PATH.test(url);
+}
+
+/**
+ * URL para logs/auditoria. Em /api/auth/govadm a query string é descartada inteira
+ * (token de sessão do GovADM e passport com a senha). Demais rotas ficam como estão.
+ */
+export function urlParaAuditoria(url: string): string {
+    return isGovadmSsoPath(url) ? (url.split("?")[0] ?? "") : url;
+}
 
 const EMPRESA_SELECTION_PATH = /\/auth\/(select-empresa|switch-empresa)(?:\?|$)/;
 

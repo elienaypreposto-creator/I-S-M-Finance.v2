@@ -10,6 +10,9 @@ export const AUDIT_SENSITIVE_GET_PREFIXES = [
     "/auditoria",
     "/tokens-api",
     "/v1",
+    // Login vindo do GovADM por GET (window.open): auditado como o POST. A query (token)
+    // nunca é gravada: ver urlParaAuditoria em audit-scope.ts.
+    "/auth/govadm",
 ] as const;
 
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);

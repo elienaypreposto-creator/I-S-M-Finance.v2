@@ -109,3 +109,59 @@ describe("corsPolicy fora de produção", () => {
         assert.equal(r.headers["access-control-allow-origin"], undefined);
     });
 });
+
+describe("corsPolicy: exceção do POST /api/auth/govadm (GOVADM_ORIGENS)", () => {
+    const GOVADM = "https://govadm.exemplo.gov.br";
+    let server: http.Server;
+    let port: number;
+
+    const req = (method: string, path: string, headers: Record<string, string>): Promise<Resp> =>
+        new Promise((resolve, reject) => {
+            const r = http.request({host: "127.0.0.1", port, path, method, headers}, (res) => {
+                res.resume();
+                res.on("end", () => resolve({status: res.statusCode ?? 0, headers: res.headers}));
+            });
+            r.on("error", reject);
+            r.end();
+        });
+
+    before(async () => {
+        const app = express();
+        app.use(corsPolicy({allowedOrigins: ["https://ism-tst.valtre.com.br"], enforce: true, govadmOrigins: [GOVADM]}));
+        app.all("/api/auth/govadm", (_req, res) => {
+            res.status(303).end();
+        });
+        app.post("/api/auth/login", (_req, res) => {
+            res.json({ok: true});
+        });
+        server = app.listen(0, "127.0.0.1");
+        await new Promise<void>((r) => server.once("listening", () => r()));
+        port = (server.address() as AddressInfo).port;
+    });
+    after(() => server.close());
+
+    it("POST /api/auth/govadm do GovADM passa, sem headers CORS", async () => {
+        const r = await req("POST", "/api/auth/govadm", {Origin: GOVADM, Host: "ism-tst.valtre.com.br"});
+        assert.equal(r.status, 303);
+        assert.equal(r.headers["access-control-allow-origin"], undefined);
+        assert.equal(r.headers["access-control-allow-credentials"], undefined);
+    });
+
+    it("GovADM em qualquer outra rota/método continua 403 (inclusive preflight)", async () => {
+        const login = await req("POST", "/api/auth/login", {Origin: GOVADM, Host: "ism-tst.valtre.com.br"});
+        assert.equal(login.status, 403);
+        const pre = await req("OPTIONS", "/api/auth/govadm", {
+            Origin: GOVADM,
+            Host: "ism-tst.valtre.com.br",
+            "Access-Control-Request-Method": "POST",
+        });
+        assert.equal(pre.status, 403);
+        const get = await req("GET", "/api/auth/govadm", {Origin: GOVADM, Host: "ism-tst.valtre.com.br"});
+        assert.equal(get.status, 403);
+    });
+
+    it("origem fora de GOVADM_ORIGENS no POST /api/auth/govadm -> 403", async () => {
+        const r = await req("POST", "/api/auth/govadm", {Origin: "https://site-malicioso.com", Host: "ism-tst.valtre.com.br"});
+        assert.equal(r.status, 403);
+    });
+});

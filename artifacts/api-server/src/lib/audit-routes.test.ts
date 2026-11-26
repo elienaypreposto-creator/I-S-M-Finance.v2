@@ -27,6 +27,12 @@ describe("shouldAuditRequest", () => {
         assert.equal(shouldAuditRequest("GET", "/api/v1x/outra"), false);
     });
 
+    it("audita o GET do login GovADM (window.open) como o POST", () => {
+        assert.equal(shouldAuditRequest("GET", "/api/auth/govadm?token=a.b.c"), true);
+        assert.equal(shouldAuditRequest("POST", "/api/auth/govadm"), true);
+        assert.equal(shouldAuditRequest("GET", "/api/auth/me"), false);
+    });
+
     it("não audita GET de listagem comum", () => {
         assert.equal(shouldAuditRequest("GET", "/api/lancamentos"), false);
         assert.equal(shouldAuditRequest("GET", "/api/healthz"), false);

@@ -1,10 +1,17 @@
-import {useState} from "react";
+import {useEffect, useRef, useState} from "react";
 import {useLocation} from "wouter";
-import {ArrowLeft, Building2, ChevronRight, KeyRound, Loader2, Lock, Mail} from "lucide-react";
+import {AlertCircle, ArrowLeft, Building2, ChevronRight, KeyRound, Loader2, Lock, Mail} from "lucide-react";
 import {fetchApi} from "@/lib/api-config";
 import {useAuth, type AuthUser, type EmpresaVinculo} from "@/hooks/use-auth";
 import {useToast} from "@/hooks/use-toast";
 import {paginaInicialDe} from "@/lib/preferencias-usuario";
+import {
+    MENSAGEM_SSO_SELECAO_EXPIRADA,
+    lerErroDaQuery,
+    lerSelecaoDoHash,
+    mensagemSsoErro,
+    urlSemParametrosSso,
+} from "@/lib/sso-govadm";
 
 // O refresh token não vem mais no body: está no cookie httpOnly.
 type SessionPayload = {
@@ -61,8 +68,49 @@ export default function Login() {
     const [empresas, setEmpresas] = useState<EmpresaVinculo[]>([]);
     const [usuarioNome, setUsuarioNome] = useState<string | null>(null);
     const [empresaEmCurso, setEmpresaEmCurso] = useState<number | null>(null);
+    // Entrada pelo GovADM: aviso fixo (erro do SSO) e carga da seleção de empresa.
+    const [avisoSso, setAvisoSso] = useState<string | null>(null);
+    const [carregandoSso, setCarregandoSso] = useState(false);
+    // Em StrictMode o efeito roda duas vezes; o ref garante uma única troca do token.
+    const ssoProcessado = useRef(false);
 
     const emSelecao = selectionToken !== null && empresas.length > 0;
+
+    useEffect(() => {
+        if (ssoProcessado.current) return;
+        ssoProcessado.current = true;
+
+        const {pathname, search, hash} = window.location;
+        const tokenSelecao = lerSelecaoDoHash(hash);
+        const codigoErro = lerErroDaQuery(search);
+        if (!tokenSelecao && !codigoErro) return;
+
+        // Tira o token/código da barra de endereço já, sem recarregar a página: o
+        // selectionToken não fica no histórico e um F5 não repete a tentativa.
+        window.history.replaceState(window.history.state, "", urlSemParametrosSso(pathname, search, hash));
+
+        if (!tokenSelecao) {
+            setAvisoSso(mensagemSsoErro(codigoErro!));
+            return;
+        }
+
+        setCarregandoSso(true);
+        void fetchApi<{ data: SelecaoEmpresaPayload }>("/auth/selecao-empresas", {
+            method: "POST",
+            body: JSON.stringify({selectionToken: tokenSelecao}),
+        })
+            .then((res) => {
+                const dados = res?.data;
+                if (!dados?.selectionToken || !Array.isArray(dados.empresas) || dados.empresas.length === 0) {
+                    throw new Error("Resposta do servidor inválida.");
+                }
+                setSelectionToken(dados.selectionToken);
+                setEmpresas(dados.empresas);
+                setUsuarioNome(dados.user?.nome ?? null);
+            })
+            .catch(() => setAvisoSso(MENSAGEM_SSO_SELECAO_EXPIRADA))
+            .finally(() => setCarregandoSso(false));
+    }, []);
 
     function concluirSessao(payload: SessionPayload) {
         const {accessToken, user, permissoes, empresa_id} = payload;
@@ -81,6 +129,7 @@ export default function Login() {
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
         setLoading(true);
+        setAvisoSso(null);
 
         try {
             const res = await fetchApi<LoginEnvelope>("/auth/login", {
@@ -166,7 +215,25 @@ export default function Login() {
                     </p>
                 </div>
 
-                {emSelecao ? (
+                {avisoSso && !emSelecao ? (
+                    <div
+                        role="alert"
+                        className="flex items-start gap-2.5 rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-100"
+                    >
+                        <AlertCircle aria-hidden="true" className="w-4 h-4 mt-0.5 shrink-0 text-red-400"/>
+                        <span>{avisoSso}</span>
+                    </div>
+                ) : null}
+
+                {carregandoSso ? (
+                    <div
+                        role="status"
+                        className="flex items-center justify-center gap-3 py-8 text-sm text-muted-foreground"
+                    >
+                        <Loader2 aria-hidden="true" className="w-5 h-5 animate-spin text-primary"/>
+                        Confirmando seu acesso pelo GovADM…
+                    </div>
+                ) : emSelecao ? (
                     <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
                         <ul className="space-y-3">
                             {empresas.map((empresa) => {

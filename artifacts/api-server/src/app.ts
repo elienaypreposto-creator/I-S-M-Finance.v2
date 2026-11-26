@@ -8,6 +8,7 @@ import {globalLimiter} from "./middlewares/rate-limit";
 import {securityHeaders} from "./middlewares/security-headers";
 import {corsPolicy, parseAllowedOrigins} from "./middlewares/cors-policy";
 import {trustProxyHops} from "./lib/client-ip";
+import {parseGovadmOrigens} from "./services/govadm.service";
 
 const app: Express = express();
 app.disable("x-powered-by");
@@ -27,7 +28,12 @@ const allowedOrigins = parseAllowedOrigins();
 if (allowedOrigins.length === 0 && process.env.NODE_ENV === "production") {
     console.warn("[CONFIG] CORS_ORIGINS/FRONTEND_URL não definido: só same-origin será aceito.");
 }
-app.use(corsPolicy({allowedOrigins, enforce: process.env.NODE_ENV === "production"}));
+// GOVADM_ORIGENS: exceção só para o POST /api/auth/govadm (form vindo do GovADM).
+app.use(corsPolicy({
+    allowedOrigins,
+    enforce: process.env.NODE_ENV === "production",
+    govadmOrigins: parseGovadmOrigens(),
+}));
 
 app.use(cookieParser());
 

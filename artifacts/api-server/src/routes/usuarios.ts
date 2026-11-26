@@ -610,7 +610,7 @@ router.put(
  * Confirma que o alvo tem vínculo ativo com a empresa da request.
  * 404 para não revelar que o usuário existe em outro tenant.
  */
-async function targetPertenceAEmpresa(
+export async function targetPertenceAEmpresa(
     targetUserId: number,
     empresaId: number,
 ): Promise<boolean> {

@@ -15,6 +15,10 @@
  * outro site (form/urlencoded) seria executado mesmo sem o navegador conseguir
  * ler a resposta. Fora de produção só omite os headers CORS (o proxy do Vite
  * reescreve o Host, e o dev precisa de liberdade).
+ *
+ * Exceção pontual: `POST /api/auth/govadm` aceita também as origens de
+ * `GOVADM_ORIGENS` (o GovADM abre o ISM com um form). Só passa pelo guard; não
+ * ganha headers CORS. O GovADM NÃO entra em `CORS_ORIGINS`.
  */
 
 import cors from "cors";
@@ -56,17 +60,29 @@ export interface CorsPolicyOptions {
     allowedOrigins: string[];
     /** true = 403 para origem fora da lista (produção). */
     enforce: boolean;
+    /**
+     * Origens do GovADM (GOVADM_ORIGENS). Exceção pontual: só passam pelo guard no
+     * `POST /api/auth/govadm` (form do GovADM, navegação de topo). Não recebem headers
+     * CORS (nem credenciais) e não valem para nenhuma outra rota, nem para preflight.
+     */
+    govadmOrigins?: string[];
 }
 
 export function originPermitida(origin: string, host: string | undefined, allowed: string[]): boolean {
     return allowed.includes(origin) || isSameHost(origin, host);
 }
 
-export function corsPolicy({allowedOrigins, enforce}: CorsPolicyOptions): RequestHandler[] {
+/** `POST /api/auth/govadm` (aceita barra final e maiúsculas, como o roteamento do Express). */
+export function isPostGovadmSso(method: string, path: string): boolean {
+    return method === "POST" && /^\/api\/auth\/govadm\/?$/i.test(path);
+}
+
+export function corsPolicy({allowedOrigins, enforce, govadmOrigins = []}: CorsPolicyOptions): RequestHandler[] {
     const guard: RequestHandler = (req: Request, res: Response, next: NextFunction) => {
         const origin = req.headers.origin;
         if (!origin || !enforce) return next();
         if (originPermitida(origin, req.headers.host, allowedOrigins)) return next();
+        if (isPostGovadmSso(req.method, req.path) && govadmOrigins.includes(origin)) return next();
         return errorResponse(res, 403, "ORIGIN_NOT_ALLOWED", "Origem não permitida.");
     };
 

@@ -19,7 +19,7 @@ import type {NextFunction, Request, Response} from "express";
 import crypto from "crypto";
 import {db, withTenantTx, type TenantDb} from "@workspace/db";
 import {logsAuditoriaTable, logsSistemaTable} from "@workspace/db/schema";
-import {isAuthGlobalPath, resolveAuditEmpresaId} from "../lib/audit-scope";
+import {isAuthGlobalPath, resolveAuditEmpresaId, urlParaAuditoria} from "../lib/audit-scope";
 import {isApiV1Path, shouldAuditRequest} from "../lib/audit-routes";
 import {identidadeAuditoria} from "../lib/api-token-identity";
 import {auditRequestId} from "./request-id";
@@ -43,6 +43,9 @@ const SENSITIVE_KEYS = new Set([
     "resetToken",
     "selectionToken",
     "secret",
+    // Login vindo do GovADM: j_password é o token de sessão do GovADM; passport leva a senha.
+    "j_password",
+    "passport",
 ]);
 
 function sanitize(value: unknown): unknown {
@@ -101,7 +104,7 @@ function writeSistema(req: Request, res: Response, servico = "auth"): void {
         .insert(logsSistemaTable)
         .values({
             servico,
-            mensagem: `${req.method} ${req.originalUrl} → ${res.statusCode}`,
+            mensagem: `${req.method} ${urlParaAuditoria(req.originalUrl)} → ${res.statusCode}`,
             detalhes: {
                 ip: extractIp(req),
                 status_code: res.statusCode,
@@ -137,7 +140,7 @@ function writeAuditoria(
                 // Chamada por token v1: usuario_id null + token_api_id (nunca o id do token como usuário).
                 ...identidadeAuditoria(req),
                 acao: req.method,
-                recurso: req.originalUrl,
+                recurso: urlParaAuditoria(req.originalUrl),
                 ip: extractIp(req),
                 detalhes: buildDetalhes(req),
                 status_code: res.statusCode,
@@ -208,7 +211,7 @@ export const auditLogger = (
         }
 
         console.warn(
-            `[audit] sem contexto de empresa - log não gravado (${req.method} ${req.originalUrl})`,
+            `[audit] sem contexto de empresa - log não gravado (${req.method} ${urlParaAuditoria(req.originalUrl)})`,
         );
     });
 
